@@ -80,9 +80,15 @@ async function login() {
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nPublic tracking page — no NVOCC assigned, nvoccName is blank, carrierCode unchanged");
     const shipPlain = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const tokenPlain = await request("POST", `/api/shipments/${shipPlain.body.id}/share-token`, null, token);
     const viewPlain = await request("GET", `/api/share/${tokenPlain.body.token}`, null, null);
@@ -94,6 +100,7 @@ async function login() {
     const nvoccCust = await request("POST", "/api/customers", { companyName: "Test NVOCC Carrier Co", isNvocc: true, fmcNumber: "FMC-999999" }, token);
     const shipNvocc = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const partyRes = await request("POST", `/api/shipments/${shipNvocc.body.id}/parties`, { role: "NVOCC", customerId: nvoccCust.body.id, customerName: nvoccCust.body.companyName }, token);
     assert("NVOCC party assigned", partyRes.status === 201, JSON.stringify(partyRes.body));
@@ -113,6 +120,7 @@ async function login() {
     const shipRelease = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       masterBlNumber: "MAEU987654321", masterBlReleaseType: "Telex Release", blReleaseType: "",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("create returns 201", shipRelease.status === 201, JSON.stringify(shipRelease.body));
     assert("masterBlReleaseType round-trips on create", shipRelease.body?.masterBlReleaseType === "Telex Release", JSON.stringify(shipRelease.body));
@@ -130,6 +138,7 @@ async function login() {
     const coloadCust = await request("POST", "/api/customers", { companyName: "Test Co-Load NVOCC Partner", isNvocc: true, fmcNumber: "FMC-888888" }, token);
     const shipCoload = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const coloadPartyRes = await request("POST", `/api/shipments/${shipCoload.body.id}/parties`,
       { role: "Co-Loading NVOCC", customerId: coloadCust.body.id, customerName: coloadCust.body.companyName }, token);
@@ -148,12 +157,14 @@ async function login() {
     const shipTariff = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       coloadTariffReference: "COLOAD-TARIFF-00123",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("create returns 201", shipTariff.status === 201, JSON.stringify(shipTariff.body));
     assert("coloadTariffReference round-trips on create", shipTariff.body?.coloadTariffReference === "COLOAD-TARIFF-00123", JSON.stringify(shipTariff.body));
 
     const shipTariffBlank = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("blank by default — the direct NVOCC-to-vessel-operator case needs no tariff reference", shipTariffBlank.body?.coloadTariffReference === "", JSON.stringify(shipTariffBlank.body));
 

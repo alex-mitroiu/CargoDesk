@@ -74,7 +74,7 @@ const Sel = ({ id, label, value, onChange, options, required, error, hint, disab
     <select id={id} value={value} onChange={e => onChange(e.target.value)} disabled={disabled}
       style={{ ...inputBase, fontFamily: T.body, fontSize: 14, cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.6 : 1,
-        ...(error ? { borderColor: T.danger, boxShadow: `0 0 0 2px ${T.danger}44` } : {}) }}>
+        ...(error ? { border: `1px solid ${T.danger}`, boxShadow: `0 0 0 2px ${T.danger}44` } : {}) }}>
       {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   </Field>

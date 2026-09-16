@@ -17,6 +17,7 @@ const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 describe("Document Generation & Signing Suite", () => {
   let tok, shipmentId;
+  let emoOfficeId, imoOfficeId;
 
   const api = (method, path, body) =>
     cy.request({
@@ -29,6 +30,15 @@ describe("Document Generation & Signing Suite", () => {
   before(() => {
     cy.request("POST", "/api/auth/login", { email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
       .then(res => { tok = res.body.token; });
+  });
+
+  before(() => {
+    // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+    // fetch real active SE/SI offices rather than hardcoding an id.
+    api("GET", "/offices").then(res => {
+      emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+      imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
+    });
   });
 
   let scratchCustomerId;
@@ -47,7 +57,8 @@ describe("Document Generation & Signing Suite", () => {
           body: { pol: "CNSHA", pod: "USNYC", carrierCode: "CMDU",
                   status: "Active", contractType: "SPOT", etd: "2026-10-01",
                   shipperId: scratchCustomerId, shipperName: "Cypress Doc Gen Test Customer Co",
-                  consigneeId: scratchCustomerId, consigneeName: "Cypress Doc Gen Test Customer Co" },
+                  consigneeId: scratchCustomerId, consigneeName: "Cypress Doc Gen Test Customer Co",
+                  emoOfficeId, imoOfficeId },
           failOnStatusCode: false,
         });
       }).then(res => {

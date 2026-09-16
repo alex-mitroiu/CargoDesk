@@ -64,6 +64,11 @@ async function login() {
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nScratch Central-contract shipment with a real rate, for reset-to-contract/update-carrier-costs");
     const contractNum = `CLL-${Date.now()}`;
     const contract = await request("POST", "/api/contracts", {
@@ -77,6 +82,7 @@ async function login() {
 
     const ship = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MSCU", contractType: "Central", contractId, status: "Active",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const shipmentId = ship.body.id;
     await request("POST", "/api/containers", { shipmentId, containerNumber: "CLLU1234567", size: "40", type: "HC" }, token);
@@ -91,7 +97,7 @@ async function login() {
     assert("a rate snapshot now exists", snapsAfter.body.length > 0);
 
     console.log("\nreset-to-contract — not-Central rejection, no-snapshot rejection, happy path");
-    const spot = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MSCU", contractType: "SPOT", status: "Active" }, token);
+    const spot = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MSCU", contractType: "SPOT", status: "Active", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, token);
     const resetNotCentral = await request("POST", `/api/shipments/${spot.body.id}/cost-lines/reset-to-contract`, {}, token);
     assert("reset-to-contract rejected on a non-Central shipment", resetNotCentral.status >= 400 && /not linked to a Central contract/i.test(resetNotCentral.body.error || ""));
     await request("DELETE", `/api/shipments/${spot.body.id}`, null, token);

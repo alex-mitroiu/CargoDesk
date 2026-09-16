@@ -18,6 +18,7 @@ describe("Share Token & Customer Tracking Suite", () => {
   let shipmentId;
   let shareToken;
   let shareUrl;
+  let emoOfficeId, imoOfficeId;
 
   const api = (method, path, body) =>
     cy.request({
@@ -32,17 +33,30 @@ describe("Share Token & Customer Tracking Suite", () => {
       email: ADMIN_EMAIL, password: ADMIN_PASSWORD,
     }).then(res => {
       tok = res.body.token;
-      // Create a shipment to share
-      return cy.request({
-        method: "POST", url: "/api/shipments",
-        headers: { Authorization: `Bearer ${tok}` },
-        body: {
-          pol: "CNSHA", pod: "USNYC", carrierCode: "CMDU",
-          status: "Active", contractType: "SPOT", etd: "2026-09-01",
-          bookingRef: "BKG-CYPRESS-SHARE", shipperName: "Cypress Shipper",
-        },
-        failOnStatusCode: false,
-      });
+    });
+  });
+
+  before(() => {
+    // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+    // fetch real active SE/SI offices rather than hardcoding an id.
+    api("GET", "/offices").then(res => {
+      emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+      imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
+    });
+  });
+
+  before(() => {
+    // Create a shipment to share
+    cy.request({
+      method: "POST", url: "/api/shipments",
+      headers: { Authorization: `Bearer ${tok}` },
+      body: {
+        pol: "CNSHA", pod: "USNYC", carrierCode: "CMDU",
+        status: "Active", contractType: "SPOT", etd: "2026-09-01",
+        bookingRef: "BKG-CYPRESS-SHARE", shipperName: "Cypress Shipper",
+        emoOfficeId, imoOfficeId,
+      },
+      failOnStatusCode: false,
     }).then(res => {
       expect(res.status).to.eq(201);
       shipmentId = res.body.id;

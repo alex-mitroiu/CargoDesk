@@ -58,9 +58,23 @@ async function login() {
   return body.token;
 }
 
+let _defaultOffices = null;
+async function getDefaultOffices(token) {
+  if (_defaultOffices) return _defaultOffices;
+  const res = await request("GET", "/api/offices", null, token);
+  const list = Array.isArray(res.body) ? res.body : res.body.results;
+  _defaultOffices = {
+    emoOfficeId: list.find(o => o.department === "SE" && o.isActive)?.id,
+    imoOfficeId: list.find(o => o.department === "SI" && o.isActive)?.id,
+  };
+  return _defaultOffices;
+}
+
 async function scratchShipment(token) {
+  const { emoOfficeId, imoOfficeId } = await getDefaultOffices(token);
   const res = await request("POST", "/api/shipments", {
     pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+    emoOfficeId, imoOfficeId,
   }, token);
   return res.body.id;
 }

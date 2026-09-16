@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { T } from "../../tokens";
+import { T, IMDG_CLASSES } from "../../tokens";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { useAuth } from "../../AuthContext";
@@ -16,6 +16,7 @@ import { onCargoValueChanged } from "../../cargoValueBus";
 import { onLegsScheduleChanged } from "../../legsScheduleBus";
 import { deriveLoopCode } from "../../utils/scheduleLoop";
 import LoopRouteModal from "./LoopRouteModal";
+import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
 
 // ─── Persistent Shipment Header ────────────────────────────────────────────
 // Mounted once in App.jsx above the page switch for "detail" + every promoted
@@ -33,19 +34,20 @@ import LoopRouteModal from "./LoopRouteModal";
 
 const Field = ({ label, value, first, onClick }) => (
   <div id={`shphdr-field-${label.toLowerCase().replace(/\s+/g, "-")}`}
+    data-testid={`shipment-detail-header-field-${label.toLowerCase().replace(/\s+/g, "-")}`}
     onClick={onClick}
     title={onClick ? "Click to view route" : undefined}
     style={{
-      display: "flex", alignItems: "baseline", gap: 6,
-      padding: "0 14px", margin: first ? "0 14px 0 0" : 0,
-      borderLeft: first ? "none" : `1px solid ${T.border}`,
+      display: "flex", flexDirection: "column", gap: 2,
+      padding: "0 16px", margin: first ? "0 16px 0 0" : 0,
+      borderLeft: first ? "none" : `1px solid ${HZ.border}`,
       cursor: onClick ? "pointer" : "default",
     }}>
-    <span style={{ fontFamily: T.mono, fontSize: 10, textTransform: "uppercase",
-      letterSpacing: "0.08em", color: T.textMuted, flexShrink: 0 }}>{label}</span>
-    <span style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: onClick ? 700 : 500,
-      color: onClick ? T.accent : T.text, textDecoration: onClick ? "underline" : "none",
-      textDecorationColor: onClick ? `${T.accent}66` : "transparent", textUnderlineOffset: 2,
+    <span style={{ fontFamily: HZ_MONO, fontSize: 9.5, textTransform: "uppercase",
+      letterSpacing: "0.08em", color: HZ.textMuted, flexShrink: 0 }}>{label}</span>
+    <span style={{ fontFamily: HZ_BODY, fontSize: 12.5, fontWeight: onClick ? 700 : 600,
+      color: onClick ? HZ.cyan : HZ.text, textDecoration: onClick ? "underline" : "none",
+      textDecorationColor: onClick ? `${HZ.cyan}66` : "transparent", textUnderlineOffset: 2,
       whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 220 }}>
       {value || "—"}
     </span>
@@ -65,38 +67,38 @@ const IconTile = ({ items }) => {
   const [hovered, setHovered] = useState(null);
   const cols = Math.max(2, Math.ceil(items.length / 2));
   return (
-    <div id="shphdr-icontile" style={{
+    <div id="shphdr-icontile" data-testid="shipment-detail-header-icon-tile" style={{
       display: "grid", gridTemplateColumns: `repeat(${cols}, 26px)`, gridAutoRows: "26px", gap: 3,
-      background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10,
+      background: "rgba(255,255,255,0.03)", border: `1px solid ${HZ.border}`, borderRadius: 10,
       padding: 4, flexShrink: 0,
     }}>
       <style>{`@keyframes shb-spin { to { transform: rotate(360deg); } }`}</style>
       {items.map(it => (
-        <div key={it.key} id={`shphdr-icontile-${it.key}`} style={{ position: "relative" }}
+        <div key={it.key} id={`shphdr-icontile-${it.key}`} data-testid={`shipment-detail-header-icon-${it.key}`} style={{ position: "relative" }}
           onMouseEnter={() => setHovered(it.key)}
           onMouseLeave={() => setHovered(null)}>
           <button type="button" onClick={it.onClick}
             style={{ position: "relative", width: "100%", height: "100%", borderRadius: 6,
-              background: hovered === it.key ? T.accentBg : "none",
+              background: hovered === it.key ? HZ.cyanBg : "none",
               border: "none", cursor: "pointer",
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 14, lineHeight: 1, color: hovered === it.key ? T.accent : T.textMuted,
+              fontSize: 14, lineHeight: 1, color: hovered === it.key ? HZ.cyan : HZ.textMuted,
               transition: "background .12s, color .12s" }}>
             <span style={{ display: "inline-flex", alignItems: "center", animation: it.spinning ? "shb-spin .7s linear infinite" : "none" }}>
               <AnyIcon icon={it.icon} size={14} />
             </span>
             {!!it.badge && (
               <span style={{ position: "absolute", top: -3, right: -3,
-                background: T.danger, color: "#fff", borderRadius: "50%",
+                background: HZ.crit, color: "#fff", borderRadius: "50%",
                 width: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center",
-                fontFamily: T.mono, fontSize: 8, fontWeight: 700, lineHeight: 1 }}>
+                fontFamily: HZ_MONO, fontSize: 8, fontWeight: 700, lineHeight: 1 }}>
                 {it.badge > 9 ? "9+" : it.badge}
               </span>
             )}
           </button>
           {hovered === it.key && (
             <div style={{ position: "absolute", top: "calc(100% + 6px)", left: "50%", transform: "translateX(-50%)",
-              background: T.text, color: T.bg, fontFamily: T.body, fontSize: 11, fontWeight: 600,
+              background: HZ.text, color: HZ.bg, fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600,
               padding: "4px 9px", borderRadius: 6, whiteSpace: "nowrap", zIndex: 20,
               boxShadow: "0 4px 14px rgba(0,0,0,.25)", pointerEvents: "none" }}>
               {it.title}
@@ -108,38 +110,45 @@ const IconTile = ({ items }) => {
   );
 };
 
-// Minimized-state summary row (direct request) — a handful of chip-style values standing in
-// for the full Row 2 + route pill, so the header can default to a much shorter footprint without
-// losing the fields an operator scans for most. Containers collapse to "N×TYPE" when every
-// container on the shipment shares one size+type, or a plain "N containers" count otherwise —
-// a mixed manifest has no single code worth naming here.
-const ChipRow = ({ shipment, ctrs }) => {
+// Minimized-state summary row (direct request, then redesigned per the approved Trade Horizon
+// mockup — https://claude.ai/artifact/SUaCjaQYTdaPHbXmm2FfYj) — a compact divided-segment strip
+// standing in for the full Row 2 + route pill, so the header can default to a much shorter
+// footprint without losing the fields an operator scans for most. Containers collapse to
+// "N×TYPE" when every container on the shipment shares one size+type, or a plain "N containers"
+// count otherwise — a mixed manifest has no single code worth naming here. The mockup's own
+// field list also included a milestone-completion fraction ("3/9"); that number isn't part of
+// this component's existing data (it would mean a new fetch just for the minimized state), so
+// Shipper stands in its place here — same "don't add fetches for a visual pass" rule this
+// codebase's other Trade Horizon ports (Dashboard, Command Center) already followed.
+const ChipRow = ({ shipment, ctrs, cargoValueUsd, openTicketCount }) => {
   const ctrTypeKeys = [...new Set(ctrs.map(c => `${c.size}${c.type}`))];
   const containerSummary = ctrs.length === 0 ? null
     : ctrTypeKeys.length === 1 ? `${ctrs.length}×${ctrTypeKeys[0]}`
     : `${ctrs.length} container${ctrs.length !== 1 ? "s" : ""}`;
+  const carrierSeg = shipment.carrierCode
+    ? `${shipment.carrierCode}${shipment.vessel ? ` · ${shipment.vessel}${shipment.voyage ? ` / ${shipment.voyage}` : ""}` : ""}`
+    : null;
   const chips = [
-    shipment.carrierCode && { label: "Carrier", value: shipment.carrierCode, accent: true },
-    shipment.vessel && { label: "Vessel", value: shipment.vessel },
-    containerSummary && { label: "Containers", value: containerSummary },
+    shipment.incoterm && { label: "Incoterm", value: shipment.incoterm },
+    carrierSeg && { label: null, value: carrierSeg, accent: true },
+    shipment.contractRef && { label: "Contract", value: shipment.contractRef },
+    containerSummary && { label: "Cargo", value: containerSummary },
+    cargoValueUsd != null && { label: "Cargo Value", value: fmtCurr(cargoValueUsd, "USD") },
     shipment.shipperName && { label: "Shipper", value: shipment.shipperName },
-    shipment.consigneeName && { label: "Consignee", value: shipment.consigneeName },
+    openTicketCount > 0 && { label: "Open Tickets", value: String(openTicketCount) },
   ].filter(Boolean);
   if (!chips.length) return null;
   return (
-    <div id="shphdr-chiprow" style={{ display: "flex", flexWrap: "wrap", gap: 8,
-      marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
-      {chips.map(c => (
-        <span key={c.label} id={`shphdr-chip-${c.label.toLowerCase()}`} style={{
-          display: "inline-flex", alignItems: "center", gap: 6,
-          fontFamily: T.mono, fontSize: 12, fontWeight: c.accent ? 700 : 400,
-          color: c.accent ? T.accent : T.text,
-          background: T.bg, border: `1px solid ${T.border}`, borderRadius: 20,
-          padding: "5px 12px 5px 10px", whiteSpace: "nowrap", maxWidth: 260,
-          overflow: "hidden", textOverflow: "ellipsis" }}>
-          <span style={{ fontFamily: T.body, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.05em", color: T.textMuted, flexShrink: 0 }}>{c.label}</span>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{c.value}</span>
+    <div id="shphdr-chiprow" data-testid="shipment-detail-header-chip-row" style={{ display: "flex", flexWrap: "wrap", alignItems: "center",
+      marginTop: 11, paddingTop: 11, borderTop: `1px solid ${HZ.border}` }}>
+      {chips.map((c, i) => (
+        <span key={c.label || `seg-${i}`} id={`shphdr-chip-${(c.label || "carrier").toLowerCase()}`} data-testid={`shipment-detail-header-chip-${(c.label || "carrier").toLowerCase()}`} style={{
+          fontFamily: HZ_MONO, fontSize: 11.3, whiteSpace: "nowrap",
+          color: c.accent ? HZ.text : HZ.textMuted,
+          padding: i === 0 ? "0 13px 0 0" : "0 13px", borderLeft: i === 0 ? "none" : `1px solid ${HZ.border}`,
+          maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis" }}>
+          {c.label && <>{c.label} </>}
+          <strong style={{ color: c.accent ? HZ.cyan : HZ.text, fontWeight: 700 }}>{c.value}</strong>
         </span>
       ))}
     </div>
@@ -316,6 +325,15 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
   const teu = ctrs.reduce((n, c) => n + (c.size === "40" ? 2 : 1), 0);
   const dgClasses = [...new Set(ctrs.filter(c => c.isDg).map(c => c.dgClass).filter(Boolean))];
   const isDg = ctrs.some(c => c.isDg);
+  // Short "what this actually means" caption for the header's DG badge — real IMDG_CLASSES
+  // `name` data (tokens.js), not invented copy. That field's format isn't consistent across
+  // classes (some are "Category — Detail", e.g. "Gases — Flammable Gas"; others are bare, e.g.
+  // "Flammable Liquids" for class 3) so it's used whole rather than split on a dash that isn't
+  // always there. A shipment can carry more than one class; only the first is captioned to keep
+  // the header glanceable, same trade-off the mockup's own single-class example made.
+  const dgMeaning = dgClasses.length
+    ? IMDG_CLASSES.find(c => c.code === dgClasses[0])?.name
+    : null;
   const loopCode = deriveLoopCode(schedules[0]);
 
   // Cargo value rollup (Epic TKT-P3ASH1, Story TKT-NSTDKF) — sum of quantity x unitValueUsd
@@ -346,34 +364,36 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
       .catch(() => toast.error("Could not copy to clipboard"));
   };
 
+  useHorizonFonts();
+
   return (
     <div id="shphdr" style={{
-      background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
+      background: HZ.surface, backdropFilter: "blur(22px)", border: `1px solid ${HZ.border}`, borderRadius: 16,
       padding: "14px 22px", marginBottom: 22, position: "sticky", top: 0, zIndex: 5,
     }}>
       {/* Row 1 — identity, route, dates, DG */}
-      <div id="shphdr-row1" style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
-        <span id="shphdr-id" style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <span style={{ fontFamily: T.mono, fontWeight: 700, fontSize: 17, color: T.text,
+      <div id="shphdr-row1" data-testid="shipment-detail-header-row1" style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+        <span id="shphdr-id" data-testid="shipment-detail-header-id" style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ fontFamily: HZ_MONO, fontWeight: 700, fontSize: 17, color: HZ.text,
             letterSpacing: "0.01em" }}>{shipment.id}</span>
-          <button id="shphdr-copy-id-btn" type="button" onClick={copyId} title="Copy shipment ID"
+          <button id="shphdr-copy-id-btn" data-testid="shipment-detail-header-copy-id-btn" type="button" onClick={copyId} title="Copy shipment ID"
             style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 3px",
-              display: "flex", alignItems: "center", fontSize: 12, lineHeight: 1, color: T.textMuted }}
-            onMouseEnter={e => { e.currentTarget.style.color = T.accent; }}
-            onMouseLeave={e => { e.currentTarget.style.color = T.textMuted; }}>
+              display: "flex", alignItems: "center", fontSize: 12, lineHeight: 1, color: HZ.textMuted }}
+            onMouseEnter={e => { e.currentTarget.style.color = HZ.cyan; }}
+            onMouseLeave={e => { e.currentTarget.style.color = HZ.textMuted; }}>
             <IconClipboard size={12} />
           </button>
         </span>
-        <span id="shphdr-movement-type" style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.03em",
-          padding: "3px 9px", borderRadius: 5, background: T.accentBg, color: T.accent,
-          border: `1px solid ${T.accent}66` }}>{shipment.movementType || "FCL"}</span>
+        <span id="shphdr-movement-type" data-testid="shipment-detail-header-movement-type" style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, letterSpacing: "0.03em",
+          padding: "3px 9px", borderRadius: 6, background: HZ.cyanBg, color: HZ.cyan,
+          border: `1px solid ${HZ.cyan}66` }}>{shipment.movementType || "FCL"}</span>
 
         {(() => {
           const r = screening?.result;
           const isHit = r === "HIT";
           const overridden = screening?.overriddenAt;
-          const bg = !r ? T.border + "33" : isHit ? "#ef444420" : "#22c55e20";
-          const color = !r ? T.textMuted : isHit ? "#ef4444" : "#22c55e";
+          const bg = !r ? "rgba(255,255,255,0.06)" : isHit ? HZ.critBg : HZ.goodBg;
+          const color = !r ? HZ.textMuted : isHit ? HZ.crit : HZ.good;
           const label = !r ? "UNSCREENED" : isHit
             ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconWarning size={11} />Compliance review required</span>
             : overridden
@@ -387,47 +407,47 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
             : overridden ? "Cleared via manual override"
             : "Compliance clear";
           return (
-            <button id="shphdr-compliance-btn" type="button" onClick={() => setComplianceOpen(true)}
+            <button id="shphdr-compliance-btn" data-testid="shipment-detail-header-compliance-btn" type="button" onClick={() => setComplianceOpen(true)}
               title={tooltipText}
-              style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, cursor: "pointer",
-                borderRadius: 5, padding: "3px 9px", letterSpacing: "0.03em", whiteSpace: "nowrap",
-                border: `1px solid ${!r ? T.border : isHit ? "#ef444444" : "#22c55e44"}`,
+              style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, cursor: "pointer",
+                borderRadius: 6, padding: "3px 9px", letterSpacing: "0.03em", whiteSpace: "nowrap",
+                border: `1px solid ${!r ? HZ.border : isHit ? `${HZ.crit}44` : `${HZ.good}44`}`,
                 background: bg, color }}>
               {label}
             </button>
           );
         })()}
 
-        <div style={{ width: 1, alignSelf: "stretch", background: T.border }} />
+        <div style={{ width: 1, alignSelf: "stretch", background: HZ.border }} />
 
-        <div id="shphdr-route" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div id="shphdr-route" data-testid="shipment-detail-header-route" style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ display: "flex", flexDirection: "column" }}>
-            <span style={{ fontFamily: T.mono, fontWeight: 700, fontSize: 15, color: T.text }}>{shipment.pol || "—"}</span>
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{shipment.polName || ""}</span>
+            <span style={{ fontFamily: HZ_MONO, fontWeight: 700, fontSize: 15, color: HZ.text }}>{shipment.pol || "—"}</span>
+            <span style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted }}>{shipment.polName || ""}</span>
+            <span style={{ fontFamily: HZ_MONO, fontSize: 9.5, color: HZ.textFaint, marginTop: 2 }}>ETD {shipment.etd || "—"}</span>
           </div>
-          <span style={{ color: T.textMuted }}>→</span>
+          <span style={{ color: HZ.textMuted }}>→</span>
           <div style={{ display: "flex", flexDirection: "column" }}>
-            <span style={{ fontFamily: T.mono, fontWeight: 700, fontSize: 15, color: T.text }}>{shipment.pod || "—"}</span>
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{shipment.podName || ""}</span>
+            <span style={{ fontFamily: HZ_MONO, fontWeight: 700, fontSize: 15, color: HZ.text }}>{shipment.pod || "—"}</span>
+            <span style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted }}>{shipment.podName || ""}</span>
+            <span style={{ fontFamily: HZ_MONO, fontSize: 9.5, color: HZ.textFaint, marginTop: 2 }}>ETA {shipment.eta || "—"}</span>
           </div>
         </div>
 
-        <div style={{ width: 1, alignSelf: "stretch", background: T.border }} />
-
-        <div id="shphdr-dates" style={{ display: "flex", gap: 16 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            <span style={{ fontFamily: T.mono, fontSize: 10, textTransform: "uppercase",
-              letterSpacing: "0.08em", color: T.textMuted }}>ETD</span>
-            <span style={{ fontFamily: T.mono, fontSize: 12.5, color: T.text,
-              fontVariantNumeric: "tabular-nums" }}>{shipment.etd || "—"}</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            <span style={{ fontFamily: T.mono, fontSize: 10, textTransform: "uppercase",
-              letterSpacing: "0.08em", color: T.textMuted }}>ETA</span>
-            <span style={{ fontFamily: T.mono, fontSize: 12.5, color: T.text,
-              fontVariantNumeric: "tabular-nums" }}>{shipment.eta || "—"}</span>
-          </div>
-        </div>
+        {isDg && (
+          <>
+            <div style={{ width: 1, alignSelf: "stretch", background: HZ.border }} />
+            <div id="shphdr-dg-badge" data-testid="shipment-detail-header-dg-badge" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
+              <span style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, letterSpacing: "0.03em",
+                padding: "3px 9px", borderRadius: 6, background: HZ.critBg, color: HZ.crit,
+                border: `1px solid ${HZ.crit}44`, whiteSpace: "nowrap",
+                display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <IconWarning size={11} />DG{dgClasses.length ? ` · CLASS ${dgClasses.join("/")}` : ""}
+              </span>
+              {dgMeaning && <span style={{ fontFamily: HZ_BODY, fontSize: 9.5, color: HZ.textFaint, paddingLeft: 1 }}>{dgMeaning}</span>}
+            </div>
+          </>
+        )}
 
         <div style={{ flex: 1 }} />
 
@@ -445,24 +465,24 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
           ...(canEdit ? [{ key: "edit", icon: IconPencil, title: "Edit Shipment", onClick: () => onEdit?.() }] : []),
         ]} />
 
-        <button id="shphdr-fold-toggle" type="button" onClick={() => setFolded(f => !f)}
+        <button id="shphdr-fold-toggle" data-testid="shipment-detail-header-fold-toggle" type="button" onClick={() => setFolded(f => !f)}
           title={folded ? "Expand shipment info" : "Minimize shipment info"}
-          style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.04em",
-            color: T.textMuted, background: "none", border: `1px solid ${T.border}`,
-            borderRadius: 6, padding: "5px 9px", cursor: "pointer",
+          style={{ fontFamily: HZ_MONO, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.04em",
+            color: HZ.textMuted, background: "none", border: `1px solid ${HZ.border}`,
+            borderRadius: 7, padding: "5px 9px", cursor: "pointer",
             display: "inline-flex", alignItems: "center", gap: 5 }}
-          onMouseEnter={e => { e.currentTarget.style.color = T.text; e.currentTarget.style.borderColor = T.accent; }}
-          onMouseLeave={e => { e.currentTarget.style.color = T.textMuted; e.currentTarget.style.borderColor = T.border; }}>
+          onMouseEnter={e => { e.currentTarget.style.color = HZ.text; e.currentTarget.style.borderColor = HZ.cyan; }}
+          onMouseLeave={e => { e.currentTarget.style.color = HZ.textMuted; e.currentTarget.style.borderColor = HZ.border; }}>
           {folded ? <IconArrowDown size={11} /> : <IconArrowUp size={11} />}
           {folded ? "Expand" : "Minimize"}
         </button>
 
         {contractMismatch && (
-          <button id="shphdr-contract-mismatch-badge" type="button" onClick={onNavigateToSchedules}
+          <button id="shphdr-contract-mismatch-badge" data-testid="shipment-detail-header-contract-mismatch-badge" type="button" onClick={onNavigateToSchedules}
             title={`${shipment.contractRef || "The attached contract"} no longer covers ${matchPol} → ${matchPod} — click to resolve`}
-            style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
-              padding: "3px 9px", borderRadius: 5, background: T.danger + "22", color: T.danger,
-              border: `1px solid ${T.danger}66`, whiteSpace: "nowrap", cursor: onNavigateToSchedules ? "pointer" : "default",
+            style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, letterSpacing: "0.03em",
+              padding: "3px 9px", borderRadius: 6, background: HZ.critBg, color: HZ.crit,
+              border: `1px solid ${HZ.crit}44`, whiteSpace: "nowrap", cursor: onNavigateToSchedules ? "pointer" : "default",
               display: "inline-flex", alignItems: "center", gap: 4 }}>
             <IconWarning size={11} />Contract Mismatch
           </button>
@@ -473,15 +493,15 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
             'exceeded' = this shipment's own TEU pushes its linked allocation over capacity;
             'warning' = not over on its own, but an overage reason is already on file for it. */}
         {(shipment.spaceBadge === "exceeded" || shipment.spaceBadge === "warning") && (
-          <button id="shphdr-space-badge" type="button" onClick={onNavigateToSchedules}
+          <button id="shphdr-space-badge" data-testid="shipment-detail-header-space-badge" type="button" onClick={onNavigateToSchedules}
             title={shipment.spaceBadge === "exceeded"
               ? "This shipment's containers push its linked space configuration over its committed capacity — click to review"
               : "This shipment was linked despite a space overage, with a reason already on file — click to review"}
-            style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
-              padding: "3px 9px", borderRadius: 5,
-              background: (shipment.spaceBadge === "exceeded" ? T.danger : T.warning) + "22",
-              color: shipment.spaceBadge === "exceeded" ? T.danger : T.warning,
-              border: `1px solid ${(shipment.spaceBadge === "exceeded" ? T.danger : T.warning)}66`,
+            style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, letterSpacing: "0.03em",
+              padding: "3px 9px", borderRadius: 6,
+              background: shipment.spaceBadge === "exceeded" ? HZ.critBg : HZ.warnBg,
+              color: shipment.spaceBadge === "exceeded" ? HZ.crit : HZ.warn,
+              border: `1px solid ${(shipment.spaceBadge === "exceeded" ? HZ.crit : HZ.warn)}44`,
               whiteSpace: "nowrap", cursor: onNavigateToSchedules ? "pointer" : "default",
               display: "inline-flex", alignItems: "center", gap: 4 }}>
             <IconWarning size={11} />{shipment.spaceBadge === "exceeded" ? "Space Exceeded" : "Space Warning"}
@@ -489,11 +509,11 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
         )}
 
         {pendingMatches && (
-          <button id="shphdr-contract-match-badge" type="button" onClick={onNavigateToSchedules}
+          <button id="shphdr-contract-match-badge" data-testid="shipment-detail-header-contract-match-badge" type="button" onClick={onNavigateToSchedules}
             title={`${pendingMatches.length} active contract${pendingMatches.length !== 1 ? "s" : ""} match${pendingMatches.length === 1 ? "es" : ""} "${shipment.contractRef}" — click to review`}
-            style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
-              padding: "3px 9px", borderRadius: 5, background: T.info + "22", color: T.info,
-              border: `1px solid ${T.info}66`, whiteSpace: "nowrap", cursor: onNavigateToSchedules ? "pointer" : "default",
+            style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, letterSpacing: "0.03em",
+              padding: "3px 9px", borderRadius: 6, background: HZ.infoBg, color: "#7db2f2",
+              border: `1px solid ${HZ.info}44`, whiteSpace: "nowrap", cursor: onNavigateToSchedules ? "pointer" : "default",
               display: "inline-flex", alignItems: "center", gap: 4 }}>
             <IconRefresh size={11} />Contract Match Found
           </button>
@@ -502,11 +522,11 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
         {lineAgentCandidates && (() => {
           const count = (lineAgentCandidates.export?.length || 0) + (lineAgentCandidates.import?.length || 0);
           return (
-            <button id="shphdr-line-agent-candidates-badge" type="button" onClick={onNavigateToParties}
+            <button id="shphdr-line-agent-candidates-badge" data-testid="shipment-detail-header-line-agent-candidates-badge" type="button" onClick={onNavigateToParties}
               title={`${count} Line Agent candidate${count !== 1 ? "s" : ""} found — click to pick which one to assign`}
-              style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
-                padding: "3px 9px", borderRadius: 5, background: T.info + "22", color: T.info,
-                border: `1px solid ${T.info}66`, whiteSpace: "nowrap", cursor: onNavigateToParties ? "pointer" : "default",
+              style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, letterSpacing: "0.03em",
+                padding: "3px 9px", borderRadius: 6, background: HZ.infoBg, color: "#7db2f2",
+                border: `1px solid ${HZ.info}44`, whiteSpace: "nowrap", cursor: onNavigateToParties ? "pointer" : "default",
                 display: "inline-flex", alignItems: "center", gap: 4 }}>
               <IconGroup size={11} />Line Agent Picks Needed
             </button>
@@ -514,21 +534,12 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
         })()}
 
         {shipmentLock?.locked && !shipmentLock?.ownedByMe && (
-          <span id="shphdr-lock-badge" title={`${shipmentLock.lockedByName} is currently editing this shipment — you have read-only access until they finish (releases automatically after 30 minutes of inactivity)`}
-            style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
-            padding: "3px 9px", borderRadius: 5, background: T.info + "22", color: T.info,
-            border: `1px solid ${T.info}66`, whiteSpace: "nowrap",
+          <span id="shphdr-lock-badge" data-testid="shipment-detail-header-lock-badge" title={`${shipmentLock.lockedByName} is currently editing this shipment — you have read-only access until they finish (releases automatically after 30 minutes of inactivity)`}
+            style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, letterSpacing: "0.03em",
+            padding: "3px 9px", borderRadius: 6, background: HZ.infoBg, color: "#7db2f2",
+            border: `1px solid ${HZ.info}44`, whiteSpace: "nowrap",
             display: "inline-flex", alignItems: "center", gap: 4 }}>
             <IconLock size={11} />Locked by {shipmentLock.lockedByName}
-          </span>
-        )}
-
-        {isDg && (
-          <span id="shphdr-dg-badge" style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
-            padding: "3px 9px", borderRadius: 5, background: T.danger + "22", color: T.danger,
-            border: `1px solid ${T.danger}66`, whiteSpace: "nowrap",
-            display: "inline-flex", alignItems: "center", gap: 4 }}>
-            <IconWarning size={11} />DG{dgClasses.length ? ` · CLASS ${dgClasses.join("/")}` : ""}
           </span>
         )}
       </div>
@@ -536,12 +547,12 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
       {folded ? (
         // Minimized (default) state — Row 1 above stays exactly as-is; everything below
         // collapses to the one chip row instead of the full Row 2 + route pill.
-        <ChipRow shipment={shipment} ctrs={ctrs} />
+        <ChipRow shipment={shipment} ctrs={ctrs} cargoValueUsd={cargoValueUsd} openTicketCount={openTicketCount} />
       ) : (
         <>
           {/* Row 2 — secondary facts */}
-          <div id="shphdr-row2" style={{ display: "flex", flexWrap: "wrap", rowGap: 6,
-            marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
+          <div id="shphdr-row2" data-testid="shipment-detail-header-row2" style={{ display: "flex", flexWrap: "wrap", rowGap: 8,
+            marginTop: 11, paddingTop: 11, borderTop: `1px solid ${HZ.border}` }}>
             <Field first label="Incoterm" value={shipment.incoterm} />
             <Field label="Routing" value={shipment.routingTerm} />
             <Field label="Trade Lane" value={shipment.tradeLane} />
@@ -558,7 +569,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
           {/* Row 3 — the same route summary panel shown on the Schedules page (Pick-up/POL,
               ETD/transit/ETA/carrier/routing-term, POD/Delivery) — one visual for one concept
               instead of a second, different journey diagram. */}
-          <div id="shphdr-row3" style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
+          <div id="shphdr-row3" data-testid="shipment-detail-header-row3" style={{ marginTop: 11, paddingTop: 11, borderTop: `1px solid ${HZ.border}` }}>
             <RouteSummaryBar shipment={shipment} />
           </div>
         </>

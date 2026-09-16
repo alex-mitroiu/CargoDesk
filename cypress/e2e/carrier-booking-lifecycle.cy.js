@@ -21,6 +21,7 @@ const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 describe("Carrier Booking Lifecycle Suite", () => {
   let tok, shipmentId, blDocId;
+  let emoOfficeId, imoOfficeId;
 
   const api = (method, path, body) =>
     cy.request({
@@ -36,6 +37,15 @@ describe("Carrier Booking Lifecycle Suite", () => {
   });
 
   before(() => {
+    // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+    // fetch real active SE/SI offices rather than hardcoding an id.
+    api("GET", "/offices").then(res => {
+      emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+      imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
+    });
+  });
+
+  before(() => {
     // MAEU is one of the bookable carriers (ShipmentCarrierBookingDetailsPage's bookable gate).
     // contractRef is required too — ShipmentCarrierBookingPage's hasContract gate checks
     // shipment.contractId || shipment.contractRef, not contractType alone.
@@ -44,7 +54,7 @@ describe("Carrier Booking Lifecycle Suite", () => {
       headers: { Authorization: `Bearer ${tok}` },
       body: { pol: "CNSHA", pod: "USNYC", carrierCode: "MAEU",
               status: "Active", contractType: "SPOT", contractRef: "CY-TEST-REF",
-              etd: "2026-10-01" },
+              etd: "2026-10-01", emoOfficeId, imoOfficeId },
       failOnStatusCode: false,
     }).then(res => {
       expect(res.status).to.eq(201);

@@ -65,6 +65,11 @@ async function login() {
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nScratch contract + two linked ports (own scratch pair, doesn't touch real MDM data) for the conflict/linked-match tests");
     const contract = await request("POST", "/api/contracts", {
       carrierCode: "MAEU", contractNumber: `ALC-TEST-${Date.now()}`, contractType: "Central",
@@ -180,6 +185,7 @@ async function login() {
       const s = await request("POST", "/api/shipments", {
         pol: portA, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
         etd: "2026-02-01", allocationId: allocId,
+        emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, token);
       const shipmentId = s.body.id;
       await request("POST", "/api/containers", { shipmentId, size: "20", type: "GP" }, token);
@@ -227,6 +233,7 @@ async function login() {
       const s = await request("POST", "/api/shipments", {
         pol: portB, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
         etd: "2026-02-01", allocationId: overflowAllocId,
+        emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, token);
       await request("POST", "/api/containers", { shipmentId: s.body.id, size: "20", type: "GP" }, token);
       await request("POST", `/api/shipments/${s.body.id}/edi-messages/booking-request`, {}, token);

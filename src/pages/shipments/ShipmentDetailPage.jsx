@@ -30,6 +30,7 @@ import { AnyIcon, IconClose, IconWarning, IconPackage, IconPencil, IconCheck, Ic
   IconRefresh, IconShip, IconLock, IconUnlock, IconEye, IconArrowUp, IconArrowDown, IconForbid,
   IconLink, IconAnchor, IconFile, IconFileCertificate, IconDoor, IconFlag,
   IconMapPin, IconCrane, IconWarehouseDoor } from "../../components/primitives/Icon";
+import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
 
 
 // ─── Section header with hover tooltip ───────────────────────────────────────
@@ -52,11 +53,11 @@ const SectionHeader = ({ n, title }) => {
           onMouseEnter={() => setTip(true)}
           onMouseLeave={() => setTip(false)}
           style={{
-            fontFamily: T.mono, fontSize: 14, fontWeight: 800, color: T.accent,
-            background: T.accentBg, border: `1px solid ${T.accent}55`,
+            fontFamily: HZ_MONO, fontSize: 14, fontWeight: 800, color: HZ.cyan,
+            background: HZ.cyanBg, border: `1px solid ${HZ.cyan}55`,
             borderRadius: 5, padding: "2px 10px", flexShrink: 0,
             cursor: "default", userSelect: "none",
-            boxShadow: tip ? `0 0 0 3px ${T.accent}22` : "none",
+            boxShadow: tip ? `0 0 0 3px ${HZ.cyan}22` : "none",
             transition: "box-shadow .15s",
           }}>
           {n}
@@ -64,30 +65,30 @@ const SectionHeader = ({ n, title }) => {
         {tip && (
           <div style={{
             position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 9999,
-            background: T.surface, border: `1px solid ${T.border}`,
+            background: HZ.surfaceSolid, backdropFilter: "blur(16px)", border: `1px solid ${HZ.border}`,
             borderRadius: 8, padding: "10px 14px",
-            boxShadow: "0 8px 24px rgba(0,0,0,.35)",
+            boxShadow: "0 8px 24px rgba(0,0,0,.45)",
             minWidth: 240, maxWidth: 300,
-            fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.6,
+            fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, lineHeight: 1.6,
             pointerEvents: "none",
           }}>
-            <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700,
-              color: T.accent, marginBottom: 5, textTransform: "uppercase",
+            <div style={{ fontFamily: HZ_BODY, fontSize: 11, fontWeight: 700,
+              color: HZ.cyan, marginBottom: 5, textTransform: "uppercase",
               letterSpacing: ".06em" }}>{title}</div>
             {SECTION_TIPS[n]}
             {/* Arrow */}
             <div style={{
               position: "absolute", top: -5, left: 12,
-              width: 8, height: 8, background: T.surface,
-              borderLeft: `1px solid ${T.border}`, borderTop: `1px solid ${T.border}`,
+              width: 8, height: 8, background: HZ.surfaceSolid,
+              borderLeft: `1px solid ${HZ.border}`, borderTop: `1px solid ${HZ.border}`,
               transform: "rotate(45deg)",
             }} />
           </div>
         )}
       </div>
-      <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: T.textMuted,
+      <span style={{ fontFamily: HZ_BODY, fontSize: 11, fontWeight: 700, color: HZ.textMuted,
         textTransform: "uppercase", letterSpacing: ".09em" }}>{title}</span>
-      <div style={{ flex: 1, height: 1, background: T.border, opacity: 0.5 }} />
+      <div style={{ flex: 1, height: 1, background: HZ.border, opacity: 0.5 }} />
     </div>
   );
 };
@@ -108,7 +109,7 @@ const fToC = f => Math.round(((f - 32) * 5 / 9) * 10) / 10;
 // guard (TKT-OJYO71, src/navigationGuard.js) — attempting away-navigation while this
 // form is open and dirty auto-validates + auto-saves rather than silently discarding
 // or just showing a generic "unsaved changes" warning (see ShipmentContainersPage.jsx).
-export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyChange, dgPolicy = null }, ref) => {
+export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyChange, dgPolicy = null, existingContainerNumbers = [] }, ref) => {
   const initSnap = useRef({
     containerNumber:  init.containerNumber  || "",
     sealNumber:       init.sealNumber       || "",
@@ -180,14 +181,21 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
   const descOk   = f.cargoDescription.trim().length > 0;
 
   const dgConflict = dgPolicyConflict(dgPolicy, f.isDg, f.dgClass);
+  // Container numbers are unique physical-asset identifiers (B/L, customs, terminal EDI) —
+  // catch a collision with another container on this same shipment before the round-trip to
+  // the server-side check, which is the authoritative guard (this is just faster feedback).
+  const dupeConflict = f.containerNumber.length > 0
+    && existingContainerNumbers.includes(f.containerNumber.toUpperCase());
 
   const valid    = f.containerNumber.length >= 4 && f.size && f.type
                  && hsOk && descOk && weightOk && volumeOk && (!f.isDg || f.dgClass)
-                 && !dgConflict;
+                 && !dgConflict && !dupeConflict;
 
   const FieldErr = ({ show, msg }) => show
-    ? <div style={{ fontFamily: T.body, fontSize: 11, color: T.danger, marginTop: 3 }}>{msg}</div>
+    ? <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.crit, marginTop: 3 }}>{msg}</div>
     : null;
+
+  useHorizonFonts();
 
   const buildPayload = () => ({
     containerNumber: f.containerNumber, sealNumber: f.sealNumber, size: f.size, type: f.type,
@@ -224,6 +232,7 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
       if (!valid) {
         const missing = [
           !f.containerNumber || f.containerNumber.length < 4 ? "Container Number" : null,
+          dupeConflict ? "Container Number (duplicate on this shipment)" : null,
           !f.size || !f.type ? "Container Type" : null,
           !hsOk   ? "HS Code" : null,
           !descOk ? "Cargo Description" : null,
@@ -240,38 +249,45 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
   }));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div data-testid="shipment-containers-form" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
       {/* ① Container Identity */}
       <SectionHeader n="①" title="Container Identity" />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Inp label="Container Number" value={f.containerNumber}
-          onChange={v => set("containerNumber")(v.toUpperCase().replace(/\s/g, ""))}
-          placeholder="MAEU1234567" mono required
-          hint="ISO 6346 container ID" />
-        <Inp label="Seal Number" value={f.sealNumber}
-          onChange={v => set("sealNumber")(v.toUpperCase().replace(/\s/g, ""))}
-          placeholder="SL1234567" mono
-          hint="Carrier or shipper seal" />
+        <div data-testid="shipment-containers-form-container-number-field">
+          <Inp label="Container Number" value={f.containerNumber}
+            onChange={v => set("containerNumber")(v.toUpperCase().replace(/\s/g, ""))}
+            placeholder="MAEU1234567" mono required
+            hint="ISO 6346 container ID" />
+          <FieldErr show={dupeConflict} msg="Already used by another container on this shipment" />
+        </div>
+        <div data-testid="shipment-containers-form-seal-number-field">
+          <Inp label="Seal Number" value={f.sealNumber}
+            onChange={v => set("sealNumber")(v.toUpperCase().replace(/\s/g, ""))}
+            placeholder="SL1234567" mono
+            hint="Carrier or shipper seal" />
+        </div>
       </div>
 
-      <ContainerTypeField
-        size={f.size} type={f.type} required
-        onChange={opt => setF(p => ({ ...p, size: opt?.size || "", type: opt?.type || "" }))} />
+      <div data-testid="shipment-containers-form-type-field">
+        <ContainerTypeField
+          size={f.size} type={f.type} required
+          onChange={opt => setF(p => ({ ...p, size: opt?.size || "", type: opt?.type || "" }))} />
+      </div>
 
       {/* ② Cargo Details */}
       <SectionHeader n="②" title="Cargo Details" />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <div>
+        <div data-testid="shipment-containers-form-hscode-field">
           <Inp label="HS Code" value={f.hsCode}
             onChange={v => { set("hsCode")(v); touch("hsCode"); }}
             placeholder="e.g. 8471.30" mono required
             hint="Customs tariff classification number" />
           <FieldErr show={touched.hsCode && !hsOk} msg="HS Code is required" />
         </div>
-        <div>
+        <div data-testid="shipment-containers-form-description-field">
           <Inp label="Cargo Description" value={f.cargoDescription}
             onChange={v => { set("cargoDescription")(v); touch("desc"); }}
             placeholder="e.g. Laptop computers, new" required
@@ -280,21 +296,27 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
         </div>
       </div>
 
-      <Inp label="Marks & Nos." value={f.marksAndNumbers} onChange={set("marksAndNumbers")}
-        placeholder="e.g. IN DIAMOND / MADE IN CHINA / NO. 1-50"
-        hint="Identifying marks and numbers stenciled on the packages, as shown on the B/L or packing list" />
+      <div data-testid="shipment-containers-form-marks-field">
+        <Inp label="Marks & Nos." value={f.marksAndNumbers} onChange={set("marksAndNumbers")}
+          placeholder="e.g. IN DIAMOND / MADE IN CHINA / NO. 1-50"
+          hint="Identifying marks and numbers stenciled on the packages, as shown on the B/L or packing list" />
+      </div>
 
       {f.type === "RF" && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Inp label="Reefer Set Temperature (°C)" value={f.setTemperatureC}
-            onChange={setCelsius}
-            type="text" inputMode="decimal" placeholder="e.g. -18"
-            hint="Carrier set-point temperature — declared on the booking and B/L" />
-          <Inp label="Reefer Set Temperature (°F)" value={fahrenheitDisplay}
-            onChange={setFahrenheit}
-            disabled={fahrenheitLocked}
-            type="text" inputMode="decimal" placeholder="e.g. -0.4"
-            hint={fahrenheitLocked ? "Computed from °C — clear °C to enter °F directly" : "Converted to °C for storage"} />
+          <div data-testid="shipment-containers-form-reefer-celsius-field">
+            <Inp label="Reefer Set Temperature (°C)" value={f.setTemperatureC}
+              onChange={setCelsius}
+              type="text" inputMode="decimal" placeholder="e.g. -18"
+              hint="Carrier set-point temperature — declared on the booking and B/L" />
+          </div>
+          <div data-testid="shipment-containers-form-reefer-fahrenheit-field">
+            <Inp label="Reefer Set Temperature (°F)" value={fahrenheitDisplay}
+              onChange={setFahrenheit}
+              disabled={fahrenheitLocked}
+              type="text" inputMode="decimal" placeholder="e.g. -0.4"
+              hint={fahrenheitLocked ? "Computed from °C — clear °C to enter °F directly" : "Converted to °C for storage"} />
+          </div>
         </div>
       )}
 
@@ -302,14 +324,14 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
       <SectionHeader n="③" title="Physical Measurements" />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <div>
+        <div data-testid="shipment-containers-form-weight-field">
           <Inp label="Gross Weight (kg)" value={f.grossWeightKg}
             onChange={v => { if (v === "" || /^\d*\.?\d*$/.test(v)) { set("grossWeightKg")(v); touch("weight"); } }}
             type="text" inputMode="decimal" placeholder="18 000" required
             hint="Total gross weight including packaging" />
           <FieldErr show={touched.weight && !weightOk} msg="Gross weight must be greater than 0" />
         </div>
-        <div>
+        <div data-testid="shipment-containers-form-volume-field">
           <Inp label="Volume (CBM)" value={f.volumeCbm}
             onChange={v => { if (v === "" || /^\d*\.?\d*$/.test(v)) { set("volumeCbm")(v); touch("volume"); } }}
             type="text" inputMode="decimal" placeholder="28.5" required
@@ -321,47 +343,51 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
       {/* ④ Dangerous Goods */}
       <SectionHeader n="④" title="Dangerous Goods" />
 
-      <div style={{ background: T.bg, border: `1px solid ${f.isDg ? T.danger + "55" : T.border}`,
+      <div data-testid="shipment-containers-form-dg-section" style={{ background: HZ.bg, border: `1px solid ${f.isDg ? HZ.crit + "55" : HZ.border}`,
         borderRadius: 8, padding: "14px 16px", transition: "border-color .15s" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
           marginBottom: f.isDg ? 14 : 0 }}>
           <div>
-            <div style={{ fontFamily: T.body, fontSize: 10.5,
-              color: f.isDg ? T.danger : T.textMuted,
+            <div style={{ fontFamily: HZ_BODY, fontSize: 10.5,
+              color: f.isDg ? HZ.crit : HZ.textMuted,
               fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 3 }}>
               <IconWarning size={11} style={{ marginRight: 4, position: "relative", top: 1 }} /> IMDG Classified Cargo
             </div>
             {!f.isDg && (
-              <div style={{ fontFamily: T.body, fontSize: 11, color: T.border }}>
+              <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textFaint }}>
                 Toggle on if this container carries dangerous goods
               </div>
             )}
           </div>
-          <BtnToggle selected={f.isDg}
-            onClick={() => setF(p => ({ ...p, isDg: !p.isDg, dgClass: "" }))}>
-            {f.isDg ? "DG ON" : "DG OFF"}
-          </BtnToggle>
+          <span data-testid="shipment-containers-form-dg-toggle-btn">
+            <BtnToggle selected={f.isDg}
+              onClick={() => setF(p => ({ ...p, isDg: !p.isDg, dgClass: "" }))}>
+              {f.isDg ? "DG ON" : "DG OFF"}
+            </BtnToggle>
+          </span>
         </div>
 
         {f.isDg && (
-          <Sel label="IMDG Class" value={f.dgClass} onChange={set("dgClass")} required
-            hint="Select the applicable IMO dangerous goods class"
-            options={[
-              { value: "", label: "— Select IMDG class —" },
-              ...IMDG_CLASSES.map(c => ({ value: c.code, label: `${c.label} — ${c.name}` }))
-            ]} />
+          <div data-testid="shipment-containers-form-dgclass-field">
+            <Sel label="IMDG Class" value={f.dgClass} onChange={set("dgClass")} required
+              hint="Select the applicable IMO dangerous goods class"
+              options={[
+                { value: "", label: "— Select IMDG class —" },
+                ...IMDG_CLASSES.map(c => ({ value: c.code, label: `${c.label} — ${c.name}` }))
+              ]} />
+          </div>
         )}
 
         {f.isDg && f.dgClass && (() => {
           const cls = IMDG_CLASSES.find(c => c.code === f.dgClass);
           return cls ? (
             <div style={{ marginTop: 10, padding: "10px 12px",
-              background: T.surface, borderRadius: 6, border: `1px solid ${T.danger}22` }}>
-              <div style={{ fontFamily: T.body, fontSize: 11, color: T.danger,
+              background: HZ.surface, borderRadius: 6, border: `1px solid ${HZ.crit}22` }}>
+              <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.crit,
                 fontWeight: 600, marginBottom: 4 }}>
                 {cls.label} — {cls.name}
               </div>
-              <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, lineHeight: 1.6 }}>
+              <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, lineHeight: 1.6 }}>
                 {cls.description}
               </div>
             </div>
@@ -370,9 +396,9 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
 
         {dgConflict && (
           <div style={{ marginTop: 10, padding: "10px 12px",
-            background: T.danger + "12", borderRadius: 6,
-            border: `1px solid ${T.danger}55`,
-            fontFamily: T.body, fontSize: 12, color: T.danger,
+            background: HZ.crit + "12", borderRadius: 6,
+            border: `1px solid ${HZ.crit}55`,
+            fontFamily: HZ_BODY, fontSize: 12, color: HZ.crit,
             display: "flex", alignItems: "flex-start", gap: 7 }}>
             <IconForbid size={14} style={{ flexShrink: 0 }} />
             <span>{dgConflict}</span>
@@ -383,47 +409,58 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
       {/* ⑤ Cutoffs & Free Time */}
       <SectionHeader n="⑤" title="Cutoffs & Free Time" />
 
-      <DatePicker label="CY Cutoff" value={f.cyCutoff} onChange={set("cyCutoff")}
-        hint="Container yard / terminal receiving cutoff" />
+      <div data-testid="shipment-containers-form-cy-cutoff-field">
+        <DatePicker label="CY Cutoff" value={f.cyCutoff} onChange={set("cyCutoff")}
+          hint="Container yard / terminal receiving cutoff" />
+      </div>
 
-      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+      <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600,
         textTransform: "uppercase", letterSpacing: ".08em", marginTop: 4 }}>
         Demurrage — terminal dwell time
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Inp label="Origin Demurrage Free Time (days)" value={f.originFreeTimeDays}
-          onChange={v => { if (v === "" || /^\d*$/.test(v)) set("originFreeTimeDays")(v); }}
-          type="text" inputMode="numeric" placeholder="e.g. 5"
-          hint="Days allowed from Gate In before origin demurrage charges start" />
-        <Inp label="Destination Demurrage Free Time (days)" value={f.destFreeTimeDays}
-          onChange={v => { if (v === "" || /^\d*$/.test(v)) set("destFreeTimeDays")(v); }}
-          type="text" inputMode="numeric" placeholder="e.g. 5"
-          hint="Days allowed from Discharged before destination demurrage charges start" />
+        <div data-testid="shipment-containers-form-origin-demurrage-field">
+          <Inp label="Origin Demurrage Free Time (days)" value={f.originFreeTimeDays}
+            onChange={v => { if (v === "" || /^\d*$/.test(v)) set("originFreeTimeDays")(v); }}
+            type="text" inputMode="numeric" placeholder="e.g. 5"
+            hint="Days allowed from Gate In before origin demurrage charges start" />
+        </div>
+        <div data-testid="shipment-containers-form-dest-demurrage-field">
+          <Inp label="Destination Demurrage Free Time (days)" value={f.destFreeTimeDays}
+            onChange={v => { if (v === "" || /^\d*$/.test(v)) set("destFreeTimeDays")(v); }}
+            type="text" inputMode="numeric" placeholder="e.g. 5"
+            hint="Days allowed from Discharged before destination demurrage charges start" />
+        </div>
       </div>
 
-      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+      <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600,
         textTransform: "uppercase", letterSpacing: ".08em", marginTop: 4 }}>
         Detention — carrier equipment held
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Inp label="Origin Detention Free Time (days)" value={f.originDetentionFreeDays}
-          onChange={v => { if (v === "" || /^\d*$/.test(v)) set("originDetentionFreeDays")(v); }}
-          type="text" inputMode="numeric" placeholder="e.g. 7"
-          hint="Days allowed from Empty Pickup before origin detention charges start" />
-        <Inp label="Destination Detention Free Time (days)" value={f.destDetentionFreeDays}
-          onChange={v => { if (v === "" || /^\d*$/.test(v)) set("destDetentionFreeDays")(v); }}
-          type="text" inputMode="numeric" placeholder="e.g. 7"
-          hint="Days allowed from Gate Out before destination detention charges start" />
+        <div data-testid="shipment-containers-form-origin-detention-field">
+          <Inp label="Origin Detention Free Time (days)" value={f.originDetentionFreeDays}
+            onChange={v => { if (v === "" || /^\d*$/.test(v)) set("originDetentionFreeDays")(v); }}
+            type="text" inputMode="numeric" placeholder="e.g. 7"
+            hint="Days allowed from Empty Pickup before origin detention charges start" />
+        </div>
+        <div data-testid="shipment-containers-form-dest-detention-field">
+          <Inp label="Destination Detention Free Time (days)" value={f.destDetentionFreeDays}
+            onChange={v => { if (v === "" || /^\d*$/.test(v)) set("destDetentionFreeDays")(v); }}
+            type="text" inputMode="numeric" placeholder="e.g. 7"
+            hint="Days allowed from Gate Out before destination detention charges start" />
+        </div>
       </div>
-      <div style={{ fontFamily: T.body, fontSize: 11, color: T.border, marginTop: -4 }}>
+      <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textFaint, marginTop: -4 }}>
         Counted from this container's Lifecycle Events (Empty Pickup / Gate In / Discharged / Gate Out / Empty Return) — see the 📋 button on the container list.
       </div>
 
       {/* Actions */}
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
-        <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
+      <div data-testid="shipment-containers-form-actions" style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
+        <Btn variant="secondary" onClick={onCancel} data-testid="shipment-containers-form-cancel-btn">Cancel</Btn>
         <Btn
           disabled={!valid || isSaving}
+          data-testid="shipment-containers-form-save-btn"
           onClick={() => {
             setTouched({ weight: true, volume: true, hsCode: true, desc: true });
             if (!valid) return;
@@ -448,11 +485,11 @@ export const CommodityDisplay = ({ code }) => {
     if (!code) return;
     import("../../api").then(m => m.api.commodities.get(code).then(setComm).catch(() => setComm({ code, description: code })));
   }, [code]);
-  if (!comm) return <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{code}</span>;
+  if (!comm) return <span data-testid="shipment-conditions-commodity-value" style={{ fontFamily: HZ_MONO, fontSize: 12, color: HZ.textMuted }}>{code}</span>;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{comm.code}</span>
-      <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{comm.description}</span>
+    <div data-testid="shipment-conditions-commodity-value" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <span style={{ fontFamily: HZ_MONO, fontSize: 12, color: HZ.cyan, fontWeight: 700 }}>{comm.code}</span>
+      <span style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text }}>{comm.description}</span>
       {comm.gradeCode && <GradePill code={comm.gradeCode} name={comm.gradeName} />}
     </div>
   );
@@ -802,6 +839,8 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
   const charCount = body.length;
   const valid = charCount >= 15 && charCount <= 500;
 
+  useHorizonFonts();
+
   const handlePost = async () => {
     if (!valid || posting) return;
     setPosting(true);
@@ -827,19 +866,19 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
       {/* Drawer panel */}
       <div style={{
         position: "fixed", top: 0, right: 0, bottom: 0, width: 420,
-        background: T.surface, borderLeft: `1px solid ${T.border}`,
-        boxShadow: "-8px 0 32px rgba(0,0,0,.35)",
+        background: HZ.surfaceSolid, backdropFilter: "blur(22px)", borderLeft: `1px solid ${HZ.border}`,
+        boxShadow: "-8px 0 32px rgba(0,0,0,.5)",
         zIndex: 1101, display: "flex", flexDirection: "column",
       }}>
         {/* Header */}
-        <div style={{ borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+        <div style={{ borderBottom: `1px solid ${HZ.border}`, flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
             padding: "16px 20px 12px" }}>
             <div>
-              <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
+              <div style={{ fontFamily: HZ_DISPLAY, fontSize: 15, fontWeight: 700, color: HZ.text }}>
                 💬 Messages
               </div>
-              <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 2 }}>
+              <div style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted, marginTop: 2 }}>
                 {sorted.length} message{sorted.length !== 1 ? "s" : ""}
               </div>
             </div>
@@ -847,22 +886,22 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
             <button
               onClick={() => setSortAsc(a => !a)}
               title={sortAsc ? "Showing oldest first — click for newest first" : "Showing newest first — click for oldest first"}
-              style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
-                cursor: "pointer", color: T.textMuted, fontSize: 12, padding: "4px 10px",
-                fontFamily: T.mono, lineHeight: 1, whiteSpace: "nowrap",
+              style={{ background: "none", border: `1px solid ${HZ.border}`, borderRadius: 6,
+                cursor: "pointer", color: HZ.textMuted, fontSize: 12, padding: "4px 10px",
+                fontFamily: HZ_MONO, lineHeight: 1, whiteSpace: "nowrap",
                 transition: "border-color .15s, color .15s" }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
+              onMouseEnter={e => { e.currentTarget.style.borderColor = HZ.cyan; e.currentTarget.style.color = HZ.cyan; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = HZ.border; e.currentTarget.style.color = HZ.textMuted; }}>
               {sortAsc
                 ? <><IconArrowUp size={11} style={{ marginRight: 4 }} />Oldest first</>
                 : <><IconArrowDown size={11} style={{ marginRight: 4 }} />Newest first</>}
             </button>
             <button onClick={onClose}
-            style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
-              cursor: "pointer", color: T.textMuted, fontSize: 15, padding: "4px 10px",
+            style={{ background: "none", border: `1px solid ${HZ.border}`, borderRadius: 6,
+              cursor: "pointer", color: HZ.textMuted, fontSize: 15, padding: "4px 10px",
               lineHeight: 1, display: "inline-flex", alignItems: "center" }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = T.danger; e.currentTarget.style.color = T.danger; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
+            onMouseEnter={e => { e.currentTarget.style.borderColor = HZ.crit; e.currentTarget.style.color = HZ.crit; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = HZ.border; e.currentTarget.style.color = HZ.textMuted; }}>
             <IconClose size={13} />
           </button>
           </div>
@@ -870,21 +909,21 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
           {/* Context strip */}
           <div style={{ display: "flex", alignItems: "center", gap: 10,
             padding: "8px 20px 12px", flexWrap: "wrap" }}>
-            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, fontWeight: 600 }}>
+            <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted, fontWeight: 600 }}>
               {shipmentId}
             </span>
-            <span style={{ color: T.border }}>·</span>
-            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.text }}>
+            <span style={{ color: HZ.textFaint }}>·</span>
+            <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.text }}>
               {shipment.pol} → {shipment.pod}
             </span>
             {(shipment.polName || shipment.podName) && (
-              <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+              <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted }}>
                 ({shipment.polName || shipment.pol} → {shipment.podName || shipment.pod})
               </span>
             )}
-            <span style={{ color: T.border }}>·</span>
+            <span style={{ color: HZ.textFaint }}>·</span>
             <span style={{
-              fontFamily: T.body, fontSize: 10.5, fontWeight: 700,
+              fontFamily: HZ_BODY, fontSize: 10.5, fontWeight: 700,
               color: statusVariant(shipment.status).color,
               background: statusVariant(shipment.status).bg,
               border: `1px solid ${statusVariant(shipment.status).color}44`,
@@ -899,37 +938,37 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
         <div ref={listRef} style={{ flex: 1, overflowY: "auto", padding: "16px 20px",
           display: "flex", flexDirection: "column", gap: 14 }}>
           {sorted.length === 0 ? (
-            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted,
+            <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted,
               fontStyle: "italic", textAlign: "center", marginTop: 40 }}>
               No messages yet. Be the first to post one.
             </div>
           ) : sorted.map(m => (
-            <div key={m.id} style={{ background: T.bg, border: `1px solid ${T.border}`,
+            <div key={m.id} style={{ background: HZ.surface, border: `1px solid ${HZ.border}`,
               borderRadius: 10, padding: "12px 14px" }}>
               {/* Author row */}
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                 <div style={{ width: 28, height: 28, borderRadius: "50%",
-                  background: T.accent, display: "flex", alignItems: "center", justifyContent: "center",
-                  fontFamily: T.head, fontSize: 12, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                  background: HZ.gradCyan, display: "flex", alignItems: "center", justifyContent: "center",
+                  fontFamily: HZ_DISPLAY, fontSize: 12, fontWeight: 800, color: "#06111f", flexShrink: 0 }}>
                   {m.author.charAt(0).toUpperCase()}
                 </div>
                 <div>
-                  <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.text }}>
+                  <div style={{ fontFamily: HZ_BODY, fontSize: 13, fontWeight: 700, color: HZ.text }}>
                     {m.author}
                   </div>
                   {m.role && (
-                    <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                    <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted }}>
                       {m.role}
                     </div>
                   )}
                 </div>
               </div>
               {/* Timestamp */}
-              <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginBottom: 8 }}>
+              <div style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted, marginBottom: 8 }}>
                 {fmtTs(m.createdAt)}
               </div>
               {/* Body */}
-              <div style={{ fontFamily: T.body, fontSize: 13, color: T.text, lineHeight: 1.6,
+              <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text, lineHeight: 1.6,
                 whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                 {m.body}
               </div>
@@ -938,7 +977,7 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
         </div>
 
         {/* Compose area */}
-        <div style={{ borderTop: `1px solid ${T.border}`, padding: "14px 20px",
+        <div style={{ borderTop: `1px solid ${HZ.border}`, padding: "14px 20px",
           display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
           <textarea
             value={body}
@@ -946,28 +985,28 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
             placeholder="Type a message… (min 15, max 500 characters)"
             rows={4}
             maxLength={500}
-            style={{ background: T.bg, border: `1px solid ${body.length > 0 && !valid ? T.danger : T.border}`,
-              borderRadius: 8, color: T.text, fontFamily: T.body, fontSize: 13,
+            style={{ background: HZ.bg, border: `1px solid ${body.length > 0 && !valid ? HZ.crit : HZ.border}`,
+              borderRadius: 8, color: HZ.text, fontFamily: HZ_BODY, fontSize: 13,
               padding: "10px 12px", outline: "none", resize: "none",
               lineHeight: 1.5, transition: "border-color .15s" }}
-            onFocus={e => e.currentTarget.style.borderColor = T.accent}
-            onBlur={e => e.currentTarget.style.borderColor = body.length > 0 && !valid ? T.danger : T.border}
+            onFocus={e => e.currentTarget.style.borderColor = HZ.cyan}
+            onBlur={e => e.currentTarget.style.borderColor = body.length > 0 && !valid ? HZ.crit : HZ.border}
             onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) handlePost(); }}
           />
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontFamily: T.mono, fontSize: 11,
-              color: charCount > 500 ? T.danger : charCount >= 15 ? T.success : T.textMuted }}>
+            <span style={{ fontFamily: HZ_MONO, fontSize: 11,
+              color: charCount > 500 ? HZ.crit : charCount >= 15 ? HZ.good : HZ.textMuted }}>
               {charCount} / 500{charCount < 15 && charCount > 0 ? ` (min ${15 - charCount} more)` : ""}
             </span>
             <button onClick={handlePost} disabled={!valid || posting}
-              style={{ background: valid ? T.accent : T.border, border: "none", borderRadius: 7,
-                color: valid ? "#fff" : T.textMuted, cursor: valid ? "pointer" : "default",
-                padding: "8px 20px", fontFamily: T.body, fontSize: 13, fontWeight: 700,
+              style={{ background: valid ? HZ.gradCyan : HZ.border, border: "none", borderRadius: 7,
+                color: valid ? "#06111f" : HZ.textMuted, cursor: valid ? "pointer" : "default",
+                padding: "8px 20px", fontFamily: HZ_BODY, fontSize: 13, fontWeight: 700,
                 transition: "background .15s" }}>
               {posting ? "Posting…" : "Post"}
             </button>
           </div>
-          <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.border }}>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textFaint }}>
             Ctrl+Enter to post quickly
           </div>
         </div>
@@ -979,9 +1018,9 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
 // ─── Compliance Modal ─────────────────────────────────────────────────────────
 
 const RESULT_STYLE = {
-  HIT:    { color: "#ef4444", bg: "#ef444415", border: "#ef444444" },
-  CLEAR:  { color: "#22c55e", bg: "#22c55e15", border: "#22c55e44" },
-  OVERRIDE: { color: "#f59e0b", bg: "#f59e0b15", border: "#f59e0b44" },
+  HIT:    { color: HZ.crit, bg: HZ.critBg, border: `${HZ.crit}44` },
+  CLEAR:  { color: HZ.good, bg: HZ.goodBg, border: `${HZ.good}44` },
+  OVERRIDE: { color: HZ.warn, bg: HZ.warnBg, border: `${HZ.warn}44` },
 };
 
 export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
@@ -1059,9 +1098,11 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
     return "pending";
   };
 
-  const CHECK_COLOR = { hit: "#f87171", clear: "#34d399", pending: "#94a3b8", no_data: "#64748b" };
+  const CHECK_COLOR = { hit: HZ.crit, clear: HZ.good, pending: HZ.textMuted, no_data: HZ.textFaint };
   const CHECK_ICON  = { hit: "✗", clear: "✓", pending: "◎", no_data: "—" };
   const CHECK_LABEL = { hit: "HIT", clear: "Clear", pending: "Not Screened", no_data: "No Data" };
+
+  useHorizonFonts();
 
   const runScreen = async () => {
     setBusy(true);
@@ -1124,20 +1165,20 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
               {effectiveResult === "HIT" ? "🔴" : effectiveResult === "OVERRIDE" ? "🟡" : "🟢"}
             </span>
             <div>
-              <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: rs.color }}>
+              <div style={{ fontFamily: HZ_DISPLAY, fontSize: 15, fontWeight: 700, color: rs.color }}>
                 {effectiveResult === "HIT" ? "Compliance review required"
                   : effectiveResult === "OVERRIDE" ? "CLEAR (manually overridden)"
                   : "CLEAR — No matches found"}
               </div>
-              <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 3 }}>
+              <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginTop: 3 }}>
                 Screened {new Date(screening.screenedAt).toLocaleString("en-GB")} · OFAC SDN
                 {screening.overriddenAt && ` · Overridden ${new Date(screening.overriddenAt).toLocaleString("en-GB")}`}
               </div>
             </div>
           </div>
         ) : (
-          <div style={{ padding: "14px 16px", background: T.surface, border: `1px solid ${T.border}`,
-            borderRadius: 8, fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+          <div style={{ padding: "14px 16px", background: HZ.surface, border: `1px solid ${HZ.border}`,
+            borderRadius: 8, fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>
             This shipment has not been screened yet. Run a screening to check all parties against the OFAC SDN list.
           </div>
         )}
@@ -1147,22 +1188,22 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
           const rollup = phaseRollup(phase);
           const rollupColor = CHECK_COLOR[rollup] || CHECK_COLOR.pending;
           return (
-            <div key={phase.id} style={{ background: T.bg, border: `1px solid ${T.border}`,
+            <div key={phase.id} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`,
               borderRadius: 8, overflow: "hidden" }}>
               {/* Phase header */}
               <div style={{ display: "flex", alignItems: "center", gap: 10,
-                padding: "10px 14px", borderBottom: `1px solid ${T.border}`,
-                background: T.surface }}>
-                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                padding: "10px 14px", borderBottom: `1px solid ${HZ.border}`,
+                background: HZ.surface }}>
+                <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700,
                   letterSpacing: ".1em", textTransform: "uppercase",
-                  color: T.textMuted, flexShrink: 0 }}>
+                  color: HZ.textMuted, flexShrink: 0 }}>
                   {phase.label}
                 </span>
-                <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600,
-                  color: T.text, flex: 1 }}>
+                <span style={{ fontFamily: HZ_BODY, fontSize: 13, fontWeight: 600,
+                  color: HZ.text, flex: 1 }}>
                   {phase.title}
                 </span>
-                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700,
                   letterSpacing: ".06em", textTransform: "uppercase",
                   color: rollupColor, background: rollupColor + "18",
                   border: `1px solid ${rollupColor}44`, borderRadius: 4, padding: "2px 8px" }}>
@@ -1177,28 +1218,28 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
                 const col  = CHECK_COLOR[stat];
                 return (
                   <div key={check.field} style={{ padding: "10px 14px",
-                    borderBottom: idx < phase.checks.length - 1 ? `1px solid ${T.border}22` : "none" }}>
+                    borderBottom: idx < phase.checks.length - 1 ? `1px solid ${HZ.border}` : "none" }}>
                     <div style={{ display: "grid", gridTemplateColumns: "16px 88px 1fr auto",
                       alignItems: "center", gap: "0 10px" }}>
                       <span style={{ fontSize: 11, color: col, fontWeight: 700, textAlign: "center" }}>
                         {CHECK_ICON[stat]}
                       </span>
-                      <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600,
-                        color: T.textMuted }}>
+                      <span style={{ fontFamily: HZ_BODY, fontSize: 12, fontWeight: 600,
+                        color: HZ.textMuted }}>
                         {check.label}
                       </span>
-                      <span style={{ fontFamily: T.body, fontSize: 12, color: T.text,
+                      <span style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.text,
                         overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {check.value
                           ? <>{check.value}{check.desc && check.desc !== check.value &&
-                              <span style={{ color: T.textMuted, fontSize: 11, marginLeft: 5 }}>
+                              <span style={{ color: HZ.textMuted, fontSize: 11, marginLeft: 5 }}>
                                 {check.desc}
                               </span>}
                             </>
-                          : <span style={{ color: T.textMuted, fontStyle: "italic" }}>—</span>
+                          : <span style={{ color: HZ.textFaint, fontStyle: "italic" }}>—</span>
                         }
                       </span>
-                      <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                      <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700,
                         letterSpacing: ".06em", textTransform: "uppercase",
                         color: col, background: col + "15",
                         border: `1px solid ${col}44`, borderRadius: 4,
@@ -1208,14 +1249,14 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
                     </div>
                     {hit && (
                       <div style={{ marginTop: 6, marginLeft: 26, padding: "7px 10px",
-                        background: T.danger + "10",
-                        border: `1px solid ${T.danger}30`,
-                        borderLeft: `3px solid ${T.danger}`,
-                        borderRadius: 4, fontFamily: T.body, fontSize: 11, color: T.text }}>
+                        background: HZ.critBg,
+                        border: `1px solid ${HZ.crit}30`,
+                        borderLeft: `3px solid ${HZ.crit}`,
+                        borderRadius: 4, fontFamily: HZ_BODY, fontSize: 11, color: HZ.text }}>
                         Matched:{" "}
                         <span style={{ fontWeight: 600 }}>{hit.matchedEntry}</span>
-                        {hit.program && <> · <span style={{ color: "#f59e0b" }}>{hit.program}</span></>}
-                        {hit.source  && <> · <span style={{ color: T.textMuted }}>{hit.source}</span></>}
+                        {hit.program && <> · <span style={{ color: HZ.warn }}>{hit.program}</span></>}
+                        {hit.source  && <> · <span style={{ color: HZ.textMuted }}>{hit.source}</span></>}
                       </div>
                     )}
                   </div>
@@ -1227,9 +1268,9 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
 
         {/* Override reason display */}
         {screening?.overrideReason && (
-          <div style={{ padding: "8px 12px", background: "#f59e0b12",
-            border: "1px solid #f59e0b44", borderRadius: 6,
-            fontFamily: T.body, fontSize: 12, color: T.text }}>
+          <div style={{ padding: "8px 12px", background: HZ.warnBg,
+            border: `1px solid ${HZ.warn}44`, borderRadius: 6,
+            fontFamily: HZ_BODY, fontSize: 12, color: HZ.text }}>
             <span style={{ fontWeight: 600 }}>Override reason: </span>{screening.overrideReason}
           </div>
         )}
@@ -1237,19 +1278,19 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
         {/* Override form */}
         {screening?.result === "HIT" && !screening?.overriddenAt && (
           overrideOpen ? (
-            <div style={{ padding: 14, background: T.surface, border: `1px solid ${T.border}`,
+            <div style={{ padding: 14, background: HZ.surface, border: `1px solid ${HZ.border}`,
               borderRadius: 8, display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text }}>
-                Override reason <span style={{ color: T.danger }}>*</span>
+              <div style={{ fontFamily: HZ_BODY, fontSize: 12, fontWeight: 600, color: HZ.text }}>
+                Override reason <span style={{ color: HZ.crit }}>*</span>
               </div>
               <textarea
                 value={overrideReason}
                 onChange={e => setOverrideReason(e.target.value)}
                 placeholder="Explain why this is a false positive or has been cleared by compliance…"
                 rows={3}
-                style={{ fontFamily: T.body, fontSize: 13, resize: "vertical",
-                  background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6,
-                  padding: "8px 10px", color: T.text, outline: "none", width: "100%", boxSizing: "border-box" }}
+                style={{ fontFamily: HZ_BODY, fontSize: 13, resize: "vertical",
+                  background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 6,
+                  padding: "8px 10px", color: HZ.text, outline: "none", width: "100%", boxSizing: "border-box" }}
               />
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                 <Btn variant="secondary" onClick={() => { setOverrideOpen(false); setOverrideReason(""); }}>Cancel</Btn>
@@ -1267,20 +1308,20 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
 
         {/* Footer actions */}
         <div style={{ display: "flex", gap: 8, alignItems: "center",
-          borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+          borderTop: `1px solid ${HZ.border}`, paddingTop: 14 }}>
           <input ref={csvInputRef} type="file" accept=".csv,text/csv"
             onChange={importCsv} style={{ display: "none" }} />
           <button onClick={() => csvInputRef.current?.click()} disabled={syncing}
-            style={{ fontFamily: T.body, fontSize: 12, background: "none",
-              border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 12px",
-              color: T.textMuted, cursor: syncing ? "default" : "pointer",
+            style={{ fontFamily: HZ_BODY, fontSize: 12, background: "none",
+              border: `1px solid ${HZ.border}`, borderRadius: 6, padding: "6px 12px",
+              color: HZ.textMuted, cursor: syncing ? "default" : "pointer",
               display: "inline-flex", alignItems: "center", gap: 5 }}>
             {syncing ? "Working…" : <><IconArrowUp size={12} />Import sdn.csv</>}
           </button>
           <button onClick={syncFromSource} disabled={syncing}
-            style={{ fontFamily: T.body, fontSize: 12, background: "none",
-              border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 12px",
-              color: T.textMuted, cursor: syncing ? "default" : "pointer",
+            style={{ fontFamily: HZ_BODY, fontSize: 12, background: "none",
+              border: `1px solid ${HZ.border}`, borderRadius: 6, padding: "6px 12px",
+              color: HZ.textMuted, cursor: syncing ? "default" : "pointer",
               display: "inline-flex", alignItems: "center", gap: 5 }}>
             {syncing ? "Working…" : <><IconRefresh size={12} />Sync from source</>}
           </button>
@@ -1312,11 +1353,12 @@ const MILESTONE_ICONS = {
 // ─── Parties & Offices Panel ───────────────────────────────────────────────────
 
 const PartiesOfficesCard = ({ id, label, value }) => (
-  <div id={id} style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 18px" }}>
-    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+  <div id={id} data-testid={id ? `shipment-parties-card-${id.replace(/^shpparties-/, "")}` : undefined}
+    style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 10, padding: "14px 18px" }}>
+    <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600,
       textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>{label}</div>
-    <div style={{ fontFamily: T.body, fontSize: 16, fontWeight: 700,
-      color: value ? T.text : T.border, wordBreak: "break-word" }}>{value || "—"}</div>
+    <div style={{ fontFamily: HZ_BODY, fontSize: 16, fontWeight: 700,
+      color: value ? HZ.text : HZ.textFaint, wordBreak: "break-word" }}>{value || "—"}</div>
   </div>
 );
 
@@ -1352,45 +1394,53 @@ const PartiesEditForm = ({ shipment, onSave, onCancel }) => {
   }));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div data-testid="shipment-parties-edit-form" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <CustomerCombobox label="Shipper" required roleFilter="Shipper"
-          value={{ id: f.shipperId, name: f.shipperName }}
-          onChange={v => setF(p => ({ ...p, shipperId: v.id, shipperName: v.name }))} />
-        <CustomerCombobox label="Consignee" required roleFilter="Consignee"
-          value={{ id: f.consigneeId, name: f.consigneeName }}
-          onChange={v => setF(p => ({ ...p, consigneeId: v.id, consigneeName: v.name }))} />
-        <CustomerCombobox label="Principal" required roleFilter="Principal"
-          value={{ id: f.principalId, name: f.principalName }}
-          onChange={v => setF(p => ({ ...p, principalId: v.id, principalName: v.name }))} />
+        <div data-testid="shipment-parties-form-shipper-field">
+          <CustomerCombobox label="Shipper" required roleFilter="Shipper"
+            value={{ id: f.shipperId, name: f.shipperName }}
+            onChange={v => setF(p => ({ ...p, shipperId: v.id, shipperName: v.name }))} />
+        </div>
+        <div data-testid="shipment-parties-form-consignee-field">
+          <CustomerCombobox label="Consignee" required roleFilter="Consignee"
+            value={{ id: f.consigneeId, name: f.consigneeName }}
+            onChange={v => setF(p => ({ ...p, consigneeId: v.id, consigneeName: v.name }))} />
+        </div>
+        <div data-testid="shipment-parties-form-principal-field">
+          <CustomerCombobox label="Principal" required roleFilter="Principal"
+            value={{ id: f.principalId, name: f.principalName }}
+            onChange={v => setF(p => ({ ...p, principalId: v.id, principalName: v.name }))} />
+        </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer",
-          fontFamily: T.body, fontSize: 12, color: T.textMuted, userSelect: "none", width: "fit-content" }}>
-          <input type="checkbox" checked={!sameNotify}
+          fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, userSelect: "none", width: "fit-content" }}>
+          <input type="checkbox" checked={!sameNotify} data-testid="shipment-parties-form-different-notify-checkbox"
             onChange={e => {
               const diff = e.target.checked;
               setSameNotify(!diff);
               if (!diff) setF(p => ({ ...p, notifyId: p.consigneeId, notifyName: p.consigneeName }));
             }}
-            style={{ accentColor: T.accent, width: 13, height: 13 }} />
+            style={{ accentColor: HZ.cyan, width: 13, height: 13 }} />
           Different notify party
         </label>
         {sameNotify
-          ? <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", paddingLeft: 2 }}>
+          ? <div style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, fontStyle: "italic", paddingLeft: 2 }}>
               {f.consigneeName
-                ? <>Notify → <span style={{ color: T.text, fontStyle: "normal" }}>{f.consigneeName}</span></>
+                ? <>Notify → <span style={{ color: HZ.text, fontStyle: "normal" }}>{f.consigneeName}</span></>
                 : "Same as Consignee (select a Consignee above)"}
             </div>
-          : <CustomerCombobox label="Notify Party" roleFilter="Notify Party"
-              value={{ id: f.notifyId, name: f.notifyName }}
-              onChange={v => setF(p => ({ ...p, notifyId: v.id, notifyName: v.name }))} />
+          : <div data-testid="shipment-parties-form-notify-field">
+              <CustomerCombobox label="Notify Party" roleFilter="Notify Party"
+                value={{ id: f.notifyId, name: f.notifyName }}
+                onChange={v => setF(p => ({ ...p, notifyId: v.id, notifyName: v.name }))} />
+            </div>
         }
       </div>
 
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
-        <Btn id="shpparties-form-cancel-btn" variant="secondary" onClick={onCancel} disabled={isSaving}>Cancel</Btn>
-        <Btn id="shpparties-form-save-btn" onClick={handleSave} disabled={isSaving}>{isSaving ? "Saving…" : "Save"}</Btn>
+        <Btn id="shpparties-form-cancel-btn" data-testid="shipment-parties-form-cancel-btn" variant="secondary" onClick={onCancel} disabled={isSaving}>Cancel</Btn>
+        <Btn id="shpparties-form-save-btn" data-testid="shipment-parties-form-save-btn" onClick={handleSave} disabled={isSaving}>{isSaving ? "Saving…" : "Save"}</Btn>
       </div>
     </div>
   );
@@ -1484,16 +1534,16 @@ const ReassignOfficeModal = ({ field, shipment, offices, onClose, onReassigned }
   if (deactivateStep) {
     const { oldOffice } = deactivateStep;
     return (
-      <Modal title="Deactivate replaced office?" onClose={() => handleDeactivateChoice(true)} width={440}>
+      <Modal title="Deactivate replaced office?" onClose={() => handleDeactivateChoice(true)} width={440} data-testid="shipment-parties-deactivate-office-modal">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <p style={{ fontFamily: T.body, fontSize: 13.5, color: T.text, lineHeight: 1.6, margin: 0 }}>
+          <p style={{ fontFamily: HZ_BODY, fontSize: 13.5, color: HZ.text, lineHeight: 1.6, margin: 0 }}>
             <b>{oldOffice.name}</b> ({oldOffice.code}) was just replaced as the {field.label} on this
             shipment. Mark it inactive across CargoDesk too? It will no longer be selectable on any
             shipment until reactivated — this doesn't affect any shipment it's already on.
           </p>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
-            <Btn variant="secondary" onClick={() => handleDeactivateChoice(true)} disabled={deactivating}>Keep Active</Btn>
-            <Btn variant="danger" onClick={() => handleDeactivateChoice(false)} disabled={deactivating}>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${HZ.border}`, paddingTop: 14 }}>
+            <Btn variant="secondary" onClick={() => handleDeactivateChoice(true)} disabled={deactivating} data-testid="shipment-parties-deactivate-office-keep-btn">Keep Active</Btn>
+            <Btn variant="danger" onClick={() => handleDeactivateChoice(false)} disabled={deactivating} data-testid="shipment-parties-deactivate-office-confirm-btn">
               {deactivating ? "Deactivating…" : "Mark Inactive"}
             </Btn>
           </div>
@@ -1503,29 +1553,29 @@ const ReassignOfficeModal = ({ field, shipment, offices, onClose, onReassigned }
   }
 
   return (
-    <Modal title={`Reassign ${field.label}`} onClose={onClose} width={440}>
+    <Modal title={`Reassign ${field.label}`} onClose={onClose} width={440} data-testid="shipment-parties-reassign-office-modal">
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div>
-          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 6 }}>New Office</div>
+        <div data-testid="shipment-parties-reassign-office-select-field">
+          <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginBottom: 6 }}>New Office</div>
           <OfficeCombobox offices={candidates} value={officeId} onChange={setOfficeId}
             allowClear={!field.required}
             placeholder="Search office by name, code, or country…" />
         </div>
-        <div>
-          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 6 }}>
-            Reason for reassignment <span style={{ color: T.danger }}>*</span>
+        <div data-testid="shipment-parties-reassign-office-reason-field">
+          <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginBottom: 6 }}>
+            Reason for reassignment <span style={{ color: HZ.crit }}>*</span>
           </div>
           <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
             placeholder="e.g. Rotterdam office affected by a regional outage — reassigning to keep the booking moving."
-            style={{ width: "100%", fontFamily: T.body, fontSize: 13, background: T.surface, color: T.text,
-              border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px", resize: "vertical", boxSizing: "border-box" }} />
+            style={{ width: "100%", fontFamily: HZ_BODY, fontSize: 13, background: HZ.surface, color: HZ.text,
+              border: `1px solid ${HZ.border}`, borderRadius: 6, padding: "8px 10px", resize: "vertical", boxSizing: "border-box" }} />
         </div>
-        <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted }}>
           Logged as its own event on the shipment's History, separate from a routine edit.
         </div>
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
-          <Btn variant="secondary" onClick={onClose} disabled={saving}>Cancel</Btn>
-          <Btn onClick={handleConfirm} disabled={saving}>{saving ? "Reassigning…" : "Reassign"}</Btn>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${HZ.border}`, paddingTop: 14 }}>
+          <Btn variant="secondary" onClick={onClose} disabled={saving} data-testid="shipment-parties-reassign-office-cancel-btn">Cancel</Btn>
+          <Btn onClick={handleConfirm} disabled={saving} data-testid="shipment-parties-reassign-office-confirm-btn">{saving ? "Reassigning…" : "Reassign"}</Btn>
         </div>
       </div>
     </Modal>
@@ -1543,20 +1593,21 @@ const InlineOfficeEdit = ({ id, field, shipment, offices, canEdit, onReassigned,
     <div id={id} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
       <div style={{ minWidth: 0 }}>
         <div style={{ ...textStyle, display: "flex", alignItems: "center", gap: 7,
-          color: shipment[field.nameKey] ? textStyle.color : T.border }}>
+          color: shipment[field.nameKey] ? textStyle.color : HZ.textFaint }}>
           {shipment[field.nameKey] || (field.required ? "Not assigned" : "No Controlling Office")}
           {shipment[field.nameKey] && pills}
         </div>
         {shipment[field.nameKey] && (
-          <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginTop: 1 }}>
+          <div style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted, marginTop: 1 }}>
             {shipment[field.codeKey]}
           </div>
         )}
       </div>
       {canEdit && (
         <button onClick={() => setOpen(true)} title={`Reassign ${field.label}`}
-          style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${T.border}`,
-            background: T.bg, color: T.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
+          data-testid={`shipment-parties-reassign-btn-${field.key}`}
+          style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${HZ.border}`,
+            background: HZ.bg, color: HZ.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
             cursor: "pointer", marginLeft: "auto" }}>
           <IconPencil size={11} />
         </button>
@@ -1604,27 +1655,29 @@ const ServiceBranch = ({ service, offices, shipmentOfficeIds, canEdit, onUpdated
 
   return (
     <div style={{ position: "relative" }}>
-      <div style={{ position: "absolute", left: -20, top: 13, width: 14, height: 2, background: T.border }} />
+      <div style={{ position: "absolute", left: -20, top: 13, width: 14, height: 2, background: HZ.border }} />
       <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
         <span style={{ fontSize: 13, flexShrink: 0 }}>{SERVICE_TYPE_ICON[service.serviceType] || "•"}</span>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, color: T.text }}>{service.serviceType}</div>
-          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 1 }}>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, fontWeight: 600, color: HZ.text }}>{service.serviceType}</div>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginTop: 1 }}>
             {service.vendorName || "No vendor set"} · {service.status}
           </div>
         </div>
         {canEdit && (editing ? (
           <select autoFocus value={service.officeId} disabled={saving} onChange={handleChange} onBlur={() => setEditing(false)}
-            style={{ flexShrink: 0, fontFamily: T.mono, fontSize: 11, color: T.text, border: `1px solid ${T.border}`,
-              background: T.surface, borderRadius: 6, padding: "4px 7px", outline: "none",
+            data-testid={`shipment-parties-service-${service.id}-office-select`}
+            style={{ flexShrink: 0, fontFamily: HZ_MONO, fontSize: 11, color: HZ.text, border: `1px solid ${HZ.border}`,
+              background: HZ.surface, borderRadius: 6, padding: "4px 7px", outline: "none",
               cursor: saving ? "wait" : "pointer", maxWidth: 190 }}>
             <option value="">No office set</option>
             {candidates.map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
           </select>
         ) : (
           <button onClick={() => setEditing(true)} title="Change office"
-            style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${T.border}`,
-              background: T.bg, color: T.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
+            data-testid={`shipment-parties-service-${service.id}-edit-office-btn`}
+            style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${HZ.border}`,
+              background: HZ.bg, color: HZ.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
               cursor: "pointer" }}>
             <IconPencil size={10} />
           </button>
@@ -1644,7 +1697,7 @@ const OfficeGroupCard = ({ icon, field, officeName, officeCode, pills, services,
   shipmentOfficeIds, canEditOffice, canEditService, onReassigned, shipment, onUpdatedService, emptyLabel, onRemove }) => (
   <div style={{ marginBottom: 14 }}>
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <div style={{ width: 32, height: 32, borderRadius: 9, background: T.bg, border: `1px solid ${T.border}`,
+      <div style={{ width: 32, height: 32, borderRadius: 9, background: HZ.bg, border: `1px solid ${HZ.border}`,
         display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 }}>
         {icon}
       </div>
@@ -1652,20 +1705,21 @@ const OfficeGroupCard = ({ icon, field, officeName, officeCode, pills, services,
         {field ? (
           <InlineOfficeEdit field={field} shipment={shipment} offices={offices} canEdit={canEditOffice}
             onReassigned={onReassigned} pills={pills}
-            textStyle={{ fontFamily: T.body, fontSize: 13.5, fontWeight: 700, color: T.text }} />
+            textStyle={{ fontFamily: HZ_BODY, fontSize: 13.5, fontWeight: 700, color: HZ.text }} />
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
             <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontFamily: T.body, fontSize: 13.5, fontWeight: 700, color: T.text,
+              <div style={{ fontFamily: HZ_BODY, fontSize: 13.5, fontWeight: 700, color: HZ.text,
                 display: "flex", alignItems: "center", gap: 7 }}>
                 {officeName}{pills}
               </div>
-              <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginTop: 1 }}>{officeCode}</div>
+              <div style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted, marginTop: 1 }}>{officeCode}</div>
             </div>
             {onRemove && canEditOffice && (
               <button onClick={onRemove} title="Remove this office"
-                style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${T.border}`,
-                  background: T.bg, color: T.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
+                data-testid={`shipment-parties-remove-office-btn-${officeCode}`}
+                style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${HZ.border}`,
+                  background: HZ.bg, color: HZ.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
                   cursor: "pointer", fontSize: 14, lineHeight: 1 }}>
                 ×
               </button>
@@ -1675,7 +1729,7 @@ const OfficeGroupCard = ({ icon, field, officeName, officeCode, pills, services,
       </div>
     </div>
     {services.length > 0 ? (
-      <div style={{ marginLeft: 16, paddingLeft: 20, borderLeft: `2px solid ${T.border}`, marginTop: 8,
+      <div style={{ marginLeft: 16, paddingLeft: 20, borderLeft: `2px solid ${HZ.border}`, marginTop: 8,
         display: "flex", flexDirection: "column", gap: 8 }}>
         {services.map(s => (
           <ServiceBranch key={s.id} service={s} offices={offices} shipmentOfficeIds={shipmentOfficeIds}
@@ -1683,8 +1737,8 @@ const OfficeGroupCard = ({ icon, field, officeName, officeCode, pills, services,
         ))}
       </div>
     ) : emptyLabel ? (
-      <div style={{ marginLeft: 16, paddingLeft: 20, borderLeft: `2px dashed ${T.border}`, marginTop: 8,
-        fontSize: 11.5, color: T.textMuted, fontStyle: "italic", paddingBottom: 2 }}>
+      <div style={{ marginLeft: 16, paddingLeft: 20, borderLeft: `2px dashed ${HZ.border}`, marginTop: 8,
+        fontSize: 11.5, color: HZ.textMuted, fontStyle: "italic", paddingBottom: 2 }}>
         {emptyLabel}
       </div>
     ) : null}
@@ -1703,8 +1757,9 @@ const AddSideOfficeControl = ({ side, dept, offices, excludeIds, onAdd }) => {
   if (!adding) {
     return candidates.length > 0 ? (
       <button onClick={() => setAdding(true)}
-        style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, background: "none",
-          border: `1px dashed ${T.border}`, borderRadius: 6, padding: "7px 10px", cursor: "pointer", width: "100%" }}>
+        data-testid={`shipment-parties-add-${side.toLowerCase()}-office-btn`}
+        style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted, background: "none",
+          border: `1px dashed ${HZ.border}`, borderRadius: 6, padding: "7px 10px", cursor: "pointer", width: "100%" }}>
         ＋ Add {side} Office
       </button>
     ) : null;
@@ -1718,15 +1773,16 @@ const AddSideOfficeControl = ({ side, dept, offices, excludeIds, onAdd }) => {
   };
 
   return (
-    <div style={{ display: "flex", gap: 8, padding: 8, borderRadius: 8, border: `1px dashed ${T.border}`, background: T.bg }}>
+    <div data-testid={`shipment-parties-add-${side.toLowerCase()}-office-form`} style={{ display: "flex", gap: 8, padding: 8, borderRadius: 8, border: `1px dashed ${HZ.border}`, background: HZ.bg }}>
       <select autoFocus value={officeId} onChange={e => setOfficeId(e.target.value)}
-        style={{ flex: 1, fontFamily: T.mono, fontSize: 11.5, color: T.text, border: `1px solid ${T.border}`,
-          background: T.surface, borderRadius: 6, padding: "6px 8px", outline: "none", cursor: "pointer" }}>
+        data-testid={`shipment-parties-add-${side.toLowerCase()}-office-select`}
+        style={{ flex: 1, fontFamily: HZ_MONO, fontSize: 11.5, color: HZ.text, border: `1px solid ${HZ.border}`,
+          background: HZ.surface, borderRadius: 6, padding: "6px 8px", outline: "none", cursor: "pointer" }}>
         <option value="">Select office…</option>
         {candidates.map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
       </select>
-      <Btn size="sm" variant="secondary" onClick={() => setAdding(false)} disabled={saving}>Cancel</Btn>
-      <Btn size="sm" onClick={handleAdd} disabled={saving || !officeId}>{saving ? "Adding…" : "Add"}</Btn>
+      <Btn size="sm" variant="secondary" onClick={() => setAdding(false)} disabled={saving} data-testid={`shipment-parties-add-${side.toLowerCase()}-office-cancel-btn`}>Cancel</Btn>
+      <Btn size="sm" onClick={handleAdd} disabled={saving || !officeId} data-testid={`shipment-parties-add-${side.toLowerCase()}-office-confirm-btn`}>{saving ? "Adding…" : "Add"}</Btn>
     </div>
   );
 };
@@ -1743,7 +1799,7 @@ const OfficeColumn = ({ side, shipment, offices, services, shipmentOfficeIds, si
   canEditOffice, canEditService, onReassigned, onUpdatedService, onAddOffice, onRemoveOffice }) => {
   const homeField = side === "Export" ? OFFICE_FIELDS[0] : OFFICE_FIELDS[1];
   const homeOfficeId = shipment[homeField.key];
-  const accent = side === "Export" ? T.accent : T.info;
+  const accent = side === "Export" ? HZ.cyan : HZ.violet;
   const dept = SIDE_DEPT[side];
 
   const byOffice = new Map();
@@ -1758,24 +1814,24 @@ const OfficeColumn = ({ side, shipment, offices, services, shipmentOfficeIds, si
 
   const pillFor = role => {
     const kind = role === homeField.role ? "primary" : role === "Controlling" ? "controlling" : "plain";
-    const bg = kind === "primary" ? accent : kind === "controlling" ? T.accent : T.textMuted;
+    const bg = kind === "primary" ? accent : kind === "controlling" ? HZ.cyan : HZ.textMuted;
     return (
-      <span key={role} style={{ fontFamily: T.mono, fontSize: 8.5, fontWeight: 700, padding: "2px 6px",
-        borderRadius: 4, textTransform: "uppercase", letterSpacing: ".03em", background: bg, color: T.bg }}>
+      <span key={role} style={{ fontFamily: HZ_MONO, fontSize: 8.5, fontWeight: 700, padding: "2px 6px",
+        borderRadius: 4, textTransform: "uppercase", letterSpacing: ".03em", background: bg, color: HZ.bg }}>
         {role}
       </span>
     );
   };
 
   return (
-    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+    <div data-testid={`shipment-parties-office-column-${side.toLowerCase()}`} style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 12, overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 18px",
-        borderBottom: `1px solid ${T.border}`, background: accent + "14" }}>
+        borderBottom: `1px solid ${HZ.border}`, background: accent + "14" }}>
         <span style={{ width: 8, height: 8, borderRadius: "50%", background: accent, flexShrink: 0 }} />
-        <span style={{ fontFamily: T.head, fontSize: 13, fontWeight: 800, textTransform: "uppercase",
-          letterSpacing: ".06em", color: T.text }}>{side}</span>
+        <span style={{ fontFamily: HZ_DISPLAY, fontSize: 13, fontWeight: 800, textTransform: "uppercase",
+          letterSpacing: ".06em", color: HZ.text }}>{side}</span>
         {!canEditOffice && (
-          <span style={{ marginLeft: "auto", fontFamily: T.body, fontSize: 10, color: T.textMuted,
+          <span style={{ marginLeft: "auto", fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted,
             display: "flex", alignItems: "center", gap: 4 }}>
             <IconLock size={10} /> Read only
           </span>
@@ -1851,18 +1907,18 @@ const InactiveOfficesSection = ({ offices, isAdmin, onReactivate }) => {
   if (total === 0) return null;
 
   const renderList = list => list.length === 0 ? (
-    <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>None</div>
+    <div style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, fontStyle: "italic" }}>None</div>
   ) : (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {list.map(o => (
         <div key={o.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-          gap: 8, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 7, padding: "7px 10px" }}>
+          gap: 8, background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 7, padding: "7px 10px" }}>
           <div style={{ minWidth: 0 }}>
-            <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textMuted, fontWeight: 700, marginRight: 7 }}>{o.code}</span>
-            <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.text }}>{o.name}</span>
+            <span style={{ fontFamily: HZ_MONO, fontSize: 11.5, color: HZ.textMuted, fontWeight: 700, marginRight: 7 }}>{o.code}</span>
+            <span style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text }}>{o.name}</span>
           </div>
           {isAdmin && (
-            <Btn size="sm" variant="secondary" onClick={() => onReactivate(o.id)}>Reactivate</Btn>
+            <Btn size="sm" variant="secondary" onClick={() => onReactivate(o.id)} data-testid={`shipment-parties-reactivate-office-btn-${o.id}`}>Reactivate</Btn>
           )}
         </div>
       ))}
@@ -1870,27 +1926,28 @@ const InactiveOfficesSection = ({ offices, isAdmin, onReactivate }) => {
   );
 
   return (
-    <div style={{ marginTop: 18, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
+    <div data-testid="shipment-parties-inactive-offices-section" style={{ marginTop: 18, border: `1px solid ${HZ.border}`, borderRadius: 10, overflow: "hidden" }}>
       <button type="button" onClick={() => setOpen(o => !o)}
+        data-testid="shipment-parties-inactive-offices-toggle"
         style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "10px 16px",
-          background: T.bg, border: "none", cursor: "pointer", textAlign: "left" }}>
-        <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, transform: open ? "rotate(90deg)" : "none",
+          background: HZ.bg, border: "none", cursor: "pointer", textAlign: "left" }}>
+        <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted, transform: open ? "rotate(90deg)" : "none",
           transition: "transform .1s", display: "inline-block" }}>▸</span>
-        <span style={{ fontFamily: T.body, fontSize: 11.5, fontWeight: 700, color: T.textMuted,
+        <span style={{ fontFamily: HZ_BODY, fontSize: 11.5, fontWeight: 700, color: HZ.textMuted,
           textTransform: "uppercase", letterSpacing: ".07em" }}>
           Inactive Offices ({total})
         </span>
       </button>
       {open && (
-        <div style={{ padding: "14px 16px", borderTop: `1px solid ${T.border}`,
+        <div style={{ padding: "14px 16px", borderTop: `1px solid ${HZ.border}`,
           display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
           <div>
-            <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
+            <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, fontWeight: 600,
               textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Export</div>
             {renderList(inactiveExport)}
           </div>
           <div>
-            <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
+            <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, fontWeight: 600,
               textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Import</div>
             {renderList(inactiveImport)}
           </div>
@@ -1968,24 +2025,26 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched }) =
     } catch (ex) { toast.error(ex.message); }
   };
 
+  useHorizonFonts();
+
   if (offices === null || sideOfficesList === null) {
     return (
       <div id="shpparties-panel" style={{ display: "flex", alignItems: "center", gap: 8,
-        color: T.textMuted, fontFamily: T.body, fontSize: 13, padding: "30px 0", justifyContent: "center" }}>
+        color: HZ.textMuted, fontFamily: HZ_BODY, fontSize: 13, padding: "30px 0", justifyContent: "center" }}>
         <Spinner size="sm" /> Loading parties &amp; offices…
       </div>
     );
   }
 
   return (
-    <div id="shpparties-panel">
+    <div id="shpparties-panel" data-testid="shipment-parties-panel">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
+        <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 700,
           textTransform: "uppercase", letterSpacing: ".08em" }}>
           Parties
         </div>
         {canEdit && onUpdate && (
-          <Btn id="shpparties-edit-btn" size="sm" variant="secondary" onClick={() => setEditing(true)}>
+          <Btn id="shpparties-edit-btn" data-testid="shipment-parties-edit-btn" size="sm" variant="secondary" onClick={() => setEditing(true)}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><IconPencil size={12} />Edit</span>
           </Btn>
         )}
@@ -1997,22 +2056,22 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched }) =
         <PartiesOfficesCard id="shpparties-principal" label="Principal"    value={shipment.principalName} />
       </div>
 
-      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
+      <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 700,
         textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
         Involved Offices
       </div>
       <div id="shpparties-office-groups">
         {(shipment.controllingOfficeId || canEditControlling) && (
           <div id="shpparties-controllingOfficeId-banner" style={{ display: "flex", alignItems: "flex-start", gap: 12,
-            background: T.accent + "14", border: `1px solid ${T.accent}55`, borderRadius: 12,
+            background: HZ.cyanBg, border: `1px solid ${HZ.cyan}55`, borderRadius: 12,
             padding: "12px 18px", marginBottom: 16 }}>
             <span style={{ fontSize: 18, lineHeight: "22px" }}>⭐</span>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase",
-                letterSpacing: ".08em", color: T.accent, marginBottom: 2 }}>Controlling Office</div>
+              <div style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase",
+                letterSpacing: ".08em", color: HZ.cyan, marginBottom: 2 }}>Controlling Office</div>
               <InlineOfficeEdit field={OFFICE_FIELDS[2]} shipment={shipment} offices={offices}
                 canEdit={canEditControlling} onReassigned={handleReassigned}
-                textStyle={{ fontFamily: T.body, fontSize: 13.5, fontWeight: 700, color: T.text }} />
+                textStyle={{ fontFamily: HZ_BODY, fontSize: 13.5, fontWeight: 700, color: HZ.text }} />
             </div>
           </div>
         )}
@@ -2034,7 +2093,7 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched }) =
       </div>
 
       {editing && (
-        <Modal title="Edit Parties" onClose={() => setEditing(false)} width={560}>
+        <Modal title="Edit Parties" onClose={() => setEditing(false)} width={560} data-testid="shipment-parties-edit-modal">
           <PartiesEditForm
             shipment={shipment}
             onCancel={() => setEditing(false)}
@@ -2132,8 +2191,10 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
   };
 
   const stateColor = st => ({
-    completed: T.success, overdue: T.danger, current: T.accent, upcoming: T.border,
+    completed: HZ.good, overdue: HZ.crit, current: HZ.cyan, upcoming: HZ.textFaint,
   }[st]);
+
+  useHorizonFonts();
 
   const overdueCount    = milestones.filter(m => !m.completedAt && m.estimatedDate && m.estimatedDate < today).length;
   const completedCount  = milestones.filter(m => !!m.completedAt).length;
@@ -2143,18 +2204,18 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
     new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 
   return (
-    <div id="shpmiles-panel" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
+    <div id="shpmiles-panel" data-testid="shipment-milestones-panel" style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, borderRadius: 10, overflow: "hidden" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "14px 18px", borderBottom: collapsed ? "none" : `1px solid ${T.border}33`,
+      <div data-testid="shipment-milestones-header-toggle" style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "14px 18px", borderBottom: collapsed ? "none" : `1px solid ${HZ.border}`,
         cursor: "pointer" }}
         onClick={() => setCollapsed(c => !c)}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
+          <span style={{ fontFamily: HZ_DISPLAY, fontSize: 15, fontWeight: 700, color: HZ.text }}>
             Shipment Milestones
           </span>
           {milestones.length > 0 && (
-            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+            <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted }}>
               {completedCount}/{milestones.length}
             </span>
           )}
@@ -2162,14 +2223,14 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {milestones.length > 0 && (
-            <button id="shpmiles-reset-btn" type="button" onClick={e => { e.stopPropagation(); handleInit(true); }} disabled={initializing}
-              style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, background: "none",
-                border: `1px solid ${T.border}`, borderRadius: 7, padding: "3px 10px",
+            <button id="shpmiles-reset-btn" data-testid="shipment-milestones-reset-btn" type="button" onClick={e => { e.stopPropagation(); handleInit(true); }} disabled={initializing}
+              style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, background: "none",
+                border: `1px solid ${HZ.border}`, borderRadius: 7, padding: "3px 10px",
                 cursor: initializing ? "not-allowed" : "pointer" }}>
               {initializing ? "Resetting…" : "↺ Reset"}
             </button>
           )}
-          <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted, lineHeight: 1, userSelect: "none" }}>
+          <span style={{ fontFamily: HZ_MONO, fontSize: 13, color: HZ.textMuted, lineHeight: 1, userSelect: "none" }}>
             {collapsed ? "▸" : "▾"}
           </span>
         </div>
@@ -2177,27 +2238,27 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
 
       {/* Body */}
       {!collapsed && (loading ? (
-        <div style={{ padding: "24px 18px", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+        <div style={{ padding: "24px 18px", fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>
           Loading…
         </div>
       ) : milestones.length === 0 ? (
-        <div id="shpmiles-empty" style={{ padding: "32px 18px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
-          <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+        <div id="shpmiles-empty" data-testid="shipment-milestones-empty" style={{ padding: "32px 18px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>
             No milestones set for this shipment.
           </div>
-          <Btn id="shpmiles-init-btn" onClick={() => handleInit(false)} disabled={initializing}>
+          <Btn id="shpmiles-init-btn" data-testid="shipment-milestones-init-btn" onClick={() => handleInit(false)} disabled={initializing}>
             {initializing ? "Initializing…" : "⚑ Initialize Milestones"}
           </Btn>
         </div>
       ) : (
-        <div id="shpmiles-steps" style={{ padding: "18px 18px 10px" }}>
+        <div id="shpmiles-steps" data-testid="shipment-milestones-steps" style={{ padding: "18px 18px 10px" }}>
           {/* Progress bar */}
           <div style={{ marginBottom: 18 }}>
-            <div style={{ height: 4, background: T.border, borderRadius: 2, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${progress}%`, background: T.success,
+            <div style={{ height: 4, background: HZ.border, borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${progress}%`, background: HZ.gradCyan,
                 transition: "width .3s ease", borderRadius: 2 }} />
             </div>
-            <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 4 }}>
+            <div style={{ fontFamily: HZ_MONO, fontSize: 10, color: HZ.textMuted, marginTop: 4 }}>
               {progress}% complete
             </div>
           </div>
@@ -2212,7 +2273,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
             const f          = fields[m.id] || {};
 
             return (
-              <div key={m.id} id={`shpmiles-step-${m.milestoneKey}`} style={{ display: "flex", gap: 14 }}>
+              <div key={m.id} id={`shpmiles-step-${m.milestoneKey}`} data-testid={`shipment-milestones-step-${m.milestoneKey}`} style={{ display: "flex", gap: 14 }}>
                 {/* Timeline column */}
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center",
                   flexShrink: 0, width: 30 }}>
@@ -2220,10 +2281,10 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
                     onClick={() => !m.completedAt && setExpanded(isExpanded ? null : m.id)}
                     style={{
                       width: 28, height: 28, borderRadius: "50%",
-                      background: state === 'upcoming' ? T.surface : color,
+                      background: state === 'upcoming' ? HZ.surface : color,
                       border: `2px solid ${color}`,
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      color: state === 'upcoming' ? T.textMuted : "#fff",
+                      color: state === 'upcoming' ? HZ.textMuted : "#06111f",
                       fontSize: state === 'completed' || state === 'overdue' ? 12 : 14,
                       fontWeight: 700, flexShrink: 0,
                       cursor: state !== 'completed' ? "pointer" : "default",
@@ -2235,7 +2296,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
                   </div>
                   {!isLast && (
                     <div style={{ width: 2, flex: 1, minHeight: 28,
-                      background: m.completedAt ? T.success : T.border, opacity: .45 }} />
+                      background: m.completedAt ? HZ.good : HZ.border, opacity: .45 }} />
                   )}
                 </div>
 
@@ -2244,9 +2305,9 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2,
                     cursor: state !== 'completed' ? "pointer" : "default" }}
                     onClick={() => !m.completedAt && setExpanded(isExpanded ? null : m.id)}>
-                    <span style={{ fontFamily: T.body, fontSize: 13,
+                    <span style={{ fontFamily: HZ_BODY, fontSize: 13,
                       fontWeight: state === 'current' ? 700 : 500,
-                      color: state === 'upcoming' ? T.textMuted : T.text }}>
+                      color: state === 'upcoming' ? HZ.textMuted : HZ.text }}>
                       {m.label}
                     </span>
                     {state === 'current' && <Badge variant="info" size={10}>Current</Badge>}
@@ -2254,12 +2315,12 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
                   </div>
 
                   {/* Sub-info line */}
-                  <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, display: "flex", gap: 8 }}>
+                  <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, display: "flex", gap: 8 }}>
                     {m.completedAt && (
                       <span>Completed {fmtCompleted(m.completedAt)}{m.completedBy ? ` · ${m.completedBy}` : ""}</span>
                     )}
                     {!m.completedAt && m.estimatedDate && (
-                      <span style={{ color: state === 'overdue' ? T.danger : T.textMuted }}>
+                      <span style={{ color: state === 'overdue' ? HZ.crit : HZ.textMuted }}>
                         Est. {m.estimatedDate}
                       </span>
                     )}
@@ -2269,43 +2330,46 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
                   {/* Expanded edit form */}
                   {isExpanded && !m.completedAt && (
                     <div style={{ marginTop: 10, padding: "12px 14px",
-                      background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
+                      background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8,
                       display: "flex", flexDirection: "column", gap: 10 }}>
                       <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
                         <div>
-                          <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+                          <div style={{ fontFamily: HZ_BODY, fontSize: 10, fontWeight: 600, color: HZ.textMuted,
                             marginBottom: 4, textTransform: "uppercase", letterSpacing: ".06em" }}>
                             Estimated Date
                           </div>
                           <input type="date"
+                            data-testid={`shipment-milestones-step-${m.milestoneKey}-date-input`}
                             value={f.estimatedDate ?? m.estimatedDate}
                             onChange={e => setFields(prev => ({ ...prev, [m.id]: { ...prev[m.id], estimatedDate: e.target.value } }))}
-                            style={{ fontFamily: T.mono, fontSize: 12, padding: "5px 8px", borderRadius: 6,
-                              border: `1px solid ${T.border}`, background: T.surface, color: T.text, outline: "none" }} />
+                            style={{ fontFamily: HZ_MONO, fontSize: 12, padding: "5px 8px", borderRadius: 6,
+                              border: `1px solid ${HZ.border}`, background: HZ.surface, color: HZ.text, outline: "none" }} />
                         </div>
                         <div style={{ flex: 1, minWidth: 140 }}>
-                          <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+                          <div style={{ fontFamily: HZ_BODY, fontSize: 10, fontWeight: 600, color: HZ.textMuted,
                             marginBottom: 4, textTransform: "uppercase", letterSpacing: ".06em" }}>
                             Note
                           </div>
                           <input type="text"
+                            data-testid={`shipment-milestones-step-${m.milestoneKey}-note-input`}
                             value={f.note ?? m.note}
                             onChange={e => setFields(prev => ({ ...prev, [m.id]: { ...prev[m.id], note: e.target.value } }))}
                             placeholder="Optional note…"
-                            style={{ fontFamily: T.body, fontSize: 12, padding: "5px 8px", borderRadius: 6,
-                              border: `1px solid ${T.border}`, background: T.surface, color: T.text,
+                            style={{ fontFamily: HZ_BODY, fontSize: 12, padding: "5px 8px", borderRadius: 6,
+                              border: `1px solid ${HZ.border}`, background: HZ.surface, color: HZ.text,
                               outline: "none", width: "100%", boxSizing: "border-box" }} />
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <Btn id={`shpmiles-step-${m.milestoneKey}-save-btn`} size="sm" onClick={() => handleSaveFields(m)} disabled={isBusy}>
+                        <Btn id={`shpmiles-step-${m.milestoneKey}-save-btn`} data-testid={`shipment-milestones-step-${m.milestoneKey}-save-btn`} size="sm" onClick={() => handleSaveFields(m)} disabled={isBusy}>
                           {isBusy ? "Saving…" : "Save"}
                         </Btn>
-                        <Btn id={`shpmiles-step-${m.milestoneKey}-complete-btn`} size="sm" variant="success" onClick={() => handleToggleComplete(m)} disabled={isBusy}>
+                        <Btn id={`shpmiles-step-${m.milestoneKey}-complete-btn`} data-testid={`shipment-milestones-step-${m.milestoneKey}-complete-btn`} size="sm" variant="success" onClick={() => handleToggleComplete(m)} disabled={isBusy}>
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><IconCheck size={12} />Mark Complete</span>
                         </Btn>
                         <button type="button" onClick={() => setExpanded(null)}
-                          style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted,
+                          data-testid={`shipment-milestones-step-${m.milestoneKey}-cancel-btn`}
+                          style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted,
                             background: "none", border: "none", cursor: "pointer" }}>
                           Cancel
                         </button>
@@ -2315,8 +2379,8 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
 
                   {/* Undo for completed */}
                   {m.completedAt && (
-                    <button id={`shpmiles-step-${m.milestoneKey}-undo-btn`} type="button" onClick={() => handleToggleComplete(m)} disabled={isBusy}
-                      style={{ marginTop: 3, fontFamily: T.body, fontSize: 10, color: T.textMuted,
+                    <button id={`shpmiles-step-${m.milestoneKey}-undo-btn`} data-testid={`shipment-milestones-step-${m.milestoneKey}-undo-btn`} type="button" onClick={() => handleToggleComplete(m)} disabled={isBusy}
+                      style={{ marginTop: 3, fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted,
                         background: "none", border: "none", cursor: "pointer", padding: 0 }}>
                       {isBusy ? "Undoing…" : "↩ Undo"}
                     </button>
@@ -2348,12 +2412,12 @@ const ContainerEventsStepper = ({ container }) => {
     api.containers.events(container.shipmentId, container.id).then(setEvents).catch(() => setEvents([]));
   }, [container.id]);
 
-  const stateColor = st => ({ completed: T.success, current: T.accent, upcoming: T.border }[st]);
+  const stateColor = st => ({ completed: HZ.good, current: HZ.cyan, upcoming: HZ.textFaint }[st]);
 
   if (events === null) {
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.textMuted,
-        fontFamily: T.body, fontSize: 12, padding: "8px 0" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, color: HZ.textMuted,
+        fontFamily: HZ_BODY, fontSize: 12, padding: "8px 0" }}>
         <Spinner size="sm" /> Loading…
       </div>
     );
@@ -2366,15 +2430,15 @@ const ContainerEventsStepper = ({ container }) => {
   const progress = Math.round((completedCount / CONTAINER_EVENT_TYPES.length) * 100);
 
   return (
-    <div id={`shpmiles-ctrstepper-${container.id}`} style={{ marginBottom: 18, paddingBottom: 18, borderBottom: `1px solid ${T.border}` }}>
+    <div id={`shpmiles-ctrstepper-${container.id}`} data-testid={`shipment-milestones-container-stepper-${container.id}`} style={{ marginBottom: 18, paddingBottom: 18, borderBottom: `1px solid ${HZ.border}` }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>
+        <span style={{ fontFamily: HZ_MONO, fontSize: 12, fontWeight: 700, color: HZ.text }}>
           {container.containerNumber || container.id}
         </span>
-        <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>{completedCount}/{CONTAINER_EVENT_TYPES.length} complete</span>
+        <span style={{ fontFamily: HZ_MONO, fontSize: 10, color: HZ.textMuted }}>{completedCount}/{CONTAINER_EVENT_TYPES.length} complete</span>
       </div>
-      <div style={{ height: 4, background: T.border, borderRadius: 2, overflow: "hidden", marginBottom: 12 }}>
-        <div style={{ height: "100%", width: `${progress}%`, background: T.success, transition: "width .3s ease", borderRadius: 2 }} />
+      <div style={{ height: 4, background: HZ.border, borderRadius: 2, overflow: "hidden", marginBottom: 12 }}>
+        <div style={{ height: "100%", width: `${progress}%`, background: HZ.gradCyan, transition: "width .3s ease", borderRadius: 2 }} />
       </div>
       <div style={{ display: "flex", gap: 4 }}>
         {CONTAINER_EVENT_TYPES.map((type, idx) => {
@@ -2384,16 +2448,16 @@ const ContainerEventsStepper = ({ container }) => {
             <div key={type} title={type} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 0 }}>
               <div style={{
                 width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
-                background: state === 'upcoming' ? T.surface : color,
+                background: state === 'upcoming' ? HZ.surface : color,
                 border: `2px solid ${color}`,
                 display: "flex", alignItems: "center", justifyContent: "center",
-                color: state === 'upcoming' ? T.textMuted : "#fff",
+                color: state === 'upcoming' ? HZ.textMuted : "#06111f",
                 fontSize: 10, fontWeight: 700, lineHeight: 1,
                 boxShadow: state === 'current' ? `0 0 0 4px ${color}22` : "none",
               }}>
                 {state === 'completed' ? <IconCheck size={11} /> : idx + 1}
               </div>
-              <span style={{ fontFamily: T.body, fontSize: 9, color: T.textMuted, textAlign: "center",
+              <span style={{ fontFamily: HZ_BODY, fontSize: 9, color: HZ.textMuted, textAlign: "center",
                 lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", width: "100%" }}>
                 {type}
               </span>
@@ -2407,10 +2471,11 @@ const ContainerEventsStepper = ({ container }) => {
 
 export const ContainerEventsSteppers = ({ shipment, containers }) => {
   const ctrs = containers.filter(c => c.shipmentId === shipment.id);
+  useHorizonFonts();
   if (ctrs.length === 0) return null;
   return (
-    <div id="shpmiles-ctrsteppers" style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, padding: "18px 20px", marginTop: 20 }}>
-      <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 800, color: T.text, marginBottom: 16 }}>
+    <div id="shpmiles-ctrsteppers" data-testid="shipment-milestones-container-steppers" style={{ background: HZ.surface, backdropFilter: "blur(20px)", borderRadius: 12, border: `1px solid ${HZ.border}`, padding: "18px 20px", marginTop: 20 }}>
+      <div style={{ fontFamily: HZ_DISPLAY, fontSize: 15, fontWeight: 800, color: HZ.text, marginBottom: 16 }}>
         Container Events
       </div>
       {ctrs.map(c => <ContainerEventsStepper key={c.id} container={c} />)}
@@ -3082,36 +3147,37 @@ const ContractCard = ({ contract, selected, onSelect }) => {
   return (
     <div
       onClick={onSelect}
+      data-testid={`shipment-schedules-contract-card-${contract.id}`}
       style={{
         display: "flex", flexDirection: "column", gap: 6,
         padding: "12px 16px", borderRadius: 8, cursor: onSelect ? "pointer" : "default",
-        border: `1px solid ${selected ? T.accent : T.border}`,
-        background: selected ? T.accent + "0d" : T.bg,
+        border: `1px solid ${selected ? HZ.cyan : HZ.border}`,
+        background: selected ? HZ.cyanBg : HZ.bg,
         transition: "border-color .15s, background .15s",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 700, color: T.accent }}>
+        <span style={{ fontFamily: HZ_MONO, fontSize: 14, fontWeight: 700, color: HZ.cyan }}>
           {contract.contractNumber}
         </span>
         {contract.contractRef && (
-          <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>
+          <span style={{ fontFamily: HZ_MONO, fontSize: 12, color: HZ.textMuted }}>
             {contract.contractRef}
           </span>
         )}
         <Badge variant="success">{contract.status}</Badge>
       </div>
       <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-        <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-          Carrier <span style={{ fontFamily: T.mono, color: T.text, fontWeight: 600 }}>{contract.carrierCode}</span>
+        <span style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted }}>
+          Carrier <span style={{ fontFamily: HZ_MONO, color: HZ.text, fontWeight: 600 }}>{contract.carrierCode}</span>
         </span>
         {contract.namedAccount && (
-          <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-            Account <span style={{ color: T.text }}>{contract.namedAccount}</span>
+          <span style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted }}>
+            Account <span style={{ color: HZ.text }}>{contract.namedAccount}</span>
           </span>
         )}
-        <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-          Valid <span style={{ fontFamily: T.mono, fontSize: 11, color: T.text }}>{validRange}</span>
+        <span style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted }}>
+          Valid <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.text }}>{validRange}</span>
         </span>
       </div>
     </div>
@@ -3123,17 +3189,20 @@ export const PendingRevalidationModal = ({ matches, contractRef, onAccept, onDis
   const single = matches.length === 1;
   const selectedContract = matches.find(c => c.id === selected) || null;
 
+  useHorizonFonts();
+
   return (
     <Modal
       title={single ? "Contract Match Found" : "Multiple Contracts Found"}
       onClose={onDismiss}
       width={540}
+      data-testid="shipment-schedules-pending-revalidation-modal"
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <p style={{ fontFamily: T.body, fontSize: 13, color: T.text, lineHeight: 1.6, margin: 0 }}>
+        <p style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text, lineHeight: 1.6, margin: 0 }}>
           {single
-            ? <>An active Central contract matching <span style={{ fontFamily: T.mono, fontWeight: 700, color: T.accent }}>{contractRef}</span> was found. Switch this shipment to use it, or keep the Pending status.</>
-            : <>{matches.length} active contracts matching <span style={{ fontFamily: T.mono, fontWeight: 700, color: T.accent }}>{contractRef}</span> were found. Select one to use, or cancel to keep the Pending status.</>
+            ? <>An active Central contract matching <span style={{ fontFamily: HZ_MONO, fontWeight: 700, color: HZ.cyan }}>{contractRef}</span> was found. Switch this shipment to use it, or keep the Pending status.</>
+            : <>{matches.length} active contracts matching <span style={{ fontFamily: HZ_MONO, fontWeight: 700, color: HZ.cyan }}>{contractRef}</span> were found. Select one to use, or cancel to keep the Pending status.</>
           }
         </p>
 
@@ -3149,11 +3218,12 @@ export const PendingRevalidationModal = ({ matches, contractRef, onAccept, onDis
         </div>
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 4 }}>
-          <Btn variant="ghost" onClick={onDismiss}>Keep Pending</Btn>
+          <Btn variant="ghost" onClick={onDismiss} data-testid="shipment-schedules-pending-revalidation-dismiss-btn">Keep Pending</Btn>
           <Btn
             variant="primary"
             disabled={!selectedContract}
             onClick={() => selectedContract && onAccept(selectedContract)}
+            data-testid="shipment-schedules-pending-revalidation-accept-btn"
           >
             {single ? "Switch to Central Contract" : "Use Selected Contract"}
           </Btn>
@@ -3244,7 +3314,7 @@ export const RouteSummaryBar = ({ shipment }) => {
   const portPolName = portPolNameRaw || resolvedPolName;
   const portPodName = portPodNameRaw || resolvedPodName;
   const gridCols = `${pkuLeg ? "auto " : ""}1fr auto 1fr${delLeg ? " auto" : ""}`;
-  const doorCell = { padding: "12px 14px", display: "flex", flexDirection: "column", gap: 3, background: T.surface };
+  const doorCell = { padding: "12px 14px", display: "flex", flexDirection: "column", gap: 3, background: HZ.surface };
   // Resolved name (+ country) leads, the UN/LOCODE is the secondary/reference line below it —
   // e.g. "Rotterdam, NL" over "NLRTM". `country` is passed in already-blanked for a GPS leg
   // (its code is "GPS"/a lat-lng string, not a real UN/LOCODE) rather than derived in here, so
@@ -3252,29 +3322,31 @@ export const RouteSummaryBar = ({ shipment }) => {
   // bare code (today's original single-line look) when no name has resolved yet.
   const LocationLines = ({ code, name, country, align = "left" }) => name ? (
     <>
-      <span style={{ fontFamily: T.body, fontSize: 15, fontWeight: 700, color: T.text, textAlign: align }}>
+      <span style={{ fontFamily: HZ_BODY, fontSize: 15, fontWeight: 700, color: HZ.text, textAlign: align }}>
         {name}{country ? `, ${country}` : ""}
       </span>
-      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, textAlign: align }}>
+      <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted, textAlign: align }}>
         {code || "—"}
       </span>
     </>
   ) : (
-    <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: code ? T.text : T.border, textAlign: align }}>
+    <span style={{ fontFamily: HZ_MONO, fontSize: 15, fontWeight: 700, color: code ? HZ.text : HZ.textFaint, textAlign: align }}>
       {code || "—"}
     </span>
   );
 
+  useHorizonFonts();
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: gridCols,
-      background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
+    <div data-testid="shipment-schedules-route-summary-bar" style={{ display: "grid", gridTemplateColumns: gridCols,
+      background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, borderRadius: 12,
       overflow: "hidden", marginBottom: 22 }}>
 
       {/* PKU door cell */}
       {pkuLeg && (
-        <div style={{ ...doorCell, borderRight: `1px dashed ${T.border}` }}>
-          <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.09em", color: T.accent, display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <div style={{ ...doorCell, borderRight: `1px dashed ${HZ.border}` }}>
+          <span style={{ fontFamily: HZ_BODY, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.09em", color: HZ.cyan, display: "inline-flex", alignItems: "center", gap: 4 }}>
             <IconWarehouseDoor size={24} />Pick-up</span>
           {(() => {
             const name = pkuPoint.name || resolvedPkuName;
@@ -3283,7 +3355,7 @@ export const RouteSummaryBar = ({ shipment }) => {
             const country = !isGpsLeg(pkuLeg, "pol") && pkuPoint.code ? countryCodeOf(pkuPoint.code) : "";
             return <LocationLines code={pkuPoint.code} name={name} country={country} />;
           })()}
-          <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
+          <span style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, marginTop: 2 }}>
             Carrier's Haulage →
           </span>
         </div>
@@ -3291,8 +3363,8 @@ export const RouteSummaryBar = ({ shipment }) => {
 
       {/* POL */}
       <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3 }}>
-        <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-          letterSpacing: "0.09em", color: T.textMuted, display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <span style={{ fontFamily: HZ_BODY, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+          letterSpacing: "0.09em", color: HZ.textMuted, display: "inline-flex", alignItems: "center", gap: 4 }}>
           <IconCrane size={24} />Port of Loading</span>
         <LocationLines code={portPol} name={portPolName} country={portPol ? countryCodeOf(portPol) : ""} />
       </div>
@@ -3300,36 +3372,36 @@ export const RouteSummaryBar = ({ shipment }) => {
       {/* Centre: ETD / transit / ETA / carrier / routing term */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
         gap: 6, padding: "12px 24px",
-        borderLeft: `1px solid ${T.border}`, borderRight: `1px solid ${T.border}`,
-        background: T.surface }}>
+        borderLeft: `1px solid ${HZ.border}`, borderRight: `1px solid ${HZ.border}`,
+        background: HZ.surface2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-            <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-              letterSpacing: "0.09em", color: T.textMuted }}>ETD</span>
-            <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.etd ? T.text : T.border }}>
+            <span style={{ fontFamily: HZ_BODY, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+              letterSpacing: "0.09em", color: HZ.textMuted }}>ETD</span>
+            <span style={{ fontFamily: HZ_MONO, fontSize: 12, color: shipment.etd ? HZ.text : HZ.textFaint }}>
               {shipment.etd || "—"}</span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
             {transitDays !== null && transitDays >= 0
-              ? <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
-                  background: T.accentBg, border: `1px solid ${T.accent}33`,
+              ? <span style={{ fontFamily: HZ_MONO, fontSize: 11, fontWeight: 700, color: HZ.cyan,
+                  background: HZ.cyanBg, border: `1px solid ${HZ.cyan}33`,
                   borderRadius: 10, padding: "2px 10px", whiteSpace: "nowrap" }}>
                   {transitDays}d transit
                 </span>
               : transitDays !== null && transitDays < 0
-                ? <span title="ETA is before ETD — check leg dates" style={{ fontFamily: T.mono, fontSize: 11,
-                    fontWeight: 700, color: T.warning, background: T.warning + "18",
-                    border: `1px solid ${T.warning}44`, borderRadius: 10,
+                ? <span title="ETA is before ETD — check leg dates" style={{ fontFamily: HZ_MONO, fontSize: 11,
+                    fontWeight: 700, color: HZ.warn, background: HZ.warnBg,
+                    border: `1px solid ${HZ.warn}44`, borderRadius: 10,
                     padding: "2px 10px", whiteSpace: "nowrap", cursor: "default",
                     display: "inline-flex", alignItems: "center", gap: 3 }}>
                     <IconWarning size={10} />dates
                   </span>
-                : <span style={{ color: T.border, fontSize: 16 }}>→</span>}
+                : <span style={{ color: HZ.textFaint, fontSize: 16 }}>→</span>}
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-            <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-              letterSpacing: "0.09em", color: T.textMuted }}>ETA</span>
-            <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.eta ? T.text : T.border }}>
+            <span style={{ fontFamily: HZ_BODY, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+              letterSpacing: "0.09em", color: HZ.textMuted }}>ETA</span>
+            <span style={{ fontFamily: HZ_MONO, fontSize: 12, color: shipment.eta ? HZ.text : HZ.textFaint }}>
               {shipment.eta || "—"}</span>
           </div>
         </div>
@@ -3337,13 +3409,13 @@ export const RouteSummaryBar = ({ shipment }) => {
           <div style={{ display: "flex", alignItems: "flex-start", gap: 4, flexWrap: "wrap", justifyContent: "center" }}>
             {tsps.map((tsp, i) => (
               <div key={`${tsp.code}-${i}`} style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
-                {i > 0 && <span style={{ color: T.textMuted, fontSize: 10, marginTop: 3 }}>›</span>}
+                {i > 0 && <span style={{ color: HZ.textMuted, fontSize: 10, marginTop: 3 }}>›</span>}
                 {/* Name+country leads, code is secondary — same pattern POL/POD use now.
                     Previously the name only reached a title tooltip, invisible on
                     hover-less/touch use. */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6,
-                  background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4, padding: "4px 8px" }}>
-                  <IconMapPin size={16} style={{ color: T.textMuted, flexShrink: 0 }} />
+                  background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 4, padding: "4px 8px" }}>
+                  <IconMapPin size={16} style={{ color: HZ.textMuted, flexShrink: 0 }} />
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
                     <LocationLines code={tsp.code} name={tsp.name || resolvedTspNames[tsp.code]}
                       country={tsp.code ? countryCodeOf(tsp.code) : ""} align="center" />
@@ -3357,16 +3429,16 @@ export const RouteSummaryBar = ({ shipment }) => {
           const displayCarrier = shipment.carrierCode || contractCarrierCode;
           return (
             <span style={{ display: "inline-flex", alignItems: "center", gap: 4,
-              fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-              color: displayCarrier ? T.accent : T.border }}>
+              fontFamily: HZ_MONO, fontSize: 12, fontWeight: 700,
+              color: displayCarrier ? HZ.cyan : HZ.textFaint }}>
               <IconShip size={24} />
               {displayCarrier || "—"}
             </span>
           );
         })()}
         {shipment.routingTerm && (
-          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.text,
-            background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4, padding: "1px 7px" }}>
+          <span style={{ fontFamily: HZ_MONO, fontSize: 11, fontWeight: 700, color: HZ.text,
+            background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 4, padding: "1px 7px" }}>
             {shipment.routingTerm}
           </span>
         )}
@@ -3374,8 +3446,8 @@ export const RouteSummaryBar = ({ shipment }) => {
 
       {/* POD */}
       <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3, textAlign: "right" }}>
-        <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-          letterSpacing: "0.09em", color: T.textMuted, display: "inline-flex", alignItems: "center",
+        <span style={{ fontFamily: HZ_BODY, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+          letterSpacing: "0.09em", color: HZ.textMuted, display: "inline-flex", alignItems: "center",
           gap: 4, justifyContent: "flex-end" }}>
           Port of Discharge<IconCrane size={24} style={{ transform: "scaleX(-1)" }} /></span>
         <LocationLines code={portPod} name={portPodName} country={portPod ? countryCodeOf(portPod) : ""} align="right" />
@@ -3383,9 +3455,9 @@ export const RouteSummaryBar = ({ shipment }) => {
 
       {/* DEL door cell */}
       {delLeg && (
-        <div style={{ ...doorCell, borderLeft: `1px dashed ${T.border}`, textAlign: "right" }}>
-          <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.09em", color: T.accent, display: "inline-flex", alignItems: "center",
+        <div style={{ ...doorCell, borderLeft: `1px dashed ${HZ.border}`, textAlign: "right" }}>
+          <span style={{ fontFamily: HZ_BODY, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.09em", color: HZ.cyan, display: "inline-flex", alignItems: "center",
             gap: 4, justifyContent: "flex-end" }}>
             Delivery<IconWarehouseDoor size={24} style={{ transform: "scaleX(-1)" }} /></span>
           {(() => {
@@ -3393,7 +3465,7 @@ export const RouteSummaryBar = ({ shipment }) => {
             const country = !isGpsLeg(delLeg, "pod") && delPoint.code ? countryCodeOf(delPoint.code) : "";
             return <LocationLines code={delPoint.code} name={name} country={country} align="right" />;
           })()}
-          <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
+          <span style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, marginTop: 2 }}>
             → Carrier's Haulage
           </span>
         </div>
@@ -3426,31 +3498,33 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
       .finally(() => setLoading(false));
   }, [shipment.id]);
 
-  const EVENT_COLOR = { SAVED: T.success, REMOVED: T.danger, UPDATED: T.warning };
+  const EVENT_COLOR = { SAVED: HZ.good, REMOVED: HZ.crit, UPDATED: HZ.warn };
   const SCHED_FIELD_LABELS = { vessel_name: "Vessel", voyage_number: "Voyage", etd: "ETD", eta: "ETA", carrier: "Carrier", service: "Service" };
+
+  useHorizonFonts();
 
   const body = (
     <>
       {loading ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.textMuted,
-          fontFamily: T.body, fontSize: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, color: HZ.textMuted,
+          fontFamily: HZ_BODY, fontSize: 12 }}>
           <Spinner size="sm" /> Loading…
         </div>
       ) : events.length === 0 ? (
-        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", padding: "8px 0" }}>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, fontStyle: "italic", padding: "8px 0" }}>
           No schedule changes yet — sailings picked via "Add Sailing" will show up here.
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {events.map(ev => {
             const m = ev.meta ? JSON.parse(ev.meta) : {};
-            const color = EVENT_COLOR[ev.event_type] || T.textMuted;
+            const color = EVENT_COLOR[ev.event_type] || HZ.textMuted;
             const isUpdate = ev.event_type === "UPDATED";
             return (
-              <div key={ev.id} style={{ display: "flex", flexDirection: "column", gap: 4,
-                padding: "10px 14px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <div key={ev.id} data-testid={`shipment-schedules-history-row-${ev.id}`} style={{ display: "flex", flexDirection: "column", gap: 4,
+                padding: "10px 14px", background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.03em",
+                  <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: "0.03em",
                     padding: "2px 8px", borderRadius: 4, textTransform: "uppercase",
                     background: color + "22", color, border: `1px solid ${color}55`, flexShrink: 0 }}>
                     {ev.event_type}
@@ -3458,27 +3532,27 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
                   {/* Schedule's own surrogate key — omitted for sailing_leg rows, which already
                       show a friendlier "Leg POL→POD:" identifier instead of a raw leg key. */}
                   {ev.entity_type === "schedule" && ev.entity_id && (
-                    <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>{ev.entity_id}</span>
+                    <span style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted }}>{ev.entity_id}</span>
                   )}
                 </div>
                 {isUpdate ? (
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
                     {ev.entity_type === "sailing_leg" && (
-                      <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>
+                      <span style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted }}>
                         Leg {m.pol || "—"}→{m.pod || "—"}:
                       </span>
                     )}
-                    <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.text, minWidth: 60 }}>
+                    <span style={{ fontFamily: HZ_BODY, fontSize: 12, fontWeight: 700, color: HZ.text, minWidth: 60 }}>
                       {SCHED_FIELD_LABELS[ev.field] || ev.field}
                     </span>
-                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.danger, textDecoration: "line-through" }}>
+                    <span style={{ fontFamily: HZ_MONO, fontSize: 12, color: HZ.crit, textDecoration: "line-through" }}>
                       {ev.old_value || "—"}
                     </span>
-                    <span style={{ color: T.textMuted, fontSize: 12 }}>→</span>
-                    <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.success }}>
+                    <span style={{ color: HZ.textMuted, fontSize: 12 }}>→</span>
+                    <span style={{ fontFamily: HZ_MONO, fontSize: 12, fontWeight: 700, color: HZ.good }}>
                       {ev.new_value || "—"}
                     </span>
-                    <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, marginLeft: "auto", whiteSpace: "nowrap" }}>
+                    <span style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, marginLeft: "auto", whiteSpace: "nowrap" }}>
                       {new Date(ev.created_at).toLocaleDateString("en-GB")}
                       {m.actor ? ` by ${m.actor}` : ""}
                     </span>
@@ -3486,24 +3560,24 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
                 ) : (
                   <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 130 }}>
-                      <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>
-                        {m.vesselName || "—"}{m.vesselImo ? <span style={{ color: T.textMuted, fontWeight: 400 }}>{` · IMO ${m.vesselImo}`}</span> : ""}
+                      <span style={{ fontFamily: HZ_MONO, fontSize: 13, fontWeight: 700, color: HZ.text }}>
+                        {m.vesselName || "—"}{m.vesselImo ? <span style={{ color: HZ.textMuted, fontWeight: 400 }}>{` · IMO ${m.vesselImo}`}</span> : ""}
                       </span>
-                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                      <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted }}>
                         {m.service || "—"}{m.voyageNumber ? ` · Voy ${m.voyageNumber}` : ""}
                       </span>
                     </div>
                     {m.carrier && (
-                      <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
-                        background: T.accentBg, border: `1px solid ${T.accent}33`, borderRadius: 4, padding: "1px 7px" }}>
+                      <span style={{ fontFamily: HZ_MONO, fontSize: 11, fontWeight: 700, color: HZ.cyan,
+                        background: HZ.cyanBg, border: `1px solid ${HZ.cyan}33`, borderRadius: 4, padding: "1px 7px" }}>
                         {m.carrier}
                       </span>
                     )}
-                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
+                    <span style={{ fontFamily: HZ_MONO, fontSize: 12, color: HZ.text }}>
                       {m.pol || "—"} → {m.pod || "—"}
                     </span>
                     {(m.etd || m.eta) ? (
-                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                      <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted }}>
                         {m.etd || "—"} → {m.eta || "—"}
                       </span>
                     ) : m.etd === undefined && m.eta === undefined ? (
@@ -3511,17 +3585,17 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
                       // older entry logged before this snapshot tracked dates at all) from a
                       // legitimately-blank ETA on an otherwise-complete recent entry (m.etd set,
                       // m.eta simply not yet known) — the latter already renders fine above.
-                      <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontStyle: "italic" }}>
+                      <span style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontStyle: "italic" }}>
                         Route dates not recorded (older entry)
                       </span>
                     ) : null}
                     {m.transitDays != null && m.transitDays !== "" && (
-                      <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted,
-                        background: T.surface, border: `1px solid ${T.border}`, borderRadius: 4, padding: "1px 7px" }}>
+                      <span style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted,
+                        background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 4, padding: "1px 7px" }}>
                         {m.transitDays}d transit
                       </span>
                     )}
-                    <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, marginLeft: "auto", whiteSpace: "nowrap" }}>
+                    <span style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, marginLeft: "auto", whiteSpace: "nowrap" }}>
                       {new Date(ev.created_at).toLocaleDateString("en-GB")}
                       {m.actor ? ` by ${m.actor}` : ""}
                     </span>
@@ -3538,18 +3612,19 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
   if (forceOpen) return body;
 
   return (
-    <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
+    <div data-testid="shipment-schedules-history-panel" style={{ background: HZ.surface, backdropFilter: "blur(20px)", borderRadius: 12, border: `1px solid ${HZ.border}`, overflow: "hidden" }}>
       <button type="button" onClick={() => setExpanded(o => !o)}
+        data-testid="shipment-schedules-history-toggle"
         style={{ display: "flex", alignItems: "center", gap: 10, width: "100%",
           padding: "14px 20px", background: "none", border: "none", cursor: "pointer", textAlign: "left",
-          borderBottom: expanded ? `1px solid ${T.border}` : "none" }}>
-        <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.textMuted }}>
+          borderBottom: expanded ? `1px solid ${HZ.border}` : "none" }}>
+        <span style={{ fontFamily: HZ_MONO, fontSize: 12, fontWeight: 700, color: HZ.textMuted }}>
           {expanded ? "▾" : "▸"}
         </span>
-        <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 800, color: T.text }}>Schedule History</span>
+        <span style={{ fontFamily: HZ_DISPLAY, fontSize: 15, fontWeight: 800, color: HZ.text }}>Schedule History</span>
         {events.length > 0 && (
-          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
-            background: T.accentBg, color: T.accent, border: `1px solid ${T.accent}33`,
+          <span style={{ fontFamily: HZ_MONO, fontSize: 11, fontWeight: 700,
+            background: HZ.cyanBg, color: HZ.cyan, border: `1px solid ${HZ.cyan}33`,
             borderRadius: 4, padding: "1px 7px" }}>{events.length}</span>
         )}
       </button>
@@ -3561,8 +3636,8 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
 
 // ─── Related Tickets Panel ────────────────────────────────────────────────────
 
-const PRIORITY_COLOR = { High: T.danger, Medium: T.warning, Low: T.textMuted, Critical: "#f97316" };
-const STATUS_DOT = { Done: T.success, "In Progress": T.accent, Ready: T.textMuted, Blocked: T.danger };
+const PRIORITY_COLOR = { High: HZ.crit, Medium: HZ.warn, Low: HZ.textMuted, Critical: HZ.amber2 };
+const STATUS_DOT = { Done: HZ.good, "In Progress": HZ.cyan, Ready: HZ.textMuted, Blocked: HZ.crit };
 
 // embedded=true skips the outer card + "Related Tickets" header (used by TicketsDrawer,
 // which supplies its own drawer header/title) and renders just the list body — same
@@ -3579,42 +3654,44 @@ export const RelatedTicketsPanel = ({ shipmentId, embedded = false }) => {
       .finally(() => setLoading(false));
   }, [shipmentId]);
 
+  useHorizonFonts();
+
   const body = (
     <div style={{ padding: embedded ? 0 : "14px 20px" }}>
       {loading ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.textMuted,
-          fontFamily: T.body, fontSize: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, color: HZ.textMuted,
+          fontFamily: HZ_BODY, fontSize: 12 }}>
           <Spinner size="sm" /> Loading…
         </div>
       ) : tickets.length === 0 ? (
-        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", padding: "8px 0" }}>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, fontStyle: "italic", padding: "8px 0" }}>
           No tickets linked to this shipment.
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {tickets.map(t => (
             <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12,
-              padding: "9px 14px", background: T.bg,
-              border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              padding: "9px 14px", background: HZ.bg,
+              border: `1px solid ${HZ.border}`, borderRadius: 8 }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-                background: STATUS_DOT[t.status] || T.textMuted }} />
+                background: STATUS_DOT[t.status] || HZ.textMuted }} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontFamily: T.body, fontSize: 13, color: T.text,
+                <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text,
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {t.title}
                 </div>
                 <div style={{ display: "flex", gap: 8, marginTop: 2, alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>{t.id}</span>
-                  <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>{t.status}</span>
+                  <span style={{ fontFamily: HZ_MONO, fontSize: 10, color: HZ.textMuted }}>{t.id}</span>
+                  <span style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted }}>{t.status}</span>
                   {t.assigneeName && (
-                    <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>
+                    <span style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted }}>
                       → {t.assigneeName}
                     </span>
                   )}
                 </div>
               </div>
-              <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, flexShrink: 0,
-                color: PRIORITY_COLOR[t.priority] || T.textMuted }}>
+              <span style={{ fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600, flexShrink: 0,
+                color: PRIORITY_COLOR[t.priority] || HZ.textMuted }}>
                 {t.priority}
               </span>
             </div>
@@ -3627,14 +3704,14 @@ export const RelatedTicketsPanel = ({ shipmentId, embedded = false }) => {
   if (embedded) return body;
 
   return (
-    <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
+    <div style={{ background: HZ.surface, backdropFilter: "blur(20px)", borderRadius: 12, border: `1px solid ${HZ.border}`, overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "14px 20px", borderBottom: `1px solid ${T.border}` }}>
+        padding: "14px 20px", borderBottom: `1px solid ${HZ.border}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 800, color: T.text }}>Related Tickets</span>
+          <span style={{ fontFamily: HZ_DISPLAY, fontSize: 15, fontWeight: 800, color: HZ.text }}>Related Tickets</span>
           {tickets.length > 0 && (
-            <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
-              background: T.accentBg, color: T.accent, border: `1px solid ${T.accent}33`,
+            <span style={{ fontFamily: HZ_MONO, fontSize: 11, fontWeight: 700,
+              background: HZ.cyanBg, color: HZ.cyan, border: `1px solid ${HZ.cyan}33`,
               borderRadius: 4, padding: "1px 7px" }}>{tickets.length}</span>
           )}
         </div>
@@ -3651,46 +3728,48 @@ export const RelatedTicketsPanel = ({ shipmentId, embedded = false }) => {
 // today; inventing one is a separate feature, not implied by "move into a drawer").
 // The list itself is RelatedTicketsPanel's existing fetch/render, unchanged, just
 // embedded without its own card chrome (same wrap-only precedent as ScheduleHistoryPanel).
-export const TicketsDrawer = ({ shipment, onClose }) => (
+export const TicketsDrawer = ({ shipment, onClose }) => {
+  useHorizonFonts();
+  return (
   <>
     <div onClick={onClose}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.25)", zIndex: 1100 }} />
 
     <div style={{
       position: "fixed", top: 0, right: 0, bottom: 0, width: 420,
-      background: T.surface, borderLeft: `1px solid ${T.border}`,
-      boxShadow: "-8px 0 32px rgba(0,0,0,.35)",
+      background: HZ.surfaceSolid, backdropFilter: "blur(22px)", borderLeft: `1px solid ${HZ.border}`,
+      boxShadow: "-8px 0 32px rgba(0,0,0,.5)",
       zIndex: 1101, display: "flex", flexDirection: "column",
     }}>
       {/* Header */}
-      <div style={{ borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+      <div style={{ borderBottom: `1px solid ${HZ.border}`, flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
           padding: "16px 20px 12px" }}>
-          <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
+          <div style={{ fontFamily: HZ_DISPLAY, fontSize: 15, fontWeight: 700, color: HZ.text }}>
             ◩ Tickets
           </div>
           <button onClick={onClose}
-            style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
-              cursor: "pointer", color: T.textMuted, fontSize: 15, padding: "4px 10px",
+            style={{ background: "none", border: `1px solid ${HZ.border}`, borderRadius: 6,
+              cursor: "pointer", color: HZ.textMuted, fontSize: 15, padding: "4px 10px",
               lineHeight: 1, display: "inline-flex", alignItems: "center" }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = T.danger; e.currentTarget.style.color = T.danger; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
+            onMouseEnter={e => { e.currentTarget.style.borderColor = HZ.crit; e.currentTarget.style.color = HZ.crit; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = HZ.border; e.currentTarget.style.color = HZ.textMuted; }}>
             <IconClose size={13} />
           </button>
         </div>
         {/* Context strip */}
         <div style={{ display: "flex", alignItems: "center", gap: 10,
           padding: "8px 20px 12px", flexWrap: "wrap" }}>
-          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, fontWeight: 600 }}>
+          <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted, fontWeight: 600 }}>
             {shipment.id}
           </span>
-          <span style={{ color: T.border }}>·</span>
-          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.text }}>
+          <span style={{ color: HZ.textFaint }}>·</span>
+          <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.text }}>
             {shipment.pol} → {shipment.pod}
           </span>
-          <span style={{ color: T.border }}>·</span>
+          <span style={{ color: HZ.textFaint }}>·</span>
           <span style={{
-            fontFamily: T.body, fontSize: 10.5, fontWeight: 700,
+            fontFamily: HZ_BODY, fontSize: 10.5, fontWeight: 700,
             color: statusVariant(shipment.status).color,
             background: statusVariant(shipment.status).bg,
             border: `1px solid ${statusVariant(shipment.status).color}44`,
@@ -3707,7 +3786,8 @@ export const TicketsDrawer = ({ shipment, onClose }) => (
       </div>
     </div>
   </>
-);
+  );
+};
 
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -3727,18 +3807,20 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
     api.statusLog.list(shipment.id).then(setStatusLog).catch(() => setStatusLog([]));
   }, [shipment?.id, shipment?.status]);
 
+  useHorizonFonts();
+
   return (
-    <div>
+    <div data-testid="shipment-detail-page">
       {/* Overview anchor — identity/route/actions now live in the persistent ShipmentHeaderBar
           (mounted once in App.jsx above this page), so there's nothing left to render here
           except the scroll target the sidebar's "Overview" link points at. */}
       <div id="shp-overview" />
 
       {!canEdit && (
-        <div id="shpoverview-viewonly-banner" style={{
+        <div id="shpoverview-viewonly-banner" data-testid="shipment-detail-viewonly-banner" style={{
           display: "flex", alignItems: "center", gap: 9, padding: "9px 16px",
-          borderRadius: 8, background: T.info + "15", border: `1px solid ${T.info}44`,
-          fontFamily: T.body, fontSize: 12, color: T.info, marginBottom: 16,
+          borderRadius: 8, background: HZ.infoBg, border: `1px solid ${HZ.info}44`,
+          fontFamily: HZ_BODY, fontSize: 12, color: "#7db2f2", marginBottom: 16,
         }}>
           <IconEye size={14} />
           {lockedByOther
@@ -3747,7 +3829,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         </div>
       )}
 
-      <div id="shp-services" style={{ marginBottom: 20 }}>
+      <div id="shp-services" data-testid="shipment-detail-services-panel" style={{ marginBottom: 20 }}>
         <ServicesPanel shipment={shipment} />
       </div>
 

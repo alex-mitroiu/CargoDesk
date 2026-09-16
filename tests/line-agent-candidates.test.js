@@ -69,13 +69,18 @@ async function login() {
     token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nControl case: unambiguous resolution still auto-assigns (unchanged behavior)");
     const soloAgent = await request("POST", "/api/customers", { companyName: "LAC Solo Agent Co" }, token);
     const soloHeader = await request("POST", "/api/carrier-agents",
       { carrierCode, agentCustomerId: soloAgent.body.id, locationType: "unlocode", unlocode: "NLRTM" }, token);
     assert("solo header created", soloHeader.status === 201, JSON.stringify(soloHeader.body));
     const soloShip = await request("POST", "/api/shipments",
-      { pol: "NLRTM", pod: "USNYC", carrierCode, status: "Active", contractType: "SPOT" }, token);
+      { pol: "NLRTM", pod: "USNYC", carrierCode, status: "Active", contractType: "SPOT", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, token);
     shipmentId = soloShip.body.id;
     assert("scratch shipment created", soloShip.status === 201);
     const soloParties = await request("GET", `/api/shipments/${shipmentId}/parties`, null, token);
@@ -106,7 +111,7 @@ async function login() {
 
     console.log("\nCreating a shipment on the ambiguous route (POL=ESVLC, no direct/country agent for TSTA; POD=SGSIN, unrelated and agent-free, to isolate the ambiguity to the export side only)");
     const ambShip = await request("POST", "/api/shipments",
-      { pol: "ESVLC", pod: "SGSIN", carrierCode, status: "Active", contractType: "SPOT" }, token);
+      { pol: "ESVLC", pod: "SGSIN", carrierCode, status: "Active", contractType: "SPOT", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, token);
     ambiguousShipmentId = ambShip.body.id;
     assert("ambiguous scratch shipment created", ambShip.status === 201, JSON.stringify(ambShip.body));
 

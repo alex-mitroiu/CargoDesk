@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { T } from "../../tokens";
 import { MilestonePanel, ContainerEventsSteppers } from "./ShipmentDetailPage";
+import { HZ_MONO, HZ, useHorizonFonts } from "./shipmentDetailTheme";
 
 // ─── Shipment Milestones & Events Page ────────────────────────────────────
 // Dedicated sub-page for milestone tracking, promoted out of the
@@ -12,11 +12,12 @@ import { MilestonePanel, ContainerEventsSteppers } from "./ShipmentDetailPage";
 
 const ShipmentMilestonesPage = ({ shipment, containers = [], onBack }) => {
   const [prog, setProg] = useState({ done: 0, total: 0 });
+  useHorizonFonts();
 
   return (
-    <div id="shpmiles-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
+    <div id="shpmiles-page" data-testid="shipment-milestones-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
       {prog.total > 0 && (
-        <div id="shpmiles-progress" style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted, marginBottom: 14 }}>
+        <div id="shpmiles-progress" data-testid="shipment-milestones-progress" style={{ fontFamily: HZ_MONO, fontSize: 12, color: HZ.textMuted, marginBottom: 14 }}>
           {prog.done}/{prog.total} milestones complete
         </div>
       )}

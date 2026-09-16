@@ -66,6 +66,11 @@ async function login() {
     token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     // ─── Legacy single-routing contract — must be completely unaffected ───────────────────────
     console.log("\nLegacy contract with no named routings — unaffected by the routing feature");
     let legacyContractId;
@@ -163,6 +168,7 @@ async function login() {
       const shipRes = await request("POST", "/api/shipments", {
         pol: "CNCKG", pod: "SEGOT", carrierCode: "HLCU", contractType: "Central",
         contractId, contractRoutingId: rtgIdA,
+        emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, token);
       assert("shipment created with a specific routing assigned", shipRes.status === 200 || shipRes.status === 201, JSON.stringify(shipRes.body));
       const shipmentId = shipRes.body.id;

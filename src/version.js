@@ -2,12 +2,18 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.91.1";
-export const BUILD     = "2026-09-12";
-export const CODENAME  = "Bulkhead";
-export const BUILD_FINGERPRINT = "3a91c2fd";
+export const VERSION   = "0.91.3";
+export const BUILD     = "2026-09-16";
+export const CODENAME  = "Horizon";
+export const BUILD_FINGERPRINT = "7c204e91";
 
 export const CHANGELOG = [
+  {
+    version:  "0.91.3",
+    date:     "2026-09-16",
+    codename: "Horizon",
+    summary:  "Bundled release -- the Trade Horizon visual language (first shipped on the Dashboard) is now applied to Command Center and the full Shipment Details experience, plus a shipment-integrity fix wave. Batched into one version per this project's own bundling precedent (v0.85.0/v0.90.0/v0.90.1/v0.90.3/v0.91.0).\n\n**Command Center restyle + Excel-style column filters** -- Command Center gets the same page-scoped Trade Horizon treatment already on the Dashboard (no shared token/primitive changes), real per-carrier brand colors on carrier badges, an expand/collapse control for the Recent Shipments list, and data-testid coverage across the page. The Shipments list and Dashboard both gain Excel-style per-column filter popovers backed by a new `GET /api/shipments/filter-options` endpoint and multi-value query params, replacing the old single-select carrier dropdown and status chip row. Also fixes the notification bell's expiring-contract items opening the plain Contracts page instead of the specific contract's edit modal.\n\n**Shipment Details restyle** -- the persistent shipment header (`ShipmentHeaderBar`) and Explorer sidebar (`ShipmentDetailSidebar`), plus the Overview/Conditions/Parties & Offices/Contracts & Schedules/Cargo/Milestones & Events panels, all move to the same Trade Horizon design language, via a new shared `src/pages/shipments/shipmentDetailTheme.js` module (mirrors Command Center's own token values for app-wide consistency). The header's minimized state gained a real divided-segment info strip (incoterm, carrier+vessel/voyage, contract, cargo summary, cargo value, shipper, open tickets) instead of a bare id/route pill; ETD/ETA now render grouped under each POL/POD code rather than as separate fields; a shipment carrying DG cargo shows its IMDG class badge beside the route block with the class's real regulatory meaning (from `IMDG_CLASSES`) captioned underneath. Two visual seams are deliberate and disclosed rather than silently absorbed: the Route Legs table and `ContractPickerModal` are both defined in `ShipmentFormPage.jsx` (the New/Edit Shipment form, explicitly out of this pass's scope) and keep their prior styling everywhere they render inside an otherwise-restyled page, rather than risk bleeding the restyle into a form this pass never touched. Purely visual throughout -- zero changes to behavior, state, data-fetching, or prop signatures anywhere in this port.\n\n**Shipment integrity fix wave (`TKT-FH5Q94` and adjacent)** -- Export/Import Managing Office (`emoOfficeId`/`imoOfficeId`) are now hard-required on `POST /api/shipments`, closing a gap where a shipment could exist with no managing office on either side. Container numbers are now enforced unique per shipment on both create and edit (`409` with a clear message on collision), backed by matching frontend inline validation in `ContainerForm`. `declaredValue` now rejects a negative number with a clean `400`. `CustomerCombobox` no longer goes silent when a role-filtered search matches nothing -- it now explains that no customers are flagged eligible for that role, with a one-click fallback to browse the full customer list. Fixed a `Form.jsx` `Sel` primitive bug where an error state's `borderColor` was silently overridden by the field's own unconditional `border` shorthand, so an invalid dropdown never actually showed its red outline.\n\nEvery test file touching a changed route or component re-run green, including the 18 Cypress specs and remaining backend suites updated to supply the newly-required `emoOfficeId`/`imoOfficeId` on every shipment they create. Clean `vite build` throughout.",
+  },
   {
     version:  "0.91.1",
     date:     "2026-09-12",

@@ -10,6 +10,7 @@ const ADMIN_EMAIL    = "claudeagent@localhost";
 const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 let authToken;
+let emoOfficeId, imoOfficeId;
 
 const api = (method, path, body) =>
   cy.request({
@@ -32,6 +33,15 @@ before(() => {
   });
 });
 
+before(() => {
+  // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+  // fetch real active SE/SI offices rather than hardcoding an id.
+  api("GET", "/offices").then(res => {
+    emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+    imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
+  });
+});
+
 // ─── Shipment Schedules — REST ────────────────────────────────────────────────
 
 describe("Shipment Schedules API", () => {
@@ -42,6 +52,7 @@ describe("Shipment Schedules API", () => {
     api("POST", "/shipments", {
       pol: "CNSHA", pod: "NLRTM", carrierCode: "MAEU",
       status: "Active", contractType: "SPOT", etd: "2026-09-10",
+      emoOfficeId, imoOfficeId,
     }).then(res => {
       expect(res.status).to.eq(201);
       shipmentId = res.body.id;
@@ -123,6 +134,7 @@ describe("GET /api/tickets?shipmentId=", () => {
     api("POST", "/shipments", {
       pol: "DEHAM", pod: "SGSIN", carrierCode: "CMDU",
       status: "Active", contractType: "SPOT", etd: "2026-10-15",
+      emoOfficeId, imoOfficeId,
     }).then(res => { shipmentId = res.body.id; });
   });
 

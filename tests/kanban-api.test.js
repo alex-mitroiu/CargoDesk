@@ -64,6 +64,11 @@ async function login() {
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nTickets — create (Epic/Story), list (unpaginated + paginated), filters, update, delete");
     const epic = await request("POST", "/api/tickets", { title: "Fixture Epic", type: "Epic", section: "backlog", status: "Backlog", priority: "High" }, token);
     assert("epic created", epic.status === 201, JSON.stringify(epic.body));
@@ -84,7 +89,7 @@ async function login() {
     assert("paginated list returns results/total/limit/offset shape", ["results", "total", "limit", "offset"].every(k => k in listPaged.body));
     assert("paginated results respects the limit", listPaged.body.results.length <= 2);
 
-    const shp = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT" }, token);
+    const shp = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, token);
     const shipmentId = shp.body.id;
     const shipmentTicket = await request("POST", "/api/tickets", { title: "Shipment Fixture Ticket", type: "Task", shipmentId, status: "Ready" }, token);
     const byShipment = await request("GET", `/api/tickets?shipmentId=${shipmentId}`, null, token);

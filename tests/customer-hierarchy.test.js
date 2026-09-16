@@ -70,6 +70,11 @@ async function addSellLine(shipmentId, token, amount, chargeCode = "OFR") {
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nScratch parent + child customers");
     const parent = await request("POST", "/api/customers", { companyName: "Test Hierarchy Global HQ" }, token);
     assert("parent created", !!parent.body.id);
@@ -99,10 +104,12 @@ async function addSellLine(shipmentId, token, amount, chargeCode = "OFR") {
     const shipParent = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: parent.body.id, principalName: "Test Hierarchy Global HQ",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const shipChild = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: child.body.id, principalName: "Test Hierarchy Regional Branch",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     await addSellLine(shipParent.body.id, token, 1000, "OFR");
     await addSellLine(shipChild.body.id, token, 500, "OFR");

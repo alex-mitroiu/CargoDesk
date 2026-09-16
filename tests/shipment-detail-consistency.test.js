@@ -69,9 +69,15 @@ async function main() {
   try {
     const token = await login();
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nSetup — scratch shipment with a container, a Confirmed booking, BUY+SELL cost lines");
     const ship = await request("POST", "/api/shipments", {
       pol: "CNSHA", pod: "USLAX", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("scratch shipment created", ship.status === 201, JSON.stringify(ship.body));
     shipmentId = ship.body.id;

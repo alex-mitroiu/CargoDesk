@@ -20,6 +20,7 @@ const ADMIN_PASSWORD = "TestFixture!2026Zq";
 const CONTRACT_NUMBER = "CMDU-CH-EUN-NAM";
 
 let authToken, contractId;
+let emoOfficeId, imoOfficeId;
 
 const api = (method, path, body) =>
   cy.request({
@@ -45,6 +46,15 @@ before(() => {
   })).then(res => {
     expect(res.status).to.eq(201);
     contractId = res.body.id;
+  });
+});
+
+before(() => {
+  // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+  // fetch real active SE/SI offices rather than hardcoding an id.
+  api("GET", "/offices").then(res => {
+    emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+    imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
   });
 });
 
@@ -137,6 +147,7 @@ describe("Pending revalidation — shipment upgrade via API", () => {
       contractType: "Pending",
       contractRef: "CMDU-CH-EUN-NAM",
       etd: "2026-08-01",
+      emoOfficeId, imoOfficeId,
     }).then(res => {
       expect(res.status).to.eq(201);
       shipmentId = res.body.id;

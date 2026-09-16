@@ -19,7 +19,7 @@ const ADMIN_EMAIL    = "claudeagent@localhost";
 const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 describe("Shipment Creation Form Suite", () => {
-  let tok, customer, commodity, createdShipmentId, sailingTestShipmentId;
+  let tok, customer, commodity, createdShipmentId, sailingTestShipmentId, emoOffice, imoOffice;
 
   const api = (method, path, body) =>
     cy.request({
@@ -43,7 +43,15 @@ describe("Shipment Creation Form Suite", () => {
         customer = { id: res.body.id, companyName: "Cypress Form Test Customer Co" };
       })
       .then(() => api("GET", "/commodities?limit=1"))
-      .then(res => { commodity = res.body.results[0]; });
+      .then(res => { commodity = res.body.results[0]; })
+      // Export/Import Managing Office are hard-required on save (TKT-FH5Q94) — fetch real
+      // active SE/SI offices rather than hardcoding an id, same "real backend state" precedent
+      // as customer/commodity above.
+      .then(() => api("GET", "/offices"))
+      .then(res => {
+        emoOffice = res.body.find(o => o.department === "SE" && o.isActive);
+        imoOffice = res.body.find(o => o.department === "SI" && o.isActive);
+      });
   });
 
   after(() => {
@@ -64,6 +72,13 @@ describe("Shipment Creation Form Suite", () => {
   const fillCombobox = (label, query) => {
     cy.contains("label", label).parent().find("input").clear().type(query);
     cy.contains("button", query, { timeout: 8000 }).click();
+  };
+
+  // EMO/IMO offices are hard-required on save (TKT-FH5Q94) — select real, backend-fetched
+  // SE/SI offices before any "Create Shipment" click that expects to succeed.
+  const selectOffices = () => {
+    cy.get('[data-testid="shipment-form-office-select-emoOfficeId"]').select(emoOffice.id);
+    cy.get('[data-testid="shipment-form-office-select-imoOfficeId"]').select(imoOffice.id);
   };
 
   it("creates a minimal valid SPOT shipment through the real form and lands on its detail page", () => {
@@ -91,6 +106,7 @@ describe("Shipment Creation Form Suite", () => {
     });
     cy.contains("button", "MAEU", { timeout: 8000 }).click();
 
+    selectOffices();
     cy.contains("button", "Create Shipment").click();
     cy.contains("Shipment created", { timeout: 10000 }).should("be.visible");
     cy.url().should("match", /shipments\/SHP-/);
@@ -171,6 +187,7 @@ describe("Shipment Creation Form Suite", () => {
           cy.get('input[placeholder="Name…"]').should("have.value", sailing.vesselName);
         });
 
+        selectOffices();
         cy.contains("button", "Create Shipment").click();
         cy.contains("Shipment created", { timeout: 10000 }).should("be.visible");
         cy.url().should("match", /shipments\/SHP-/);

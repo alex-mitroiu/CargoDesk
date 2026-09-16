@@ -37,42 +37,49 @@ const BLANK_DRAFT_CTR = () => ({
 });
 
 const DraftCtrRow = ({ idx, ctr, onChange, onRemove }) => (
-  <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" }}>
+  <div data-testid={`shipment-form-draft-container-row-${ctr._key}`}
+    style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
       <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.textMuted }}>Container #{idx + 1}</span>
-      <button type="button" onClick={onRemove}
+      <button type="button" onClick={onRemove} data-testid={`shipment-form-draft-container-remove-btn-${ctr._key}`}
         style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 14, padding: "0 2px", lineHeight: 1,
           display: "inline-flex", alignItems: "center" }}><IconClose size={12} /></button>
     </div>
     <div style={{ display: "grid", gridTemplateColumns: "163px 1fr 1fr 1fr", gap: 10, marginBottom: 8 }}>
-      <div>
+      <div data-testid={`shipment-form-draft-container-type-${ctr._key}`}>
         <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
           textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>Container Type</div>
         <ContainerTypeField size={ctr.size} type={ctr.type} label={null}
           onChange={opt => { onChange('size', opt?.size || ''); onChange('type', opt?.type || ''); }} />
       </div>
-      <Inp label="Weight (kg)" value={ctr.grossWeightKg != null ? String(ctr.grossWeightKg) : ''} mono
-        onChange={v => onChange('grossWeightKg', v === '' ? null : parseFloat(v) || null)} placeholder="18000" />
-      <Inp label="Volume (CBM)" value={ctr.volumeCbm != null ? String(ctr.volumeCbm) : ''} mono
-        onChange={v => onChange('volumeCbm', v === '' ? null : parseFloat(v) || null)} placeholder="28" />
-      <Inp label="HS Code" value={ctr.hsCode} mono
-        onChange={v => onChange('hsCode', v)} placeholder="e.g. 8471.30" />
+      <div data-testid={`shipment-form-draft-container-weight-${ctr._key}`}>
+        <Inp label="Weight (kg)" value={ctr.grossWeightKg != null ? String(ctr.grossWeightKg) : ''} mono
+          onChange={v => onChange('grossWeightKg', v === '' ? null : parseFloat(v) || null)} placeholder="18000" />
+      </div>
+      <div data-testid={`shipment-form-draft-container-volume-${ctr._key}`}>
+        <Inp label="Volume (CBM)" value={ctr.volumeCbm != null ? String(ctr.volumeCbm) : ''} mono
+          onChange={v => onChange('volumeCbm', v === '' ? null : parseFloat(v) || null)} placeholder="28" />
+      </div>
+      <div data-testid={`shipment-form-draft-container-hscode-${ctr._key}`}>
+        <Inp label="HS Code" value={ctr.hsCode} mono
+          onChange={v => onChange('hsCode', v)} placeholder="e.g. 8471.30" />
+      </div>
     </div>
     <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-      <div style={{ flex: 1 }}>
+      <div data-testid={`shipment-form-draft-container-description-${ctr._key}`} style={{ flex: 1 }}>
         <Inp label="Cargo Description" value={ctr.cargoDescription}
           onChange={v => onChange('cargoDescription', v)} placeholder="e.g. Electronics components" />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 20 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
           fontFamily: T.body, fontSize: 13, color: T.text, userSelect: "none", whiteSpace: "nowrap" }}>
-          <input type="checkbox" checked={ctr.isDg}
+          <input type="checkbox" checked={ctr.isDg} data-testid={`shipment-form-draft-container-dg-checkbox-${ctr._key}`}
             onChange={e => { onChange('isDg', e.target.checked); if (!e.target.checked) onChange('dgClass', ''); }}
             style={{ accentColor: T.accent }} />
           DG Cargo
         </label>
         {ctr.isDg && (
-          <select value={ctr.dgClass}
+          <select value={ctr.dgClass} data-testid={`shipment-form-draft-container-dgclass-select-${ctr._key}`}
             onChange={e => onChange('dgClass', e.target.value)}
             style={{ ...inputBase, fontFamily: T.body, fontSize: 13, cursor: "pointer" }}>
             <option value="">Select class…</option>
@@ -97,19 +104,19 @@ const DraftContainerManagerModal = ({ containers, onSave, onClose }) => {
 
   return (
     <Modal title="Manage Containers" onClose={onClose} width={700}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div data-testid="shipment-form-draft-container-manager" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {items.map((ctr, idx) => (
           <DraftCtrRow key={ctr._key} idx={idx} ctr={ctr}
             onChange={(f, v) => update(ctr._key, f, v)}
             onRemove={() => remove(ctr._key)} />
         ))}
         <div>
-          <Btn variant="secondary" onClick={add}>+ Add Container</Btn>
+          <Btn variant="secondary" onClick={add} data-testid="shipment-form-draft-container-add-btn">+ Add Container</Btn>
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8,
           borderTop: `1px solid ${T.border}`, paddingTop: 12, marginTop: 4 }}>
-          <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
-          <Btn onClick={() => onSave(items.map(({ _key, ...rest }) => rest))}>Done</Btn>
+          <Btn variant="secondary" onClick={onClose} data-testid="shipment-form-draft-container-cancel-btn">Cancel</Btn>
+          <Btn onClick={() => onSave(items.map(({ _key, ...rest }) => rest))} data-testid="shipment-form-draft-container-done-btn">Done</Btn>
         </div>
       </div>
     </Modal>
@@ -165,7 +172,8 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
     const canSelect = !overage || !!reason;
     const k       = kindBadge(alloc.matchKind);
     return (
-      <div key={alloc.id} style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div key={alloc.id} data-testid={`shipment-form-contract-picker-alloc-${alloc.id}`}
+        style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700 }}>{alloc.carrierCode}</span>
           <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{alloc.pol} → {alloc.pod}</span>
@@ -193,6 +201,7 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
               <IconWarning size={12} />Shipment is {shipmentTEU} TEU — only {alloc.remainingTEU} TEU remaining
             </div>
             <select value={reason} onChange={e => setOverageReasons(p => ({ ...p, [alloc.id]: e.target.value }))}
+              data-testid={`shipment-form-contract-picker-alloc-${alloc.id}-overage-select`}
               style={{ ...inputBase, fontFamily: T.body, fontSize: 13 }}>
               <option value="">Select overage reason to proceed…</option>
               {OVERAGE_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
@@ -200,6 +209,7 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
           </div>
         )}
         <Btn disabled={!canSelect} onClick={() => canSelect && onSelectAllocation(alloc, reason)}
+          data-testid={`shipment-form-contract-picker-alloc-${alloc.id}-select-btn`}
           style={{ alignSelf: "flex-start" }}>
           Select this configuration
         </Btn>
@@ -235,7 +245,7 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
     const total = totalUsd(rates);
     const isBest = !contractsLocked && lowestTotal !== null && total === lowestTotal && sorted.length > 1;
     return (
-      <button key={c.id} type="button"
+      <button key={c.id} type="button" data-testid={`shipment-form-contract-picker-contract-${c.id}`}
         onClick={() => !contractsLocked && onSelectContract(c, skipReason)}
         disabled={contractsLocked}
         style={{
@@ -284,10 +294,10 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
   };
 
   return (
-    <Modal title={`Select Contract — ${pol} → ${pod}`} onClose={onClose} width={680}>
+    <Modal title={`Select Contract — ${pol} → ${pod}`} onClose={onClose} width={680} data-testid="shipment-form-contract-picker-modal">
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {onBack && (
-          <button type="button" onClick={onBack}
+          <button type="button" onClick={onBack} data-testid="shipment-form-contract-picker-back-btn"
             style={{ alignSelf: "flex-start", background: T.bg, border: `1px solid ${T.border}`,
               borderRadius: 7, cursor: "pointer", color: T.text, fontFamily: T.body, fontSize: 12,
               fontWeight: 600, padding: "6px 12px", marginBottom: 2 }}
@@ -329,7 +339,7 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
                   <div style={{ flex: 1, height: 1, background: T.border }} />
                 </div>
                 {!skipMode ? (
-                  <button type="button" onClick={() => setSkipMode(true)}
+                  <button type="button" onClick={() => setSkipMode(true)} data-testid="shipment-form-contract-picker-skip-start-btn"
                     style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px",
                       background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
                       cursor: "pointer", color: T.textMuted, fontFamily: T.body, fontSize: 13, textAlign: "left" }}
@@ -342,11 +352,12 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
                   <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 14px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8 }}>
                     <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text }}>Reason for skipping</div>
                     <select value={skipReason} onChange={e => setSkipReason(e.target.value)}
+                      data-testid="shipment-form-contract-picker-skip-reason-select"
                       style={{ ...inputBase, fontFamily: T.body, fontSize: 13 }}>
                       <option value="">Select reason…</option>
                       {SKIP_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                     </select>
-                    <button type="button" onClick={() => setSkipMode(false)}
+                    <button type="button" onClick={() => setSkipMode(false)} data-testid="shipment-form-contract-picker-skip-cancel-btn"
                       style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontFamily: T.body, fontSize: 11, alignSelf: "flex-start", padding: 0, textDecoration: "underline" }}>
                       Cancel
                     </button>
@@ -390,6 +401,7 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
                   return (
                     <div key={num} style={{ display: "flex", flexDirection: "column", gap: 6, opacity: contractsLocked ? 0.45 : 1 }}>
                       <button type="button" onClick={() => !contractsLocked && toggleGroup(num)} disabled={contractsLocked}
+                        data-testid={`shipment-form-contract-picker-group-${num}`}
                         style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "11px 14px",
                           background: T.surface, border: `1px solid ${isOpen ? T.accent + "66" : T.border}`,
                           borderRadius: 8, cursor: contractsLocked ? "not-allowed" : "pointer", textAlign: "left" }}>
@@ -504,7 +516,7 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
   return (
     <Field label="Contract Ref" required={isCentral}>
       {value.id ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
+        <div data-testid="shipment-form-contract-selected" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
           background: T.bg, border: `1px solid ${T.accent}55`, borderRadius: 6 }}>
           <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700, flex: 1 }}>{value.ref}</span>
           {value.allocationId && (
@@ -512,15 +524,15 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
               border: `1px solid ${T.success}44`, borderRadius: 4, padding: "2px 8px",
               display: "inline-flex", alignItems: "center", gap: 3 }}><IconPackage size={10} />Space config</span>
           )}
-          <button type="button" onClick={() => setPickerOpen(true)}
+          <button type="button" onClick={() => setPickerOpen(true)} data-testid="shipment-form-contract-change-btn"
             style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 4, cursor: "pointer",
               color: T.text, fontFamily: T.body, fontSize: 11, padding: "2px 8px" }}>Change</button>
-          <button type="button" onClick={clearContract}
+          <button type="button" onClick={clearContract} data-testid="shipment-form-contract-clear-btn"
             style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 13, padding: "0 2px", lineHeight: 1,
               display: "inline-flex", alignItems: "center" }}><IconClose size={11} /></button>
         </div>
       ) : (
-        <button type="button" onClick={() => !browseDisabled && setPickerOpen(true)}
+        <button type="button" onClick={() => !browseDisabled && setPickerOpen(true)} data-testid="shipment-form-contract-browse-btn"
           style={{ ...inputBase, width: "100%", cursor: browseDisabled ? "not-allowed" : "pointer",
             textAlign: "left", fontFamily: T.body, fontSize: 13,
             color: !missing && !hasAllocs && matches !== null && matches.length === 0 ? T.danger : T.textMuted,
@@ -672,7 +684,8 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
             : isPort ? (portPoint.code || "—")
             : (d[c.key] || "—");
           return (
-            <div key={c.key} id={`leg-${d.id}-${c.key}`} style={{ width: widths[i], minWidth: widths[i], padding: "8px 8px 8px 10px",
+            <div key={c.key} id={`leg-${d.id}-${c.key}`} data-testid={`shipment-form-leg-${d.id}-${c.key}`}
+              style={{ width: widths[i], minWidth: widths[i], padding: "8px 8px 8px 10px",
               display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}22` }}>
               {/* Ports get the same bordered chip weight as the editable PortCombobox, so a
                   locked row doesn't look visually "cheaper" than an editable one beside it. */}
@@ -724,7 +737,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       <div style={{ width: LEG_LEAD_COL_W, minWidth: LEG_LEAD_COL_W, borderRight: `1px solid ${T.border}22` }} />
 
       {/* Leg Type */}
-      <div id={`leg-${d.id}-legType`} style={{ width: widths[0], minWidth: widths[0], padding: "0 0 0 10px",
+      <div id={`leg-${d.id}-legType`} data-testid={`shipment-form-leg-${d.id}-legType`} style={{ width: widths[0], minWidth: widths[0], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
         <select value={d.legType || "SEA"} onChange={e => {
           const lt = e.target.value;
@@ -736,7 +749,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* Movement Type */}
-      <div id={`leg-${d.id}-movementType`} style={{ width: widths[1], minWidth: widths[1], padding: "0 0 0 10px",
+      <div id={`leg-${d.id}-movementType`} data-testid={`shipment-form-leg-${d.id}-movementType`} style={{ width: widths[1], minWidth: widths[1], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
         {(d.legType || "SEA") === "SEA"
           ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
@@ -749,7 +762,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
 
       {/* From (POL) — a classified-location Pick-up/Delivery leg swaps the port picker for two
           plain number inputs (Lat/Lng) once its Loc. Type is set to GPS Coordinates. */}
-      <div id={`leg-${d.id}-pol`} style={{ width: widths[2], minWidth: widths[2], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
+      <div id={`leg-${d.id}-pol`} data-testid={`shipment-form-leg-${d.id}-pol`} style={{ width: widths[2], minWidth: widths[2], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
         {d.polLocType === GPS_LOC_TYPE ? (
           <div style={{ display: "flex", gap: 4, padding: "0 8px 0 0" }}>
             <input type="number" step="any" min={-90} max={90} placeholder="Lat" value={d.polLatitude ?? ""}
@@ -772,7 +785,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* Loc. Type (From) */}
-      <div id={`leg-${d.id}-polLocType`} style={{ width: widths[3], minWidth: widths[3], padding: "0 0 0 10px",
+      <div id={`leg-${d.id}-polLocType`} data-testid={`shipment-form-leg-${d.id}-polLocType`} style={{ width: widths[3], minWidth: widths[3], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
         <select value={d.polLocType || "Terminal"} onChange={e => {
             const lt = e.target.value;
@@ -791,7 +804,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           in place to the real date rather than sitting alongside a separate ATD column (TKT-
           ZFO2OM); the ship icon marks it as confirmed rather than still just an estimate. A
           human can always type over it — editing clears the confirmed flag on the next save. */}
-      <div id={`leg-${d.id}-etd`} style={{ width: widths[4], minWidth: widths[4], padding: "0 0 0 10px",
+      <div id={`leg-${d.id}-etd`} data-testid={`shipment-form-leg-${d.id}-etd`} style={{ width: widths[4], minWidth: widths[4], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", gap: 4, borderRight: `1px solid ${T.border}33` }}>
         {d.etdSource === "ais" && (
           <span title={`Confirmed departure — detected via AIS`} style={{ color: T.accent, flexShrink: 0, display: "inline-flex" }}>
@@ -804,7 +817,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* To (POD) — same GPS-mode swap as From (POL) above */}
-      <div id={`leg-${d.id}-pod`} style={{ width: widths[5], minWidth: widths[5], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
+      <div id={`leg-${d.id}-pod`} data-testid={`shipment-form-leg-${d.id}-pod`} style={{ width: widths[5], minWidth: widths[5], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
         {d.podLocType === GPS_LOC_TYPE ? (
           <div style={{ display: "flex", gap: 4, padding: "0 8px 0 0" }}>
             <input type="number" step="any" min={-90} max={90} placeholder="Lat" value={d.podLatitude ?? ""}
@@ -827,7 +840,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* Loc. Type (To) */}
-      <div id={`leg-${d.id}-podLocType`} style={{ width: widths[6], minWidth: widths[6], padding: "0 0 0 10px",
+      <div id={`leg-${d.id}-podLocType`} data-testid={`shipment-form-leg-${d.id}-podLocType`} style={{ width: widths[6], minWidth: widths[6], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
         <select value={d.podLocType || "Terminal"} onChange={e => {
             const lt = e.target.value;
@@ -841,7 +854,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* Date (ETA) — same confirmed-in-place behavior as ETD above */}
-      <div id={`leg-${d.id}-eta`} style={{ width: widths[7], minWidth: widths[7], padding: "0 0 0 10px", borderRight: `1px solid ${T.border}33`,
+      <div id={`leg-${d.id}-eta`} data-testid={`shipment-form-leg-${d.id}-eta`} style={{ width: widths[7], minWidth: widths[7], padding: "0 0 0 10px", borderRight: `1px solid ${T.border}33`,
         display: "flex", flexDirection: "column", justifyContent: "center", gap: 3 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {d.etaSource === "ais" && (
@@ -870,7 +883,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           own dropdown already escapes via position:fixed, so this doesn't need to allow it) is
           what makes the selected chip's name actually truncate/ellipsis at the column's real
           width instead of visibly overflowing into Movement By next to it. */}
-      <div id={`leg-${d.id}-carrierCode`} style={{ width: widths[8], minWidth: widths[8], borderRight: `1px solid ${T.border}33`, overflow: "hidden",
+      <div id={`leg-${d.id}-carrierCode`} data-testid={`shipment-form-leg-${d.id}-carrierCode`} style={{ width: widths[8], minWidth: widths[8], borderRight: `1px solid ${T.border}33`, overflow: "hidden",
         display: "flex", alignItems: "center" }}>
         {d.legType === "Pick-up" || d.legType === "Delivery"
           ? <span style={{ display: "block", padding: "0 8px 0 10px", fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>—</span>
@@ -882,7 +895,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* Movement by */}
-      <div id={`leg-${d.id}-movementBy`} style={{ width: widths[9], minWidth: widths[9], padding: "0 0 0 10px",
+      <div id={`leg-${d.id}-movementBy`} data-testid={`shipment-form-leg-${d.id}-movementBy`} style={{ width: widths[9], minWidth: widths[9], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
         {(d.legType || "SEA") === "SEA"
           ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
@@ -897,7 +910,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       {(() => {
         const vesselDisabled = (d.legType === "Pick-up" || d.legType === "Delivery") && d.movementBy !== "Barge";
         return (
-          <div id={`leg-${d.id}-vessel`} style={{ width: widths[10], minWidth: widths[10], padding: "0 0 0 10px",
+          <div id={`leg-${d.id}-vessel`} data-testid={`shipment-form-leg-${d.id}-vessel`} style={{ width: widths[10], minWidth: widths[10], padding: "0 0 0 10px",
             display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
             {vesselDisabled
               ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
@@ -911,7 +924,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       {(() => {
         const voyageDisabled = (d.legType === "Pick-up" || d.legType === "Delivery") && d.movementBy !== "Barge";
         return (
-          <div id={`leg-${d.id}-voyage`} style={{ width: widths[11], minWidth: widths[11], padding: "0 0 0 10px",
+          <div id={`leg-${d.id}-voyage`} data-testid={`shipment-form-leg-${d.id}-voyage`} style={{ width: widths[11], minWidth: widths[11], padding: "0 0 0 10px",
             display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
             {voyageDisabled
               ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
@@ -1009,6 +1022,15 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
   };
 
   const addLeg = async () => {
+    // A leg with no POL/POD/carrier yet is already "blank" — adding another on top of it
+    // (e.g. the one New Shipment pre-seeds) silently doubles the empty-leg count and turns
+    // "Missing required fields: Leg POL/POD" into a mystery, since the toast doesn't say
+    // which of two legs is incomplete. Finish the existing blank leg first instead.
+    const blankLeg = legs.find(l => !l.pol && !l.pod && !l.carrierCode);
+    if (blankLeg) {
+      toast.error("Finish entering the current empty leg before adding another.");
+      return;
+    }
     const newLeg = {
       legType: "SEA", mot: "SEA", pol: "", pod: "", etd: null, eta: null,
       carrierCode: inheritedCarrier || "",
@@ -1031,6 +1053,14 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
   };
 
   const saveLeg = async leg => {
+    // Chronological order hard block (TKT-YGIAXG) — the top-level ShipmentFormPage `valid`
+    // check catches this at Create/Save time for a new shipment, but an EXISTING shipment's
+    // legs are edited (and auto-saved on blur) straight from the Schedules page, which never
+    // goes through that top-level gate at all — this is the only choke point for that path.
+    if (leg.etd && leg.eta && leg.etd > leg.eta) {
+      toast.error(`ETA (${leg.eta}) is before ETD (${leg.etd}) — fix the dates before saving this leg.`);
+      return;
+    }
     const toSave = { ...leg, contractType: inheritedContractType || leg.contractType, contractRef: inheritedContractRef || leg.contractRef };
     if (isDraft) {
       const merged = legs.map(l => l.id === toSave.id ? toSave : l);
@@ -1066,7 +1096,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
   const totalCols = widths.reduce((s, w) => s + w, 0);
 
   return (
-    <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
+    <div data-testid="shipment-form-legs-table" style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
       {isDraft && !hideDraftBanner && (
         <div style={{ padding: "6px 14px", background: T.info + "12", borderBottom: `1px solid ${T.info}33`,
           fontFamily: T.body, fontSize: 11, color: T.info }}>
@@ -1098,7 +1128,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
           ) : legs.map(leg => {
             const isSelected = selectedLegId === leg.id;
             return (
-              <div key={leg.id} id={`leg-row-${leg.id}`}
+              <div key={leg.id} id={`leg-row-${leg.id}`} data-testid={`shipment-form-leg-row-${leg.id}`}
                 onClick={() => canEdit && setSelectedLegId(id => id === leg.id ? null : leg.id)}
                 style={{ position: "relative", cursor: canEdit ? "pointer" : "default",
                   borderLeft: isSelected ? `3px solid ${T.accent}` : "3px solid transparent",
@@ -1146,7 +1176,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
             </span>
             {canEdit && (
               <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={addLeg}
+                <button onClick={addLeg} data-testid="shipment-form-add-leg-btn"
                   style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
                     padding: "4px 12px", fontFamily: T.body, fontSize: 12, color: T.accent, cursor: "pointer" }}
                   onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
@@ -1156,6 +1186,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
                 {extraAction}
                 <button
                   disabled={!selectedLegId}
+                  data-testid="shipment-form-remove-leg-btn"
                   onClick={() => selectedLegId && setConfirmRemove(legs.find(l => l.id === selectedLegId) || null)}
                   style={{ background: "none", borderRadius: 6, padding: "4px 12px",
                     fontFamily: T.body, fontSize: 12, cursor: selectedLegId ? "pointer" : "default",
@@ -1176,7 +1207,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
         // not a cascade, it's just deleting an unconfigured row.
         const isCascade = lockedSeaLegs && confirmRemove.legType === "SEA" && !!(confirmRemove.vessel || confirmRemove.voyage);
         return (
-          <Modal title="Remove leg?" onClose={() => setConfirmRemove(null)} width={440}>
+          <Modal title="Remove leg?" onClose={() => setConfirmRemove(null)} width={440} data-testid="shipment-form-leg-remove-modal">
             <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, margin: "0 0 6px", lineHeight: 1.6 }}>
               Remove the <strong>{confirmRemove.legType}</strong> leg
               {confirmRemove.pol || confirmRemove.pod
@@ -1193,8 +1224,8 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
               This can't be undone.
             </p>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <Btn variant="secondary" onClick={() => setConfirmRemove(null)}>Cancel</Btn>
-              <Btn variant="danger" onClick={() => { removeLeg(confirmRemove.id); setConfirmRemove(null); }}>Remove</Btn>
+              <Btn variant="secondary" onClick={() => setConfirmRemove(null)} data-testid="shipment-form-leg-remove-cancel-btn">Cancel</Btn>
+              <Btn variant="danger" onClick={() => { removeLeg(confirmRemove.id); setConfirmRemove(null); }} data-testid="shipment-form-leg-remove-confirm-btn">Remove</Btn>
             </div>
           </Modal>
         );
@@ -1210,7 +1241,8 @@ const CommodityHint = () => (
 );
 
 const SectionDivider = ({ label, id }) => (
-  <div id={id} style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 0" }}>
+  <div id={id} data-testid={id ? `shipment-form-section-${id.replace(/^shpform-/, "")}` : undefined}
+    style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 0" }}>
     <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
       color: T.textMuted, textTransform: "uppercase", whiteSpace: "nowrap" }}>{label}</span>
     <div style={{ flex: 1, height: 1, background: T.border }} />
@@ -1438,9 +1470,16 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
 
   const isCentral = f.contractType === "Central";
   const effectiveCarrierCode = firstSeaLeg?.carrierCode || firstLeg?.carrierCode || f.carrierCode || "";
+  // Chronological order hard block (TKT-YGIAXG) — ETD/ETA are ISO "YYYY-MM-DD" strings
+  // everywhere in this codebase, so a plain string compare is a correct date compare too.
+  // Only flags a leg where BOTH dates are actually set — a leg mid-entry with just one date
+  // filled in isn't a violation yet, just incomplete.
+  const legDateViolation = legs.find(l => l.etd && l.eta && l.etd > l.eta);
   const valid = f.incoterm !== ""
     && f.commodityCode.trim().length > 0
     && !!f.shipperId && !!f.consigneeId && !!f.principalId
+    && !!f.emoOfficeId && !!f.imoOfficeId
+    && !legDateViolation
     && (!isCentral || f.contractId.trim().length > 0)
     && (!init.id ? (legs.length > 0 && !!derivedPol && !!derivedPod && !!effectiveCarrierCode) : true);
 
@@ -1451,6 +1490,8 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       if (!f.shipperId || !f.consigneeId || !f.principalId) missing.push("Parties");
       if (!f.incoterm) missing.push("Incoterm");
       if (!f.commodityCode.trim()) missing.push("Commodity");
+      if (!f.emoOfficeId || !f.imoOfficeId) missing.push("EMO/IMO offices");
+      if (legDateViolation) missing.push(`${legDateViolation.pol || "leg"} → ${legDateViolation.pod || "?"}: ETA before ETD`);
       if (!init.id) {
         if (legs.length === 0) missing.push("at least one Leg");
         else if (!derivedPol || !derivedPod) missing.push("Leg POL/POD");
@@ -1509,7 +1550,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       etd: derivedEtd,
       eta: derivedEta,
       carrierCode: effectiveCarrierCode,
-      declaredValue: f.declaredValue !== "" ? Number(f.declaredValue) : null,
+      declaredValue: (f.declaredValue !== "" && Number(f.declaredValue) >= 0) ? Number(f.declaredValue) : null,
     }, draftLegs || [], containersToSave, selectedSailing));
   };
 
@@ -1520,16 +1561,22 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
 
       {/* ── Parties ───────────────────────────────────────────────────────────── */}
       <SectionDivider label="Parties" id="shpform-parties" />
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <CustomerCombobox label="Shipper" required
-          value={{ id: f.shipperId, name: f.shipperName }}
-          onChange={v => setF(p => ({ ...p, shipperId: v.id, shipperName: v.name }))} />
-        <CustomerCombobox label="Consignee" required
-          value={{ id: f.consigneeId, name: f.consigneeName }}
-          onChange={v => setF(p => ({ ...p, consigneeId: v.id, consigneeName: v.name }))} />
-        <CustomerCombobox label="Principal" required
-          value={{ id: f.principalId, name: f.principalName }}
-          onChange={v => setF(p => ({ ...p, principalId: v.id, principalName: v.name }))} />
+      <div data-testid="shipment-form-parties-section" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <div data-testid="shipment-form-shipper-field">
+          <CustomerCombobox label="Shipper" required
+            value={{ id: f.shipperId, name: f.shipperName }}
+            onChange={v => setF(p => ({ ...p, shipperId: v.id, shipperName: v.name }))} />
+        </div>
+        <div data-testid="shipment-form-consignee-field">
+          <CustomerCombobox label="Consignee" required
+            value={{ id: f.consigneeId, name: f.consigneeName }}
+            onChange={v => setF(p => ({ ...p, consigneeId: v.id, consigneeName: v.name }))} />
+        </div>
+        <div data-testid="shipment-form-principal-field">
+          <CustomerCombobox label="Principal" required
+            value={{ id: f.principalId, name: f.principalName }}
+            onChange={v => setF(p => ({ ...p, principalId: v.id, principalName: v.name }))} />
+        </div>
       </div>
       {touched.parties && (!f.shipperId || !f.consigneeId || !f.principalId) && (
         <FieldError show msg="Shipper, Consignee and Principal are required" />
@@ -1537,7 +1584,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer",
           fontFamily: T.body, fontSize: 12, color: T.textMuted, userSelect: "none", width: "fit-content" }}>
-          <input type="checkbox" checked={!sameNotify}
+          <input type="checkbox" checked={!sameNotify} data-testid="shipment-form-different-notify-checkbox"
             onChange={e => {
               const diff = e.target.checked;
               setSameNotify(!diff);
@@ -1552,16 +1599,18 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                 ? <>Notify → <span style={{ color: T.text, fontStyle: "normal" }}>{f.consigneeName}</span></>
                 : "Same as Consignee (select a Consignee above)"}
             </div>
-          : <CustomerCombobox label="Notify Party"
-              value={{ id: f.notifyId, name: f.notifyName }}
-              onChange={v => setF(p => ({ ...p, notifyId: v.id, notifyName: v.name }))} />
+          : <div data-testid="shipment-form-notify-field">
+              <CustomerCombobox label="Notify Party"
+                value={{ id: f.notifyId, name: f.notifyName }}
+                onChange={v => setF(p => ({ ...p, notifyId: v.id, notifyName: v.name }))} />
+            </div>
         }
       </div>
 
       {/* ── Cargo ─────────────────────────────────────────────────────────────── */}
       <SectionDivider label="Cargo" id="shpform-cargo" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <div>
+        <div data-testid="shipment-form-incoterm-field">
           <Sel label="Incoterm" value={f.incoterm}
             onChange={v => {
               touch("incoterm");
@@ -1585,33 +1634,39 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
           />
           <FieldError show={touched.incoterm && !f.incoterm} msg="Incoterm is required" />
         </div>
-        <Sel label="Freight Terms" value={f.freightTerms} onChange={set("freightTerms")}
-          options={[
-            { value: "Prepaid",                label: "Prepaid" },
-            { value: "Collect",                label: "Collect" },
-            { value: "Payable at Destination", label: "Payable at Destination" },
-          ]}
-        />
+        <div data-testid="shipment-form-freight-terms-field">
+          <Sel label="Freight Terms" value={f.freightTerms} onChange={set("freightTerms")}
+            options={[
+              { value: "Prepaid",                label: "Prepaid" },
+              { value: "Collect",                label: "Collect" },
+              { value: "Payable at Destination", label: "Payable at Destination" },
+            ]}
+          />
+        </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Sel label="Movement Type" value={f.movementType} onChange={set("movementType")}
-          options={[
-            { value: "FCL", label: "FCL — Full Container Load" },
-            { value: "LCL", label: "LCL — Less than Container Load" },
-            { value: "BCO", label: "BCO — Beneficial Cargo Owner" },
-          ]}
-        />
-        <Sel label="Service Type" value={f.serviceType} onChange={set("serviceType")}
-          options={[
-            { value: "Port-to-Port",     label: "Port-to-Port (P2P)" },
-            { value: "Door-to-Port",     label: "Door-to-Port (D2P)" },
-            { value: "Port-to-Door",     label: "Port-to-Door (P2D)" },
-            { value: "Door-to-Door",     label: "Door-to-Door (D2D)" },
-          ]}
-        />
+        <div data-testid="shipment-form-movement-type-field">
+          <Sel label="Movement Type" value={f.movementType} onChange={set("movementType")}
+            options={[
+              { value: "FCL", label: "FCL — Full Container Load" },
+              { value: "LCL", label: "LCL — Less than Container Load" },
+              { value: "BCO", label: "BCO — Beneficial Cargo Owner" },
+            ]}
+          />
+        </div>
+        <div data-testid="shipment-form-service-type-field">
+          <Sel label="Service Type" value={f.serviceType} onChange={set("serviceType")}
+            options={[
+              { value: "Port-to-Port",     label: "Port-to-Port (P2P)" },
+              { value: "Door-to-Port",     label: "Door-to-Port (D2P)" },
+              { value: "Port-to-Door",     label: "Port-to-Door (P2D)" },
+              { value: "Door-to-Door",     label: "Door-to-Door (D2D)" },
+            ]}
+          />
+        </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <div>
+        <div data-testid="shipment-form-commodity-field">
           <div style={errRing(touched.commodityCode && !f.commodityCode)}>
             <Field label={
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
@@ -1625,14 +1680,27 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
           <FieldError show={touched.commodityCode && !f.commodityCode} msg="Commodity is required" />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <Inp label="Declared Value" value={f.declaredValue}
-            onChange={v => setF(p => ({ ...p, declaredValue: v }))}
-            placeholder="0.00" type="number" min="0" step="0.01"
-            hint="Customs / insured value of the goods" />
-          <Sel label="Currency" value={f.declaredValueCurrency}
-            onChange={v => setF(p => ({ ...p, declaredValueCurrency: v }))}
-            options={["USD","EUR","GBP","CNY","JPY","AUD","CAD","CHF","SGD","HKD"].map(c => ({ value: c, label: c }))}
-            hint="Currency the declared value is expressed in" />
+          <div data-testid="shipment-form-declared-value-field">
+            <Inp label="Declared Value" value={f.declaredValue}
+              onChange={v => {
+                // Strip any leading minus outright rather than silently no-op'ing the whole
+                // keystroke — a plain reject-if-negative left a stray "-" or "00" artifact
+                // behind when typing "-500" character by character (each partial value like
+                // "-" or "-5" bounced differently against a type="number" input's own DOM
+                // value coercion). Stripping is deterministic regardless of typing order.
+                const cleaned = v.replace(/-/g, "");
+                if (cleaned !== "" && Number(cleaned) < 0) return;
+                setF(p => ({ ...p, declaredValue: cleaned }));
+              }}
+              placeholder="0.00" type="number" min="0" step="0.01"
+              hint="Customs / insured value of the goods" />
+          </div>
+          <div data-testid="shipment-form-declared-value-currency-field">
+            <Sel label="Currency" value={f.declaredValueCurrency}
+              onChange={v => setF(p => ({ ...p, declaredValueCurrency: v }))}
+              options={["USD","EUR","GBP","CNY","JPY","AUD","CAD","CHF","SGD","HKD"].map(c => ({ value: c, label: c }))}
+              hint="Currency the declared value is expressed in" />
+          </div>
         </div>
       </div>
 
@@ -1646,12 +1714,13 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
         ].map(({ key, label, required, dept }) => {
           const candidates = dept ? offices.filter(o => o.department === dept && o.isActive) : offices.filter(o => o.isActive);
           return (
-            <div key={key}>
+            <div key={key} data-testid={`shipment-form-office-field-${key}`}>
               <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
                 textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
                 {label}{required && <span style={{ color: T.danger, marginLeft: 2 }}>*</span>}
               </div>
               <select value={f[key] || ""} onChange={e => setF(p => ({ ...p, [key]: e.target.value || null }))}
+                data-testid={`shipment-form-office-select-${key}`}
                 style={{ width: "100%", padding: "7px 10px", borderRadius: 7, fontFamily: T.mono, fontSize: 12,
                   color: f[key] ? T.text : T.textMuted,
                   border: `1px solid ${required && touched.offices && !f[key] ? T.danger : T.border}`,
@@ -1668,11 +1737,13 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                   </span>
                   <button type="button"
                     onClick={() => setF(p => ({ ...p, imoOfficeId: imoSuggestion.id }))}
+                    data-testid="shipment-form-imo-suggestion-use-btn"
                     style={{ padding: "2px 8px", borderRadius: 5, border: "none", background: T.info,
                       color: "#fff", cursor: "pointer", fontFamily: T.body, fontSize: 11, fontWeight: 600 }}>
                     Use
                   </button>
                   <button type="button" onClick={() => setImoSuggestion(null)}
+                    data-testid="shipment-form-imo-suggestion-dismiss-btn"
                     style={{ padding: "2px 4px", borderRadius: 5, border: "none", background: "none",
                       cursor: "pointer", fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1,
                       display: "inline-flex", alignItems: "center" }}>
@@ -1693,38 +1764,56 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       {/* ── Transport & References ─────────────────────────────────────────────── */}
       <SectionDivider label="Transport & References" id="shpform-transport" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Inp label="Place of Receipt" value={f.placeOfReceipt} onChange={set("placeOfReceipt")}
-          placeholder="e.g. Inland depot, city" hint="Where cargo is received from shipper" />
-        <Inp label="Place of Delivery" value={f.placeOfDelivery} onChange={set("placeOfDelivery")}
-          placeholder="e.g. Inland destination, city" hint="Where cargo is delivered to consignee" />
+        <div data-testid="shipment-form-place-of-receipt-field">
+          <Inp label="Place of Receipt" value={f.placeOfReceipt} onChange={set("placeOfReceipt")}
+            placeholder="e.g. Inland depot, city" hint="Where cargo is received from shipper" />
+        </div>
+        <div data-testid="shipment-form-place-of-delivery-field">
+          <Inp label="Place of Delivery" value={f.placeOfDelivery} onChange={set("placeOfDelivery")}
+            placeholder="e.g. Inland destination, city" hint="Where cargo is delivered to consignee" />
+        </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <DatePicker label="Cargo Ready Date" value={f.cargoReadyDate} onChange={set("cargoReadyDate")} />
-        <Inp label="Booking Reference" value={f.bookingRef} onChange={set("bookingRef")} placeholder="BK-2025-00123" mono />
+        <div data-testid="shipment-form-cargo-ready-date-field">
+          <DatePicker label="Cargo Ready Date" value={f.cargoReadyDate} onChange={set("cargoReadyDate")} />
+        </div>
+        <div data-testid="shipment-form-booking-ref-field">
+          <Inp label="Booking Reference" value={f.bookingRef} onChange={set("bookingRef")} placeholder="BK-2025-00123" mono />
+        </div>
         {init.id
-          ? <Inp label="B/L Number" value={f.blNumber} onChange={set("blNumber")} placeholder="MAEU123456789" mono />
+          ? <div data-testid="shipment-form-bl-number-field">
+              <Inp label="B/L Number" value={f.blNumber} onChange={set("blNumber")} placeholder="MAEU123456789" mono />
+            </div>
           : <div />}
       </div>
       {init.id && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-          <Sel label="B/L Release Type" value={f.blReleaseType} onChange={set("blReleaseType")}
-            hint="What actually releases cargo at destination"
-            options={[{ value: "", label: "— Not yet decided —" },
-              ...BL_RELEASE_TYPES.map(t => ({ value: t, label: t }))]} />
-          <Inp label="Master B/L Number" value={f.masterBlNumber} onChange={set("masterBlNumber")}
-            placeholder="MAEU987654321" mono
-            hint="Carrier's own B/L, when booked through an NVOCC/forwarder — B/L Number above is the House B/L" />
-          <Sel label="Master B/L Release Type" value={f.masterBlReleaseType} onChange={set("masterBlReleaseType")}
-            hint="A separate release event: the vessel operator to the NVOCC's own agent — distinct from B/L Release Type above, which governs the NVOCC's release to the actual consignee"
-            options={[{ value: "", label: "— Not yet decided —" },
-              ...BL_RELEASE_TYPES.map(t => ({ value: t, label: t }))]} />
+          <div data-testid="shipment-form-bl-release-type-field">
+            <Sel label="B/L Release Type" value={f.blReleaseType} onChange={set("blReleaseType")}
+              hint="What actually releases cargo at destination"
+              options={[{ value: "", label: "— Not yet decided —" },
+                ...BL_RELEASE_TYPES.map(t => ({ value: t, label: t }))]} />
+          </div>
+          <div data-testid="shipment-form-master-bl-number-field">
+            <Inp label="Master B/L Number" value={f.masterBlNumber} onChange={set("masterBlNumber")}
+              placeholder="MAEU987654321" mono
+              hint="Carrier's own B/L, when booked through an NVOCC/forwarder — B/L Number above is the House B/L" />
+          </div>
+          <div data-testid="shipment-form-master-bl-release-type-field">
+            <Sel label="Master B/L Release Type" value={f.masterBlReleaseType} onChange={set("masterBlReleaseType")}
+              hint="A separate release event: the vessel operator to the NVOCC's own agent — distinct from B/L Release Type above, which governs the NVOCC's release to the actual consignee"
+              options={[{ value: "", label: "— Not yet decided —" },
+                ...BL_RELEASE_TYPES.map(t => ({ value: t, label: t }))]} />
+          </div>
         </div>
       )}
       {init.id && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
-          <Inp label="Co-Load Tariff Reference" value={f.coloadTariffReference} onChange={set("coloadTariffReference")}
-            placeholder="e.g. the co-loading NVOCC's own tariff/contract number"
-            hint="Only when this shipment's own NVOCC has no direct contract with the vessel operator and tenders cargo through another NVOCC's own tariff — assign that NVOCC as a 'Co-Loading NVOCC' party on Parties & Offices; leave blank for the direct NVOCC-to-vessel-operator case" />
+          <div data-testid="shipment-form-coload-tariff-ref-field">
+            <Inp label="Co-Load Tariff Reference" value={f.coloadTariffReference} onChange={set("coloadTariffReference")}
+              placeholder="e.g. the co-loading NVOCC's own tariff/contract number"
+              hint="Only when this shipment's own NVOCC has no direct contract with the vessel operator and tenders cargo through another NVOCC's own tariff — assign that NVOCC as a 'Co-Loading NVOCC' party on Parties & Offices; leave blank for the direct NVOCC-to-vessel-operator case" />
+          </div>
         </div>
       )}
       <LegsTable
@@ -1738,6 +1827,11 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
         loopCode={savedSchedules[0]?.service || ""}
         canEdit={canEdit}
       />
+      {touched.legs && legDateViolation && (
+        <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.danger, marginTop: 6 }}>
+          {legDateViolation.pol || "A leg"} → {legDateViolation.pod || "?"}: ETA ({legDateViolation.eta}) is before ETD ({legDateViolation.etd}) — fix before saving
+        </div>
+      )}
 
       {/* ── Route summary (derived from legs) ─────────────────────────────────── */}
       {(() => {
@@ -1750,7 +1844,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
         const labelStyle = { fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
           letterSpacing: "0.09em", color: T.textMuted };
         return (
-          <div id="shpform-route" style={{ display: "grid", gridTemplateColumns: gridCols,
+          <div id="shpform-route" data-testid="shipment-form-route-summary" style={{ display: "grid", gridTemplateColumns: gridCols,
             background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
 
             {/* PKU flanking cell */}
@@ -1792,9 +1886,9 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                         {transitDays}d transit
                       </span>
                     : transitDays !== null && transitDays < 0
-                      ? <span title="ETA is before ETD — check leg dates" style={{ fontFamily: T.mono, fontSize: 11,
-                          fontWeight: 700, color: T.warning, background: T.warning + "18",
-                          border: `1px solid ${T.warning}44`, borderRadius: 10,
+                      ? <span title="ETA is before ETD — fix leg dates before saving" style={{ fontFamily: T.mono, fontSize: 11,
+                          fontWeight: 700, color: T.danger, background: T.danger + "18",
+                          border: `1px solid ${T.danger}44`, borderRadius: 10,
                           padding: "2px 10px", whiteSpace: "nowrap", cursor: "default",
                           display: "inline-flex", alignItems: "center", gap: 3 }}>
                           <IconWarning size={10} />dates
@@ -1885,6 +1979,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
               ))}
             </div>
             <button type="button" onClick={() => setContainerManagerOpen(true)}
+              data-testid="shipment-form-containers-edit-btn"
               style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
                 cursor: "pointer", color: T.text, fontFamily: T.body, fontSize: 11,
                 padding: "4px 10px", whiteSpace: "nowrap" }}>
@@ -1897,15 +1992,17 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
         <>
           <SectionDivider label="Containers" id="shpform-containers" />
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
+          <div data-testid="shipment-form-quick-cargo-section" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
             {/* Left: cargo fields stacked */}
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {/* Row 1: Count · Type · Weight · Volume */}
               <div style={{ display: "grid", gridTemplateColumns: "72px 163px 130px 120px", gap: 10, alignItems: "end" }}>
-                <Inp label="Count" value={quickCargo.count}
-                  onChange={v => setQuickCargo(q => ({ ...q, count: v.replace(/\D/g, '') }))}
-                  placeholder="1" mono />
-                <div>
+                <div data-testid="shipment-form-quick-cargo-count-field">
+                  <Inp label="Count" value={quickCargo.count}
+                    onChange={v => setQuickCargo(q => ({ ...q, count: v.replace(/\D/g, '') }))}
+                    placeholder="1" mono />
+                </div>
+                <div data-testid="shipment-form-quick-cargo-type-field">
                   <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
                     textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
                     Container Type
@@ -1914,12 +2011,16 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                     size={quickCargo.size} type={quickCargo.type}
                     onChange={opt => setQuickCargo(q => ({ ...q, size: opt?.size || '20', type: opt?.type || 'DC' }))} />
                 </div>
-                <Inp label="Weight (kg)" value={quickCargo.weight}
-                  onChange={v => setQuickCargo(q => ({ ...q, weight: v }))}
-                  placeholder="e.g. 18000" mono />
-                <Inp label="Volume (CBM)" value={quickCargo.volume}
-                  onChange={v => setQuickCargo(q => ({ ...q, volume: v }))}
-                  placeholder="e.g. 28" mono />
+                <div data-testid="shipment-form-quick-cargo-weight-field">
+                  <Inp label="Weight (kg)" value={quickCargo.weight}
+                    onChange={v => setQuickCargo(q => ({ ...q, weight: v }))}
+                    placeholder="e.g. 18000" mono />
+                </div>
+                <div data-testid="shipment-form-quick-cargo-volume-field">
+                  <Inp label="Volume (CBM)" value={quickCargo.volume}
+                    onChange={v => setQuickCargo(q => ({ ...q, volume: v }))}
+                    placeholder="e.g. 28" mono />
+                </div>
               </div>
 
               {/* Row 2: Distribution + DG flag inline */}
@@ -1931,6 +2032,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                   </div>
                   <select value={quickCargo.distribution}
                     onChange={e => setQuickCargo(q => ({ ...q, distribution: e.target.value }))}
+                    data-testid="shipment-form-quick-cargo-distribution-select"
                     style={{ ...inputBase, fontFamily: T.body, fontSize: 13, cursor: "pointer", width: "fit-content" }}>
                     <option value="all">Total ÷ N</option>
                     <option value="per">Per container</option>
@@ -1939,7 +2041,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                 <div style={{ display: "flex", alignItems: "center", gap: 10, paddingTop: 20 }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
                     fontFamily: T.body, fontSize: 13, color: T.text, userSelect: "none", whiteSpace: "nowrap" }}>
-                    <input type="checkbox" checked={quickCargo.isDg}
+                    <input type="checkbox" checked={quickCargo.isDg} data-testid="shipment-form-quick-cargo-dg-checkbox"
                       onChange={e => setQuickCargo(q => ({ ...q, isDg: e.target.checked, dgClass: '' }))} />
                     DG Cargo
                   </label>
@@ -1947,6 +2049,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                     <>
                       <select value={quickCargo.dgClass}
                         onChange={e => setQuickCargo(q => ({ ...q, dgClass: e.target.value }))}
+                        data-testid="shipment-form-quick-cargo-dgclass-select"
                         style={{ ...inputBase, fontFamily: T.body, fontSize: 13, cursor: "pointer" }}>
                         <option value="">Select IMDG class…</option>
                         {IMDG_CLASSES.map(c => <option key={c.code} value={c.code}>{c.label} — {c.name}</option>)}
@@ -1975,6 +2078,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                 Cargo Description
               </div>
               <textarea
+                data-testid="shipment-form-quick-cargo-description-textarea"
                 value={quickCargo.cargoDescription}
                 onChange={e => setQuickCargo(q => ({ ...q, cargoDescription: e.target.value }))}
                 placeholder="e.g. Electronics components in cartons"
@@ -2012,6 +2116,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
 
       {/* ── Contract ──────────────────────────────────────────────────────────── */}
       <SectionDivider label="Contract" id="shpform-contract" />
+      <div data-testid="shipment-form-contract-type-field">
       <ContractTypeInput value={f.contractType} onChange={v => {
         if (v !== "Central") {
           setF(p => ({ ...p, contractType: v, contractId: "", contractRef: "", contractRoutingId: "", allocationId: "" }));
@@ -2034,6 +2139,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
         }
         set("contractType")(v);
       }} />
+      </div>
       {isCentral && (
         <ContractField
           value={{ id: f.contractId, ref: f.contractRef, allocationId: f.allocationId }}
@@ -2073,12 +2179,16 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
         </div>
       )}
       {!isCentral && (
-        <Inp label="Contract Reference" value={f.contractRef}
-          onChange={v => setF(p => ({ ...p, contractRef: v }))}
-          placeholder="e.g. SPOT-2025-001" mono hint="Free-text reference for this contract arrangement" />
+        <div data-testid="shipment-form-contract-reference-field">
+          <Inp label="Contract Reference" value={f.contractRef}
+            onChange={v => setF(p => ({ ...p, contractRef: v }))}
+            placeholder="e.g. SPOT-2025-001" mono hint="Free-text reference for this contract arrangement" />
+        </div>
       )}
-      <Textarea label="Contract Notes" value={f.contractNotes} onChange={set("contractNotes")}
-        placeholder="Optional reference, contract IDs, remarks…" rows={2} />
+      <div data-testid="shipment-form-contract-notes-field">
+        <Textarea label="Contract Notes" value={f.contractNotes} onChange={set("contractNotes")}
+          placeholder="Optional reference, contract IDs, remarks…" rows={2} />
+      </div>
 
       {/* ── Sailing ───────────────────────────────────────────────────────────── */}
       <SectionDivider label="Sailing" id="shpform-sailing" />
@@ -2255,7 +2365,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                 : savedSchedules.length > 0 ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     {savedSchedules.map(s => (
-                      <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10,
+                      <div key={s.id} data-testid={`shipment-form-sailing-row-${s.id}`} style={{ display: "flex", alignItems: "center", gap: 10,
                         padding: "10px 14px", background: T.bg,
                         border: `1px solid ${T.border}`, borderRadius: 8 }}>
                         <div style={{ flex: 1, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
@@ -2282,6 +2392,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                         </div>
                         {canEdit && (draftLegs || []).some(l => l.legType === "SEA") && (
                           <button type="button"
+                            data-testid={`shipment-form-sailing-${s.id}-apply-btn`}
                             onClick={() => applySailingToLegs({
                               carrier:      s.carrier,
                               vesselName:   s.vesselName,
@@ -2299,6 +2410,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                         )}
                         {canEdit && (
                           <button type="button" onClick={() => removeSchedule(s.id)}
+                            data-testid={`shipment-form-sailing-${s.id}-remove-btn`}
                             style={{ background: "none", border: "none", cursor: "pointer",
                               color: T.textMuted, fontSize: 14, padding: "0 2px", lineHeight: 1,
                               display: "inline-flex", alignItems: "center" }}
@@ -2316,7 +2428,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
 
             {/* New mode: show selected sailing chip */}
             {!init.id && selectedSailing && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div data-testid="shipment-form-selected-sailing-chip" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
                   background: T.accentBg, border: `1px solid ${T.accent}44`, borderRadius: 8 }}>
                   <div style={{ flex: 1, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
@@ -2341,7 +2453,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                         padding: "1px 6px", textTransform: "uppercase" }}>Demo</span>
                     )}
                   </div>
-                  <button type="button" onClick={() => setSelectedSailing(null)}
+                  <button type="button" onClick={() => setSelectedSailing(null)} data-testid="shipment-form-selected-sailing-clear-btn"
                     style={{ background: "none", border: "none", cursor: "pointer",
                       color: T.textMuted, fontSize: 14, padding: "0 2px", lineHeight: 1,
                       display: "inline-flex", alignItems: "center" }}><IconClose size={12} /></button>
@@ -2357,6 +2469,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                     stayed on whatever default blank leg the form started with. */}
                 <button type="button"
                   onClick={() => applySailingToLegs(selectedSailing)}
+                  data-testid="shipment-form-selected-sailing-apply-btn"
                   style={{ alignSelf: "flex-start", background: "none",
                     border: `1px solid ${T.border}`, borderRadius: 5,
                     padding: "4px 12px", cursor: "pointer",
@@ -2369,7 +2482,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
             )}
 
             {confirmSailing && (
-              <Modal title="Replace sailing?" onClose={() => setConfirmSailing(null)} width={420}>
+              <Modal title="Replace sailing?" onClose={() => setConfirmSailing(null)} width={420} data-testid="shipment-form-confirm-sailing-modal">
                 <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, margin: "0 0 6px", lineHeight: 1.6 }}>
                   This will replace{" "}
                   <strong style={{ fontFamily: T.mono }}>
@@ -2383,8 +2496,8 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                   The sea leg dates will be updated automatically.
                 </p>
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                  <Btn variant="secondary" onClick={() => setConfirmSailing(null)}>Cancel</Btn>
-                  <Btn onClick={() => { commitSailing(confirmSailing); setConfirmSailing(null); }}>Replace</Btn>
+                  <Btn variant="secondary" onClick={() => setConfirmSailing(null)} data-testid="shipment-form-confirm-sailing-cancel-btn">Cancel</Btn>
+                  <Btn onClick={() => { commitSailing(confirmSailing); setConfirmSailing(null); }} data-testid="shipment-form-confirm-sailing-replace-btn">Replace</Btn>
                 </div>
               </Modal>
             )}
@@ -2395,6 +2508,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                 <button type="button"
                   disabled={!canSearch}
                   onClick={() => canSearch && setSailingPickerOpen(true)}
+                  data-testid="shipment-form-search-sailings-btn"
                   style={{ background: canSearch ? T.surface : T.bg,
                     border: `1px solid ${canSearch ? T.border : T.border}`,
                     borderRadius: 6, padding: "7px 14px", cursor: canSearch ? "pointer" : "not-allowed",
@@ -2429,7 +2543,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <span style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor,
           flexShrink: 0, boxShadow: `0 0 6px ${statusColor}88` }} />
-        <div style={{ flex: 1 }}>
+        <div data-testid="shipment-form-status-field" style={{ flex: 1 }}>
           <Sel label="" value={f.status} onChange={set("status")}
             options={STATUSES.map(s => ({ value: s, label: s }))} />
         </div>
@@ -2438,8 +2552,8 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       {/* ── Actions ───────────────────────────────────────────────────────────── */}
       <div id="shpform-actions" style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 8,
         borderTop: `1px solid ${T.border}`, marginTop: 8 }}>
-        <Btn variant="secondary" onClick={onBack}>Cancel</Btn>
-        <Btn onClick={handleSave}>
+        <Btn variant="secondary" onClick={onBack} data-testid="shipment-form-cancel-btn">Cancel</Btn>
+        <Btn onClick={handleSave} data-testid="shipment-form-save-btn">
           <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
             {isSaving && <Spinner size="sm" color="currentColor" />}
             {isSaving ? "Saving…" : (init.id ? "Save Changes" : "Create Shipment")}
@@ -2481,10 +2595,10 @@ const ShipmentFormPage = ({ mode, init = {}, onSave, onBack, onDirtyChange, ctrM
   const title  = isEdit ? `Edit — ${init.id}` : "New Shipment";
 
   return (
-    <div style={{ maxWidth: 1600, margin: "0 auto" }}>
+    <div data-testid="shipment-form-page" style={{ maxWidth: 1600, margin: "0 auto" }}>
       {/* Page header */}
       <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontFamily: T.head, fontSize: 24, fontWeight: 800, color: T.text, margin: 0 }}>
+        <h1 data-testid="shipment-form-title" style={{ fontFamily: T.head, fontSize: 24, fontWeight: 800, color: T.text, margin: 0 }}>
           {title}
         </h1>
         {isEdit && (
@@ -2495,7 +2609,7 @@ const ShipmentFormPage = ({ mode, init = {}, onSave, onBack, onDirtyChange, ctrM
       </div>
 
       {/* Form card */}
-      <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`,
+      <div data-testid="shipment-form-card" style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`,
         padding: "28px 28px" }}>
         <ShipmentForm
           init={init}

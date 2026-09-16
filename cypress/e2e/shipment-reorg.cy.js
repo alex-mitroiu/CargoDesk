@@ -29,6 +29,7 @@ describe("Shipment Detail Reorg Suite", () => {
   let tok;
   let shipmentId;
   let containerId;
+  let emoOfficeId, imoOfficeId;
   const CONTAINER_NUMBER = "CYPR1234567"; // the stepper strip is headed by the container
                                            // number, not the internal CTR- id
 
@@ -51,6 +52,13 @@ describe("Shipment Detail Reorg Suite", () => {
       .then(res => {
         savedSidebarOrder = res.body.shipment_sidebar_order; // JSON string, or undefined if never customized
         return api("PUT", "/settings/shipment-sidebar-order", { order: [] });
+      })
+      // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+      // fetch real active SE/SI offices rather than hardcoding an id.
+      .then(() => api("GET", "/offices"))
+      .then(res => {
+        emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+        imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
       });
   });
 
@@ -59,7 +67,8 @@ describe("Shipment Detail Reorg Suite", () => {
       method: "POST", url: "/api/shipments",
       headers: { Authorization: `Bearer ${tok}` },
       body: { pol: "CNSHA", pod: "USNYC", carrierCode: "CMDU",
-              status: "Active", contractType: "SPOT", etd: "2026-10-01" },
+              status: "Active", contractType: "SPOT", etd: "2026-10-01",
+              emoOfficeId, imoOfficeId },
       failOnStatusCode: false,
     }).then(res => {
       expect(res.status).to.eq(201);

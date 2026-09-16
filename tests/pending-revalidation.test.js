@@ -120,6 +120,11 @@ async function testRevalidateEndpoint(token, fixture) {
 async function testUpgradeFlow(token, fixture) {
   console.log("\nPending → Central upgrade flow");
 
+  const officesRes = await request("GET", "/api/offices", null, token);
+  const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+  const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+  const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
   // Create a Pending shipment with a contractRef that matches the scratch contract
   const create = await request("POST", "/api/shipments", {
     pol: "CNSHA", pod: "USNYC",
@@ -128,6 +133,7 @@ async function testUpgradeFlow(token, fixture) {
     contractType: "Pending",
     contractRef: fixture.contractNumber,
     etd: "2026-08-01",
+    emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
   }, token);
   assert("create Pending shipment (201)", create.status === 201);
   const shipmentId = create.body?.id;

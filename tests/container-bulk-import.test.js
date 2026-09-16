@@ -107,6 +107,11 @@ function buildWorkbook(dataRows) {
     token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nTemplate download");
     const template = await downloadBinary("/api/containers/import-template", token);
     assert("template returns 200", template.status === 200);
@@ -125,6 +130,7 @@ function buildWorkbook(dataRows) {
 
     const ship = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     shipmentId = ship.body.id;
     assert("scratch shipment created", !!shipmentId, JSON.stringify(ship.body));

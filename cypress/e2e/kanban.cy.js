@@ -17,6 +17,7 @@ describe("Kanban Suite", () => {
   let ticketId;
   let linkedId;
   let shipmentId;
+  let emoOfficeId, imoOfficeId;
 
   const api = (method, path, body) =>
     cy.request({
@@ -32,6 +33,15 @@ describe("Kanban Suite", () => {
     }).then(res => {
       expect(res.status).to.eq(200);
       tok = res.body.token;
+    });
+  });
+
+  before(() => {
+    // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+    // fetch real active SE/SI offices rather than hardcoding an id.
+    api("GET", "/offices").then(res => {
+      emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+      imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
     });
   });
 
@@ -175,6 +185,7 @@ describe("Kanban Suite", () => {
       api("POST", "/shipments", {
         pol: "CNSHA", pod: "DEHAM", carrierCode: "CMDU",
         status: "Active", contractType: "SPOT", etd: "2026-11-01",
+        emoOfficeId, imoOfficeId,
       }).then(res => { shipmentId = res.body.id; });
     });
 

@@ -76,6 +76,11 @@ const CLEAN_NAME = "Test Compliance Clean Co";
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nConfirm the sanctions dataset is actually loaded (prerequisite for this file)");
     const status0 = await request("GET", "/api/sanctions/status", null, token);
     assert("sanctions status reachable", status0.status === 200);
@@ -104,6 +109,7 @@ const CLEAN_NAME = "Test Compliance Clean Co";
     const ship = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custClean.body.id, principalName: CLEAN_NAME,
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const shipmentId = ship.body.id;
     assert("scratch shipment created", !!shipmentId);
@@ -173,6 +179,7 @@ const CLEAN_NAME = "Test Compliance Clean Co";
     const shipCross = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custCross.body.id, principalName: "Test Compliance Cross-Ref Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const runCrossBaseline = await request("POST", `/api/shipments/${shipCross.body.id}/screen`, {}, token);
     assert("cross-ref shipment starts CLEAR", runCrossBaseline.body.result === "CLEAR");

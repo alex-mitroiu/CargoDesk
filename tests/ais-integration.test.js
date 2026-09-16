@@ -68,6 +68,11 @@ async function login() {
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nVessel resolve — unknown IMO becomes a real vessels row");
     const imo = "9199901", mmsi = "911222333";
     const empty = await request("GET", `/api/vessels/${imo}`, null, token);
@@ -109,6 +114,7 @@ async function login() {
     console.log("\nScratch shipment + SEA leg with a real POL for ETD/ETA confirmation");
     const ship = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const shipmentId = ship.body.id;
     assert("scratch shipment created", ship.status === 201);

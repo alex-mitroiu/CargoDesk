@@ -16,7 +16,7 @@ const ADMIN_PASSWORD = "TestFixture!2026Zq";
 const CONTAINER_NUMBER = "CYDW1234567";
 
 describe("Shipment Detail Walkthrough Suite", () => {
-  let tok, shipmentId, containerId, customers;
+  let tok, shipmentId, containerId, customers, emoOfficeId, imoOfficeId;
   const createdCustomerIds = [];
 
   const api = (method, path, body) =>
@@ -32,6 +32,12 @@ describe("Shipment Detail Walkthrough Suite", () => {
     // create scratch ones rather than assuming any pre-existing data.
     cy.request("POST", "/api/auth/login", { email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
       .then(res => { tok = res.body.token; })
+      // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+      // fetch real active SE/SI offices rather than hardcoding an id.
+      .then(() => api("GET", "/offices")).then(res => {
+        emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+        imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
+      })
       .then(() => api("POST", "/customers", { companyName: "Cypress Walkthrough Shipper Co" }))
       .then(res => {
         expect(res.status).to.eq(201);
@@ -61,7 +67,8 @@ describe("Shipment Detail Walkthrough Suite", () => {
               status: "Active", contractType: "SPOT", etd: "2026-10-01",
               shipperId: customers[0].id, shipperName: customers[0].companyName,
               consigneeId: customers[1].id, consigneeName: customers[1].companyName,
-              principalId: customers[0].id, principalName: customers[0].companyName },
+              principalId: customers[0].id, principalName: customers[0].companyName,
+              emoOfficeId, imoOfficeId },
       failOnStatusCode: false,
     }).then(res => {
       expect(res.status).to.eq(201);

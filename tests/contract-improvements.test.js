@@ -69,6 +69,11 @@ async function login() {
     token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\ncontractType — server-side enum validation");
     {
       let r = await request("POST", "/api/shipments", {
@@ -77,6 +82,7 @@ async function login() {
       assert("bogus contractType rejected", r.status === 400);
       r = await request("POST", "/api/shipments", {
         pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "SPOT",
+        emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, token);
       assert("valid contractType (SPOT) accepted", r.status === 200 || r.status === 201);
       if (r.body.id) { await request("DELETE", `/api/shipments/${r.body.id}`, null, token); }
@@ -137,6 +143,7 @@ async function login() {
       // into shipment_cost_lines via generateCostLinesFromSnapshot.
       const shipRes = await request("POST", "/api/shipments", {
         pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "Central", contractId,
+        emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, token);
       assert("scratch shipment created against the contract", shipRes.status === 200 || shipRes.status === 201, JSON.stringify(shipRes.body));
       shipmentId = shipRes.body.id;

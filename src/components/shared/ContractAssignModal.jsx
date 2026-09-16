@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { T } from "../../tokens";
 import { api } from "../../api";
 import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
@@ -7,6 +6,7 @@ import { Inp, ContractTypeInput } from "../primitives/Form";
 import DatePicker from "../primitives/DatePicker";
 import CarrierCombobox from "./CarrierCombobox";
 import { ContractPickerModal, deriveHaulageNeeds } from "../../pages/shipments/ShipmentFormPage";
+import { HZ, HZ_BODY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
 
 // ─── Contract Assign Modal ──────────────────────────────────────────────────
 // "+ Add Contract" / "Change Contract" flow for the Schedules page — mirrors
@@ -99,13 +99,15 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
       contractValidFrom: validFrom, contractValidTo: validTo });
   };
 
+  useHorizonFonts();
+
   if (step === "contract") {
     if (!pol || !pod) {
       return (
-        <Modal title="+ Add Contract" onClose={onClose} width={420}>
+        <Modal title="+ Add Contract" onClose={onClose} width={420} data-testid="shipment-schedules-contract-assign-modal">
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <ContractTypeInput value={type} onChange={setType} />
-            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+            <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>
               Set the shipment's POL and POD (via Route Legs) before searching for a contract.
             </div>
           </div>
@@ -125,30 +127,32 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
   }
 
   return (
-    <Modal title="+ Add Contract" onClose={onClose} width={420}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <Modal title="+ Add Contract" onClose={onClose} width={420} data-testid="shipment-schedules-contract-assign-modal">
+      <div data-testid="shipment-schedules-contract-assign-type-field" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <ContractTypeInput value={type} onChange={setType} />
         {type === "Central" ? (
-          <Btn onClick={() => setStep("contract")}>Search contracts for {pol} → {pod} →</Btn>
+          <Btn onClick={() => setStep("contract")} data-testid="shipment-schedules-contract-assign-search-btn">Search contracts for {pol} → {pod} →</Btn>
         ) : (
           <>
-            <Inp label="Contract Reference" value={refVal} onChange={setRefVal}
-              placeholder="e.g. SPOT-2025-001" mono hint="Free-text reference for this contract arrangement" />
-            <div>
-              <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.textMuted, marginBottom: 6 }}>Carrier</div>
+            <div data-testid="shipment-schedules-contract-assign-ref-field">
+              <Inp label="Contract Reference" value={refVal} onChange={setRefVal}
+                placeholder="e.g. SPOT-2025-001" mono hint="Free-text reference for this contract arrangement" />
+            </div>
+            <div data-testid="shipment-schedules-contract-assign-carrier-field">
+              <div style={{ fontFamily: HZ_BODY, fontSize: 12, fontWeight: 600, color: HZ.textMuted, marginBottom: 6 }}>Carrier</div>
               <CarrierCombobox value={carrierVal} onChange={setCarrierVal} />
             </div>
             <div style={{ display: "flex", gap: 12 }}>
-              <div style={{ flex: 1 }}>
+              <div data-testid="shipment-schedules-contract-assign-valid-from-field" style={{ flex: 1 }}>
                 <DatePicker label="Valid From" value={validFrom} onChange={setValidFrom} maxDate={validTo || undefined} />
               </div>
-              <div style={{ flex: 1 }}>
+              <div data-testid="shipment-schedules-contract-assign-valid-to-field" style={{ flex: 1 }}>
                 <DatePicker label="Valid To" value={validTo} onChange={setValidTo} minDate={validFrom || undefined} />
               </div>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
-              <Btn onClick={saveRef}>Save</Btn>
+              <Btn variant="secondary" onClick={onClose} data-testid="shipment-schedules-contract-assign-cancel-btn">Cancel</Btn>
+              <Btn onClick={saveRef} data-testid="shipment-schedules-contract-assign-save-btn">Save</Btn>
             </div>
           </>
         )}

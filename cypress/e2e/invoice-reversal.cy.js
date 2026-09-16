@@ -16,6 +16,7 @@ const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 describe("Invoice Entry + Reversal Suite", () => {
   let tok, shipmentId;
+  let emoOfficeId, imoOfficeId;
 
   const api = (method, path, body) =>
     cy.request({
@@ -31,8 +32,18 @@ describe("Invoice Entry + Reversal Suite", () => {
   });
 
   before(() => {
+    // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+    // fetch real active SE/SI offices rather than hardcoding an id.
+    api("GET", "/offices").then(res => {
+      emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+      imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
+    });
+  });
+
+  before(() => {
     cy.then(() => api("POST", "/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      emoOfficeId, imoOfficeId,
     })).then(res => {
       expect(res.status).to.eq(201);
       shipmentId = res.body.id;

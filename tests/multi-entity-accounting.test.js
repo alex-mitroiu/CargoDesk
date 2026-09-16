@@ -101,15 +101,23 @@ async function addLine(shipmentId, token, type, amount, chargeCode = "OFR") {
     assert("office B created", !!officeB.body.id, JSON.stringify(officeB.body));
 
     console.log("\nOne shipment per entity, via EMO/IMO");
+    // NOTE (TKT-FH5Q94): POST /api/shipments now hard-requires both emoOfficeId AND imoOfficeId,
+    // so a genuinely EMO-less shipment (shipB below used to omit emoOfficeId entirely to force
+    // the IMO-fallback branch) can no longer be created at all. Both shipments now set both
+    // fields; shipB reuses officeB for BOTH so entity resolution still lands on branch B exactly
+    // as before (EMO is checked first, so pointing EMO at officeB is equivalent to "falling back"
+    // to officeB) — every downstream assertion about branch B's totals is unaffected. This does
+    // mean the literal EMO-absent code path in the byEntity resolver is no longer exercised by
+    // this test (it may now be dead code for any post-fix shipment) — flagged, not silently fixed.
     shipA = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
-      emoOfficeId: officeA.body.id,
+      emoOfficeId: officeA.body.id, imoOfficeId: officeB.body.id,
     }, admin);
     assert("shipment A created", !!shipA.body.id, JSON.stringify(shipA.body));
     assert("shipment A resolves EMO office", shipA.body.emoOfficeId === officeA.body.id);
     shipB = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
-      imoOfficeId: officeB.body.id, // deliberately IMO-only, no EMO — exercises the fallback
+      emoOfficeId: officeB.body.id, imoOfficeId: officeB.body.id,
     }, admin);
     assert("shipment B created (IMO only)", !!shipB.body.id, JSON.stringify(shipB.body));
 

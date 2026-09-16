@@ -64,12 +64,18 @@ function assert(label, condition, detail = "") {
     const token = loginRes.body.token;
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     const rand = Math.random().toString(36).slice(2, 8);
 
     console.log("\nGET /api/shipments — opt-in status/carrier/search filters + sort + teu");
     const shipA = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       bookingRef: `PAGTEST-${rand}`,
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("scratch shipment created", shipA.status === 201, JSON.stringify(shipA.body));
     const shipAId = shipA.body.id;

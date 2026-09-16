@@ -6,7 +6,7 @@ Full-stack freight management app. React 18 + Vite frontend, Express + dual-back
 `lib/db.js`) backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.91.1 "Bulkhead"**
+- Version: **v0.91.3 "Horizon"**
 - First-time setup: `npm run setup` (`scripts/setup.js`) — boots the server once to create its
   schema, shuts it down cleanly, then seeds MDM reference data, in the correct order. NOT
   zero-script — a genuinely fresh `pgdata/` has no ports/carriers/vessels/commodities until this
@@ -506,6 +506,39 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.91.3 "Horizon")
+Bundled release — the Trade Horizon visual language (first shipped on the Dashboard) now covers
+Command Center and the full Shipment Details experience, plus a shipment-integrity fix wave.
+Batched per this project's own bundling precedent (v0.85.0/v0.90.0/v0.90.1/v0.90.3/v0.91.0).
+- **Command Center restyle + Excel-style column filters** — Command Center gets the same
+  page-scoped Trade Horizon treatment already on the Dashboard (no shared token/primitive
+  changes), real per-carrier brand colors on carrier badges, an expand/collapse control for
+  Recent Shipments, and data-testid coverage. Shipments + Dashboard both gain Excel-style
+  per-column filter popovers backed by a new `GET /api/shipments/filter-options` endpoint and
+  multi-value query params, replacing the old single-select carrier dropdown and status chip row.
+  Also fixes the bell's expiring-contract items opening the plain Contracts page instead of the
+  specific contract's edit modal.
+- **Shipment Details restyle** — the persistent header (`ShipmentHeaderBar`) and Explorer sidebar
+  (`ShipmentDetailSidebar`), plus Overview/Conditions/Parties & Offices/Contracts &
+  Schedules/Cargo/Milestones & Events, all move to Trade Horizon via a new shared
+  `src/pages/shipments/shipmentDetailTheme.js` module (mirrors Command Center's own token values).
+  The header's minimized state gained a real divided-segment info strip (incoterm, carrier+vessel/
+  voyage, contract, cargo summary, cargo value, shipper, open tickets); ETD/ETA now render grouped
+  under each POL/POD code; a DG shipment shows its IMDG class badge beside the route block with
+  the class's real regulatory meaning (`IMDG_CLASSES`) captioned underneath. Two seams are
+  deliberate and disclosed: the Route Legs table and `ContractPickerModal` both live in
+  `ShipmentFormPage.jsx` (out of this pass's scope) and keep their prior styling wherever they
+  render inside an otherwise-restyled page. Purely visual — zero behavior/state/prop changes.
+- **Shipment integrity fix wave (`TKT-FH5Q94` and adjacent)** — `emoOfficeId`/`imoOfficeId` are now
+  hard-required on `POST /api/shipments`; container numbers are enforced unique per shipment on
+  create and edit (`409` on collision, plus matching frontend validation in `ContainerForm`);
+  `declaredValue` rejects a negative number with a clean `400`; `CustomerCombobox` now explains
+  when a role-filtered search matches nothing (with a one-click "browse all" fallback) instead of
+  going silent; fixed a `Form.jsx` `Sel` bug where an error state's `borderColor` was silently
+  overridden by the field's own unconditional `border` shorthand.
+- Every test file touching a changed route/component re-run green, including 18 Cypress specs
+  updated to supply the newly-required `emoOfficeId`/`imoOfficeId`. Clean `vite build` throughout.
 
 ## Recent changes (v0.91.1 "Bulkhead")
 Hotfix — a User Management/access-scoping redesign plus a deep-dive QA pass on shipment

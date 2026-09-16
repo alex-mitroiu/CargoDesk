@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { T } from "../../tokens";
 import { useAuth } from "../../AuthContext";
 import { api } from "../../api";
 import { toast } from "../../toast";
@@ -18,6 +17,7 @@ import { deriveLoopCode } from "../../utils/scheduleLoop";
 import { emitLegsScheduleChanged } from "../../legsScheduleBus";
 import useSaving from "../../hooks/useSaving";
 import { setNavigationGuard, clearNavigationGuard } from "../../navigationGuard";
+import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "./shipmentDetailTheme";
 
 // ─── Shipment Schedules Page ──────────────────────────────────────────────
 // Dedicated sub-page for carrier schedule/booking management, promoted out
@@ -46,8 +46,8 @@ import { setNavigationGuard, clearNavigationGuard } from "../../navigationGuard"
 // exactly like the New Shipment form already behaves; Save's validation is the real safety net
 // now, not a separate lock/unlock mechanic.
 
-const sectionLabel = { fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
-  letterSpacing: "0.08em", color: T.textMuted, marginBottom: 10 };
+const sectionLabel = { fontFamily: HZ_MONO, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
+  letterSpacing: "0.08em", color: HZ.textMuted, marginBottom: 10 };
 
 const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -73,36 +73,38 @@ const LineAgentField = ({ label, role, party, canEdit, onAssign, onRemove }) => 
   };
 
   return (
-    <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 16px" }}>
-      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
+    <div data-testid={`shipment-schedules-line-agent-${role.toLowerCase().replace(/\s+/g, "-")}`} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 10, padding: "12px 16px" }}>
+      <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 700,
         textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>{label}</div>
       {editing ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <CustomerCombobox label="Customer" value={value} onChange={setValue} roleFilter={role} />
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Btn size="sm" variant="secondary" onClick={() => setEditing(false)}>Cancel</Btn>
-            <Btn size="sm" disabled={saving || !value.id} onClick={save}>{saving ? "Saving…" : "Save"}</Btn>
+            <Btn size="sm" variant="secondary" onClick={() => setEditing(false)} data-testid={`shipment-schedules-line-agent-${role.toLowerCase().replace(/\s+/g, "-")}-cancel-btn`}>Cancel</Btn>
+            <Btn size="sm" disabled={saving || !value.id} onClick={save} data-testid={`shipment-schedules-line-agent-${role.toLowerCase().replace(/\s+/g, "-")}-save-btn`}>{saving ? "Saving…" : "Save"}</Btn>
           </div>
         </div>
       ) : (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontFamily: T.body, fontSize: 14, fontWeight: 700,
-            color: party ? T.text : T.textMuted, fontStyle: party ? "normal" : "italic" }}>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 14, fontWeight: 700,
+            color: party ? HZ.text : HZ.textMuted, fontStyle: party ? "normal" : "italic" }}>
             {party ? party.customerName : "Not assigned"}
           </div>
           {canEdit && (
             <div style={{ display: "flex", gap: 10 }}>
               <button type="button" title={party ? "Reassign" : "Assign"} onClick={startEdit}
-                style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 13 }}
-                onMouseEnter={e => e.currentTarget.style.color = T.text}
-                onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+                data-testid={`shipment-schedules-line-agent-${role.toLowerCase().replace(/\s+/g, "-")}-edit-btn`}
+                style={{ background: "none", border: "none", cursor: "pointer", color: HZ.textMuted, fontSize: 13 }}
+                onMouseEnter={e => e.currentTarget.style.color = HZ.text}
+                onMouseLeave={e => e.currentTarget.style.color = HZ.textMuted}>
                 {party ? "✎" : "＋"}
               </button>
               {party && (
                 <button type="button" title="Remove" onClick={() => onRemove(party.id)}
-                  style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 15, lineHeight: 1 }}
-                  onMouseEnter={e => e.currentTarget.style.color = T.danger}
-                  onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+                  data-testid={`shipment-schedules-line-agent-${role.toLowerCase().replace(/\s+/g, "-")}-remove-btn`}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: HZ.textMuted, fontSize: 15, lineHeight: 1 }}
+                  onMouseEnter={e => e.currentTarget.style.color = HZ.crit}
+                  onMouseLeave={e => e.currentTarget.style.color = HZ.textMuted}>
                   ×
                 </button>
               )}
@@ -592,12 +594,14 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDirty, draftLegs, draftSailing]);
 
+  useHorizonFonts();
+
   // Every hook above has already run this render regardless of this branch — only what gets
   // returned/rendered is gated, so this doesn't violate the Rules of Hooks.
   if (schedules === null || parties === null || draftLegs === null) {
     return (
-      <div id="shpsched-page" style={{ display: "flex", alignItems: "center", gap: 10, padding: "24px 0",
-        fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+      <div id="shpsched-page" data-testid="shipment-schedules-page" style={{ display: "flex", alignItems: "center", gap: 10, padding: "24px 0",
+        fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>
         <Spinner size="sm" /> Loading schedule…
       </div>
     );
@@ -607,12 +611,12 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
     <button type="button"
       disabled={!canSearch}
       onClick={() => { if (canSearch) { setChainedFromContract(false); setPickerOpen(true); } }}
-      style={{ background: "none", border: `1px solid ${T.border}`,
+      style={{ background: "none", border: `1px solid ${HZ.border}`,
         borderRadius: 6, padding: "4px 12px", cursor: canSearch ? "pointer" : "not-allowed",
-        fontFamily: T.body, fontSize: 12, color: canSearch ? T.text : T.textMuted,
+        fontFamily: HZ_BODY, fontSize: 12, color: canSearch ? HZ.text : HZ.textMuted,
         opacity: canSearch ? 1 : 0.5, display: "inline-flex", alignItems: "center", gap: 5 }}
-      onMouseEnter={e => { if (canSearch) { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = canSearch ? T.text : T.textMuted; }}
+      onMouseEnter={e => { if (canSearch) { e.currentTarget.style.borderColor = HZ.cyan; e.currentTarget.style.color = HZ.cyan; }}}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = HZ.border; e.currentTarget.style.color = canSearch ? HZ.text : HZ.textMuted; }}
       title={canSearch ? "Search and stage a sailing" : "POL, POD and carrier must be set"}>
       <IconAnchor size={12} />{hasSchedule ? "Change Sailing" : "Add Sailing"}
     </button>
@@ -621,20 +625,20 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   const hasSpaceConfig = shipment.contractType === "Central" && shipment.allocationId;
 
   return (
-    <div id="shpsched-page">
+    <div id="shpsched-page" data-testid="shipment-schedules-page">
       {isDirty && (
-        <div id="shpsched-dirty-bar" style={{ display: "flex", alignItems: "center", gap: 12,
-          background: T.accentBg, border: `1px solid ${T.accent}44`, borderRadius: 8,
+        <div id="shpsched-dirty-bar" data-testid="shipment-schedules-dirty-bar" style={{ display: "flex", alignItems: "center", gap: 12,
+          background: HZ.cyanBg, border: `1px solid ${HZ.cyan}44`, borderRadius: 8,
           padding: "10px 16px", marginBottom: 18 }}>
-          <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, flex: 1 }}>
+          <span style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, flex: 1 }}>
             You have unsaved route/schedule changes on this page.
           </span>
-          <Btn id="shpsched-discard-btn" size="sm" variant="secondary" disabled={isSaving} onClick={handleDiscard}>Discard</Btn>
-          <Btn id="shpsched-save-btn" size="sm" disabled={isSaving} onClick={handleSave}>💾 Save</Btn>
+          <Btn id="shpsched-discard-btn" data-testid="shipment-schedules-discard-btn" size="sm" variant="secondary" disabled={isSaving} onClick={handleDiscard}>Discard</Btn>
+          <Btn id="shpsched-save-btn" data-testid="shipment-schedules-save-btn" size="sm" disabled={isSaving} onClick={handleSave}>💾 Save</Btn>
         </div>
       )}
 
-      <div id="shpsched-line-agents-section" style={{ marginBottom: 22 }}>
+      <div id="shpsched-line-agents-section" data-testid="shipment-schedules-line-agents-section" style={{ marginBottom: 22 }}>
         <div style={sectionLabel}>Line Agents</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <LineAgentField label="Export Line Agent" role="Line Agent (Export)" party={exportLineAgent}
@@ -646,7 +650,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
         </div>
       </div>
 
-      <div id="shpsched-legs-section">
+      <div id="shpsched-legs-section" data-testid="shipment-schedules-legs-section">
         <div style={sectionLabel}>Route Legs</div>
         <LegsTable key={`legs-${legsVersion}`} shipmentId={null} draftLegs={draftLegs} onDraftLegsChange={handleDraftLegsChange}
           canEdit={canEdit} showContractCols={false}
@@ -657,49 +661,49 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
 
       <div style={{ marginTop: 22, marginBottom: 22,
         ...(hasSpaceConfig ? { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 } : {}) }}>
-        <div id="shpsched-contract-section">
+        <div id="shpsched-contract-section" data-testid="shipment-schedules-contract-section">
           <div style={sectionLabel}>Contract</div>
           {contractMismatch && (
-            <div id="shpsched-contract-mismatch" style={{ background: T.danger + "12", border: `1px solid ${T.danger}55`, borderLeft: `3px solid ${T.danger}`,
+            <div id="shpsched-contract-mismatch" data-testid="shipment-schedules-contract-mismatch" style={{ background: HZ.critBg, border: `1px solid ${HZ.crit}55`, borderLeft: `3px solid ${HZ.crit}`,
               borderRadius: 8, padding: "12px 16px", marginBottom: 12,
               display: "flex", alignItems: "flex-start", gap: 10 }}>
-              <span style={{ color: T.danger, fontSize: 15, lineHeight: 1.4, display: "inline-flex" }}><IconWarning size={15} /></span>
+              <span style={{ color: HZ.crit, fontSize: 15, lineHeight: 1.4, display: "inline-flex" }}><IconWarning size={15} /></span>
               <div>
-                <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.danger, marginBottom: 3 }}>
+                <div style={{ fontFamily: HZ_BODY, fontSize: 13, fontWeight: 700, color: HZ.crit, marginBottom: 3 }}>
                   Contract doesn't cover this route
                 </div>
-                <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, lineHeight: 1.55 }}>
-                  <strong style={{ fontFamily: T.mono, color: T.text }}>{shipment.contractRef || "This contract"}</strong> no
-                  longer matches <strong style={{ fontFamily: T.mono, color: T.text }}>{pol} → {pod}</strong>.
+                <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, lineHeight: 1.55 }}>
+                  <strong style={{ fontFamily: HZ_MONO, color: HZ.text }}>{shipment.contractRef || "This contract"}</strong> no
+                  longer matches <strong style={{ fontFamily: HZ_MONO, color: HZ.text }}>{pol} → {pod}</strong>.
                   Pick a new one below — via a linked space configuration, the Central contract list, or switch to SPOT/Pending/Customer Own.
                 </div>
               </div>
             </div>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 14, maxWidth: hasSpaceConfig ? "none" : 480 }}>
-            <div id="shpsched-contract-summary" style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", flex: 1,
-              background: T.bg, border: `1px solid ${contractMismatch ? T.danger + "66" : T.border}`, borderRadius: 8 }}>
-              <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
-                padding: "2px 8px", borderRadius: 4, background: T.accentBg, color: T.accent, flexShrink: 0 }}>
+            <div id="shpsched-contract-summary" data-testid="shipment-schedules-contract-summary" style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", flex: 1,
+              background: HZ.bg, border: `1px solid ${contractMismatch ? HZ.crit + "66" : HZ.border}`, borderRadius: 8 }}>
+              <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
+                padding: "2px 8px", borderRadius: 4, background: HZ.cyanBg, color: HZ.cyan, flexShrink: 0 }}>
                 {shipment.contractType || "—"}
               </span>
-              <span style={{ fontFamily: T.mono, fontSize: 13, color: shipment.contractRef ? T.text : T.textMuted,
+              <span style={{ fontFamily: HZ_MONO, fontSize: 13, color: shipment.contractRef ? HZ.text : HZ.textMuted,
                 fontWeight: shipment.contractRef ? 700 : 400, fontStyle: shipment.contractRef ? "normal" : "italic",
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {shipment.contractRef || "No contract assigned"}
               </span>
               {shipment.allocationId && (
-                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, background: T.success + "22", color: T.success,
-                  border: `1px solid ${T.success}44`, borderRadius: 4, padding: "2px 8px", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}><IconPackage size={10} /> Space config</span>
+                <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, background: HZ.goodBg, color: HZ.good,
+                  border: `1px solid ${HZ.good}44`, borderRadius: 4, padding: "2px 8px", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}><IconPackage size={10} /> Space config</span>
               )}
               {shipment.contractType !== "Central" && shipment.contractValidTo && shipment.contractValidTo < todayStr && (
                 <span title={`Expired ${shipment.contractValidTo}`}
-                  style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, background: T.warning + "22", color: T.warning,
-                  border: `1px solid ${T.warning}44`, borderRadius: 4, padding: "2px 8px", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}><IconWarning size={10} /> Expired</span>
+                  style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, background: HZ.warnBg, color: HZ.warn,
+                  border: `1px solid ${HZ.warn}44`, borderRadius: 4, padding: "2px 8px", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}><IconWarning size={10} /> Expired</span>
               )}
             </div>
             {canEdit && (
-              <Btn id="shpsched-contract-btn" size="sm" variant="secondary" disabled={isDirty}
+              <Btn id="shpsched-contract-btn" data-testid="shipment-schedules-contract-btn" size="sm" variant="secondary" disabled={isDirty}
                 title={isDirty ? "Save or discard your route changes first" : undefined}
                 onClick={() => setContractModalOpen(true)}>
                 {shipment.contractRef ? "Change Contract" : "+ Add Contract"}
@@ -728,22 +732,22 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
               ["Valid To", isCentral ? (contractDetail?.validTo || "") : (shipment.contractValidTo || "")],
             ];
             return (
-              <div id="shpsched-contract-details" style={{ marginTop: 12,
-                border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
-                <div style={{ display: "flex", padding: "8px 0", borderBottom: `1px solid ${T.border}`, background: T.surface }}>
+              <div id="shpsched-contract-details" data-testid="shipment-schedules-contract-details" style={{ marginTop: 12,
+                border: `1px solid ${HZ.border}`, borderRadius: 8, overflow: "hidden" }}>
+                <div style={{ display: "flex", padding: "8px 0", borderBottom: `1px solid ${HZ.border}`, background: HZ.surface }}>
                   {cols.map(([label], i) => (
                     <div key={label} style={{ flex: 1, minWidth: 0, paddingLeft: 14, paddingRight: 10,
-                      fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted,
+                      fontFamily: HZ_BODY, fontSize: 10.5, fontWeight: 600, color: HZ.textMuted,
                       textTransform: "uppercase", letterSpacing: ".08em",
-                      borderRight: i < cols.length - 1 ? `1px solid ${T.border}33` : "none" }}>
+                      borderRight: i < cols.length - 1 ? `1px solid ${HZ.border}` : "none" }}>
                       {label}
                     </div>
                   ))}
                 </div>
                 <div style={{ display: "flex", padding: "8px 0" }}>
                   {cols.map(([label, value], i) => (
-                    <div key={label} style={{ flex: 1, minWidth: 0, paddingLeft: 14, paddingRight: 10, fontFamily: T.mono, fontSize: 12,
-                      color: value ? T.text : T.textMuted, fontWeight: value ? 700 : 400, fontStyle: value ? "normal" : "italic",
+                    <div key={label} style={{ flex: 1, minWidth: 0, paddingLeft: 14, paddingRight: 10, fontFamily: HZ_MONO, fontSize: 12,
+                      color: value ? HZ.text : HZ.textMuted, fontWeight: value ? 700 : 400, fontStyle: value ? "normal" : "italic",
                       wordBreak: "break-word" }}>
                       {value || "—"}
                     </div>
@@ -755,32 +759,32 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
         </div>
 
         {hasSpaceConfig && (
-          <div id="shpsched-space-config-section">
+          <div id="shpsched-space-config-section" data-testid="shipment-schedules-space-config-section">
             <div style={sectionLabel}>Space Configuration</div>
             {linkedAlloc ? (
-              <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px" }}>
+              <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8, padding: "12px 14px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>
+                  <span style={{ fontFamily: HZ_MONO, fontSize: 12, fontWeight: 700, color: HZ.text }}>
                     {linkedAlloc.carrierCode} · {linkedAlloc.pol} → {linkedAlloc.pod}
                   </span>
-                  <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                  <span style={{ fontFamily: HZ_MONO, fontSize: 10, color: HZ.textMuted }}>
                     {linkedAlloc.contractNumber || "—"}
                   </span>
                 </div>
-                <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, marginBottom: 8 }}>
+                <div style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted, marginBottom: 8 }}>
                   Valid {linkedAlloc.effectiveDate} → {linkedAlloc.endDate}
                 </div>
                 <ConsumptionBar allocated={linkedAlloc.allocatedTEU} confirmed={linkedAlloc.confirmedTEU}
                   pending={linkedAlloc.pendingTEU} rejected={linkedAlloc.rejectedTEU} height={6} width="100%" />
-                <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 4 }}>
+                <div style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted, marginTop: 4 }}>
                   {linkedAlloc.confirmedTEU} / {linkedAlloc.allocatedTEU} TEU confirmed ({linkedAlloc.remainingTEU} remaining)
-                  {linkedAlloc.pendingTEU > 0 && <span style={{ color: T.warning }}> · +{linkedAlloc.pendingTEU} pending</span>}
-                  {linkedAlloc.rejectedTEU > 0 && <span style={{ color: T.danger }}> · +{linkedAlloc.rejectedTEU} rejected</span>}
+                  {linkedAlloc.pendingTEU > 0 && <span style={{ color: HZ.warn }}> · +{linkedAlloc.pendingTEU} pending</span>}
+                  {linkedAlloc.rejectedTEU > 0 && <span style={{ color: HZ.crit }}> · +{linkedAlloc.rejectedTEU} rejected</span>}
                 </div>
               </div>
             ) : (
-              <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, fontStyle: "italic",
-                background: T.bg, border: `1px dashed ${T.border}`, borderRadius: 8, padding: "12px 14px" }}>
+              <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, fontStyle: "italic",
+                background: HZ.bg, border: `1px dashed ${HZ.border}`, borderRadius: 8, padding: "12px 14px" }}>
                 No active space configuration matches this shipment.
               </div>
             )}
@@ -789,46 +793,46 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
       </div>
 
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <Btn id="shpsched-history-btn" size="sm" variant="secondary" onClick={() => setHistOpen(true)}>⏱ History</Btn>
+        <Btn id="shpsched-history-btn" data-testid="shipment-schedules-history-btn" size="sm" variant="secondary" onClick={() => setHistOpen(true)}>⏱ History</Btn>
       </div>
       {histOpen && (
-        <Modal title="Schedule History" onClose={() => setHistOpen(false)} width={640}>
+        <Modal title="Schedule History" onClose={() => setHistOpen(false)} width={640} data-testid="shipment-schedules-history-modal">
           <ScheduleHistoryPanel key={`history-${historyVersion}`} shipment={shipment} forceOpen />
         </Modal>
       )}
 
       {validationErrors && (
-        <Modal title="Can't save yet" onClose={() => setValidationErrors(null)} width={460} hideClose>
-          <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, margin: "0 0 10px", lineHeight: 1.5 }}>
+        <Modal title="Can't save yet" onClose={() => setValidationErrors(null)} width={460} hideClose data-testid="shipment-schedules-validation-errors-modal">
+          <p style={{ fontFamily: HZ_BODY, fontSize: 14, color: HZ.text, margin: "0 0 10px", lineHeight: 1.5 }}>
             Fix the following before saving:
           </p>
           <ul style={{ margin: "0 0 20px", paddingLeft: 20, display: "flex", flexDirection: "column", gap: 6 }}>
             {validationErrors.map((e, i) => (
-              <li key={i} style={{ fontFamily: T.body, fontSize: 13, color: T.text, lineHeight: 1.5 }}>{e}</li>
+              <li key={i} style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text, lineHeight: 1.5 }}>{e}</li>
             ))}
           </ul>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Btn variant="danger" onClick={handleDiscard}>Discard changes</Btn>
-            <Btn onClick={() => setValidationErrors(null)}>Fix issues</Btn>
+            <Btn variant="danger" onClick={handleDiscard} data-testid="shipment-schedules-validation-discard-btn">Discard changes</Btn>
+            <Btn onClick={() => setValidationErrors(null)} data-testid="shipment-schedules-validation-fix-btn">Fix issues</Btn>
           </div>
         </Modal>
       )}
 
       {confirmSailing && (
-        <Modal title="Replace sailing?" onClose={() => setConfirmSailing(null)} width={420}>
-          <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, margin: "0 0 6px", lineHeight: 1.6 }}>
+        <Modal title="Replace sailing?" onClose={() => setConfirmSailing(null)} width={420} data-testid="shipment-schedules-confirm-sailing-modal">
+          <p style={{ fontFamily: HZ_BODY, fontSize: 14, color: HZ.text, margin: "0 0 6px", lineHeight: 1.6 }}>
             This will replace{" "}
-            <strong style={{ fontFamily: T.mono }}>{seaLegsForSearch[0]?.vessel || "the current sailing"}</strong>
+            <strong style={{ fontFamily: HZ_MONO }}>{seaLegsForSearch[0]?.vessel || "the current sailing"}</strong>
             {" "}with{" "}
-            <strong style={{ fontFamily: T.mono }}>{confirmSailing.vesselName}</strong>
+            <strong style={{ fontFamily: HZ_MONO }}>{confirmSailing.vesselName}</strong>
             {" "}· Voy {confirmSailing.voyageNumber}.
           </p>
-          <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "0 0 20px" }}>
+          <p style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, margin: "0 0 20px" }}>
             This won't be saved to the shipment until you click Save below.
           </p>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Btn variant="secondary" onClick={() => setConfirmSailing(null)}>Cancel</Btn>
-            <Btn onClick={() => { stageSailing(confirmSailing); setConfirmSailing(null); }}>Replace</Btn>
+            <Btn variant="secondary" onClick={() => setConfirmSailing(null)} data-testid="shipment-schedules-confirm-sailing-cancel-btn">Cancel</Btn>
+            <Btn onClick={() => { stageSailing(confirmSailing); setConfirmSailing(null); }} data-testid="shipment-schedules-confirm-sailing-replace-btn">Replace</Btn>
           </div>
         </Modal>
       )}
@@ -851,20 +855,20 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
       )}
 
       {confirmCloseSailing && (
-        <Modal title="Close without a sailing?" onClose={() => setConfirmCloseSailing(false)} width={440}>
-          <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, margin: "0 0 6px", lineHeight: 1.6 }}>
-            The contract <strong style={{ fontFamily: T.mono }}>{shipment.contractRef || "you just picked"}</strong> has
+        <Modal title="Close without a sailing?" onClose={() => setConfirmCloseSailing(false)} width={440} data-testid="shipment-schedules-confirm-close-sailing-modal">
+          <p style={{ fontFamily: HZ_BODY, fontSize: 14, color: HZ.text, margin: "0 0 6px", lineHeight: 1.6 }}>
+            The contract <strong style={{ fontFamily: HZ_MONO }}>{shipment.contractRef || "you just picked"}</strong> has
             already been saved to this shipment, but no sailing has been selected yet.
           </p>
-          <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "0 0 20px" }}>
+          <p style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, margin: "0 0 20px" }}>
             You can add one later via "Add Sailing" — the contract selection stays either way.
           </p>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Btn variant="secondary" onClick={() => setConfirmCloseSailing(false)}>Keep searching</Btn>
+            <Btn variant="secondary" onClick={() => setConfirmCloseSailing(false)} data-testid="shipment-schedules-confirm-close-sailing-keep-btn">Keep searching</Btn>
             <Btn variant="danger" onClick={() => {
               setConfirmCloseSailing(false); setPickerOpen(false);
               setCarrierOverride(null); setRouteOverride(null); setChainedFromContract(false);
-            }}>Close without a sailing</Btn>
+            }} data-testid="shipment-schedules-confirm-close-sailing-close-btn">Close without a sailing</Btn>
           </div>
         </Modal>
       )}

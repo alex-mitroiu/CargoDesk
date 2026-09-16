@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { T, IMDG_CLASSES, CURRENCIES } from "../../tokens";
+import { IMDG_CLASSES, CURRENCIES } from "../../tokens";
 import Btn from "../primitives/Btn";
 import { Inp, Sel, BtnToggle } from "../primitives/Form";
 import { AnyIcon, IconWarning } from "../primitives/Icon";
+import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
 
 // ─── Container cargo manifest — shared tree/detail building blocks ────────────
 // NavRow and PackageDetailForm back the unified Containers + Cargo Manifest tree
@@ -13,27 +14,32 @@ import { AnyIcon, IconWarning } from "../primitives/Icon";
 // single-container-only tree opened from a separate "Cargo Manifest" modal button —
 // that surface is gone now that the same tree lives inline on the unified page.
 
-const NavRow = ({ id, icon, label, badge, dgClass, depth, selected, onClick, onToggle, hasChildren, isOpen }) => (
-  <div id={id} onClick={onClick}
+const NavRow = ({ id, icon, label, badge, dgClass, incomplete, depth, selected, onClick, onToggle, hasChildren, isOpen }) => (
+  <div id={id} data-testid={id ? `shipment-containers-navrow-${id}` : undefined} onClick={onClick}
     style={{ display: "flex", alignItems: "center", gap: 4,
       padding: `4px 8px 4px ${8 + depth * 14}px`,
       borderRadius: 5, cursor: "pointer", userSelect: "none",
-      background: selected ? T.accent + "22" : "transparent",
-      color: selected ? T.accent : T.text,
-      fontFamily: T.body, fontSize: 12.5, fontWeight: selected ? 600 : 400,
-      borderLeft: selected ? `2px solid ${T.accent}` : "2px solid transparent" }}>
+      background: selected ? HZ.cyanBg : "transparent",
+      color: selected ? HZ.cyan : HZ.text,
+      fontFamily: HZ_BODY, fontSize: 12.5, fontWeight: selected ? 600 : 400,
+      borderLeft: selected ? `2px solid ${HZ.cyan}` : "2px solid transparent" }}>
     <span onClick={e => { if (onToggle) { e.stopPropagation(); onToggle(); } }}
-      style={{ fontSize: 9, color: T.textMuted, width: 10, flexShrink: 0, textAlign: "center" }}>
+      style={{ fontSize: 9, color: HZ.textMuted, width: 10, flexShrink: 0, textAlign: "center" }}>
       {hasChildren ? (isOpen ? "▾" : "▸") : ""}
     </span>
     <AnyIcon icon={icon} size={13} />
     <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
     {dgClass && (
-      <span title={`DG — IMO ${dgClass}`} style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700,
-        color: "#fff", background: T.danger, borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>DG</span>
+      <span title={`DG — IMO ${dgClass}`} style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700,
+        color: "#fff", background: HZ.crit, borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>DG</span>
+    )}
+    {incomplete && (
+      <span title="Missing container number, HS code, cargo description, weight, or volume"
+        style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700,
+        color: "#06111f", background: HZ.warn, borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>⚠ Incomplete</span>
     )}
     {badge != null && (
-      <span style={{ fontFamily: T.mono, fontSize: 10, color: T.accent, fontWeight: 700, flexShrink: 0 }}>× {badge}</span>
+      <span style={{ fontFamily: HZ_MONO, fontSize: 10, color: HZ.cyan, fontWeight: 700, flexShrink: 0 }}>× {badge}</span>
     )}
   </div>
 );
@@ -86,45 +92,55 @@ const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, conta
     && (!needsLicenseValue || licenseValue.trim().length > 0);
   const typeOptions = [{ value: "", label: "— No type —" }, ...packTypes.map(t => ({ value: t.id, label: `${t.icon} ${t.label}` }))];
 
+  useHorizonFonts();
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Sel id="pkgform-packtype" label="Pack Type" value={packTypeId} onChange={setPackTypeId} options={typeOptions} />
-      <Inp id="pkgform-description" label="Description" value={description} onChange={setDescription}
-        placeholder="e.g. Bottles of olive oil" hint="What's on/in this pack — the type above is the box/pallet/etc. itself" required />
-      <Inp id="pkgform-quantity" label="Quantity" value={quantity} onChange={setQuantity} type="number" required />
+    <div data-testid="shipment-containers-package-form" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div data-testid="shipment-containers-package-form-packtype-field">
+        <Sel id="pkgform-packtype" label="Pack Type" value={packTypeId} onChange={setPackTypeId} options={typeOptions} />
+      </div>
+      <div data-testid="shipment-containers-package-form-description-field">
+        <Inp id="pkgform-description" label="Description" value={description} onChange={setDescription}
+          placeholder="e.g. Bottles of olive oil" hint="What's on/in this pack — the type above is the box/pallet/etc. itself" required />
+      </div>
+      <div data-testid="shipment-containers-package-form-quantity-field">
+        <Inp id="pkgform-quantity" label="Quantity" value={quantity} onChange={setQuantity} type="number" required />
+      </div>
 
       <div style={{ display: "flex", gap: 10 }}>
-        <div style={{ flex: 2 }}>
+        <div data-testid="shipment-containers-package-form-unitvalue-field" style={{ flex: 2 }}>
           <Inp id="pkgform-unitvalue" label="Unit Value" value={unitValue} onChange={setUnitValue} type="number"
             placeholder="e.g. 12.50" hint="Per-unit declared value — leave blank if not priced yet" />
         </div>
-        <div style={{ flex: 1 }}>
+        <div data-testid="shipment-containers-package-form-currency-field" style={{ flex: 1 }}>
           <Sel id="pkgform-currency" label="Currency" value={currency} onChange={setCurrency}
             options={CURRENCIES.map(c => ({ value: c, label: c }))} />
         </div>
       </div>
-      <Inp id="pkgform-hscode" label="HS Code" value={hsCode} onChange={setHsCode}
-        placeholder={containerHsCode ? `Container default: ${containerHsCode}` : "e.g. 8471.30"}
-        hint="Optional override — leave blank to use the container's own HS code" />
+      <div data-testid="shipment-containers-package-form-hscode-field">
+        <Inp id="pkgform-hscode" label="HS Code" value={hsCode} onChange={setHsCode}
+          placeholder={containerHsCode ? `Container default: ${containerHsCode}` : "e.g. 8471.30"}
+          hint="Optional override — leave blank to use the container's own HS code" />
+      </div>
 
-      <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" }}>
-        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+      <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8, padding: "10px 12px" }}>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600,
           textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 10 }}>
           Export Control (AES/EEI)
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ display: "flex", gap: 10 }}>
-            <div style={{ flex: 1 }}>
+            <div data-testid="shipment-containers-package-form-scheduleb-field" style={{ flex: 1 }}>
               <Inp id="pkgform-scheduleb" label="Schedule B Number" value={scheduleBNumber} onChange={setScheduleBNumber}
                 placeholder="e.g. 8471.30.0100" hint="US export classification — often, not always, the same as HS Code" />
             </div>
-            <div style={{ flex: 1 }}>
+            <div data-testid="shipment-containers-package-form-eccn-field" style={{ flex: 1 }}>
               <Inp id="pkgform-eccn" label="ECCN" value={eccn} onChange={setEccn}
                 placeholder="e.g. EAR99" hint="Export control classification — leave blank if not yet determined" />
             </div>
           </div>
           <div style={{ display: "flex", gap: 10 }}>
-            <div style={{ flex: 1 }}>
+            <div data-testid="shipment-containers-package-form-licensetype-field" style={{ flex: 1 }}>
               <Sel id="pkgform-licensetype" label="License Type" value={licenseType} onChange={setLicenseType}
                 options={[
                   { value: "", label: "— Not classified —" },
@@ -134,7 +150,7 @@ const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, conta
                 ]} />
             </div>
             {needsLicenseValue && (
-              <div style={{ flex: 1 }}>
+              <div data-testid="shipment-containers-package-form-licensevalue-field" style={{ flex: 1 }}>
                 <Inp id="pkgform-licensevalue" label={licenseType === "License Required" ? "License Number" : "Exception Symbol"}
                   value={licenseValue} onChange={setLicenseValue}
                   placeholder={licenseType === "License Required" ? "e.g. D1234567" : "e.g. TMP, RPL, GOV"} required />
@@ -144,17 +160,19 @@ const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, conta
         </div>
       </div>
 
-      <div style={{ background: T.bg, border: `1px solid ${isDg ? T.danger + "55" : T.border}`,
+      <div style={{ background: HZ.bg, border: `1px solid ${isDg ? HZ.crit + "55" : HZ.border}`,
         borderRadius: 8, padding: "10px 12px", transition: "border-color .15s" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontFamily: T.body, fontSize: 10.5, color: isDg ? T.danger : T.textMuted,
+          <span style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: isDg ? HZ.crit : HZ.textMuted,
             fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em", display: "flex", alignItems: "center", gap: 4 }}>
             <IconWarning size={11} /> Dangerous Goods
           </span>
-          <BtnToggle selected={isDg} onClick={() => { setIsDg(v => !v); setDgClass(""); }}>{isDg ? "DG ON" : "DG OFF"}</BtnToggle>
+          <span data-testid="shipment-containers-package-form-dg-toggle-btn">
+            <BtnToggle selected={isDg} onClick={() => { setIsDg(v => !v); setDgClass(""); }}>{isDg ? "DG ON" : "DG OFF"}</BtnToggle>
+          </span>
         </div>
         {isDg && (
-          <div style={{ marginTop: 10 }}>
+          <div data-testid="shipment-containers-package-form-dgclass-field" style={{ marginTop: 10 }}>
             <Sel id="pkgform-dgclass" label="IMDG Class" value={dgClass} onChange={setDgClass} required
               options={[{ value: "", label: "— Select IMDG class —" }, ...IMDG_CLASSES.map(c => ({ value: c.code, label: `${c.label} — ${c.name}` }))]} />
           </div>
@@ -163,12 +181,12 @@ const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, conta
 
       <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", paddingTop: 4 }}>
         <div>
-          {!isNew && canEdit && <Btn id="pkgform-delete-btn" variant="danger" size="sm" onClick={onDelete}>Delete</Btn>}
+          {!isNew && canEdit && <Btn id="pkgform-delete-btn" data-testid="shipment-containers-package-form-delete-btn" variant="danger" size="sm" onClick={onDelete}>Delete</Btn>}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          {!isNew && canEdit && <Btn id="pkgform-addchild-btn" variant="secondary" size="sm" onClick={onAddChild}>＋ Add Sub-Package</Btn>}
-          {isNew && <Btn id="pkgform-cancel-btn" variant="secondary" onClick={onCancel}>Cancel</Btn>}
-          <Btn id="pkgform-save-btn" disabled={!valid || saving}
+          {!isNew && canEdit && <Btn id="pkgform-addchild-btn" data-testid="shipment-containers-package-form-addchild-btn" variant="secondary" size="sm" onClick={onAddChild}>＋ Add Sub-Package</Btn>}
+          {isNew && <Btn id="pkgform-cancel-btn" data-testid="shipment-containers-package-form-cancel-btn" variant="secondary" onClick={onCancel}>Cancel</Btn>}
+          <Btn id="pkgform-save-btn" data-testid="shipment-containers-package-form-save-btn" disabled={!valid || saving}
             onClick={() => valid && onSave({ description: description.trim(), quantity: qty, packTypeId: packTypeId || null,
               isDg, dgClass: isDg ? dgClass : "", unitValue: uv, currency: uv != null ? currency : "", hsCode: hsCode.trim(),
               scheduleBNumber: scheduleBNumber.trim(), eccn: eccn.trim(), licenseType,

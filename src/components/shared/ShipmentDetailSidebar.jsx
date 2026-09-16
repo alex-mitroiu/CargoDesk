@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { T } from "../../tokens";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { useAuth } from "../../AuthContext";
@@ -14,6 +13,7 @@ import {
   AnyIcon, IconAnchor, IconBaseStation, IconChartBar, IconClipboard, IconCoin, IconDownload,
   IconFileCertificate, IconMapPin, IconReceipt, IconRoute, IconUpload,
 } from "../primitives/Icon";
+import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
 
 // ─── Shipment Detail Sidebar ──────────────────────────────────────────────────
 
@@ -112,8 +112,8 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
       .catch(() => !cancelled && setBookingStatus(null));
     return () => { cancelled = true; };
   }, [shipment.id, currentPage]);
-  const bookingBadge = bookingStatus === "Pending" ? { text: "Pending", color: T.accent }
-    : bookingStatus === "Rejected" ? { text: "Rejected", color: T.danger }
+  const bookingBadge = bookingStatus === "Pending" ? { text: "Pending", color: HZ.cyan }
+    : bookingStatus === "Rejected" ? { text: "Rejected", color: HZ.crit }
     : null;
 
   // Same self-fetch, no-WS idiom as bookingBadge above — a shipment can have up to 2 filings
@@ -127,8 +127,8 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
       .catch(() => !cancelled && setFilingStatuses([]));
     return () => { cancelled = true; };
   }, [shipment.id, currentPage]);
-  const filingBadge = filingStatuses.includes("Rejected") ? { text: "Rejected", color: T.danger }
-    : filingStatuses.includes("Filed") ? { text: "Filed", color: T.accent }
+  const filingBadge = filingStatuses.includes("Rejected") ? { text: "Rejected", color: HZ.crit }
+    : filingStatuses.includes("Filed") ? { text: "Filed", color: HZ.cyan }
     : null;
 
   // Same self-fetch, no-WS idiom as bookingBadge/filingBadge above.
@@ -140,8 +140,8 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
       .catch(() => !cancelled && setSiStatus(null));
     return () => { cancelled = true; };
   }, [shipment.id, currentPage]);
-  const siBadge = siStatus === "Rejected" ? { text: "Rejected", color: T.danger }
-    : siStatus === "Submitted" ? { text: "Submitted", color: T.accent }
+  const siBadge = siStatus === "Rejected" ? { text: "Rejected", color: HZ.crit }
+    : siStatus === "Submitted" ? { text: "Submitted", color: HZ.cyan }
     : null;
 
   // One nav row per distinct, non-cancelled ordered type per side, in canonical
@@ -218,10 +218,10 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
   };
 
   const STATUS_COLORS = {
-    ACTIVE:    { bg: "#22c55e22", color: "#22c55e" },
-    COMPLETED: { bg: "#3b82f622", color: "#3b82f6" },
-    CANCELLED: { bg: "#ef444422", color: "#ef4444" },
-    DRAFT:     { bg: "#ffffff11", color: T.textMuted },
+    ACTIVE:    { bg: HZ.goodBg, color: HZ.good },
+    COMPLETED: { bg: HZ.infoBg, color: "#7db2f2" },
+    CANCELLED: { bg: HZ.critBg, color: HZ.crit },
+    DRAFT:     { bg: "rgba(255,255,255,0.06)", color: HZ.textMuted },
   };
   const sc = STATUS_COLORS[shipment.status] || STATUS_COLORS.DRAFT;
 
@@ -276,30 +276,36 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
     "shp-import-services":   { icon: IconDownload, label: "Import Services" },
     "shp-accounting":        { icon: "◈",          label: "Accounting" },
   };
+  useHorizonFonts();
+
   return (
     <aside style={{ width: 240, height: "100vh", position: "sticky", top: 0,
-      background: T.surface, borderRight: `1px solid ${T.border}`,
+      background: HZ.surfaceSolid, borderRight: `1px solid ${HZ.border}`,
       display: "flex", flexDirection: "column", flexShrink: 0, overflow: "hidden" }}>
 
       {/* Logo */}
-      <div style={{ padding: "22px 20px 18px", borderBottom: `1px solid ${T.border}` }}>
-        <div style={{ fontFamily: T.head, fontSize: 17, fontWeight: 800, color: T.text,
-          display: "flex", alignItems: "center", gap: 7 }}>
-          <IconAnchor size={17} />CargoDesk
+      <div style={{ padding: "22px 20px 18px", borderBottom: `1px solid ${HZ.border}` }}>
+        <div style={{ fontFamily: HZ_DISPLAY, fontSize: 17, fontWeight: 800, color: HZ.text,
+          display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 26, height: 26, borderRadius: 8, background: HZ.gradCyan,
+            display: "flex", alignItems: "center", justifyContent: "center", color: "#04121c", flexShrink: 0 }}>
+            <IconAnchor size={14} />
+          </span>
+          CargoDesk
         </div>
-        <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted, marginTop: 3,
-          letterSpacing: ".12em", textTransform: "uppercase" }}>
+        <div style={{ fontFamily: HZ_MONO, fontSize: 9, color: HZ.textFaint, marginTop: 5,
+          letterSpacing: ".16em", textTransform: "uppercase" }}>
           Freight Management
         </div>
       </div>
 
       {/* Back */}
-      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}` }}>
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${HZ.border}` }}>
         <button onClick={goBack} style={{
           display: "flex", alignItems: "center", gap: 8,
-          width: "100%", padding: "8px 12px", borderRadius: 8,
-          background: T.bg, border: `1px solid ${T.border}`,
-          fontFamily: T.body, fontSize: 13, color: T.text,
+          width: "100%", padding: "8px 12px", borderRadius: 9,
+          background: HZ.surface, border: `1px solid ${HZ.border}`,
+          fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text,
           cursor: "pointer", fontWeight: 500, textAlign: "left",
         }}>
           ← {window.opener ? "Close tab" : "All Shipments"}
@@ -307,38 +313,38 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
       </div>
 
       {/* Shipment context card */}
-      <div style={{ padding: "14px 16px", borderBottom: `1px solid ${T.border}`,
+      <div style={{ padding: "14px 16px", borderBottom: `1px solid ${HZ.border}`,
         display: "flex", flexDirection: "column", gap: 7 }}>
 
         <div
           title="Click to copy shipment ID"
           onClick={() => navigator.clipboard.writeText(shipment.id)
             .then(() => toast.success(`Copied ${shipment.id}`))}
-          style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 800, color: T.text,
-            cursor: "pointer", userSelect: "none", letterSpacing: ".02em" }}>
+          style={{ fontFamily: HZ_MONO, fontSize: 14.5, fontWeight: 700, color: HZ.text,
+            cursor: "pointer", userSelect: "none", letterSpacing: ".01em" }}>
           {shipment.id}
         </div>
 
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, borderRadius: 4,
+          <span style={{ fontFamily: HZ_MONO, fontSize: 11, fontWeight: 700, borderRadius: 4,
             padding: "2px 8px", background: sc.bg, color: sc.color }}>
             {shipment.status}
           </span>
           {shipment.carrier && (
-            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+            <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted }}>
               {shipment.carrier}
             </span>
           )}
         </div>
 
         {(shipment.pol || shipment.pod) && (
-          <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text, fontWeight: 600 }}>
+          <div style={{ fontFamily: HZ_MONO, fontSize: 12, color: HZ.text, fontWeight: 600 }}>
             {shipment.pol || "—"} → {shipment.pod || "—"}
           </div>
         )}
 
         {shipment.etd && (
-          <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+          <div style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted }}>
             ETD {shipment.etd}
           </div>
         )}
@@ -347,16 +353,16 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
       {/* Section nav — Explorer-tree pattern, same visual language as TestCasesPage's folder tree */}
       <nav style={{ padding: "14px 12px", flex: 1, overflowY: "auto" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 12px", marginBottom: 8 }}>
-          <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
-            textTransform: "uppercase", letterSpacing: ".12em" }}>
+          <div style={{ fontFamily: HZ_MONO, fontSize: 9, color: HZ.textFaint, fontWeight: 700,
+            textTransform: "uppercase", letterSpacing: ".14em" }}>
             Explorer
           </div>
           {/* Admin-only — sets the sidebar order every user sees, not just this admin's own
               view. See DEFAULT_SIDEBAR_ORDER/reconcileSidebarOrder above. */}
           {isAdmin && !reorderMode && (
             <button onClick={startReorder} title="Reorder the sidebar for all users"
-              style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 4,
-                color: T.textMuted, fontFamily: T.mono, fontSize: 9.5, fontWeight: 700,
+              style={{ background: "none", border: `1px solid ${HZ.border}`, borderRadius: 4,
+                color: HZ.textMuted, fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700,
                 textTransform: "uppercase", letterSpacing: ".04em", padding: "2px 7px", cursor: "pointer" }}>
               ⇅ Reorder
             </button>
@@ -364,7 +370,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
         </div>
         {reorderMode && (
           <div style={{ marginBottom: 10 }}>
-            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, fontStyle: "italic",
+            <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, fontStyle: "italic",
               padding: "0 12px 8px" }}>
               Drag rows to set the order every user's sidebar will use.
             </div>
@@ -375,14 +381,14 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
                 <div key={id} draggable onDragStart={() => setDragIdx(idx)} onDragEnd={handleReorderDrop}
                   onDragOver={e => { e.preventDefault(); setDragOverIdx(idx); }}
                   style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px",
-                    borderRadius: 6, marginBottom: 3, cursor: "grab",
-                    background: dragOverIdx === idx ? `${T.accent}12` : T.bg,
-                    border: `1px solid ${dragOverIdx === idx ? T.accent + "55" : T.border}` }}>
-                  <span style={{ color: T.border, fontSize: 13 }}>⠿</span>
+                    borderRadius: 7, marginBottom: 3, cursor: "grab",
+                    background: dragOverIdx === idx ? HZ.cyanBg : "rgba(255,255,255,0.03)",
+                    border: `1px solid ${dragOverIdx === idx ? `${HZ.cyan}55` : HZ.border}` }}>
+                  <span style={{ color: HZ.textFaint, fontSize: 13 }}>⠿</span>
                   <span style={{ width: 16, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <AnyIcon icon={meta.icon} size={13} />
                   </span>
-                  <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{meta.label}</span>
+                  <span style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text }}>{meta.label}</span>
                 </div>
               );
             })}
@@ -396,7 +402,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
             reordering — the draft list above is the only thing being edited right now. */}
         {!reorderMode && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px",
-          fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.textMuted }}>
+          fontFamily: HZ_BODY, fontSize: 12, fontWeight: 700, color: HZ.textMuted }}>
           <span style={{ fontSize: 11, width: 10, textAlign: "center" }}>▾</span>
           <span style={{ fontSize: 13 }}>🚢</span>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{shipment.id}</span>
@@ -407,28 +413,28 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
             entry today (a fixed, always-expanded 3-child subtree — no collapse state
             needed for a subtree this small; more restructuring planned later). */}
         {!reorderMode && (() => {
-          const NavRow = ({ id, icon, label, badge, badgeColor = T.accent, depth = 0, selected, promoted, onClick }) => (
+          const NavRow = ({ id, icon, label, badge, badgeColor = HZ.cyan, depth = 0, selected, promoted, onClick }) => (
             <div key={id} onClick={onClick}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between",
-                padding: `5px 8px 5px ${32 + depth * 14}px`, borderRadius: 5, cursor: "pointer", userSelect: "none",
-                background: selected ? T.accent + "22" : "transparent",
-                color: selected ? T.accent : T.text,
-                fontFamily: T.body, fontSize: 13, fontWeight: selected ? 600 : 400,
-                borderLeft: selected ? `2px solid ${T.accent}` : "2px solid transparent",
+                padding: `6px 8px 6px ${32 + depth * 14}px`, borderRadius: 6, cursor: "pointer", userSelect: "none",
+                background: selected ? HZ.cyanBg : "transparent",
+                color: selected ? HZ.cyan : HZ.text,
+                fontFamily: HZ_BODY, fontSize: 12.7, fontWeight: selected ? 600 : 400,
+                borderLeft: selected ? `2px solid ${HZ.cyan}` : "2px solid transparent",
                 marginBottom: 1,
               }}
-              onMouseEnter={e => { if (!selected) e.currentTarget.style.background = T.bg; }}
+              onMouseEnter={e => { if (!selected) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
               onMouseLeave={e => { if (!selected) e.currentTarget.style.background = "transparent"; }}
             >
-              <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                <span style={{ width: 16, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0 }}><AnyIcon icon={icon} size={13} /></span>
+              <span style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
+                <span style={{ width: 16, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0, opacity: selected ? 1 : .85 }}><AnyIcon icon={icon} size={13} /></span>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
-                {promoted && <span style={{ fontSize: 9, color: T.border }}>↗</span>}
+                {promoted && <span style={{ fontSize: 9, color: HZ.textFaint }}>↗</span>}
               </span>
               {badge != null && (
-                <span style={{ fontFamily: T.mono, fontSize: 11, background: badgeColor + "22",
-                  color: badgeColor, borderRadius: 10, padding: "1px 7px", fontWeight: 700, flexShrink: 0 }}>
+                <span style={{ fontFamily: HZ_MONO, fontSize: 10, background: `${badgeColor}22`,
+                  color: badgeColor, borderRadius: 9, padding: "1px 7px", fontWeight: 700, flexShrink: 0 }}>
                   {badge}
                 </span>
               )}
@@ -497,7 +503,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
               <div key="shp-export-services" style={{ display: "flex", alignItems: "center", gap: 8,
                 padding: "5px 8px 5px 32px", marginBottom: 1 }}>
                 <Spinner size="sm" />
-                <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>Loading services…</span>
+                <span style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, fontStyle: "italic" }}>Loading services…</span>
               </div>
             ) : <div key="shp-export-services">{renderServiceGroup("Export", genericExportTypes, IconUpload)}</div>,
             "shp-import-services": () => servicesLoading ? null

@@ -6,6 +6,8 @@ implementation-level detail.
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.91.3 | Horizon | Command Center restyled to Trade Horizon with Excel-style column filters (Shipments + Dashboard) and a bell contract-deep-link fix; the full Shipment Details experience (header, sidebar, Overview/Conditions/Parties & Offices/Contracts & Schedules/Cargo/Milestones & Events) restyled to match; shipment-integrity fix wave (required EMO/IMO offices, container-number uniqueness, non-negative declared value). |
+| 0.91.1 | Bulkhead | Hotfix — User Management/access-scoping redesign (Branch/Country office-visibility grants, a new `sales` role, Quotes/Opportunities office scoping) plus a shipment creation/editing deep-dive; 8 real findings across both QA passes fixed same day, including an office-reassignment authorization bypass and a silent full-replace on shipment edits. |
 | 0.91.0 | Interchange | Real multi-carrier API integration (DCSA Booking v2.0.5, adapter-registry pattern); added Shipping Instructions and closed 4 more FCL export gaps; closed all 9 Space Configuration & Allocation Consumption gaps (badge UI, Dashboard/allocation-engine reconciliation, cascading cancel, real FKs); Kanban page split into focused components; changelog history extracted to this file. |
 | 0.90.3 | Ledger's Edge | Closed out the 37-route-file Shipment-Domain Gap & Dead-Code Audit — 5 real findings fixed (2 critical scope bypasses); shipped Rate Reconciliation for carrier cost import/update conflicts. |
 | 0.90.2 | Ol' Scratch | Fixed a real pglite database-corruption bug (concurrent `npm run seed` + a live server) with an OS-level exclusive lock; added `npm run setup` to automate the correct one-time onboarding order. |

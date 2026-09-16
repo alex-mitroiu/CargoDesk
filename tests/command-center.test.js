@@ -73,6 +73,11 @@ const today = new Date().toISOString().slice(0, 10);
     const token = loginRes.body.token;
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     const rand = Math.random().toString(36).slice(2, 8);
 
     // ── shipmentA: overdue-summary + stalledMilestone + unconfirmedBooking ─────────────────
@@ -80,6 +85,7 @@ const today = new Date().toISOString().slice(0, 10);
     const shipA = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       contractRef: `CC-TEST-${rand}`, etd: daysAgo(30), eta: daysAgo(20),
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("shipment A created", shipA.status === 201, JSON.stringify(shipA.body));
     const shipAId = shipA.body.id;
@@ -143,6 +149,7 @@ const today = new Date().toISOString().slice(0, 10);
 
     const shipB = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("shipment B created", shipB.status === 201);
     const shipBId = shipB.body.id;

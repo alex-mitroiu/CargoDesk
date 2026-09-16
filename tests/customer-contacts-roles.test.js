@@ -68,6 +68,11 @@ async function login() {
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nScratch customer");
     const cust = await request("POST", "/api/customers", { companyName: "Test Contacts & Roles Co" }, token);
     const customerId = cust.body.id;
@@ -125,6 +130,7 @@ async function login() {
     const unflagged = await request("POST", "/api/customers", { companyName: "Test Unflagged Co" }, token);
     const shipment = await request("POST", "/api/shipments", {
       pol: "nlrtm", pod: "usnyc", carrierCode: "MAEU", contractType: "SPOT", principalId: customerId,
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("scratch shipment created", shipment.status === 201);
     const rolesAfterPrincipal = await request("GET", `/api/customers/${customerId}/roles`, null, token);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { T, teuOf } from "../../tokens";
+import { teuOf } from "../../tokens";
 import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
@@ -14,6 +14,7 @@ import { toast } from "../../toast";
 import { setNavigationGuard, clearNavigationGuard } from "../../navigationGuard";
 import { dgPolicyConflict } from "../../utils/dgPolicy";
 import { IconWarning, IconClipboard, IconPackage, IconArchive, IconClose, IconCoin } from "../../components/primitives/Icon";
+import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
 
 // ─── Shipment Containers Page — unified Containers + Cargo Manifest tree ──────
 // Cargo Manifest & Container Details Redesign (TKT-OTKNJN), direct user-drawn concept:
@@ -66,37 +67,37 @@ const LandedCostEstimateModal = ({ shipmentId, onClose }) => {
   return (
     <Modal title="Landed-Cost Estimate" onClose={onClose} width={560}>
       {data === null ? (
-        <div style={{ padding: "24px 0", textAlign: "center", fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+        <div style={{ padding: "24px 0", textAlign: "center", fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted }}>
           Calculating…
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
             {[["Freight", data.freightUsd], ["Est. Duty", data.dutyEstimateUsd], ["Est. Landed Cost", data.landedCostUsd]].map(([label, val]) => (
-              <div key={label} style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" }}>
-                <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
-                <div style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 700, color: T.text, marginTop: 2 }}>{fmtCurr(val, "USD")}</div>
+              <div key={label} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8, padding: "10px 12px" }}>
+                <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+                <div style={{ fontFamily: HZ_MONO, fontSize: 16, fontWeight: 700, color: HZ.text, marginTop: 2 }}>{fmtCurr(val, "USD")}</div>
               </div>
             ))}
           </div>
 
-          <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, fontStyle: "italic" }}>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted, fontStyle: "italic" }}>
             {CARGO_VALUE_SOURCE_LABEL[data.cargoValueSource]}
           </div>
 
           {data.byChapter.length > 0 && (
             <div>
-              <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: T.text, textTransform: "uppercase",
+              <div style={{ fontFamily: HZ_BODY, fontSize: 11, fontWeight: 700, color: HZ.text, textTransform: "uppercase",
                 letterSpacing: 0.4, marginBottom: 6 }}>
                 By HS Chapter
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {data.byChapter.map(c => (
                   <div key={c.chapter || "unk"} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
-                    padding: "7px 10px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6,
-                    fontFamily: T.body, fontSize: 11.5 }}>
-                    <span style={{ color: T.text }}>{c.chapter ? `${c.chapter} — ${c.label}` : c.label}</span>
-                    <span style={{ fontFamily: T.mono, color: T.textMuted, flexShrink: 0, marginLeft: 10 }}>
+                    padding: "7px 10px", background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 6,
+                    fontFamily: HZ_BODY, fontSize: 11.5 }}>
+                    <span style={{ color: HZ.text }}>{c.chapter ? `${c.chapter} — ${c.label}` : c.label}</span>
+                    <span style={{ fontFamily: HZ_MONO, color: HZ.textMuted, flexShrink: 0, marginLeft: 10 }}>
                       {fmtCurr(c.valueUsd, "USD")} × {c.ratePct}% = {fmtCurr(c.dutyUsd, "USD")}
                     </span>
                   </div>
@@ -105,7 +106,7 @@ const LandedCostEstimateModal = ({ shipmentId, onClose }) => {
             </div>
           )}
 
-          <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, borderTop: `1px solid ${T.border}`, paddingTop: 10 }}>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, borderTop: `1px solid ${HZ.border}`, paddingTop: 10 }}>
             {data.disclaimer}
           </div>
         </div>
@@ -253,24 +254,26 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
   const activePkgContainer = (selection?.kind === "package" || selection?.kind === "new-package")
     ? ctrs.find(c => c.id === selection.containerId) || null : null;
 
+  useHorizonFonts();
+
   return (
-    <div id="shpctr-page" style={{ maxWidth: 1200, margin: "0 auto" }}>
+    <div id="shpctr-page" data-testid="shipment-containers-page" style={{ maxWidth: 1200, margin: "0 auto" }}>
       {/* Toolbar */}
-      <div id="shpctr-toolbar" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+      <div id="shpctr-toolbar" data-testid="shipment-containers-toolbar" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span id="shpctr-summary" style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+          <span id="shpctr-summary" data-testid="shipment-containers-summary" style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>
             {ctrs.length} container{ctrs.length !== 1 ? "s" : ""} · {totalTEU} TEU total
           </span>
           {dgConflicts > 0 && (
-            <span id="shpctr-dg-conflicts" style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.warning,
-              background: T.warning + "18", border: `1px solid ${T.warning}55`,
+            <span id="shpctr-dg-conflicts" data-testid="shipment-containers-dg-conflicts" style={{ fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600, color: HZ.warn,
+              background: HZ.warnBg, border: `1px solid ${HZ.warn}55`,
               borderRadius: 6, padding: "2px 8px", display: "inline-flex", alignItems: "center", gap: 5 }}>
               <IconWarning size={11} />{dgConflicts} DG conflict{dgConflicts !== 1 ? "s" : ""} — review required
             </span>
           )}
         </div>
         {ctrs.length > 0 && (
-          <Btn size="sm" variant="secondary" onClick={() => setLandedCostOpen(true)}>
+          <Btn size="sm" variant="secondary" onClick={() => setLandedCostOpen(true)} data-testid="shipment-containers-landed-cost-btn">
             <IconCoin size={13} /> Landed-Cost Estimate
           </Btn>
         )}
@@ -278,13 +281,13 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
       {landedCostOpen && <LandedCostEstimateModal shipmentId={shipment.id} onClose={() => setLandedCostOpen(false)} />}
 
       {ctrs.length === 0 && !canEdit ? (
-        <div id="shpctr-empty" style={{ padding: 48, textAlign: "center", fontFamily: T.body,
-          fontSize: 13, color: T.textMuted, fontStyle: "italic",
-          background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10 }}>
+        <div id="shpctr-empty" data-testid="shipment-containers-empty" style={{ padding: 48, textAlign: "center", fontFamily: HZ_BODY,
+          fontSize: 13, color: HZ.textMuted, fontStyle: "italic",
+          background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 10 }}>
           No containers yet.
         </div>
       ) : (
-        <div style={{ display: "flex", alignItems: "flex-start", border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, borderRadius: 10, overflow: "hidden" }}>
           {/* Left: container + cargo manifest tree — capped height with its own scroll (only
               kicks in once there are enough containers/packages to need it) so a long tree
               never pushes the page's real height around; the right panel below is NOT capped,
@@ -292,16 +295,16 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
               flows naturally in the page instead of being buried inside a second nested
               scroll box — a real bug found live: those buttons were unreachable-looking,
               stuck deep inside a small fixed-height (560px) scrollable panel. */}
-          <div style={{ width: 260, flexShrink: 0, maxHeight: 640, background: T.bg, borderRight: `1px solid ${T.border}`,
+          <div style={{ width: 260, flexShrink: 0, maxHeight: 640, background: HZ.bg, borderRight: `1px solid ${HZ.border}`,
             display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <div style={{ padding: "10px 10px 8px", borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
-              <span style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 700, letterSpacing: ".07em",
-                textTransform: "uppercase", color: T.textMuted }}>Containers</span>
+            <div style={{ padding: "10px 10px 8px", borderBottom: `1px solid ${HZ.border}`, flexShrink: 0 }}>
+              <span style={{ fontFamily: HZ_BODY, fontSize: 10.5, fontWeight: 700, letterSpacing: ".07em",
+                textTransform: "uppercase", color: HZ.textMuted }}>Containers</span>
             </div>
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "6px 4px" }}>
               {ctrs.length === 0 ? (
-                <div style={{ padding: "16px 10px", fontFamily: T.body, fontSize: 11.5,
-                  color: T.textMuted, fontStyle: "italic", lineHeight: 1.5 }}>
+                <div style={{ padding: "16px 10px", fontFamily: HZ_BODY, fontSize: 11.5,
+                  color: HZ.textMuted, fontStyle: "italic", lineHeight: 1.5 }}>
                   No containers yet — add one below.
                 </div>
               ) : ctrs.map(c => {
@@ -309,11 +312,12 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
                 const roots = pkgs.filter(p => !p.parentId);
                 const isOpen = navOpen[c.id] !== false;
                 return (
-                  <div key={c.id}>
+                  <div key={c.id} data-testid={`shipment-containers-row-${c.id}`}>
                     <NavRow id={`shpctr-${c.id}-row`} icon={IconArchive}
                       label={`${c.containerNumber || c.id} · ${c.size}ft ${c.type}`}
                       badge={`${teuOf(c.size)} TEU`}
                       dgClass={c.isDg ? c.dgClass : null}
+                      incomplete={!c.containerNumber || !c.hsCode || !c.cargoDescription || !(c.grossWeightKg > 0) || !(c.volumeCbm > 0)}
                       depth={0} selected={selection?.kind === "container" && selection.id === c.id}
                       onClick={() => setSelection({ kind: "container", id: c.id })}
                       onToggle={roots.length > 0 ? () => toggleNav(c.id) : null}
@@ -328,14 +332,14 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
             </div>
             {canEdit && (
               <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: 8 }}>
-                <button id="shpctr-add-btn" type="button" onClick={() => setSelection({ kind: "new-container" })}
-                  style={{ padding: "7px 12px", background: "none", border: `1px dashed ${T.accent}55`,
-                    borderRadius: 6, cursor: "pointer", fontFamily: T.body, fontSize: 12, color: T.accent }}>
+                <button id="shpctr-add-btn" data-testid="shipment-containers-add-btn" type="button" onClick={() => setSelection({ kind: "new-container" })}
+                  style={{ padding: "7px 12px", background: "none", border: `1px dashed ${HZ.cyan}55`,
+                    borderRadius: 6, cursor: "pointer", fontFamily: HZ_BODY, fontSize: 12, color: HZ.cyan }}>
                   ＋ Add Container
                 </button>
-                <button id="shpctr-import-btn" type="button" onClick={() => setImportOpen(true)}
-                  style={{ padding: "7px 12px", background: "none", border: `1px dashed ${T.border}`,
-                    borderRadius: 6, cursor: "pointer", fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+                <button id="shpctr-import-btn" data-testid="shipment-containers-import-btn" type="button" onClick={() => setImportOpen(true)}
+                  style={{ padding: "7px 12px", background: "none", border: `1px dashed ${HZ.border}`,
+                    borderRadius: 6, cursor: "pointer", fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted }}>
                   ⬆ Import Containers
                 </button>
               </div>
@@ -353,39 +357,41 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
           <div style={{ flex: 1, minWidth: 0, minHeight: 400, padding: 20 }}>
             {selection?.kind === "new-container" ? (
               <>
-                <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 16px" }}>Add Container</h3>
+                <h3 style={{ fontFamily: HZ_DISPLAY, fontSize: 15, fontWeight: 700, color: HZ.text, margin: "0 0 16px" }}>Add Container</h3>
                 <ContainerForm ref={ctrFormRef} init={{}} dgPolicy={dgPolicy}
+                  existingContainerNumbers={ctrs.map(c => c.containerNumber?.toUpperCase()).filter(Boolean)}
                   onSave={handleSaveContainer} onCancel={() => setSelection(null)} />
               </>
             ) : selectedCtr ? (
               <div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-                  <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>
+                  <h3 style={{ fontFamily: HZ_DISPLAY, fontSize: 15, fontWeight: 700, color: HZ.text, margin: 0 }}>
                     {selectedCtr.containerNumber || selectedCtr.id}
                   </h3>
                   <div style={{ display: "flex", gap: 6 }}>
-                    <Btn id={`shpctr-${selectedCtr.id}-events-btn`} size="sm" variant="secondary" onClick={() => setEventsCtr(selectedCtr)}
+                    <Btn id={`shpctr-${selectedCtr.id}-events-btn`} data-testid={`shipment-containers-events-btn-${selectedCtr.id}`} size="sm" variant="secondary" onClick={() => setEventsCtr(selectedCtr)}
                       title={selectedCtr.latestEventType ? `Latest: ${selectedCtr.latestEventType}${selectedCtr.latestEventLocation ? ` @ ${selectedCtr.latestEventLocation}` : ""} (${selectedCtr.latestEventAt || ""})` : "No lifecycle events yet"}>
                       <IconClipboard size={12} /> Lifecycle Events
                     </Btn>
                     {canEdit && (
-                      <Btn id={`shpctr-${selectedCtr.id}-delete-btn`} size="sm" variant="danger" onClick={() => setConfirmCtr(selectedCtr.id)}>
+                      <Btn id={`shpctr-${selectedCtr.id}-delete-btn`} data-testid={`shipment-containers-delete-btn-${selectedCtr.id}`} size="sm" variant="danger" onClick={() => setConfirmCtr(selectedCtr.id)}>
                         <IconClose size={11} /> Delete
                       </Btn>
                     )}
                   </div>
                 </div>
                 <ContainerForm ref={ctrFormRef} key={selectedCtr.id} init={selectedCtr} dgPolicy={dgPolicy}
+                  existingContainerNumbers={ctrs.filter(c => c.id !== selectedCtr.id).map(c => c.containerNumber?.toUpperCase()).filter(Boolean)}
                   onSave={handleSaveContainer} onCancel={() => setSelection(null)} />
 
                 <div style={{ marginTop: 24 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 700, letterSpacing: ".07em",
-                        textTransform: "uppercase", color: T.textMuted }}>Description of Goods</div>
+                      <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, fontWeight: 700, letterSpacing: ".07em",
+                        textTransform: "uppercase", color: HZ.textMuted }}>Description of Goods</div>
                       {cargoValueRollup.pricedCount > 0 && (
-                        <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
-                          background: T.accent + "18", border: `1px solid ${T.accent}55`, borderRadius: 5, padding: "2px 8px" }}>
+                        <span style={{ fontFamily: HZ_MONO, fontSize: 11, fontWeight: 700, color: HZ.cyan,
+                          background: HZ.cyanBg, border: `1px solid ${HZ.cyan}55`, borderRadius: 5, padding: "2px 8px" }}>
                           {fmtCurr(cargoValueRollup.totalUsd, "USD")}
                           {cargoValueRollup.pricedCount < cargoValueRollup.totalCount
                             ? ` · ${cargoValueRollup.pricedCount}/${cargoValueRollup.totalCount} priced` : ""}
@@ -393,32 +399,32 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
                       )}
                     </div>
                     {canEdit && (
-                      <Btn id="shpctr-add-package-btn" size="sm" variant="secondary"
+                      <Btn id="shpctr-add-package-btn" data-testid="shipment-containers-add-package-btn" size="sm" variant="secondary"
                         onClick={() => setSelection({ kind: "new-package", containerId: selectedCtr.id, parentId: null })}>
                         ＋ Add Package
                       </Btn>
                     )}
                   </div>
                   {descriptionOfGoods.length === 0 ? (
-                    <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, fontStyle: "italic" }}>
+                    <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, fontStyle: "italic" }}>
                       No packing breakdown recorded yet — add pallets/cartons on the left.
                     </div>
                   ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div data-testid="shipment-containers-description-of-goods" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {descriptionOfGoods.map((p, i) => (
-                        <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8,
-                          padding: "6px 10px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6 }}>
-                          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, flexShrink: 0 }}>Item {i + 1}</span>
-                          <span style={{ flex: 1, fontFamily: T.body, fontSize: 12.5, color: T.text }}>{p.description}</span>
-                          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, fontWeight: 700, flexShrink: 0 }}>× {p.quantity}</span>
+                        <div key={p.id} data-testid={`shipment-containers-goods-row-${p.id}`} style={{ display: "flex", alignItems: "center", gap: 8,
+                          padding: "6px 10px", background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 6 }}>
+                          <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted, flexShrink: 0 }}>Item {i + 1}</span>
+                          <span style={{ flex: 1, fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text }}>{p.description}</span>
+                          <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.cyan, fontWeight: 700, flexShrink: 0 }}>× {p.quantity}</span>
                           {p.unitValueUsd != null && (
-                            <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, flexShrink: 0 }}>
+                            <span style={{ fontFamily: HZ_MONO, fontSize: 10, color: HZ.textMuted, flexShrink: 0 }}>
                               {fmtCurr(p.unitValue, p.currency || "USD")}
                             </span>
                           )}
                           {p.isDg && p.dgClass && (
-                            <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: "#fff",
-                              background: T.danger, borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>DG {p.dgClass}</span>
+                            <span style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, color: "#fff",
+                              background: HZ.crit, borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>DG {p.dgClass}</span>
                           )}
                         </div>
                       ))}
@@ -437,7 +443,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
                 onAddChild={() => setSelection({ kind: "new-package", containerId: selection.containerId, parentId: selectedPkg.id })} />
             ) : (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%",
-                textAlign: "center", fontFamily: T.body, fontSize: 12.5, color: T.textMuted, fontStyle: "italic" }}>
+                textAlign: "center", fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, fontStyle: "italic" }}>
                 Select a container or a pack item on the left, or add a container to get started.
               </div>
             )}
@@ -448,7 +454,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
       {/* Lifecycle events */}
       {eventsCtr && (
         <Modal title={`Lifecycle Events — ${eventsCtr.containerNumber || eventsCtr.id}`}
-          onClose={() => setEventsCtr(null)} width={480}>
+          onClose={() => setEventsCtr(null)} width={480} data-testid="shipment-containers-events-modal">
           <ContainerEventsPanel shipmentId={shipment.id} containerId={eventsCtr.id} containerNumber={eventsCtr.containerNumber} />
         </Modal>
       )}

@@ -161,6 +161,7 @@ export const CustomerPickerModal = ({ onSelect, onClose, roleFilter = "" }) => {
 const CustomerCombobox = ({ label, value = { id: "", name: "" }, onChange, required, roleFilter = "" }) => {
   const [query,      setQuery]      = useState(value.name || "");
   const [results,    setResults]    = useState([]);
+  const [noResults,  setNoResults]  = useState(false);
   const [dropOpen,   setDropOpen]   = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [dropPos,    setDropPos]    = useState({ top: 0, left: 0, width: 200 });
@@ -191,13 +192,19 @@ const CustomerCombobox = ({ label, value = { id: "", name: "" }, onChange, requi
 
   const fetchSuggestions = q => {
     clearTimeout(timer.current);
-    if (!q.trim()) { setResults([]); setDropOpen(false); return; }
+    if (!q.trim()) { setResults([]); setNoResults(false); setDropOpen(false); return; }
     timer.current = setTimeout(async () => {
       try {
         const res = await api.customers.list({ search: q.trim(), role: roleFilter, limit: 8 });
         const items = res.results || [];
         setResults(items);
-        if (items.length > 0) { computeDropPos(); setDropOpen(true); }
+        // Open the dropdown even on zero results (when a role filter is active) so the
+        // "not eligible for this role" explanation below has somewhere to render — previously
+        // a role-filtered search that matched nothing just showed silence, indistinguishable
+        // from the customer not existing at all.
+        setNoResults(items.length === 0);
+        computeDropPos();
+        setDropOpen(true);
       } catch {}
     }, 200);
   };
@@ -240,7 +247,7 @@ const CustomerCombobox = ({ label, value = { id: "", name: "" }, onChange, requi
             ref={inputRef}
             value={query}
             onChange={e => handleInput(e.target.value)}
-            onFocus={() => { if (results.length > 0) { computeDropPos(); setDropOpen(true); } }}
+            onFocus={() => { if (results.length > 0 || noResults) { computeDropPos(); setDropOpen(true); } }}
             placeholder="Company name or CUS- code…"
             style={{
               ...inputBase,
@@ -311,6 +318,27 @@ const CustomerCombobox = ({ label, value = { id: "", name: "" }, onChange, requi
                 </span>
               </button>
             ))}
+          </div>
+        )}
+
+        {dropOpen && results.length === 0 && noResults && query.trim() && (
+          <div style={{
+            position: "fixed",
+            top: dropPos.top, left: dropPos.left, width: dropPos.width,
+            background: T.surface, border: `1px solid ${T.border}`,
+            borderRadius: 8, boxShadow: "0 8px 28px rgba(0,0,0,.45)",
+            zIndex: 1100, padding: "10px 12px",
+          }}>
+            <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.5 }}>
+              {roleFilter ? (
+                <>No customers are flagged eligible for role <strong style={{ color: T.text }}>{roleFilter}</strong>.{" "}
+                  <button type="button" onMouseDown={e => { e.preventDefault(); setDropOpen(false); setPickerOpen(true); }}
+                    style={{ background: "none", border: "none", padding: 0, margin: 0,
+                      color: T.accent, cursor: "pointer", font: "inherit", textDecoration: "underline" }}>
+                    Browse
+                  </button> to search all customers.</>
+              ) : "No matching customers."}
+            </div>
           </div>
         )}
       </div>

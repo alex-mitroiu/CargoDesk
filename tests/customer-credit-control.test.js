@@ -96,6 +96,11 @@ async function confirmDoc(shipmentId, docId, token) {
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nScratch customer — credit fields default blank/off");
     const cust = await request("POST", "/api/customers", { companyName: "Test Credit Co" }, token);
     const customerId = cust.body.id;
@@ -122,6 +127,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const ship = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: customerId, principalName: "Test Credit Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const shipmentId = ship.body.id;
     assert("scratch shipment created", !!shipmentId);
@@ -298,6 +304,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const groupShip = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: childCust.body.id, principalName: "Test Credit Child Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const groupLine = await addSellLine(groupShip.body.id, token, 400, "OFR");
     const groupDoc = await generateInvoiceDoc(groupShip.body.id, token, [groupLine.id]);
@@ -325,6 +332,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const heldShip = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: heldCust.body.id, principalName: "Test Credit Held Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("shipment creation itself is never blocked by a hold", heldShip.status === 201);
     assert("creation response carries a creditWarning naming the held party", heldShip.body.creditWarning?.onHold?.length === 1, JSON.stringify(heldShip.body.creditWarning));
@@ -333,6 +341,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const cleanShip = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: customerId, principalName: "Test Credit Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("a shipment with no held party carries no creditWarning at all", cleanShip.body.creditWarning === undefined, JSON.stringify(cleanShip.body.creditWarning));
     await request("DELETE", `/api/shipments/${cleanShip.body.id}`, null, token);
@@ -361,6 +370,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const ship2 = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: customerId, principalName: "Test Credit Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const shipment2Id = ship2.body.id;
     await request("PUT", `/api/customers/${customerId}`, { companyName: "Test Credit Co", creditLimit: 50, creditTermsDays: 30 }, token);

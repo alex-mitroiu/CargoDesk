@@ -64,6 +64,11 @@ async function login() {
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nScratch agent customer");
     const agentCust = await request("POST", "/api/customers", { companyName: "Test Line Agent Co" }, token);
     const agentId = agentCust.body.id;
@@ -143,7 +148,7 @@ async function login() {
 
     console.log("\nShipment auto-resolution via a COUNTRY-level location (not just a direct UN/LOCODE match)");
     const esShipment = await request("POST", "/api/shipments",
-      { pol: "ESBCN", pod: "USNYC", carrierCode: "TSTZ", contractType: "SPOT" }, token);
+      { pol: "ESBCN", pod: "USNYC", carrierCode: "TSTZ", contractType: "SPOT", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, token);
     assert("shipment created", esShipment.status === 201);
     const esParties = await request("GET", `/api/shipments/${esShipment.body.id}/parties`, null, token);
     const esExportParty = esParties.body.find(p => p.role === "Line Agent (Export)");
@@ -179,7 +184,7 @@ async function login() {
 
     console.log("\nCreating a shipment with that carrier/route auto-assigns both sides");
     const shipment = await request("POST", "/api/shipments",
-      { pol: "NLRTM", pod: "USNYC", carrierCode: "TSTL", contractType: "SPOT" }, token);
+      { pol: "NLRTM", pod: "USNYC", carrierCode: "TSTL", contractType: "SPOT", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, token);
     assert("shipment created", shipment.status === 201);
     const parties1 = await request("GET", `/api/shipments/${shipment.body.id}/parties`, null, token);
     const exportParty = parties1.body.find(p => p.role === "Line Agent (Export)");
@@ -205,7 +210,7 @@ async function login() {
 
     console.log("\nA manually-assigned Line Agent on a fresh shipment is never overwritten by a later carrier/route edit");
     const shipment2 = await request("POST", "/api/shipments",
-      { pol: "NLRTM", pod: "USNYC", carrierCode: "TSTX", contractType: "SPOT" }, token); // TSTX has no registered agents
+      { pol: "NLRTM", pod: "USNYC", carrierCode: "TSTX", contractType: "SPOT", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, token); // TSTX has no registered agents
     const manualAgentCust = await request("POST", "/api/customers", { companyName: "Test Manually Chosen Agent Co" }, token);
     await request("POST", `/api/shipments/${shipment2.body.id}/parties`,
       { role: "Line Agent (Export)", customerId: manualAgentCust.body.id, customerName: "Test Manually Chosen Agent Co" }, token);

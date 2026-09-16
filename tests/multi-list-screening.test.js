@@ -74,6 +74,11 @@ async function login() {
   try {
     const token = await login();
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("GET /api/sanctions/status exposes per-source entry counts");
     const status = await request("GET", "/api/sanctions/status", null, token);
     assert("status returns 200", status.status === 200, JSON.stringify(status.body));
@@ -118,6 +123,7 @@ async function login() {
         const ship = await request("POST", "/api/shipments", {
           pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "SPOT", status: "Active",
           shipperName: cslHit.entity_name,
+          emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
         }, token);
         assert("shipment created", ship.status === 201, JSON.stringify(ship.body));
         const shipmentId = ship.body.id;

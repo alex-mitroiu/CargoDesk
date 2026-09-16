@@ -77,6 +77,11 @@ const SAMPLE_HTML = `<html><body><h1>Test fixture</h1></body></html>`;
     adminToken = await login("claudeagent@localhost", "TestFixture!2026Zq");
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, adminToken);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nScratch viewer user, for the role-gate tests below");
     const viewerEmail = `wf-viewer-${Date.now()}@test.local`;
     const created = await request("POST", "/api/users", {
@@ -94,6 +99,7 @@ const SAMPLE_HTML = `<html><body><h1>Test fixture</h1></body></html>`;
     {
       const ship = await request("POST", "/api/shipments", {
         pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "SPOT", status: "Active",
+        emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, adminToken);
       const shipmentId = ship.body.id;
       cleanupShipments.push(shipmentId);
@@ -122,6 +128,7 @@ const SAMPLE_HTML = `<html><body><h1>Test fixture</h1></body></html>`;
         // Shipper/Consignee set from the start (TKT-6A7J45 story 7 added a USPPI/Consignee
         // check too) — this test is specifically about the broker/cargo gate, not this one.
         shipperName: "WF Bug2 Shipper Co", consigneeName: "WF Bug2 Consignee Co",
+        emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, adminToken);
       const shipmentId = ship.body.id;
       cleanupShipments.push(shipmentId);
@@ -155,6 +162,7 @@ const SAMPLE_HTML = `<html><body><h1>Test fixture</h1></body></html>`;
       const ship = await request("POST", "/api/shipments", {
         pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "SPOT", status: "Active",
         principalId: customerId, principalName: "WF Bug3 Held Co",
+        emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, adminToken);
       const shipmentId = ship.body.id;
       cleanupShipments.push(shipmentId);
@@ -178,6 +186,7 @@ const SAMPLE_HTML = `<html><body><h1>Test fixture</h1></body></html>`;
       assert("bogus shipment status rejected", bad.status === 400);
       const good = await request("POST", "/api/shipments", {
         pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "SPOT", status: "Active",
+        emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, adminToken);
       assert("valid shipment status accepted", good.status === 200 || good.status === 201);
       if (good.body.id) cleanupShipments.push(good.body.id);
@@ -209,6 +218,7 @@ const SAMPLE_HTML = `<html><body><h1>Test fixture</h1></body></html>`;
     {
       const ship = await request("POST", "/api/shipments", {
         pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "SPOT", status: "Active",
+        emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, adminToken);
       const shipmentId = ship.body.id;
       cleanupShipments.push(shipmentId);
@@ -233,6 +243,7 @@ const SAMPLE_HTML = `<html><body><h1>Test fixture</h1></body></html>`;
     {
       const ship = await request("POST", "/api/shipments", {
         pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "SPOT", status: "Active",
+        emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, adminToken);
       const shipmentId = ship.body.id;
       cleanupShipments.push(shipmentId);
@@ -264,6 +275,7 @@ const SAMPLE_HTML = `<html><body><h1>Test fixture</h1></body></html>`;
     {
       const ship = await request("POST", "/api/shipments", {
         pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "SPOT", status: "Active",
+        emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, adminToken);
       const shipmentId = ship.body.id;
       cleanupShipments.push(shipmentId);
@@ -278,6 +290,7 @@ const SAMPLE_HTML = `<html><body><h1>Test fixture</h1></body></html>`;
     {
       const ship = await request("POST", "/api/shipments", {
         pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "SPOT", status: "Active",
+        emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, adminToken);
       const shipmentId = ship.body.id;
       cleanupShipments.push(shipmentId);

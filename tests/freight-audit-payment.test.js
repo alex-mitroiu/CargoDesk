@@ -60,6 +60,11 @@ async function login() {
   try {
     const token = await login();
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("Scratch contract — OF rate + a per-day DET rate");
     const contractNum = `FAP-${Date.now()}`;
     const contract = await request("POST", "/api/contracts", {
@@ -78,6 +83,7 @@ async function login() {
     console.log("\nScratch Central shipment linked to that contract, with one 40HC container");
     const ship = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MSCU", contractType: "Central", contractId, status: "Active",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("shipment created", ship.status === 201, JSON.stringify(ship.body));
     const shipmentId = ship.body.id;

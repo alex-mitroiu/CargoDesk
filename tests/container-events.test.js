@@ -77,7 +77,7 @@ async function login() {
 
 // ─── Test suites ──────────────────────────────────────────────────────────────
 
-async function testCreateShipment(token) {
+async function testCreateShipment(token, defaultEmoOfficeId, defaultImoOfficeId) {
   console.log("\nPOST /api/shipments (scratch shipment)");
 
   const res = await request("POST", "/api/shipments", {
@@ -86,6 +86,7 @@ async function testCreateShipment(token) {
     status: "Active",
     contractType: "SPOT",
     etd: "2026-09-01",
+    emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
   }, token);
 
   assert("returns 201", res.status === 201);
@@ -240,7 +241,12 @@ async function testConditionCapture(token, containerId, shipmentId) {
     const token = await login();
     console.log("  ✓ Login OK");
 
-    shipmentId  = await testCreateShipment(token);
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
+    shipmentId  = await testCreateShipment(token, defaultEmoOfficeId, defaultImoOfficeId);
     containerId = await testAddContainerWithSeal(token, shipmentId);
     await testEventValidation(token, shipmentId, containerId);
     remainingEventId = await testEventCrud(token, containerId, shipmentId);

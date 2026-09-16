@@ -65,6 +65,11 @@ async function login() {
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     const rand = `GAP${Date.now()}`;
 
     console.log("\nGET /api/contracts/search — typeahead by number/carrier/asOf");
@@ -141,6 +146,7 @@ async function login() {
 
     const shp = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "Central", contractId: activeId,
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const withdrawRefByShipment = await request("POST", `/api/contracts/${activeId}/withdraw`, {}, token);
     assert("withdraw rejected — referenced by a shipment", withdrawRefByShipment.status >= 400 && /referenced by at least one shipment/i.test(withdrawRefByShipment.body.error || ""));
@@ -160,7 +166,7 @@ async function login() {
     // Distinct from /entity-events/shipment_leg/:id (already covered by ais-integration.test.js)
     // and the generic entity_events branch (covered by contract-improvements.test.js) — this one
     // specifically reads shipment_events, keyed by shipment_id.
-    const evShp = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT" }, token);
+    const evShp = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, token);
     await request("PUT", `/api/shipments/${evShp.body.id}`, { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "SPOT", status: "Active", bookingRef: "TESTBOOKREF" }, token);
     const shipmentEvents = await request("GET", `/api/entity-events/shipment/${evShp.body.id}`, null, token);
     assert("shipment entity-events returns 200", shipmentEvents.status === 200);

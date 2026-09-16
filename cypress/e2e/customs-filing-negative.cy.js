@@ -20,6 +20,7 @@ const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 describe("Customs Filing — Negative / Gated Paths Suite", () => {
   let tok;
+  let emoOfficeId, imoOfficeId;
   const createdShipmentIds = [];
   const createdCustomerIds = [];
 
@@ -44,6 +45,15 @@ describe("Customs Filing — Negative / Gated Paths Suite", () => {
       .then(res => { tok = res.body.token; });
   });
 
+  before(() => {
+    // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+    // fetch real active SE/SI offices rather than hardcoding an id.
+    api("GET", "/offices").then(res => {
+      emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+      imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
+    });
+  });
+
   after(() => {
     createdShipmentIds.forEach(id => api("DELETE", `/shipments/${id}`));
     createdCustomerIds.forEach(id => api("DELETE", `/customers/${id}`));
@@ -55,6 +65,7 @@ describe("Customs Filing — Negative / Gated Paths Suite", () => {
     before(() => {
       cy.then(() => api("POST", "/shipments", {
         pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+        emoOfficeId, imoOfficeId,
       })).then(res => {
         expect(res.status).to.eq(201);
         shipmentId = res.body.id;
@@ -93,6 +104,7 @@ describe("Customs Filing — Negative / Gated Paths Suite", () => {
           // Shipper/Consignee (USPPI/Ultimate Consignee) must both already be set here — this
           // test's own point is that ONLY cargo is still missing, not parties too.
           shipperName: "Cypress Test Shipper Co", consigneeName: "Cypress Test Consignee Co",
+          emoOfficeId, imoOfficeId,
         }))
         .then(res => {
           expect(res.status).to.eq(201);
@@ -123,6 +135,7 @@ describe("Customs Filing — Negative / Gated Paths Suite", () => {
         .then(() => api("POST", "/shipments", {
           pol: "CNSHA", pod: "USLAX", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
           shipperName: "Cypress Export Shipper Co", consigneeName: "Cypress Export Consignee Co",
+          emoOfficeId, imoOfficeId,
         }))
         .then(res => {
           shipmentId = res.body.id;
@@ -163,6 +176,7 @@ describe("Customs Filing — Negative / Gated Paths Suite", () => {
         .then(() => api("POST", "/shipments", {
           pol: "SGSIN", pod: "USLAX", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
           shipperName: "Cypress Import Shipper Co", consigneeName: "Cypress Import Consignee Co",
+          emoOfficeId, imoOfficeId,
         }))
         .then(res => {
           shipmentId = res.body.id;

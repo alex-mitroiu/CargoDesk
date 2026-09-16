@@ -13,6 +13,7 @@ const ADMIN_EMAIL    = "claudeagent@localhost";
 const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 let authToken;
+let emoOfficeId, imoOfficeId;
 
 const api = (method, path, body) =>
   cy.request({
@@ -32,6 +33,11 @@ before(() => {
   }).then(res => {
     expect(res.status).to.eq(200);
     authToken = res.body.token;
+  }).then(() => api("GET", "/offices")).then(res => {
+    // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+    // fetch real active SE/SI offices rather than hardcoding an id.
+    emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+    imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
   });
 });
 
@@ -51,6 +57,7 @@ describe("POST /api/shipments", () => {
       carrierCode: "CMDU",
       status: "Active",
       contractType: "SPOT",
+      emoOfficeId, imoOfficeId,
       etd: "2026-09-01",
     }).then(res => {
       expect(res.status).to.eq(201);
@@ -65,6 +72,7 @@ describe("POST /api/shipments", () => {
       carrierCode: "MSCU",
       status: "Active",
       contractType: "SPOT",
+      emoOfficeId, imoOfficeId,
       etd: "2026-09-15",
     }).then(res => {
       expect(res.status).to.eq(201);
@@ -105,6 +113,7 @@ describe("GET /api/shipments/:id", () => {
       carrierCode: "CMDU",
       status: "Active",
       contractType: "SPOT",
+      emoOfficeId, imoOfficeId,
       etd: "2026-10-01",
     }).then(res => { shipmentId = res.body.id; });
   });
@@ -143,6 +152,7 @@ describe("POST /api/containers", () => {
       carrierCode: "CMDU",
       status: "Active",
       contractType: "SPOT",
+      emoOfficeId, imoOfficeId,
       etd: "2026-10-10",
     }).then(res => { shipmentId = res.body.id; });
   });
@@ -199,6 +209,7 @@ describe("PUT /api/shipments/:id — status change", () => {
       carrierCode: "CMDU",
       status: "Active",
       contractType: "SPOT",
+      emoOfficeId, imoOfficeId,
       etd: "2026-11-01",
     }).then(res => { shipmentId = res.body.id; });
   });
@@ -269,6 +280,7 @@ describe("GET /api/shipments/:id/events — audit log", () => {
       carrierCode: "CMDU",
       status: "Active",
       contractType: "SPOT",
+      emoOfficeId, imoOfficeId,
       etd: "2026-12-01",
     }).then(res => {
       shipmentId = res.body.id;
@@ -337,6 +349,7 @@ describe("GET /api/shipments/:id/events — audit log", () => {
       carrierCode: "MSCU",
       status: "Active",
       contractType: "SPOT",
+      emoOfficeId, imoOfficeId,
       etd: "2026-12-15",
     }).then(res => {
       const freshId = res.body.id;
@@ -361,6 +374,7 @@ describe("DELETE /api/shipments/:id", () => {
       carrierCode: "CMDU",
       status: "Active",
       contractType: "SPOT",
+      emoOfficeId, imoOfficeId,
       etd: "2026-12-20",
     }).then(res => {
       const id = res.body.id;
@@ -376,6 +390,7 @@ describe("DELETE /api/shipments/:id", () => {
       carrierCode: "CMDU",
       status: "Active",
       contractType: "SPOT",
+      emoOfficeId, imoOfficeId,
       etd: "2026-12-22",
     }).then(res => {
       const id = res.body.id;

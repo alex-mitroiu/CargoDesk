@@ -80,8 +80,12 @@ async function login(email, password) {
     console.log("  ✓ User B logged in");
 
     console.log("\nScratch shipment");
+    const officesRes = await request("GET", "/api/offices", null, tokenA);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
     const ship = await request("POST", "/api/shipments",
-      { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT" }, tokenA);
+      { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, tokenA);
     shipmentId = ship.body.id;
     assert("scratch shipment created", ship.status === 201);
 

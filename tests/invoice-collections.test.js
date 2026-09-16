@@ -101,6 +101,11 @@ async function confirmDoc(shipmentId, docId, token) {
     console.log("  ✓ Logged in");
     const rand = Math.random().toString(36).slice(2, 8);
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nReason codes — seeded defaults present, CRUD");
     const codes = await request("GET", "/api/invoice-status-reason-codes", null, token);
     assert("5 seeded defaults present", codes.body.length >= 5, JSON.stringify(codes.body.map(c => c.code)));
@@ -163,6 +168,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const ship = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: cust.body.id, principalName: "Test Collections Co", emoOfficeId: officeId,
+      imoOfficeId: defaultImoOfficeId,
     }, token);
     const shipmentId = ship.body.id;
     cleanup.shipments.push(shipmentId);
@@ -224,6 +230,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const shipMissing = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custMissing.body.id, principalName: "Test Missing Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     cleanup.shipments.push(shipMissing.body.id);
     await request("POST", `/api/shipments/${shipMissing.body.id}/milestones/init`, {}, token);
@@ -242,6 +249,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const shipPaid = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custPaid.body.id, principalName: "Test Paid Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     cleanup.shipments.push(shipPaid.body.id);
     const linePaid = await addSellLine(shipPaid.body.id, token, 800, "OFR");
@@ -258,6 +266,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const shipCancel = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custCancel.body.id, principalName: "Test Cancelled Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     cleanup.shipments.push(shipCancel.body.id);
     const lineCancel = await addSellLine(shipCancel.body.id, token, 300, "OFR");

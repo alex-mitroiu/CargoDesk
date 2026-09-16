@@ -7,9 +7,9 @@ import AdditionalPartiesPanel from "../../components/shared/AdditionalPartiesPan
 
 const ShipmentPartiesPage = ({ shipment, onBack, onUpdate, onShipmentPatched }) => {
   return (
-    <div id="shpparties-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
+    <div id="shpparties-page" data-testid="shipment-parties-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
       <PartiesOfficesPanel shipment={shipment} onUpdate={onUpdate} onShipmentPatched={onShipmentPatched} />
-      <div style={{ marginTop: 28 }}>
+      <div data-testid="shipment-parties-additional-section" style={{ marginTop: 28 }}>
         <AdditionalPartiesPanel shipmentId={shipment.id} />
       </div>
     </div>

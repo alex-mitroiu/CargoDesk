@@ -17,6 +17,7 @@ const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 describe("Add Sailing — Catalog-First Search Suite", () => {
   let tok;
+  let emoOfficeId, imoOfficeId;
   const shipmentIds = [];
   const scheduleIds = [];
 
@@ -29,12 +30,22 @@ describe("Add Sailing — Catalog-First Search Suite", () => {
     });
 
   const scratchShipment = (pol, pod, carrierCode = "MAEU") =>
-    api("POST", "/shipments", { pol, pod, carrierCode, status: "Active", contractType: "SPOT" })
+    api("POST", "/shipments", { pol, pod, carrierCode, status: "Active", contractType: "SPOT",
+      emoOfficeId, imoOfficeId })
       .then(res => { shipmentIds.push(res.body.id); return res.body.id; });
 
   before(() => {
     cy.request("POST", "/api/auth/login", { email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
       .then(res => { tok = res.body.token; });
+  });
+
+  before(() => {
+    // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+    // fetch real active SE/SI offices rather than hardcoding an id.
+    api("GET", "/offices").then(res => {
+      emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+      imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
+    });
   });
 
   after(() => {

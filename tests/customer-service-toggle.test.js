@@ -74,6 +74,11 @@ async function setSource(token, value) {
   try {
     const token = await login("claudeagent@localhost", "TestFixture!2026Zq");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("Baseline");
     const settings0 = await request("GET", "/api/settings", null, token);
     assert("customer_source defaults to 'local'", (settings0.body.customer_source || "local") === "local");
@@ -140,6 +145,7 @@ async function setSource(token, value) {
     const shipHold = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       shipperId: custHoldId, shipperName: custHold.body.companyName,
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("shipment create succeeds despite the hold (soft, informational only)", shipHold.status === 201, JSON.stringify(shipHold.body));
     assert("creditWarning.onHold surfaces the held customer (getCustomerRow remote branch, shipments.js)",
@@ -167,6 +173,7 @@ async function setSource(token, value) {
     const rollupShip = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: childCustId, principalName: childCust.body.companyName,
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("rollup shipment create succeeds", rollupShip.status === 201, JSON.stringify(rollupShip.body));
     rollupShipId = rollupShip.body.id;
@@ -193,6 +200,7 @@ async function setSource(token, value) {
       const crossRefShip = await request("POST", "/api/shipments", {
         pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
         principalId: crossRefCustId, principalName: crossRefCust.body.companyName,
+        emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, token);
       assert("cross-ref shipment starts CLEAR", crossRefShip.status === 201 && crossRefShip.body?.screening?.result !== 'HIT', JSON.stringify(crossRefShip.body?.screening));
       crossRefShipId = crossRefShip.body.id;

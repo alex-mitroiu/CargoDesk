@@ -20,6 +20,7 @@ describe("Containers Suite", () => {
   let spotShipmentId;
   let centralShipmentId;
   let containerId;
+  let emoOfficeId, imoOfficeId;
 
   const api = (method, path, body) =>
     cy.request({
@@ -39,12 +40,22 @@ describe("Containers Suite", () => {
   });
 
   before(() => {
+    // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+    // fetch real active SE/SI offices rather than hardcoding an id.
+    api("GET", "/offices").then(res => {
+      emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+      imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
+    });
+  });
+
+  before(() => {
     // Step 2: create SPOT shipment (runs after first before)
     cy.request({
       method: "POST", url: "/api/shipments",
       headers: { Authorization: `Bearer ${tok}` },
       body: { pol: "CNSHA", pod: "USNYC", carrierCode: "CMDU",
-              status: "Active", contractType: "SPOT", etd: "2026-10-01" },
+              status: "Active", contractType: "SPOT", etd: "2026-10-01",
+              emoOfficeId, imoOfficeId },
       failOnStatusCode: false,
     }).then(res => {
       expect(res.status).to.eq(201);
@@ -73,6 +84,7 @@ describe("Containers Suite", () => {
           status: "Active", contractType: "Central",
           contractId: central.id, contractRef: central.contractNumber,
           etd: "2026-10-15",
+          emoOfficeId, imoOfficeId,
         },
         failOnStatusCode: false,
       }).then(r => { centralShipmentId = r.body.id; });

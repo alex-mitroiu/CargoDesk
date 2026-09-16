@@ -120,6 +120,11 @@ async function chatRequestingTool(token, userMessage, name, input) {
   const cleanup = [];
 
   try {
+    const officesRes = await request("GET", "/api/offices", null, adminToken);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("Point AI settings at the in-process mock endpoint, save originals for restore");
     const before = (await request("GET", "/api/settings", null, adminToken)).body;
     const AI_KEYS = ["ai_agent_enabled", "ai_endpoint", "ai_model", "ai_api_key", "ai_system_prompt"];
@@ -151,8 +156,8 @@ async function chatRequestingTool(token, userMessage, name, input) {
     // CI failure caught right after this file first shipped.
     const scopedPol = "NLRTM";
     const otherPol   = "DEHAM";
-    const inScopeShipRes = await request("POST", "/api/shipments", { pol: scopedPol, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT" }, adminToken);
-    const outOfScopeShipRes = await request("POST", "/api/shipments", { pol: otherPol, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT" }, adminToken);
+    const inScopeShipRes = await request("POST", "/api/shipments", { pol: scopedPol, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, adminToken);
+    const outOfScopeShipRes = await request("POST", "/api/shipments", { pol: otherPol, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, adminToken);
     assert("in-scope scratch shipment created", inScopeShipRes.status === 200 || inScopeShipRes.status === 201);
     assert("out-of-scope scratch shipment created", outOfScopeShipRes.status === 200 || outOfScopeShipRes.status === 201);
     const inScope    = inScopeShipRes.body;

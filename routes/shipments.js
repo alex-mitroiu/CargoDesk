@@ -500,6 +500,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
             emoOfficeId = null, imoOfficeId = null, controllingOfficeId = null,
             contractRoutingId = "" } = req.body;
     if (!pol || !pod || !carrierCode || !contractType) return err(res, "pol, pod, carrierCode, contractType required");
+    if (!emoOfficeId || !imoOfficeId) return err(res, "emoOfficeId, imoOfficeId required");
+    if (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '' && Number(declaredValue) < 0)
+      return err(res, "declaredValue cannot be negative");
     if (!CONTRACT_TYPES.includes(contractType)) return err(res, `contractType must be one of: ${CONTRACT_TYPES.join(", ")}`);
     if (!SHIPMENT_STATUSES.includes(status)) return err(res, `status must be one of: ${SHIPMENT_STATUSES.join(", ")}`);
     if (blReleaseType && !BL_RELEASE_TYPES.includes(blReleaseType)) return err(res, `blReleaseType must be one of: ${BL_RELEASE_TYPES.join(", ")}`);
@@ -980,6 +983,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (dgErr) return err(res, dgErr, 422);
     const id  = `CTR-${uid()}`;
     const cnU = containerNumber.toUpperCase();
+    // Container numbers are unique physical-asset identifiers (B/L, customs, terminal EDI) —
+    // a blank one is allowed (quick-entry containers filled in later), but a non-blank one must
+    // not collide with another container already on the same shipment.
+    if (cnU && (await query("SELECT 1 FROM containers WHERE shipment_id=$1 AND container_number=$2", [shipmentId, cnU]))[0])
+      return err(res, `Container number ${cnU} is already used on this shipment`, 409);
     await query(`INSERT INTO containers (id,shipment_id,container_number,seal_number,size,type,hs_code,cargo_description,marks_and_numbers,gross_weight_kg,volume_cbm,is_dg,dg_class,
                 vgm_weight_kg,vgm_status,vgm_cutoff,vgm_method,cy_cutoff,origin_free_time_days,dest_free_time_days,origin_detention_free_days,dest_detention_free_days,set_temperature_c) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
       [id, shipmentId, cnU, sealNumber, size, type, hsCode, cargoDescription, marksAndNumbers, grossWeightKg, volumeCbm, !!isDg, dgClass,
@@ -1011,6 +1019,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!CONTAINER_SIZES.includes(size)) return err(res, `size must be one of: ${CONTAINER_SIZES.join(", ")}`);
     if (grossWeightKg !== null && grossWeightKg !== undefined && Number(grossWeightKg) < 0) return err(res, "grossWeightKg cannot be negative");
     if (volumeCbm !== null && volumeCbm !== undefined && Number(volumeCbm) < 0) return err(res, "volumeCbm cannot be negative");
+    if (cnU && (await query("SELECT 1 FROM containers WHERE shipment_id=$1 AND container_number=$2 AND id<>$3", [oldCtr.shipment_id, cnU, req.params.id]))[0])
+      return err(res, `Container number ${cnU} is already used on this shipment`, 409);
     // Full-row-replace passthrough (ContainerForm's own buildPayload comment: VGM fields ride
     // along unchanged on an unrelated save) means vgmStatus is frequently resent as whatever it
     // already was — only reject an actual attempted TRANSITION into Accepted/Rejected, not an

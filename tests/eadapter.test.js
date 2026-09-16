@@ -85,10 +85,20 @@ async function scratchOffice(token, countryCode, name, stamp) {
   return res.body;
 }
 
+let _defaultImoOfficeId = null;
+async function getDefaultImoOfficeId(token) {
+  if (_defaultImoOfficeId) return _defaultImoOfficeId;
+  const res = await request("GET", "/api/offices", null, token);
+  const list = Array.isArray(res.body) ? res.body : res.body.results;
+  _defaultImoOfficeId = list.find(o => o.department === "SI" && o.isActive)?.id;
+  return _defaultImoOfficeId;
+}
+
 async function scratchShipment(token, carrierCode, emoOfficeId) {
+  const imoOfficeId = await getDefaultImoOfficeId(token);
   const res = await request("POST", "/api/shipments", {
     pol: "NLRTM", pod: "USNYC", carrierCode,
-    status: "Active", contractType: "SPOT", etd: "2026-09-01", emoOfficeId,
+    status: "Active", contractType: "SPOT", etd: "2026-09-01", emoOfficeId, imoOfficeId,
   }, token);
   return res.body.id;
 }
@@ -226,7 +236,12 @@ async function testBookingRequestOfficeResolution(token, officeA, officeB) {
   const sendAtB = await request("POST", `/api/shipments/${shipAtB}/edi-messages/booking-request`, {}, token);
   assert("booking-request is blocked (400) for the same carrier through a DIFFERENT office with no config", sendAtB.status === 400, JSON.stringify(sendAtB.body));
 
-  const shipNoOffice = await scratchShipment(token, code, null);
+  // NOTE (TKT-FH5Q94): POST /api/shipments now hard-requires both emoOfficeId and imoOfficeId,
+  // so a genuinely EMO-less shipment can no longer be created at all — reusing officeB (which
+  // has no eadapter config for this carrier, same as shipAtB above) instead of `null` to keep
+  // this exercising the "no matching config" 400 branch, since that's the same code path
+  // isEdiBookable falls into either way (a null office also just fails to match any config).
+  const shipNoOffice = await scratchShipment(token, code, officeB.id);
   const sendNoOffice = await request("POST", `/api/shipments/${shipNoOffice}/edi-messages/booking-request`, {}, token);
   assert("booking-request is blocked (400) for a shipment with no EMO office assigned at all", sendNoOffice.status === 400, JSON.stringify(sendNoOffice.body));
 

@@ -61,13 +61,18 @@ async function login(email, password) {
   const cleanup = [];
 
   try {
+    const officesRes = await request("GET", "/api/offices", null, adminToken);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("Create three scratch shipments to probe every side of the fix");
     // podOnly: POD is in the scoped country, POL is not — the exact gap this fix closes.
     // polOnly: POL is in the scoped country, POD is not — already worked before the fix.
     // neither: neither end is in the scoped country — proves the fix isn't over-broad.
-    const podOnlyRes = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT" }, adminToken);
-    const polOnlyRes  = await request("POST", "/api/shipments", { pol: "USLAX", pod: "DEHAM", carrierCode: "MAEU", status: "Active", contractType: "SPOT" }, adminToken);
-    const neitherRes  = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "DEHAM", carrierCode: "MAEU", status: "Active", contractType: "SPOT" }, adminToken);
+    const podOnlyRes = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, adminToken);
+    const polOnlyRes  = await request("POST", "/api/shipments", { pol: "USLAX", pod: "DEHAM", carrierCode: "MAEU", status: "Active", contractType: "SPOT", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, adminToken);
+    const neitherRes  = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "DEHAM", carrierCode: "MAEU", status: "Active", contractType: "SPOT", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, adminToken);
     assert("POD-only scratch shipment created", podOnlyRes.status === 200 || podOnlyRes.status === 201);
     assert("POL-only scratch shipment created", polOnlyRes.status === 200 || polOnlyRes.status === 201);
     assert("neither-end scratch shipment created", neitherRes.status === 200 || neitherRes.status === 201);

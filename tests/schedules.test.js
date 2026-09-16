@@ -65,13 +65,27 @@ async function login() {
 
 // ─── Shipment Schedules ───────────────────────────────────────────────────────
 
+let _defaultOffices = null;
+async function getDefaultOffices(token) {
+  if (_defaultOffices) return _defaultOffices;
+  const res = await request("GET", "/api/offices", null, token);
+  const list = Array.isArray(res.body) ? res.body : res.body.results;
+  _defaultOffices = {
+    emoOfficeId: list.find(o => o.department === "SE" && o.isActive)?.id,
+    imoOfficeId: list.find(o => o.department === "SI" && o.isActive)?.id,
+  };
+  return _defaultOffices;
+}
+
 async function testShipmentSchedules(token) {
   console.log("\nGET|POST|DELETE /api/shipments/:id/schedules");
 
   // Create a scratch shipment
+  const { emoOfficeId, imoOfficeId } = await getDefaultOffices(token);
   const sRes = await request("POST", "/api/shipments", {
     pol: "CNSHA", pod: "USLAX", carrierCode: "MAEU",
     status: "Active", contractType: "SPOT", etd: "2026-09-01",
+    emoOfficeId, imoOfficeId,
   }, token);
   assert("scratch shipment created (201)", sRes.status === 201);
   const shipmentId = sRes.body.id;
@@ -136,8 +150,10 @@ async function testShipmentSchedules(token) {
 async function testPolPodClearOnLastLegRemoved(token) {
   console.log("\nDELETE last leg — shipment.pol/pod reset (server.js syncShipmentFromLegs)");
 
+  const { emoOfficeId, imoOfficeId } = await getDefaultOffices(token);
   const sRes = await request("POST", "/api/shipments", {
     pol: "NLRTM", pod: "USNYC", carrierCode: "HLCU", status: "Active", contractType: "SPOT",
+    emoOfficeId, imoOfficeId,
   }, token);
   assert("scratch shipment created (201)", sRes.status === 201);
   const shipmentId = sRes.body.id;
@@ -194,9 +210,11 @@ async function testTicketsShipmentFilter(token) {
   console.log("\nGET /api/tickets?shipmentId=");
 
   // Create a shipment and a ticket linked to it
+  const { emoOfficeId, imoOfficeId } = await getDefaultOffices(token);
   const sRes = await request("POST", "/api/shipments", {
     pol: "DEHAM", pod: "SGSIN", carrierCode: "CMDU",
     status: "Active", contractType: "SPOT", etd: "2026-10-01",
+    emoOfficeId, imoOfficeId,
   }, token);
   const shipmentId = sRes.body?.id;
   assert("shipment created for ticket test", !!shipmentId);

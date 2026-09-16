@@ -62,6 +62,11 @@ async function login(email, password) {
   const cleanup = [];
 
   try {
+    const officesRes = await request("GET", "/api/offices", null, adminToken);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("── TKT-9RSZ3U — email format validation ──");
     const badEmail = await request("POST", "/api/users", {
       email: "not-an-email", name: "Bad Email Fixture", roles: ["viewer"], password: "GoodPolicyPassword!2026",
@@ -108,7 +113,7 @@ async function login(email, password) {
     assert("POST .../access-configs no longer exists (404)", legacyCreate.status === 404, JSON.stringify(legacyCreate.body));
 
     console.log("\n── TKT-6MLBG2 — deactivation releases a held shipment edit lock ──");
-    const scratchShipment = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT" }, adminToken);
+    const scratchShipment = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, adminToken);
     const shipmentId = scratchShipment.body.id;
     cleanup.push(() => request("DELETE", `/api/shipments/${shipmentId}`, null, adminToken));
 

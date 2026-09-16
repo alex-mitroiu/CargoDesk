@@ -63,10 +63,23 @@ async function login() {
   return body.token;
 }
 
+let _defaultOffices = null;
+async function getDefaultOffices(token) {
+  if (_defaultOffices) return _defaultOffices;
+  const res = await request("GET", "/api/offices", null, token);
+  const list = Array.isArray(res.body) ? res.body : res.body.results;
+  _defaultOffices = {
+    emoOfficeId: list.find(o => o.department === "SE" && o.isActive)?.id,
+    imoOfficeId: list.find(o => o.department === "SI" && o.isActive)?.id,
+  };
+  return _defaultOffices;
+}
+
 async function scratchShipment(token, carrierCode) {
+  const { emoOfficeId, imoOfficeId } = await getDefaultOffices(token);
   const res = await request("POST", "/api/shipments", {
     pol: "NLRTM", pod: "USNYC", carrierCode,
-    status: "Active", contractType: "SPOT", etd: "2026-09-01",
+    status: "Active", contractType: "SPOT", etd: "2026-09-01", emoOfficeId, imoOfficeId,
   }, token);
   return res.body.id;
 }
@@ -665,9 +678,11 @@ async function testPayloadContractAndRateSnapshot(token) {
   assert("test contract created (201)", contractCreate.status === 201);
   const contractId = contractCreate.body?.id;
 
+  const { emoOfficeId: centralEmoOfficeId, imoOfficeId: centralImoOfficeId } = await getDefaultOffices(token);
   const centralCreate = await request("POST", "/api/shipments", {
     pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active",
     contractType: "Central", contractId, contractRef: "TEST-SUPERSEDE-CNTR", etd: "2026-09-01",
+    emoOfficeId: centralEmoOfficeId, imoOfficeId: centralImoOfficeId,
   }, token);
   assert("Central shipment created (201)", centralCreate.status === 201);
   const centralId = centralCreate.body?.id;
@@ -705,12 +720,14 @@ async function testExtendedPayloadFields(token) {
   await request("DELETE", `/api/shipments/${bareId}`, null, token);
 
   // Fully populated.
+  const { emoOfficeId: fullEmoOfficeId, imoOfficeId: fullImoOfficeId } = await getDefaultOffices(token);
   const fullCreate = await request("POST", "/api/shipments", {
     pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
     etd: "2026-09-01", vesselImo: "9321483", cargoReadyDate: "2026-08-15",
     placeOfReceipt: "Utrecht", placeOfDelivery: "Newark",
     shipperName: "Test Shipper Co", consigneeName: "Test Consignee Co", notifyName: "Test Notify Co",
     commodityCode: "HS8471",
+    emoOfficeId: fullEmoOfficeId, imoOfficeId: fullImoOfficeId,
   }, token);
   const fullId = fullCreate.body.id;
   const fullSend = await request("POST", `/api/shipments/${fullId}/edi-messages/booking-request`, {}, token);

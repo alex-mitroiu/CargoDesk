@@ -144,6 +144,10 @@ async function main() {
     officeA = await scratchOffice(token, "ZM", "DCSA Test Office", stamp);
     assert("scratch office created", !!officeA?.id);
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     const eadapterRes = await request("POST", "/api/eadapter/configs", { carrierCode, officeId: officeA.id, transportType: "rest_api", isActive: true }, token);
     assert("scratch eadapter config created (edi-bookable prerequisite, unrelated to carrier_integrations)", eadapterRes.status === 201, JSON.stringify(eadapterRes.body));
 
@@ -158,7 +162,7 @@ async function main() {
     const adaptersRes = await request("GET", "/api/carrier-integrations/adapters", null, token);
     assert("registered adapters list includes dcsa-bkg-v2", adaptersRes.body?.includes("dcsa-bkg-v2"));
 
-    const shipRes = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode, status: "Active", contractType: "SPOT", etd: "2026-10-01", emoOfficeId: officeA.id }, token);
+    const shipRes = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode, status: "Active", contractType: "SPOT", etd: "2026-10-01", emoOfficeId: officeA.id, imoOfficeId: defaultImoOfficeId }, token);
     shipmentId = shipRes.body?.id;
     assert("scratch shipment created", !!shipmentId, JSON.stringify(shipRes.body));
 
@@ -183,7 +187,7 @@ async function main() {
     const scheduleRes = await request("GET", `/api/schedules/search?pol=ZZTS1&pod=ZZTS2&carrierCode=${carrierCode}&weeks=4`, null, token);
     assert("schedule search uses the active 'schedules' integration ahead of mock fallback", scheduleRes.body?.sailings?.[0]?.vesselName === "MOCK CARRIER VESSEL" && scheduleRes.body?.sailings?.[0]?.source === "live" && scheduleRes.body?.isMock === false);
 
-    const unconfiguredShip = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", etd: "2026-10-01" }, token);
+    const unconfiguredShip = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", etd: "2026-10-01", emoOfficeId: officeA.id, imoOfficeId: defaultImoOfficeId }, token);
     unconfiguredShipmentId = unconfiguredShip.body?.id;
     const unconfiguredSend = await request("POST", `/api/shipments/${unconfiguredShipmentId}/edi-messages/booking-request`, {}, token);
     assert("a carrier with NO active integration behaves byte-for-byte as before (fallback invisible)", unconfiguredSend.status === 201 && unconfiguredSend.body?.pending === true && !unconfiguredSend.body?.booking?.carrierBookingRequestReference);
@@ -193,7 +197,7 @@ async function main() {
     let toggleShipmentId = null;
     await request("PUT", "/api/settings", { api_carrier_integrations_enabled: "false" }, token);
     try {
-      const toggleShip = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode, status: "Active", contractType: "SPOT", etd: "2026-10-01", emoOfficeId: officeA.id }, token);
+      const toggleShip = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode, status: "Active", contractType: "SPOT", etd: "2026-10-01", emoOfficeId: officeA.id, imoOfficeId: defaultImoOfficeId }, token);
       toggleShipmentId = toggleShip.body?.id;
       const sendWhileOff = await request("POST", `/api/shipments/${toggleShipmentId}/edi-messages/booking-request`, {}, token);
       assert("booking-request still succeeds while toggle is off (falls back to simulator, not blocked)", sendWhileOff.status === 201 && sendWhileOff.body?.pending === true);

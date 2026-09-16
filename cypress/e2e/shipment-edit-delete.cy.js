@@ -14,7 +14,7 @@ const ADMIN_EMAIL    = "claudeagent@localhost";
 const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 describe("Shipment Edit + Delete Suite", () => {
-  let tok;
+  let tok, emoOfficeId, imoOfficeId;
   const createdShipmentIds = [];
 
   const api = (method, path, body) =>
@@ -35,7 +35,13 @@ describe("Shipment Edit + Delete Suite", () => {
 
   before(() => {
     cy.request("POST", "/api/auth/login", { email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
-      .then(res => { tok = res.body.token; });
+      .then(res => { tok = res.body.token; })
+      // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+      // fetch real active SE/SI offices rather than hardcoding an id.
+      .then(() => api("GET", "/offices")).then(res => {
+        emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+        imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
+      });
   });
 
   const createdCustomerIds = [];
@@ -63,7 +69,7 @@ describe("Shipment Edit + Delete Suite", () => {
           const custId = res.body.id;
           createdCustomerIds.push(custId);
           return api("POST", "/shipments", {
-            pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+            pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", emoOfficeId, imoOfficeId,
             incoterm: "FOB", commodityCode: "9999",
             shipperId: custId, shipperName: "Cypress Edit Test Customer Co",
             consigneeId: custId, consigneeName: "Cypress Edit Test Customer Co",
@@ -105,7 +111,7 @@ describe("Shipment Edit + Delete Suite", () => {
 
     before(() => {
       cy.then(() => api("POST", "/shipments", {
-        pol: "DEHAM", pod: "SGSIN", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+        pol: "DEHAM", pod: "SGSIN", carrierCode: "MAEU", status: "Active", contractType: "SPOT", emoOfficeId, imoOfficeId,
       })).then(res => {
         expect(res.status).to.eq(201);
         shipmentId = res.body.id;

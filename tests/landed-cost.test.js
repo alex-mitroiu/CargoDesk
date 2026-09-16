@@ -65,6 +65,11 @@ async function login() {
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nDuty Rate Chapters registry — seeded defaults present");
     const seeded = await request("GET", "/api/duty-rate-chapters", null, token);
     assert("returns 200", seeded.status === 200);
@@ -98,6 +103,7 @@ async function login() {
     const ship1 = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: cust.body.id, principalName: "Test Landed Cost Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const ship1Id = ship1.body.id;
     const ctr1 = await request("POST", "/api/containers", { shipmentId: ship1Id, size: "40", type: "DC", hsCode: "8471.30" }, token);
@@ -136,6 +142,7 @@ async function login() {
     const ship2 = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: cust2.body.id, principalName: "Test Landed Cost Fallback Co", declaredValue: 3000, declaredValueCurrency: "USD",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const ship2Id = ship2.body.id;
     const ctr2 = await request("POST", "/api/containers", { shipmentId: ship2Id, size: "40", type: "DC", hsCode: "390110" }, token);
@@ -149,6 +156,7 @@ async function login() {
     const ship3 = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: cust3.body.id, principalName: "Test Landed Cost None Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const ship3Id = ship3.body.id;
     await request("POST", "/api/containers", { shipmentId: ship3Id, size: "40", type: "DC" }, token);

@@ -16,6 +16,7 @@ const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 describe("Carrier Booking — Negative / Gated Paths Suite", () => {
   let tok;
+  let emoOfficeId, imoOfficeId;
 
   const api = (method, path, body) =>
     cy.request({
@@ -38,12 +39,22 @@ describe("Carrier Booking — Negative / Gated Paths Suite", () => {
       .then(res => { tok = res.body.token; });
   });
 
+  before(() => {
+    // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
+    // fetch real active SE/SI offices rather than hardcoding an id.
+    api("GET", "/offices").then(res => {
+      emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
+      imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
+    });
+  });
+
   describe("Gate modal — no contract or schedule yet", () => {
     let shipmentId;
 
     before(() => {
       cy.then(() => api("POST", "/shipments", {
         pol: "DEHAM", pod: "SGSIN", carrierCode: "MAEU", status: "Active", contractType: "Pending",
+        emoOfficeId, imoOfficeId,
       })).then(res => {
         expect(res.status).to.eq(201);
         shipmentId = res.body.id;
@@ -77,6 +88,7 @@ describe("Carrier Booking — Negative / Gated Paths Suite", () => {
       cy.then(() => api("POST", "/shipments", {
         pol: "CNSHA", pod: "USNYC", carrierCode: "MAEU", status: "Active",
         contractType: "SPOT", contractRef: "CY-NEG-REF", etd: "2026-10-01",
+        emoOfficeId, imoOfficeId,
       })).then(res => {
         expect(res.status).to.eq(201);
         shipmentId = res.body.id;

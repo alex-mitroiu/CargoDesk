@@ -78,6 +78,11 @@ async function login() {
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nScratch Central contract for HLCU, NLRTM → USNYC");
     const num = `TC-MISMATCH-${Date.now()}`;
     const contract = await request("POST", "/api/contracts", {
@@ -92,6 +97,7 @@ async function login() {
     console.log("\nScratch shipment, then attach the HLCU Central contract");
     const ship = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("scratch shipment created", ship.status === 201, JSON.stringify(ship.body));
     const shipmentId = ship.body.id;

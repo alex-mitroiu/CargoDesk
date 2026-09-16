@@ -74,6 +74,11 @@ function rowFor(rows, chargeCode) { return rows.find(r => r.chargeCode === charg
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nScratch contract with OF + DOC rates, mirroring the real SHP-WKX04E shape");
     const cust = await request("POST", "/api/customers", { companyName: "Rate Reconciliation Test Co" }, token);
     custId = cust.body.id;
@@ -91,6 +96,7 @@ function rowFor(rows, chargeCode) { return rows.find(r => r.chargeCode === charg
     console.log("\nDOC and BL/BLF must resolve to distinct labels (the actual live bug)");
     const ship1 = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "Central", contractId, status: "Active",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const ship1Id = ship1.body.id;
     cleanupShipments.push(ship1Id);
@@ -154,6 +160,7 @@ function rowFor(rows, chargeCode) { return rows.find(r => r.chargeCode === charg
     console.log("\naction=overwrite (fresh scratch shipment): reaches manual overrides deliberately, refreshes stale prices");
     const ship2 = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "Central", contractId, status: "Active",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const ship2Id = ship2.body.id;
     cleanupShipments.push(ship2Id);
@@ -173,7 +180,7 @@ function rowFor(rows, chargeCode) { return rows.find(r => r.chargeCode === charg
     console.log("\nValidation — bad action value, non-Central shipment");
     const badAction = await request("POST", `/api/shipments/${ship2Id}/cost-lines/update-carrier-costs`, { action: "delete-everything" }, token);
     assert("invalid action rejected", badAction.status >= 400);
-    const spot = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "SPOT", status: "Active" }, token);
+    const spot = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "SPOT", status: "Active", emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId }, token);
     cleanupShipments.push(spot.body.id);
     const previewNotCentral = await request("GET", `/api/shipments/${spot.body.id}/cost-lines/reconcile-preview?mode=update`, null, token);
     assert("preview rejected on a non-Central shipment", previewNotCentral.status >= 400 && /not linked to a Central contract/i.test(previewNotCentral.body.error || ""));

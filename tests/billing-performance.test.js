@@ -120,12 +120,18 @@ async function confirmDoc(shipmentId, docId, token) {
     const token = await login();
     console.log("  ✓ Logged in");
 
+    const officesRes = await request("GET", "/api/offices", null, token);
+    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
+    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
+    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+
     console.log("\nScratch customer + shipment + confirmed invoice");
     const cust = await request("POST", "/api/customers", { companyName: "Test Billing Co" }, token);
     const customerId = cust.body.id;
     const ship = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: customerId, principalName: "Test Billing Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const shipmentId = ship.body.id;
     const line1 = await addSellLine(shipmentId, token, 600, "OFR");
@@ -231,6 +237,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const shipDl = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custDl.body.id, principalName: "Test Deadline Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const shipDlId = shipDl.body.id;
     await request("POST", `/api/shipments/${shipDlId}/milestones/init`, {}, token);
@@ -263,6 +270,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const shipNoDl = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custNoDl.body.id, principalName: "Test No Deadline Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     await request("POST", `/api/shipments/${shipNoDl.body.id}/milestones/init`, {}, token);
     const milestonesNoDl = await request("GET", `/api/shipments/${shipNoDl.body.id}/milestones`, null, token);
@@ -280,6 +288,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const shipBp = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custBp.body.id, principalName: "Test Billing Report Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const shipBpId = shipBp.body.id;
     const lineBp = await addSellLine(shipBpId, token, 1000, "OFR");
@@ -332,6 +341,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const shipMiss = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custMiss.body.id, principalName: "Test Billing Missing Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const rptBeforeDelivery = await request("GET", "/api/reports/billing-performance", null, token);
     assert("not yet in the report — no delivered milestone completed yet", !rptBeforeDelivery.body.some(r => r.shipmentId === shipMiss.body.id));
@@ -373,6 +383,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const shipInScope = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custInScope.body.id, principalName: "Test Scope In Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const lineInScope = await addSellLine(shipInScope.body.id, token, 700, "OFR");
     const docInScope = await generateInvoiceDoc(shipInScope.body.id, token, [lineInScope.id]);
@@ -382,6 +393,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const shipOutOfScope = await request("POST", "/api/shipments", {
       pol: "DEHAM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custOutOfScope.body.id, principalName: "Test Scope Out Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     const lineOutOfScope = await addSellLine(shipOutOfScope.body.id, token, 900, "OFR");
     const docOutOfScope = await generateInvoiceDoc(shipOutOfScope.body.id, token, [lineOutOfScope.id]);
@@ -446,6 +458,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const shipSweep = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custSweep.body.id, principalName: "Test Sweep Co", emoOfficeId: officeSweep.body.id,
+      imoOfficeId: defaultImoOfficeId,
     }, token);
     const shipSweepId = shipSweep.body.id;
     const lineSweep = await addSellLine(shipSweepId, token, 500, "OFR");
@@ -462,6 +475,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const shipDisabled = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custDisabled.body.id, principalName: "Test Sweep Disabled Co", emoOfficeId: officeSweep.body.id,
+      imoOfficeId: defaultImoOfficeId,
     }, token);
     const lineDisabled = await addSellLine(shipDisabled.body.id, token, 500, "OFR");
     const docDisabled = await generateInvoiceDoc(shipDisabled.body.id, token, [lineDisabled.id]);
@@ -474,6 +488,7 @@ async function confirmDoc(shipmentId, docId, token) {
     const shipFuture = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custFuture.body.id, principalName: "Test Sweep Future Co", emoOfficeId: officeSweep.body.id,
+      imoOfficeId: defaultImoOfficeId,
     }, token);
     const lineFuture = await addSellLine(shipFuture.body.id, token, 500, "OFR");
     const docFuture = await generateInvoiceDoc(shipFuture.body.id, token, [lineFuture.id]);
