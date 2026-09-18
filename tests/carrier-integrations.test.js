@@ -21,6 +21,7 @@ import crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ensureOffices } from "./helpers/offices.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dcsaAdapter = (await import(pathToFileURL(path.join(__dirname, "..", "lib", "carrier-integrations", "dcsa-bkg-v2.js")).href)).default;
@@ -144,9 +145,7 @@ async function main() {
     officeA = await scratchOffice(token, "ZM", "DCSA Test Office", stamp);
     assert("scratch office created", !!officeA?.id);
 
-    const officesRes = await request("GET", "/api/offices", null, token);
-    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
-    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+    const { imoOfficeId: defaultImoOfficeId } = await ensureOffices(token);
 
     const eadapterRes = await request("POST", "/api/eadapter/configs", { carrierCode, officeId: officeA.id, transportType: "rest_api", isActive: true }, token);
     assert("scratch eadapter config created (edi-bookable prerequisite, unrelated to carrier_integrations)", eadapterRes.status === 201, JSON.stringify(eadapterRes.body));

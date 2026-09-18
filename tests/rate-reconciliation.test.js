@@ -22,6 +22,7 @@
  */
 
 import http from "node:http";
+import { ensureOffices } from "./helpers/offices.mjs";
 
 let passed = 0;
 let failed = 0;
@@ -74,10 +75,7 @@ function rowFor(rows, chargeCode) { return rows.find(r => r.chargeCode === charg
     const token = await login();
     console.log("  ✓ Logged in");
 
-    const officesRes = await request("GET", "/api/offices", null, token);
-    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
-    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
-    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+    const { emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId } = await ensureOffices(token);
 
     console.log("\nScratch contract with OF + DOC rates, mirroring the real SHP-WKX04E shape");
     const cust = await request("POST", "/api/customers", { companyName: "Rate Reconciliation Test Co" }, token);

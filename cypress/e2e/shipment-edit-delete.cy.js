@@ -10,6 +10,8 @@
  *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  */
 
+import { ensureOffices } from "../support/offices";
+
 const ADMIN_EMAIL    = "claudeagent@localhost";
 const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
@@ -37,10 +39,10 @@ describe("Shipment Edit + Delete Suite", () => {
     cy.request("POST", "/api/auth/login", { email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
       .then(res => { tok = res.body.token; })
       // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
-      // fetch real active SE/SI offices rather than hardcoding an id.
-      .then(() => api("GET", "/offices")).then(res => {
-        emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
-        imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
+      // use the active SE/SI offices, creating fixture ones on a fresh database (ensureOffices).
+      .then(() => ensureOffices(api)).then(res => {
+        emoOfficeId = res.emoOfficeId;
+        imoOfficeId = res.imoOfficeId;
       });
   });
 

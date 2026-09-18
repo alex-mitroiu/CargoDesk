@@ -13,6 +13,7 @@
  */
 
 import http from "node:http";
+import { ensureOffices } from "./helpers/offices.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -120,10 +121,7 @@ async function testRevalidateEndpoint(token, fixture) {
 async function testUpgradeFlow(token, fixture) {
   console.log("\nPending → Central upgrade flow");
 
-  const officesRes = await request("GET", "/api/offices", null, token);
-  const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
-  const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
-  const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+  const { emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId } = await ensureOffices(token);
 
   // Create a Pending shipment with a contractRef that matches the scratch contract
   const create = await request("POST", "/api/shipments", {

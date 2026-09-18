@@ -23,6 +23,7 @@
  */
 
 import http from "node:http";
+import { ensureOffices } from "./helpers/offices.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -77,10 +78,7 @@ const SAMPLE_HTML = `<html><body><h1>Test fixture</h1></body></html>`;
     adminToken = await login("claudeagent@localhost", "TestFixture!2026Zq");
     console.log("  ✓ Logged in");
 
-    const officesRes = await request("GET", "/api/offices", null, adminToken);
-    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
-    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
-    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+    const { emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId } = await ensureOffices(adminToken);
 
     console.log("\nScratch viewer user, for the role-gate tests below");
     const viewerEmail = `wf-viewer-${Date.now()}@test.local`;

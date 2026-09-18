@@ -13,6 +13,7 @@
 
 import http from "node:http";
 import { verifySignedPdf } from "../lib/pdf-signing.js";
+import { ensureOffices } from "./helpers/offices.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -81,12 +82,7 @@ async function login() {
 let _defaultOffices = null;
 async function getDefaultOffices(token) {
   if (_defaultOffices) return _defaultOffices;
-  const res = await request("GET", "/api/offices", null, token);
-  const list = Array.isArray(res.body) ? res.body : res.body.results;
-  _defaultOffices = {
-    emoOfficeId: list.find(o => o.department === "SE" && o.isActive)?.id,
-    imoOfficeId: list.find(o => o.department === "SI" && o.isActive)?.id,
-  };
+  _defaultOffices = await ensureOffices(token);
   return _defaultOffices;
 }
 

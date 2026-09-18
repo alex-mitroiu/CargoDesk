@@ -16,6 +16,7 @@
  */
 
 import http from "node:http";
+import { ensureOffices } from "./helpers/offices.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -62,10 +63,7 @@ async function login(email, password) {
   const cleanup = [];
 
   try {
-    const officesRes = await request("GET", "/api/offices", null, adminToken);
-    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
-    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
-    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+    const { emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId } = await ensureOffices(adminToken);
 
     console.log("── TKT-9RSZ3U — email format validation ──");
     const badEmail = await request("POST", "/api/users", {

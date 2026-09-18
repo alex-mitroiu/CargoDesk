@@ -23,6 +23,8 @@
  *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  */
 
+import { ensureOffices } from "../support/offices";
+
 const ADMIN_EMAIL    = "claudeagent@localhost";
 const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
@@ -46,10 +48,10 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
 
   before(() => {
     // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
-    // fetch real active SE/SI offices rather than hardcoding an id.
-    api("GET", "/offices").then(res => {
-      emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
-      imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
+    // use the active SE/SI offices, creating fixture ones on a fresh database (ensureOffices).
+    ensureOffices(api).then(res => {
+      emoOfficeId = res.emoOfficeId;
+      imoOfficeId = res.imoOfficeId;
     });
   });
 
@@ -111,6 +113,9 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
     // render before interacting, or "+ Add leg" can race an empty table.
     cy.get('[id^="leg-row-"]', { timeout: 10000 }).should("have.length", 1);
     cy.contains("button", "+ Add leg").click();
+    // "+ Add leg" opens a Pick-up / SEA / Delivery menu (2026-09-18) instead of immediately
+    // appending a blank SEA leg — pick SEA, which is exactly the leg it used to add outright.
+    cy.get('[data-testid="shipment-form-add-leg-option-sea"]').click();
     // No "locked" concept exists on this page anymore — every leg, old or new, always
     // renders a real, enabled Leg Type <select>, never a read-only row.
     cy.get('[id^="leg-row-"]', { timeout: 8000 }).should("have.length", 2);

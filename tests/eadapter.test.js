@@ -13,6 +13,7 @@
  */
 
 import http from "node:http";
+import { ensureOffices } from "./helpers/offices.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -88,9 +89,7 @@ async function scratchOffice(token, countryCode, name, stamp) {
 let _defaultImoOfficeId = null;
 async function getDefaultImoOfficeId(token) {
   if (_defaultImoOfficeId) return _defaultImoOfficeId;
-  const res = await request("GET", "/api/offices", null, token);
-  const list = Array.isArray(res.body) ? res.body : res.body.results;
-  _defaultImoOfficeId = list.find(o => o.department === "SI" && o.isActive)?.id;
+  _defaultImoOfficeId = (await ensureOffices(token)).imoOfficeId;
   return _defaultImoOfficeId;
 }
 

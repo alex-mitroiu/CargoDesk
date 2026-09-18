@@ -15,6 +15,8 @@
  *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  */
 
+import { ensureOffices } from "../support/offices";
+
 const ADMIN_EMAIL    = "claudeagent@localhost";
 const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
@@ -47,10 +49,10 @@ describe("Shipment Creation Form Suite", () => {
       // Export/Import Managing Office are hard-required on save (TKT-FH5Q94) — fetch real
       // active SE/SI offices rather than hardcoding an id, same "real backend state" precedent
       // as customer/commodity above.
-      .then(() => api("GET", "/offices"))
+      .then(() => ensureOffices(api))
       .then(res => {
-        emoOffice = res.body.find(o => o.department === "SE" && o.isActive);
-        imoOffice = res.body.find(o => o.department === "SI" && o.isActive);
+        emoOffice = res.emoOffice;
+        imoOffice = res.imoOffice;
       });
   });
 

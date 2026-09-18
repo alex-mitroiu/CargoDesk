@@ -24,6 +24,7 @@
  */
 
 import http from "node:http";
+import { ensureOffices } from "./helpers/offices.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -83,10 +84,7 @@ async function login() {
     const token = await login();
     console.log("  ✓ Logged in");
 
-    const officesRes = await request("GET", "/api/offices", null, token);
-    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
-    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
-    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+    const { emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId } = await ensureOffices(token);
 
     console.log("\nScratch Central contract for HLCU, NLRTM → USNYC");
     const num = `TC-MISMATCH-${Date.now()}`;

@@ -6,6 +6,8 @@
  *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  */
 
+import { ensureOffices } from "../support/offices";
+
 const ADMIN_EMAIL    = "claudeagent@localhost";
 const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
@@ -35,10 +37,10 @@ before(() => {
 
 before(() => {
   // Export/Import Managing Office are hard-required on POST /api/shipments (TKT-FH5Q94) —
-  // fetch real active SE/SI offices rather than hardcoding an id.
-  api("GET", "/offices").then(res => {
-    emoOfficeId = res.body.find(o => o.department === "SE" && o.isActive).id;
-    imoOfficeId = res.body.find(o => o.department === "SI" && o.isActive).id;
+  // use the active SE/SI offices, creating fixture ones on a fresh database (ensureOffices).
+  ensureOffices(api).then(res => {
+    emoOfficeId = res.emoOfficeId;
+    imoOfficeId = res.imoOfficeId;
   });
 });
 

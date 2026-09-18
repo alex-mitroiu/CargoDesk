@@ -24,6 +24,7 @@
  */
 
 import http from "node:http";
+import { ensureOffices } from "./helpers/offices.mjs";
 
 let passed = 0;
 let failed = 0;
@@ -120,10 +121,7 @@ async function chatRequestingTool(token, userMessage, name, input) {
   const cleanup = [];
 
   try {
-    const officesRes = await request("GET", "/api/offices", null, adminToken);
-    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
-    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
-    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+    const { emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId } = await ensureOffices(adminToken);
 
     console.log("Point AI settings at the in-process mock endpoint, save originals for restore");
     const before = (await request("GET", "/api/settings", null, adminToken)).body;

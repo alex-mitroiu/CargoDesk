@@ -19,6 +19,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
+import { ensureOffices } from "./helpers/offices.mjs";
 
 const BASE = "http://localhost:3001";
 const TEMPLATE_PATH = path.join(process.cwd(), "exports", "dashboard-template.xlsx");
@@ -79,10 +80,7 @@ async function login() {
     const token = await login();
     console.log("  ✓ Logged in");
 
-    const officesRes = await request("GET", "/api/offices", null, token);
-    const officesList = Array.isArray(officesRes.body) ? officesRes.body : officesRes.body.results;
-    const defaultEmoOfficeId = officesList.find(o => o.department === "SE" && o.isActive)?.id;
-    const defaultImoOfficeId = officesList.find(o => o.department === "SI" && o.isActive)?.id;
+    const { emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId } = await ensureOffices(token);
 
     console.log("\nScratch shipment with a SEA leg + BUY/SELL cost lines (feeds margin summary + sea-port resolution)");
     const today = new Date().toISOString().slice(0, 10);
