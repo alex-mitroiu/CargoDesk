@@ -31,31 +31,58 @@ const BOOKING_STATUS_VARIANT = {
 // screenshot the user shared. `HZ.chart*` are NOT the decorative gradients below — they're the
 // dataviz-skill-validated categorical/status steps (node scripts/validate_palette.js), kept
 // separate on purpose so real chart color-encoding never doubles as decoration.
-const HZ = {
+//
+// Dark/light split (TKT-198GZH) follows the exact same mutable-object pattern as src/tokens.js's
+// T/applyTheme and src/pages/shipments/shipmentDetailTheme.js's HZ/applyHzTheme — HZ here is
+// mutated in place by applyDashboardHzTheme, called from App.jsx's own isDark toggle, so this
+// page (unmemoized, re-renders whenever App.jsx does) always reads the current theme without
+// needing its own isDark prop. Light values are the same validated TKT-198GZH set used for
+// Shipment Details; chartCategorical's light column is the dataviz skill's own reference light
+// steps for slots 1-5 (blue/orange/aqua/yellow/magenta), re-validated here (validate_palette.js,
+// --mode light): passes CVD + normal-vision floors on the adjacent pairlist this bar/line usage
+// actually needs, with the documented WARN on 3-of-5 slots' surface contrast — mitigated the same
+// way the reference doc requires: this page's charts already carry direct labels/legend, never
+// color alone.
+const HZ_DARK = {
   bg: "#080b15", surface: "rgba(255,255,255,0.045)", surfaceStrong: "rgba(255,255,255,0.075)",
   border: "rgba(255,255,255,0.09)", borderSoft: "rgba(255,255,255,0.055)",
   ink: "#f3f5fc", inkMuted: "#8c93b5", inkFaint: "#4d5476",
+  gradCyan: ["#38d4e8", "#3987e5"], gradAmber: ["#fbc531", "#d9772a"], gradViolet: ["#9085e9", "#d5519f"],
+  good: "#22c55e", warning: "#fab219", critical: "#f0526b",
+  chartCategorical: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"],
+  cardShadow: "none",
+};
+const HZ_LIGHT = {
+  bg: "#f4f6fb", surface: "rgba(255,255,255,0.72)", surfaceStrong: "rgba(255,255,255,0.85)",
+  border: "rgba(15,20,40,0.12)", borderSoft: "rgba(15,20,40,0.07)",
+  ink: "#10142a", inkMuted: "#5b6178", inkFaint: "#7c8299",
+  gradCyan: ["#006970", "#006795"], gradAmber: ["#796100", "#8c5000"], gradViolet: ["#8d45b3", "#9d2962"],
+  good: "#087736", warning: "#af4e05", critical: "#ad0e3a",
+  chartCategorical: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"],
+  cardShadow: "0 1px 2px rgba(16,20,40,.05), 0 14px 32px -16px rgba(16,20,40,.20)",
+};
+const HZ = {
+  ...HZ_DARK,
   fontDisplay: "'Sora', ui-sans-serif, system-ui, sans-serif",
   fontBody: "'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif",
   fontMono: "'IBM Plex Mono', ui-monospace, monospace",
-  gradCyan: ["#38d4e8", "#3987e5"], gradAmber: ["#fbc531", "#d9772a"], gradViolet: ["#9085e9", "#d5519f"],
-  good: "#22c55e", warning: "#fab219", critical: "#f0526b",
-  // dataviz-validated categorical order (node_modules-free hand check against the skill's own
-  // reference steps) — cycles past 5 carriers rather than inventing a 6th hue.
-  chartCategorical: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"],
 };
+export const applyDashboardHzTheme = (dark) => { Object.assign(HZ, dark ? HZ_DARK : HZ_LIGHT); };
 
 // Trade Horizon's own token mapping for the shared ColumnFilter component (see
 // src/components/shared/ColumnFilter.jsx) — passed explicitly at every call site on this page so
 // its popover keeps this page's dark-glass look instead of falling back to the shared component's
 // default (the app's normal theme-aware T tokens, which every other page uses unmodified). A
-// solid "#0d1220", not HZ.surface's translucent glass fill — a translucent popover floating over
-// table rows read muddy in practice; every other Trade Horizon popover-style surface on this page
-// (chart tooltips) already made the same call.
+// solid "#0d1220" in dark mode, not HZ.surface's translucent glass fill — a translucent popover
+// floating over table rows read muddy in practice; every other Trade Horizon popover-style surface
+// on this page (chart tooltips) already made the same call. Getters (not a frozen snapshot) so
+// this stays live across a theme switch, same fix as shipmentDetailTheme.js's HZ_LEGACY_THEME.
 const HZ_FILTER_TOKENS = {
-  bg: "#0d1220", border: HZ.border, borderSoft: HZ.borderSoft,
-  ink: HZ.ink, inkMuted: HZ.inkMuted, accent: HZ.gradCyan[0],
-  fontMono: HZ.fontMono, fontBody: HZ.fontBody,
+  get bg() { return HZ.bg === HZ_DARK.bg ? "#0d1220" : HZ.surfaceStrong; },
+  get border() { return HZ.border; }, get borderSoft() { return HZ.borderSoft; },
+  get ink() { return HZ.ink; }, get inkMuted() { return HZ.inkMuted; },
+  get accent() { return HZ.gradCyan[0]; },
+  get fontMono() { return HZ.fontMono; }, get fontBody() { return HZ.fontBody; },
 };
 
 const hzGradientFor = code => {
@@ -158,7 +185,7 @@ const KpiTile = ({ label, value, caption, tintColor, unit, breakdown }) => {
   const display = typeof value === "number" ? value.toLocaleString("en-US") : value;
   return (
     <div style={{ position: "relative", overflow: "hidden", background: HZ.surface, backdropFilter: "blur(18px)",
-      border: `1px solid ${HZ.border}`, borderRadius: 16, padding: "18px 20px",
+      border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, padding: "18px 20px",
       borderLeft: `3px solid ${tintColor || "transparent"}` }}>
       {tintColor && (
         <div style={{ position: "absolute", top: -46, right: -36, width: 130, height: 130,
@@ -409,7 +436,7 @@ export const MatchedShipmentsTable = ({
   const { template: COL, startResize } = useResizableColumns("dashboard-matched-shipments", [130, 120, 120, 110, 140, 48, 90, 90]);
 
   return (
-    <div data-testid="matched-shipments-table" style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden" }}>
+    <div data-testid="matched-shipments-table" style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden" }}>
       <div style={{ padding: "15px 20px", borderBottom: `1px solid ${T.border}` }}>
         <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 17, fontWeight: 600, color: HZ.ink, margin: 0 }}>
           Shipments in Period
@@ -625,7 +652,7 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
             Central shipments in the selected period, grouped by contract
           </p>
         </div>
-        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)",
+        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)",
           padding: 48, textAlign: "center" }}>
           <div style={{ fontFamily: T.body, fontSize: 14, color: T.textMuted, marginBottom: 8 }}>
             No Central shipments in this period.
@@ -655,7 +682,7 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
 
           {/* Left: allocated vs consumed bars */}
           {chartRows.length > 0 && (
-            <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)",
+            <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)",
               padding: "18px 20px" }}>
               <div style={{ marginBottom: 14 }}>
                 <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 3px" }}>
@@ -725,7 +752,7 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
 
           {/* Right: 6-week trend by contract */}
           {contractTrendData?.contractIds?.length > 0 && (
-            <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)",
+            <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)",
               padding: "20px 20px 14px" }}>
               <div style={{ marginBottom: 16 }}>
                 <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 3px" }}>
@@ -743,7 +770,7 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
                   <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }}
                     axisLine={false} tickLine={false} allowDecimals={false} />
                   <Tooltip
-                    contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
+                    contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
                     labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }}
                     itemStyle={{ color: T.textMuted }}
                     formatter={(v, name) => [`${v} TEU`, contractTrendData.refMap[name] || name]}
@@ -797,7 +824,7 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
           const carrier  = carriers.find(c => c.code === g.carrierCode);
 
           return (
-            <div key={g.contractId} style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, backdropFilter: "blur(16px)",
+            <div key={g.contractId} style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, backdropFilter: "blur(16px)",
               borderRadius: 16, overflow: "hidden" }}>
 
               {/* Contract header */}
@@ -937,7 +964,7 @@ const MarginView = ({ financeEnabled }) => {
   const col  = marginColor(pct);
 
   const TrendChart = ({ rows, dataKeys, title, subtitle }) => (
-    <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", padding: "20px 20px 14px" }}>
+    <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)", padding: "20px 20px 14px" }}>
       <div style={{ marginBottom: 14 }}>
         <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 2px" }}>{title}</h3>
         <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>{subtitle}</p>
@@ -949,7 +976,7 @@ const MarginView = ({ financeEnabled }) => {
           <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false}
             tickFormatter={v => `${v}%`} domain={['auto', 'auto']} allowDecimals={false} />
           <ReferenceLine y={0} stroke={T.border} strokeDasharray="3 3" />
-          <Tooltip contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
+          <Tooltip contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
             labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }} itemStyle={{ color: T.textMuted }}
             formatter={(v, name) => [v != null ? `${v}%` : "—", name]} cursor={{ fill: `${T.accent}18` }} />
           <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
@@ -1058,7 +1085,7 @@ const MarginView = ({ financeEnabled }) => {
 
       {/* Carrier breakdown table */}
       {data.byCarrier.length > 0 && (
-        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden", marginBottom: 16 }}>
           <div style={{ padding: "13px 20px", borderBottom: `1px solid ${T.border}` }}>
             <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: 0 }}>By Carrier</h3>
           </div>
@@ -1096,7 +1123,7 @@ const MarginView = ({ financeEnabled }) => {
 
       {/* Customer breakdown table (Organization Model Enhancement Epic 4) */}
       {data.byCustomer?.length > 0 && (
-        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden", marginBottom: 16 }}>
           <div style={{ padding: "13px 20px", borderBottom: `1px solid ${T.border}`,
             display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: 0 }}>By Customer</h3>
@@ -1148,7 +1175,7 @@ const MarginView = ({ financeEnabled }) => {
           (every branch needs a country + an EMO/IMO office pointing at it) — a single-entity/
           single-branch deployment simply never sees this table, no configuration needed. */}
       {data.byEntity?.length > 0 && (
-        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden", marginBottom: 16 }}>
           <div style={{ padding: "13px 20px", borderBottom: `1px solid ${T.border}` }}>
             <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: 0 }}>By Entity</h3>
           </div>
@@ -1244,7 +1271,7 @@ const CarrierView = ({ rangeShipments, containers, carriers, carrierTrends, rang
       <div style={{ display: "grid", gridTemplateColumns: barData.length > 0 ? "1fr 1fr" : "1fr", gap: 16, marginBottom: 20 }}>
 
         {/* Bar chart */}
-        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", padding: "20px 20px 14px" }}>
+        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)", padding: "20px 20px 14px" }}>
           <div style={{ marginBottom: 14 }}>
             <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 2px" }}>TEU by Carrier — Selected Period</h3>
             <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>Total: {totalTEU} TEU across {barData.length} carrier{barData.length !== 1 ? "s" : ""}</p>
@@ -1255,7 +1282,7 @@ const CarrierView = ({ rangeShipments, containers, carriers, carrierTrends, rang
               <XAxis dataKey="carrier" tick={{ fontFamily: T.mono, fontSize: 11, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
               <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
               <Tooltip
-                contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
+                contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
                 labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }}
                 itemStyle={{ color: T.textMuted }}
                 formatter={(v, _name, props) => [`${v} TEU`, props.payload.name || props.payload.carrier]}
@@ -1267,7 +1294,7 @@ const CarrierView = ({ rangeShipments, containers, carriers, carrierTrends, rang
 
         {/* 6-week trend line chart */}
         {barData.length > 0 && (
-          <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", padding: "20px 20px 14px" }}>
+          <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)", padding: "20px 20px 14px" }}>
             <div style={{ marginBottom: 14 }}>
               <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 2px" }}>6-Week Volume Trend</h3>
               <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>TEU shipped per carrier, calendar-week aligned</p>
@@ -1278,7 +1305,7 @@ const CarrierView = ({ rangeShipments, containers, carriers, carrierTrends, rang
                 <XAxis dataKey="week" tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
                 <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip
-                  contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
+                  contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
                   labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }}
                   itemStyle={{ color: T.textMuted }}
                   formatter={(v, name) => [`${v} TEU`, name]}
@@ -1297,7 +1324,7 @@ const CarrierView = ({ rangeShipments, containers, carriers, carrierTrends, rang
       </div>
 
       {/* Ranking table */}
-      <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden" }}>
+      <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden" }}>
         <div style={{ padding: "13px 20px", borderBottom: `1px solid ${T.border}` }}>
           <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: 0 }}>Carrier Rankings</h3>
         </div>
@@ -1380,7 +1407,7 @@ const ComplianceReviewView = ({ compHits, custHits, loading, onRefresh }) => {
       ) : (
         <>
           {/* ── Shipment Hits ── */}
-          <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden", marginBottom: 24 }}>
+          <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden", marginBottom: 24 }}>
             <div style={{ padding: "14px 20px", borderBottom: `1px solid ${T.border}`,
               display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1440,7 +1467,7 @@ const ComplianceReviewView = ({ compHits, custHits, loading, onRefresh }) => {
           </div>
 
           {/* ── Customer Hits ── */}
-          <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden" }}>
+          <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden" }}>
             <div style={{ padding: "14px 20px", borderBottom: `1px solid ${T.border}`,
               display: "flex", alignItems: "center", gap: 10 }}>
               <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: 0 }}>
@@ -1863,7 +1890,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
     if (!active || !payload?.length) return null;
     const d = chartData.find(x => x.carrier === label);
     return (
-      <div style={{ background: "#0d1220", border: `1px solid ${HZ.border}`, borderRadius: 12, padding: "12px 16px" }}>
+      <div style={{ background: "#0d1220", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, padding: "12px 16px" }}>
         <div style={{ fontFamily: HZ.fontMono, fontWeight: 700, color: HZ.gradCyan[0], marginBottom: 8, fontSize: 13 }}>{label} · {d?.name}</div>
         <div style={{ fontFamily: HZ.fontBody, fontSize: 13, color: HZ.good }}>Confirmed: {d?.confirmed} TEU</div>
         {d?.pending > 0 && <div style={{ fontFamily: HZ.fontBody, fontSize: 13, color: HZ.warning }}>Pending: {d.pending} TEU</div>}
@@ -1913,7 +1940,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
           below has only position:relative for plain DOM stacking, nothing from the filter family. */}
       <div data-testid="dashboard-date-range" style={{ position: "relative", borderRadius: 16, marginBottom: 20 }}>
         <div aria-hidden="true" style={{ position: "absolute", inset: 0, zIndex: 0, borderRadius: 16,
-          background: HZ.surface, border: `1px solid ${HZ.border}`, backdropFilter: "blur(18px)" }} />
+          background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, backdropFilter: "blur(18px)" }} />
         <div style={{ position: "relative", zIndex: 1, padding: "16px 20px" }}>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 12 }}>
             <Btn variant="secondary" size="sm" onClick={() => shiftRange(-1)}>← Prev</Btn>
@@ -1971,13 +1998,13 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
               below needs no equivalent branch: its own chartData.length > 0 gate already hides
               it automatically once chartData comes back empty from the same filtered inputs. */}
           {carrierFilterIsEmpty ? (
-            <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20,
+            <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 20,
               backdropFilter: "blur(18px)", marginBottom: 20 }}>
               <NoCarriersSelected />
             </div>
           ) : (
           <div style={{ display: "grid", gridTemplateColumns: "5fr 3fr 4fr", gap: 16, marginBottom: 20 }}>
-            <div data-testid="space-consumption-card" style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20, backdropFilter: "blur(18px)", padding: 22 }}>
+            <div data-testid="space-consumption-card" style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 20, backdropFilter: "blur(18px)", padding: 22 }}>
               <div style={{ fontFamily: HZ.fontDisplay, fontSize: 14.5, fontWeight: 600, color: HZ.ink, marginBottom: 2 }}>Space Consumption</div>
               <div style={{ fontFamily: HZ.fontBody, fontSize: 12, color: HZ.inkMuted, marginBottom: 16 }}>
                 Across {filteredActiveAllocations.length} active allocation{filteredActiveAllocations.length !== 1 ? "s" : ""} · {totalAlloc.toLocaleString("en-US")} TEU committed
@@ -1985,12 +2012,12 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
               <KpiRing pct={totalAlloc > 0 ? (totalConfirmed / totalAlloc) * 100 : 0}
                 confirmed={totalConfirmed} pending={totalPending} rejected={totalRejected} remaining={totalRemain} />
             </div>
-            <div data-testid="active-carriers-card" style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20, backdropFilter: "blur(18px)", padding: 22 }}>
+            <div data-testid="active-carriers-card" style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 20, backdropFilter: "blur(18px)", padding: 22 }}>
               <div style={{ fontFamily: HZ.fontDisplay, fontSize: 14.5, fontWeight: 600, color: HZ.ink, marginBottom: 2 }}>Active Carriers</div>
               <div style={{ fontFamily: HZ.fontBody, fontSize: 12, color: HZ.inkMuted, marginBottom: 14 }}>By space commitment</div>
               <CarrierBadgeGrid rows={chartData} />
             </div>
-            <div data-testid="total-allocated-card" style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20, backdropFilter: "blur(18px)", padding: 22, display: "flex", flexDirection: "column", gap: 16 }}>
+            <div data-testid="total-allocated-card" style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 20, backdropFilter: "blur(18px)", padding: 22, display: "flex", flexDirection: "column", gap: 16 }}>
               <div>
                 <div style={{ fontFamily: HZ.fontDisplay, fontSize: 14.5, fontWeight: 600, color: HZ.ink }}>Total Allocated</div>
                 <div style={{ fontFamily: HZ.fontDisplay, fontSize: 25, fontWeight: 700, color: HZ.ink, marginTop: 6 }}>{totalAlloc.toLocaleString("en-US")} <span style={{ fontSize: 13, color: HZ.inkMuted, fontFamily: HZ.fontBody }}>TEU</span></div>
@@ -2041,7 +2068,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
             if (active.length === 0) return null;
             const barW = pct ?? 100;
             return (
-              <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20, backdropFilter: "blur(18px)",
+              <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 20, backdropFilter: "blur(18px)",
                 padding: "16px 24px", display: "flex", alignItems: "center", gap: 32 }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontFamily: HZ.fontBody, fontSize: 10.5, color: HZ.inkMuted, fontWeight: 600,
@@ -2085,7 +2112,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
             const sentValueUsd = sentQuotes.reduce((sum, q) => sum + (q.totalAmountUsd || 0), 0);
             if (openOpportunities === 0 && draftQuotes === 0 && sentQuotes.length === 0) return null;
             return (
-              <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20, backdropFilter: "blur(18px)",
+              <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 20, backdropFilter: "blur(18px)",
                 padding: "16px 24px", display: "flex", alignItems: "center", gap: 32 }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontFamily: HZ.fontBody, fontSize: 10.5, color: HZ.inkMuted, fontWeight: 600,
@@ -2124,7 +2151,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
           {/* Charts */}
           {chartData.length > 0 && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 22 }}>
-              <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20, backdropFilter: "blur(18px)", padding: "20px 20px 14px" }}>
+              <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 20, backdropFilter: "blur(18px)", padding: "20px 20px 14px" }}>
                 <div style={{ marginBottom: 16 }}>
                   <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 3px" }}>TEU by Carrier</h2>
                   <p style={{ fontFamily: HZ.fontBody, fontSize: 11, color: HZ.inkMuted, margin: 0 }}>Awarded vs Confirmed/Pending/Rejected for the selected period</p>
@@ -2143,7 +2170,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-              <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20, backdropFilter: "blur(18px)", padding: "20px 20px 14px" }}>
+              <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 20, backdropFilter: "blur(18px)", padding: "20px 20px 14px" }}>
                 <div style={{ marginBottom: 16 }}>
                   <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 3px" }}>6-Week TEU Trend</h2>
                   <p style={{ fontFamily: HZ.fontBody, fontSize: 11, color: HZ.inkMuted, margin: 0 }}>Weekly Confirmed consumption per carrier — last 6 weeks</p>
@@ -2153,7 +2180,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
                     <CartesianGrid strokeDasharray="3 3" stroke={HZ.borderSoft} vertical={false} />
                     <XAxis dataKey="week" tick={{ fontFamily: HZ.fontMono, fontSize: 10, fill: HZ.inkMuted }} axisLine={{ stroke: HZ.border }} tickLine={false} />
                     <YAxis tick={{ fontFamily: HZ.fontBody, fontSize: 10, fill: HZ.inkMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
-                    <Tooltip contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
+                    <Tooltip contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
                       labelStyle={{ color: HZ.ink, fontWeight: 600, marginBottom: 4 }} itemStyle={{ color: HZ.inkMuted }}
                       formatter={(v, name) => [`${v} TEU`, name]} cursor={{ stroke: HZ.border, strokeWidth: 1 }} />
                     <Legend wrapperStyle={{ fontFamily: HZ.fontBody, fontSize: 11, color: HZ.inkMuted, paddingTop: 10 }} />

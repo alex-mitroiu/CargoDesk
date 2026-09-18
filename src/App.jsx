@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
-import { T, applyTheme } from "./tokens";
+import { T, applyTheme, teuOf, buildTeuLookup } from "./tokens";
+import { applyHzTheme } from "./pages/shipments/shipmentDetailTheme";
+import { applyDashboardHzTheme } from "./pages/DashboardPage";
 import { toast } from "./toast";
 import ToastContainer from "./components/primitives/ToastContainer";
 import GlobalSavingOverlay from "./components/primitives/GlobalSavingOverlay";
@@ -91,6 +93,7 @@ import LoopMapExplorerPage    from "./pages/mdm/LoopMapExplorerPage";
 import MdmCountriesPage       from "./pages/mdm/MdmCountriesPage";
 import MdmUNLocationCodesPage  from "./pages/mdm/MdmUNLocationCodesPage";
 import MdmCommoditiesPage     from "./pages/mdm/MdmCommoditiesPage";
+import MdmHsCodesPage         from "./pages/mdm/MdmHsCodesPage";
 import MdmChargeCodesPage     from "./pages/mdm/MdmChargeCodesPage";
 import MdmDutyRatesPage       from "./pages/mdm/MdmDutyRatesPage";
 import MdmPackTypesPage       from "./pages/mdm/MdmPackTypesPage";
@@ -134,6 +137,11 @@ function App() {
   const [containers,  setContainers]  = useState([]);
   const [allocations, setAllocations] = useState([]);
   const [containerTypeDefs, setContainerTypeDefs] = useState([]);
+  // Same admin-configured-override-aware TEU source DashboardPage.jsx already uses — computed
+  // once here so ContractAssignModal/ContractField's shipmentTEU prop (the overage-warning gate
+  // in ContractPickerModal, previously always defaulting to 0 since neither caller passed it)
+  // agrees with every other TEU figure in the app.
+  const teuDefsMap = useMemo(() => buildTeuLookup(containerTypeDefs), [containerTypeDefs]);
   const [ready,       setReady]       = useState(false);
   const [apiError,    setApiError]    = useState(null);
   const [appSettings, setAppSettings] = useState({});
@@ -271,11 +279,17 @@ function App() {
   });
 
   // Apply saved theme once on mount — before first paint
-  useEffect(() => { applyTheme(isDark); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    applyTheme(isDark);
+    applyHzTheme(isDark);
+    applyDashboardHzTheme(isDark);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleTheme = () => {
     const next = !isDark;
     applyTheme(next);                                            // mutate T before re-render
+    applyHzTheme(next);                                          // mutate Shipment Details' HZ
+    applyDashboardHzTheme(next);                                 // mutate Dashboard's HZ
     localStorage.setItem("cd_theme", next ? "dark" : "light"); // persist
     setIsDark(next);                                            // trigger re-render (T already updated)
   };
@@ -769,6 +783,7 @@ function App() {
     "mdm-carrier-integrations": "Master Data — Carrier Integrations",
     "mdm-vessels":      "Master Data — Vessels",
     "mdm-commodities":  "Master Data — Commodities",
+    "mdm-hs-codes":     "Master Data — HS Codes",
     "mdm-ports":        "Master Data — Port Locations",
     "mdm-linked":       "Master Data — Linked Ports",
     "mdm-loop-codes":   "Master Data — Loop Codes",
@@ -1894,6 +1909,7 @@ function App() {
                     <NavBtn pageKey="mdm-loop-map-explorer" icon={IconEarth} label="Loop Map Explorer" subIndent />
                   )}
                   <NavBtn pageKey="mdm-commodities" icon={IconPackage} label="Commodities"     indent />
+                  <NavBtn pageKey="mdm-hs-codes" icon={IconTag} label="HS Codes"     indent />
                   <NavBtn pageKey="mdm-ports"    icon={IconMapPin} label="Port Locations" indent
                     foldable open={portsNavOpen} onToggleFold={() => setPortsNavOpen(o => !o)} />
                   {portsNavOpen && (
@@ -2033,6 +2049,7 @@ function App() {
           <ShipmentFormPage
             mode="new"
             init={{}}
+            containers={containers} containerTypeDefs={containerTypeDefs}
             ctrManagerTrigger={newCtrSignal}
             onDirtyChange={v => { formDirtyRef.current = v; }}
             onBack={() => navigate("shipments")}
@@ -2071,6 +2088,7 @@ function App() {
             <ShipmentFormPage
               mode="edit"
               init={shp}
+              containers={containers} containerTypeDefs={containerTypeDefs}
               onDirtyChange={v => { formDirtyRef.current = v; }}
               onBack={() => navigate("detail", selectedId)}
               onSave={async (form) => {
@@ -2142,6 +2160,8 @@ function App() {
         {page === "shipment-schedules" && selectedShipment && (
           <ShipmentSchedulesPage
             shipment={selectedShipment}
+            shipmentTEU={containers.filter(c => c.shipmentId === selectedShipment.id)
+              .reduce((sum, c) => sum + teuOf(c.size, c.type, teuDefsMap), 0)}
             onBack={() => navigate("detail", selectedShipment.id)}
             onUpdate={handleUpdateShipment}
             onRefresh={async () => {
@@ -2341,6 +2361,7 @@ function App() {
         {page === "mdm-countries"  &&                                 <MdmCountriesPage />}
         {page === "mdm-unlocodes"  &&                                 <MdmUNLocationCodesPage />}
         {page === "mdm-commodities"&&                                 <MdmCommoditiesPage />}
+        {page === "mdm-hs-codes"&&                                    <MdmHsCodesPage />}
         {page === "mdm-finance"&&                                     <MdmFinancePage navigate={navigate} />}
         {page === "mdm-locations"&&                                   <MdmLocationsPage navigate={navigate} />}
         {page === "mdm-charge-codes"&&                                <MdmChargeCodesPage />}

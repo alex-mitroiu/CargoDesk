@@ -145,9 +145,10 @@ module.exports = function loopCodeRoutes(app, ctx) {
       await transaction(async (tx) => {
         await tx.query("DELETE FROM loop_code_ports WHERE loop_code_id=$1", [req.params.id]);
         for (let i = 0; i < ports.length; i++) {
+          const direction = ports[i].direction === "WB" ? "WB" : "EB";
           await tx.query(
-            `INSERT INTO loop_code_ports (id, loop_code_id, port_unlocode, sequence_order, transit_day_offset) VALUES ($1,$2,$3,$4,$5)`,
-            [uid(), req.params.id, ports[i].portUnlocode, i, ports[i].transitDayOffset ?? null]
+            `INSERT INTO loop_code_ports (id, loop_code_id, port_unlocode, sequence_order, transit_day_offset, direction) VALUES ($1,$2,$3,$4,$5,$6)`,
+            [uid(), req.params.id, ports[i].portUnlocode, i, ports[i].transitDayOffset ?? null, direction]
           );
         }
       });

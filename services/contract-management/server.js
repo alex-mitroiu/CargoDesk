@@ -470,6 +470,20 @@ app.get("/internal/contracts/match", async (req, res) => {
     }
   }
 
+  // De-dupe: findMatchingContractLegs can surface more than one satisfying leg-chain for the
+  // same contract (e.g. two different linked-port paths that both happen to resolve to the same
+  // POL/POD), producing two result entries with the identical (contract id, routingId) pair —
+  // mirrors the identical fix in routes/contracts.js's local (non-remote) copy of this route.
+  const seenMatches = new Set();
+  const deduped = results.filter(r => {
+    const key = `${r.id}::${r.routingId || ""}`;
+    if (seenMatches.has(key)) return false;
+    seenMatches.add(key);
+    return true;
+  });
+  results.length = 0;
+  results.push(...deduped);
+
   if (results.length > 0) {
     const ids = [...new Set(results.map(r => r.id))];
     const ph = ids.map((_, i) => `$${i + 1}`).join(",");

@@ -371,6 +371,22 @@ module.exports = function contractsRoutes(app, ctx) {
       }
     }
 
+    // De-dupe: findMatchingContractLegs can surface more than one satisfying leg-chain for the
+    // same contract (e.g. two different linked-port paths that both happen to resolve to the
+    // same POL/POD), producing two result entries with the identical (contract id, routingId)
+    // pair — indistinguishable cards in ContractPickerModal, plus a React duplicate-key warning
+    // there since it keys by contract id alone. Keep the first (candidates are already ordered by
+    // valid_from DESC and findMatchingContractLegs' own match order) and drop the rest.
+    const seenMatches = new Set();
+    const deduped = results.filter(r => {
+      const key = `${r.id}::${r.routingId || ""}`;
+      if (seenMatches.has(key)) return false;
+      seenMatches.add(key);
+      return true;
+    });
+    results.length = 0;
+    results.push(...deduped);
+
     // Rates: scoped to the specific routing that actually matched (that routing's own rows plus
     // contract-wide routing_id='' rows, e.g. a flat documentation fee), not every rate on the
     // whole contract — previously the full unfiltered rate set was attached regardless of which

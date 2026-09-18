@@ -17,7 +17,7 @@ import { deriveLoopCode } from "../../utils/scheduleLoop";
 import { emitLegsScheduleChanged } from "../../legsScheduleBus";
 import useSaving from "../../hooks/useSaving";
 import { setNavigationGuard, clearNavigationGuard } from "../../navigationGuard";
-import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "./shipmentDetailTheme";
+import { HZ, HZ_MONO, HZ_BODY, HZ_LEGACY_THEME, useHorizonFonts } from "./shipmentDetailTheme";
 
 // ─── Shipment Schedules Page ──────────────────────────────────────────────
 // Dedicated sub-page for carrier schedule/booking management, promoted out
@@ -73,7 +73,7 @@ const LineAgentField = ({ label, role, party, canEdit, onAssign, onRemove }) => 
   };
 
   return (
-    <div data-testid={`shipment-schedules-line-agent-${role.toLowerCase().replace(/\s+/g, "-")}`} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 10, padding: "12px 16px" }}>
+    <div data-testid={`shipment-schedules-line-agent-${role.toLowerCase().replace(/\s+/g, "-")}`} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, padding: "12px 16px" }}>
       <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 700,
         textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>{label}</div>
       {editing ? (
@@ -116,7 +116,7 @@ const LineAgentField = ({ label, role, party, canEdit, onAssign, onRemove }) => 
   );
 };
 
-const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
+const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, onRefresh }) => {
   const { canEditShipments: canEdit, activeOffice, allOffices, isAdmin, activeRoles } = useAuth();
   // Change Contract's own carrier-changed cascade (below) is the one remaining multi-step async
   // operation on this page that still hits the server immediately — everything else route-leg/
@@ -611,7 +611,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
     <button type="button"
       disabled={!canSearch}
       onClick={() => { if (canSearch) { setChainedFromContract(false); setPickerOpen(true); } }}
-      style={{ background: "none", border: `1px solid ${HZ.border}`,
+      style={{ background: "none", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
         borderRadius: 6, padding: "4px 12px", cursor: canSearch ? "pointer" : "not-allowed",
         fontFamily: HZ_BODY, fontSize: 12, color: canSearch ? HZ.text : HZ.textMuted,
         opacity: canSearch ? 1 : 0.5, display: "inline-flex", alignItems: "center", gap: 5 }}
@@ -656,7 +656,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
           canEdit={canEdit} showContractCols={false}
           extraAction={addSailingBtn}
           loopCode={deriveLoopCode(draftSailing || scheduleList[0])}
-          hideDraftBanner />
+          hideDraftBanner theme={HZ_LEGACY_THEME} />
       </div>
 
       <div style={{ marginTop: 22, marginBottom: 22,
@@ -684,7 +684,14 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
             <div id="shpsched-contract-summary" data-testid="shipment-schedules-contract-summary" style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", flex: 1,
               background: HZ.bg, border: `1px solid ${contractMismatch ? HZ.crit + "66" : HZ.border}`, borderRadius: 8 }}>
               <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
-                padding: "2px 8px", borderRadius: 4, background: HZ.cyanBg, color: HZ.cyan, flexShrink: 0 }}>
+                padding: "2px 8px", borderRadius: 4, flexShrink: 0,
+                // Central specifically reads violet — matches the approved Trade Horizon mockup
+                // (https://claude.ai/artifact/SUaCjaQYTdaPHbXmm2FfYj)'s own pill-violet contract
+                // badge exactly; SPOT/Pending/Customer Own keep the existing cyan, which the
+                // mockup never depicted an example of (its own sample shipment was Central).
+                ...(shipment.contractType === "Central"
+                  ? { background: HZ.violetBg, color: HZ.violetPillText, border: `1px solid ${HZ.violet}66` }
+                  : { background: HZ.cyanBg, color: HZ.cyan }) }}>
                 {shipment.contractType || "—"}
               </span>
               <span style={{ fontFamily: HZ_MONO, fontSize: 13, color: shipment.contractRef ? HZ.text : HZ.textMuted,
@@ -733,7 +740,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
             ];
             return (
               <div id="shpsched-contract-details" data-testid="shipment-schedules-contract-details" style={{ marginTop: 12,
-                border: `1px solid ${HZ.border}`, borderRadius: 8, overflow: "hidden" }}>
+                border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8, overflow: "hidden" }}>
                 <div style={{ display: "flex", padding: "8px 0", borderBottom: `1px solid ${HZ.border}`, background: HZ.surface }}>
                   {cols.map(([label], i) => (
                     <div key={label} style={{ flex: 1, minWidth: 0, paddingLeft: 14, paddingRight: 10,
@@ -759,10 +766,12 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
         </div>
 
         {hasSpaceConfig && (
-          <div id="shpsched-space-config-section" data-testid="shipment-schedules-space-config-section">
+          <div id="shpsched-space-config-section" data-testid="shipment-schedules-space-config-section"
+            style={{ display: "flex", flexDirection: "column", height: "100%" }}>
             <div style={sectionLabel}>Space Configuration</div>
             {linkedAlloc ? (
-              <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8, padding: "12px 14px" }}>
+              <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8, padding: "12px 14px",
+                flex: 1, display: "flex", flexDirection: "column" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                   <span style={{ fontFamily: HZ_MONO, fontSize: 12, fontWeight: 700, color: HZ.text }}>
                     {linkedAlloc.carrierCode} · {linkedAlloc.pol} → {linkedAlloc.pod}
@@ -784,7 +793,8 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
               </div>
             ) : (
               <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, fontStyle: "italic",
-                background: HZ.bg, border: `1px dashed ${HZ.border}`, borderRadius: 8, padding: "12px 14px" }}>
+                background: HZ.bg, border: `1px dashed ${HZ.border}`, borderRadius: 8, padding: "12px 14px",
+                flex: 1 }}>
                 No active space configuration matches this shipment.
               </div>
             )}
@@ -875,7 +885,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
 
       {contractModalOpen && (
         <ContractAssignModal
-          shipment={shipment} legs={draftLegs} pol={pol} pod={pod} onUpdate={onUpdate}
+          shipment={shipment} legs={draftLegs} pol={pol} pod={pod} shipmentTEU={shipmentTEU} onUpdate={onUpdate}
           onClose={() => setContractModalOpen(false)}
           onDone={async ({ isCentral, contractPicked, carrierCode, matchedRoute }) => {
             setContractModalOpen(false);

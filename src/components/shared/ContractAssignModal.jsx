@@ -25,7 +25,7 @@ import { HZ, HZ_BODY, useHorizonFonts } from "../../pages/shipments/shipmentDeta
 // space-config/contract search the shipment form already uses.
 // Non-Central types resolve inline on the type step via a free-text ref field.
 
-const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClose }) => {
+const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, onUpdate, onDone, onClose }) => {
   const [type, setType] = useState(shipment.contractType === "Central" ? "Central" : (shipment.contractType || "Central"));
   const [step, setStep] = useState(shipment.contractType === "Central" ? "contract" : "type");
   const [refVal, setRefVal] = useState(shipment.contractRef || "");
@@ -115,7 +115,7 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
       );
     }
     return (
-      <ContractPickerModal pol={pol} pod={pod} matches={matches} allocs={allocs}
+      <ContractPickerModal pol={pol} pod={pod} matches={matches} allocs={allocs} shipmentTEU={shipmentTEU}
         searchCriteria={{ pol, pod, crd: (shipment.cargoReadyDate || shipment.etd || "") || null,
           // Deliberately no carrierCode here — this search is intentionally NOT carrier-filtered
           // (see the comment above the match useEffect), so showing one would misrepresent what
@@ -142,7 +142,7 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
         ) : (
           <>
             <div data-testid="shipment-schedules-contract-assign-ref-field">
-              <Inp label="Contract Reference" value={refVal} onChange={setRefVal}
+              <Inp label="Contract Reference" value={refVal} onChange={setRefVal} required
                 placeholder="e.g. SPOT-2025-001" mono hint="Free-text reference for this contract arrangement" />
             </div>
             <div data-testid="shipment-schedules-contract-assign-carrier-field">
@@ -159,7 +159,7 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <Btn variant="secondary" onClick={onClose} data-testid="shipment-schedules-contract-assign-cancel-btn">Cancel</Btn>
-              <Btn onClick={saveRef} data-testid="shipment-schedules-contract-assign-save-btn">Save</Btn>
+              <Btn disabled={!refVal.trim()} onClick={saveRef} data-testid="shipment-schedules-contract-assign-save-btn">Save</Btn>
             </div>
           </>
         )}

@@ -21,18 +21,8 @@ import {
 // dots straddling it. Endpoint (hub) stops get the darker/bolder name-text treatment their own
 // CSS gives `.port-name.connection-endpoint` — the dot/pill styling itself doesn't change,
 // exactly like the reference (no separate "hub dot color", the emphasis lives in the label only).
-export const Timeline = ({ ports: portsIn, polCode, podCode, reversed = false, accentColor }) => {
-  const ports = reversed ? [...portsIn].reverse() : portsIn;
+export const Timeline = ({ ports, polCode, podCode, dirLabel, accentColor }) => {
   const color = accentColor || T.accent;
-  // Both bars show the exact same registered rotation — just read in opposite order — rather than
-  // deriving two separate real "legs" from the ports' own geography (direct request, 2026-09-05:
-  // no direction field exists anywhere in the data model, so anything fancier would be a guess).
-  // The direction label is the one thing computed, from whichever order is actually on screen:
-  // net decreasing longitude start-to-end reads as westbound, increasing as eastbound.
-  const withLon = ports.filter(p => p.longitude != null);
-  const dirLabel = withLon.length >= 2
-    ? (withLon[withLon.length - 1].longitude < withLon[0].longitude ? "Westbound" : "Eastbound")
-    : null;
   const n = ports.length;
   // marginX is generous specifically for the diagonal name label's own overhang, not just the dot
   // — every Timeline label reads left-to-right regardless of above/below (see RotatedLabel's
@@ -92,16 +82,13 @@ export const Timeline = ({ ports: portsIn, polCode, podCode, reversed = false, a
       {/* Direction arrows at the midpoint between every consecutive pair of REAL stops only — one
           past the last stop would imply an (n+1)th hop that doesn't exist (found confusing live,
           2026-09-04), since the Timeline is linear and doesn't visually render the loop's actual
-          close-the-circle hop back to the first port the way the Map does. The arrow always points
-          toward whichever neighbor the vessel *actually* reaches later in real time — for the
-          reversed (Eastbound) bar, real day-offsets decrease left to right, so the true direction
-          of travel is backward relative to reading order (caught live, 2026-09-05: both bars were
-          pointing the same way, which silently mislabeled the Eastbound one). */}
+          close-the-circle hop back to the first port the way the Map does. `ports` is always this
+          leg's own real rotation in ascending day-offset order (loop_code_ports.direction, added
+          2026-09-18 — see MdmLoopCodesPage.jsx's Eastbound/Westbound rotation editor, the
+          authoritative source for this split), so the arrow always points forward in reading order. */}
       {Array.from({ length: Math.max(n - 1, 0) }).map((_, i) => {
         const mx = marginX + step * (i + 0.5);
-        const points = reversed
-          ? `${mx - 7},${y} ${mx + 7},${y - 7} ${mx + 7},${y + 7}`
-          : `${mx + 7},${y} ${mx - 7},${y - 7} ${mx - 7},${y + 7}`;
+        const points = `${mx + 7},${y} ${mx - 7},${y - 7} ${mx - 7},${y + 7}`;
         return <polygon key={`arrow-${i}`} points={points} fill={T.bg} opacity={0.35} />;
       })}
       {ports.map((p, i) => {
@@ -323,12 +310,50 @@ const LoopRouteModal = ({ code, polCode, podCode, onClose }) => {
             <div style={{ padding: 24, textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
               This loop has no rotation configured yet.
             </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <Timeline ports={loop.ports} polCode={polCode} podCode={podCode} />
-              <Timeline ports={loop.ports} polCode={polCode} podCode={podCode} reversed accentColor={T.purple} />
-            </div>
-          )}
+          ) : (() => {
+            // Same split MdmLoopCodesPage's Rotation editor uses (loop_code_ports.direction,
+            // 2026-09-18) — each leg's real registered stops, in their own ascending day-offset
+            // order, not the whole rotation shown twice forward/reversed as a stand-in for a
+            // return leg (the pre-direction-field placeholder this replaced).
+            const wbPorts = loop.ports.filter(p => p.direction === "WB");
+            const ebPorts = loop.ports.filter(p => p.direction !== "WB");
+            const renderLeg = (ports, dirLabel, accentColor) => {
+              if (ports.length >= 2) return <Timeline ports={ports} polCode={polCode} podCode={podCode} dirLabel={dirLabel} accentColor={accentColor} />;
+              // A leg can genuinely be a single stop (e.g. one return call before heading back to
+              // the loop's start) — that's real data, not "nothing registered", so it gets its own
+              // one-stop display rather than falling into the true-zero empty state below. A line
+              // needs 2+ points to draw at all, which is the only reason Timeline itself can't
+              // just render this case (caught live, 2026-09-18: AL1's real 1-port Eastbound leg
+              // was being misreported as unregistered).
+              if (ports.length === 1) {
+                const p = ports[0];
+                return (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px",
+                    background: T.bg, borderRadius: 10 }}>
+                    <span style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 800, textTransform: "uppercase",
+                      letterSpacing: "0.04em", color: "#fff", background: accentColor, borderRadius: 11, padding: "3px 10px" }}>{dirLabel}</span>
+                    <span style={{ width: 9, height: 9, borderRadius: "50%", background: accentColor, flexShrink: 0 }} />
+                    <span style={{ fontFamily: T.mono, fontSize: 12.5, color: T.accent, fontWeight: 700 }}>{p.portUnlocode}</span>
+                    <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.text }}>{p.portName}</span>
+                    {p.transitDayOffset != null && (
+                      <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted, marginLeft: "auto" }}>Day {p.transitDayOffset}</span>
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <div style={{ padding: 12, textAlign: "center", fontFamily: T.body, fontSize: 12, color: T.textMuted, background: T.bg, borderRadius: 10 }}>
+                  No {dirLabel.toLowerCase()} ports registered for this loop.
+                </div>
+              );
+            };
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {renderLeg(wbPorts, "Westbound", T.accent)}
+                {renderLeg(ebPorts, "Eastbound", T.purple)}
+              </div>
+            );
+          })()}
 
           {loop.ports.length >= 2 && (
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",

@@ -284,6 +284,33 @@ async function importCommodities() {
   return { inserted, skipped };
 }
 
+// ─── Import HS Codes ────────────────────────────────────────────────────────────
+// Distinct from commodities.json — that's CargoDesk's own internal cargo-grade classification,
+// this is a curated set of real, well-known international 6-digit Harmonized System codes (not
+// the full ~5,300-code WCO nomenclature, which has no free bulk-download source — see the
+// HS Codes MDM page's own header comment for the sourcing tradeoff this reflects).
+
+async function importHsCodes() {
+  const jsonPath = path.join(__dirname, "..", "data", "hs-codes.json");
+  if (!fs.existsSync(jsonPath)) {
+    console.warn("  ⚠ data/hs-codes.json not found — skipping");
+    return { inserted: 0, skipped: 0 };
+  }
+  const items = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+  let inserted = 0, skipped = 0;
+  const now = new Date().toISOString();
+  await transaction(async (tx) => {
+    for (const h of items) {
+      const rows = await tx.query(
+        "INSERT INTO hs_codes (code,description,hs_chapter,chapter_name,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$5) ON CONFLICT (code) DO NOTHING RETURNING code",
+        [h.code, h.description, h.hsChapter, h.chapterName, now]
+      );
+      if (rows.length > 0) inserted++; else skipped++;
+    }
+  });
+  return { inserted, skipped };
+}
+
 // ─── Seed trade lanes + their default transit days ─────────────────────────────
 // The 14 FIATA-style trade lanes this app has always used (routing_term display,
 // longestLane() port resolution, Reports "By Region"). Found missing entirely from this
@@ -390,6 +417,10 @@ async function main() {
   const commResult = await importCommodities();
   console.log(`  ✔ Commodities: ${commResult.inserted} inserted, ${commResult.skipped} skipped`);
 
+  console.log("Importing HS codes...");
+  const hsResult = await importHsCodes();
+  console.log(`  ✔ HS codes: ${hsResult.inserted} inserted, ${hsResult.skipped} skipped`);
+
   console.log("Importing vessels...");
   const vesselResult = await importVessels();
   console.log(`  ✔ Vessels:  ${vesselResult.inserted} inserted, ${vesselResult.skipped} skipped`);
@@ -413,7 +444,8 @@ async function main() {
   const [{ n: totalRegions }]    = await query("SELECT COUNT(*) AS n FROM regions");
   const [{ n: totalVessels }]    = await query("SELECT COUNT(*) AS n FROM vessels");
   const [{ n: totalCommodities }]= await query("SELECT COUNT(*) AS n FROM commodities");
-  console.log(`\n  DB now has ${Number(totalPorts).toLocaleString()} ports, ${Number(totalCarriers)} carriers, ${Number(totalRegions)} regions, ${Number(totalVessels)} vessels, and ${Number(totalCommodities)} commodities.`);
+  const [{ n: totalHsCodes }]    = await query("SELECT COUNT(*) AS n FROM hs_codes");
+  console.log(`\n  DB now has ${Number(totalPorts).toLocaleString()} ports, ${Number(totalCarriers)} carriers, ${Number(totalRegions)} regions, ${Number(totalVessels)} vessels, ${Number(totalCommodities)} commodities, and ${Number(totalHsCodes)} HS codes.`);
   console.log("\nDone. You can restart the server now.\n");
 }
 

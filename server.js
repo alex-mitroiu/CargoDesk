@@ -2137,7 +2137,7 @@ const {
   SVC_ABBR, longestLane, cutoffState, roundCents, costLineEffectiveUsd, COST_LINE_EFFECTIVE_USD_SQL,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapRateSnapshot, mapRateSnapshotLine,
   mapChargeCodeDefinition, mapContainer, mapContainerEvent, mapContainerPackage, mapShipmentParty, mapSideOffice,
-  mapPackTypeDefinition, mapDutyRateChapter, mapScheduledReport, mapContainerTypeDefinition, mapDocumentTemplate, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
+  mapPackTypeDefinition, mapDutyRateChapter, mapHsCode, mapScheduledReport, mapContainerTypeDefinition, mapDocumentTemplate, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
   mapCarrierAgent, mapCarrierAgentScheduleRow, mapTradeLane, mapScopeItem, mapOffice, mapOfficeMailSettings,
   mapSystemEmailSettings,
   mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket, mapTestItem,
@@ -3649,7 +3649,7 @@ const ctx = {
   computeCostLineReconciliation, applyReconciliation,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
   mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice,
-  mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition, mapDutyRateChapter, mapScheduledReport, mapContainerTypeDefinition, mapDocumentTemplate,
+  mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition, mapDutyRateChapter, mapHsCode, mapScheduledReport, mapContainerTypeDefinition, mapDocumentTemplate,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent, mapCarrierAgentScheduleRow,
   mapScopeItem, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
@@ -3737,6 +3737,7 @@ require('./routes/document-templates')(app, ctx);
 require('./routes/loop-codes')(app, ctx);
 require('./routes/container-types')(app, ctx);
 require('./routes/duty-rates')(app, ctx);
+require('./routes/hs-codes')(app, ctx);
 require('./routes/scheduled-reports')(app, ctx);
 require('./routes/ais')(app, ctx);
 

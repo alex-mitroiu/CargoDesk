@@ -10,10 +10,11 @@ import {
 } from "../../shipmentSections";
 import { SERVICE_TYPES, SERVICE_TYPE_ICON, servicePageKey } from "../../shipmentServicePages";
 import {
-  AnyIcon, IconAnchor, IconBaseStation, IconChartBar, IconClipboard, IconCoin, IconDownload,
+  AnyIcon, IconAnchor, IconArrowDown, IconBaseStation, IconChartBar, IconClipboard, IconCoin, IconDownload,
   IconFileCertificate, IconMapPin, IconReceipt, IconRoute, IconUpload,
 } from "../primitives/Icon";
-import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
+import { parseIso, todayIso } from "../../tokens";
+import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts, carrierBadgeColors } from "../../pages/shipments/shipmentDetailTheme";
 
 // ─── Shipment Detail Sidebar ──────────────────────────────────────────────────
 
@@ -43,6 +44,16 @@ const reconcileSidebarOrder = stored => {
   return [...valid, ...missing];
 };
 
+// Per-viewer UI preferences (NOT the admin-shared sidebar order above) — whether each nested
+// group is folded, and whether the whole sidebar is collapsed to an icon rail. Personal to
+// whoever's browser it is, so plain localStorage, not a server-saved setting.
+const LS_GROUPS_KEY = "cargodesk_shp_sidebar_groups";
+const LS_RAIL_KEY = "cargodesk_shp_sidebar_rail";
+const safeGet = (key, fallback) => {
+  try { const v = JSON.parse(localStorage.getItem(key)); return v == null ? fallback : v; } catch { return fallback; }
+};
+const safeSet = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} };
+
 const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, currentPage = "detail",
   appSettings = {}, onSidebarOrderSaved }) => {
   const { isTradeManager, isAdmin } = useAuth();
@@ -55,6 +66,29 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
   const [dragIdx,     setDragIdx]     = useState(null);
   const [dragOverIdx, setDragOverIdx] = useState(null);
   const [savingOrder, setSavingOrder] = useState(false);
+
+  // Fold state for the four parent+children blocks (Booking & Routing, Export Services,
+  // Import Services, Accounting) — undefined/false means "open" (matches the old
+  // always-expanded behavior exactly, so nobody's view changes until they fold something
+  // themselves), `true` means folded. Whichever group contains the page you're actually on
+  // is always forced open regardless of stored state, so folding one can never hide where
+  // you currently are — see isGroupOpen below.
+  const [groupCollapsed, setGroupCollapsed] = useState(() => safeGet(LS_GROUPS_KEY, {}));
+  const toggleGroup = id => setGroupCollapsed(prev => {
+    const next = { ...prev, [id]: !prev[id] };
+    safeSet(LS_GROUPS_KEY, next);
+    return next;
+  });
+  const isGroupOpen = (id, hasActive) => hasActive || groupCollapsed[id] !== true;
+
+  // Collapse the whole sidebar to a 64px icon rail — labels/badges/group children all hide,
+  // hover shows a floating tooltip instead (see hoverTip below), and the vitals card shrinks
+  // to a clickable status dot + carrier chip that opens the full card as a flyout.
+  const [railCollapsed, setRailCollapsed] = useState(() => safeGet(LS_RAIL_KEY, false));
+  const toggleRail = () => setRailCollapsed(prev => { const next = !prev; safeSet(LS_RAIL_KEY, next); return next; });
+  const [hoverTip, setHoverTip] = useState(null); // { label, badge, x, y } — rail mode only
+  const [vitalsFlyoutOpen, setVitalsFlyoutOpen] = useState(false);
+  const [vitalsFlyoutPos, setVitalsFlyoutPos] = useState(null);
 
   let storedOrder = [];
   try { storedOrder = JSON.parse(appSettings.shipment_sidebar_order || "[]"); } catch { storedOrder = []; }
@@ -144,6 +178,40 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
     : siStatus === "Submitted" ? { text: "Submitted", color: HZ.cyan }
     : null;
 
+  // Self-fetches milestones purely to power the vitals card's progress rail + "next
+  // milestone" chip below — same self-fetch, no-WS idiom as booking/filing/SI above. Reuses
+  // the exact completed/overdue/current/upcoming state logic MilestonePanel (ShipmentDetailPage.jsx)
+  // already established, so the two views can never disagree about a milestone's state.
+  const [milestones, setMilestones] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.milestones.list(shipment.id)
+      .then(m => !cancelled && setMilestones(m))
+      .catch(() => !cancelled && setMilestones([]));
+    return () => { cancelled = true; };
+  }, [shipment.id, currentPage]);
+  const msList = milestones || [];
+  const todayStr = todayIso();
+  const msFirstIncompleteIdx = msList.findIndex(m => !m.completedAt);
+  const msState = (m, idx) => {
+    if (m.completedAt) return "completed";
+    if (m.estimatedDate && m.estimatedDate < todayStr) return "overdue";
+    return idx === msFirstIncompleteIdx ? "current" : "upcoming";
+  };
+  const msColor = st => ({ completed: HZ.good, overdue: HZ.crit, current: HZ.cyan, upcoming: HZ.textFaint }[st]);
+  const nextMs = msFirstIncompleteIdx >= 0 ? msList[msFirstIncompleteIdx] : null;
+  const nextMsState = nextMs ? msState(nextMs, msFirstIncompleteIdx) : null;
+
+  const daysUntil = iso => {
+    if (!iso) return null;
+    return Math.round((parseIso(iso) - parseIso(todayStr)) / 86400000);
+  };
+  const etdDays = daysUntil(shipment.etd);
+  const etdCountdown = etdDays == null ? null
+    : etdDays > 0 ? `in ${etdDays}d`
+    : etdDays === 0 ? "today"
+    : `${Math.abs(etdDays)}d ago`;
+
   // One nav row per distinct, non-cancelled ordered type per side, in canonical
   // SERVICE_TYPES order (not order-ordered) for predictable placement.
   const orderedTypesFor = (side) => {
@@ -219,7 +287,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
 
   const STATUS_COLORS = {
     ACTIVE:    { bg: HZ.goodBg, color: HZ.good },
-    COMPLETED: { bg: HZ.infoBg, color: "#7db2f2" },
+    COMPLETED: { bg: HZ.infoBg, color: HZ.infoPillText },
     CANCELLED: { bg: HZ.critBg, color: HZ.crit },
     DRAFT:     { bg: "rgba(255,255,255,0.06)", color: HZ.textMuted },
   };
@@ -278,96 +346,205 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
   };
   useHorizonFonts();
 
+  // ── Vitals card body — shared between the full (expanded sidebar) and mini (rail, as a
+  // click-to-open flyout) presentations so the two never drift apart. ────────────────────
+  const msDotRail = msList.length === 0 ? null : (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+        {msList.flatMap((m, idx) => {
+          const st = msState(m, idx);
+          const color = msColor(st);
+          const dot = (
+            <span key={`dot-${m.id}`} title={`${m.label} — ${st}`} style={{
+              width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: color,
+              ...(st === "overdue" ? { boxShadow: `0 0 0 3px ${HZ.critBg}` } : {}),
+            }} />
+          );
+          if (idx === 0) return [dot];
+          const prevDone = msState(msList[idx - 1], idx - 1) === "completed";
+          const seg = (
+            <span key={`seg-${m.id}`} style={{ height: 2, flex: 1, background: prevDone ? HZ.cyan : HZ.border }} />
+          );
+          return [seg, dot];
+        })}
+      </div>
+      <div style={{ fontFamily: HZ_MONO, fontSize: 9.5, color: HZ.textFaint, marginTop: 4 }}>
+        {msList.filter(m => m.completedAt).length}/{msList.length} milestones
+      </div>
+    </div>
+  );
+
+  const vitalsBody = (
+    <>
+      <div
+        title="Click to copy shipment ID"
+        onClick={() => navigator.clipboard.writeText(shipment.id)
+          .then(() => toast.success(`Copied ${shipment.id}`))}
+        style={{ fontFamily: HZ_MONO, fontSize: 14.5, fontWeight: 700, color: HZ.text,
+          cursor: "pointer", userSelect: "none", letterSpacing: ".01em" }}>
+        {shipment.id}
+      </div>
+
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontFamily: HZ_MONO, fontSize: 11, fontWeight: 700, borderRadius: 4,
+          padding: "2px 8px", background: sc.bg, color: sc.color }}>
+          {shipment.status}
+        </span>
+      </div>
+
+      {shipment.carrierCode && (
+        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+          <span style={{ ...carrierBadgeColors(shipment.carrierCode), fontFamily: HZ_MONO, fontWeight: 700,
+            fontSize: 10, padding: "2px 7px", borderRadius: 4 }}>
+            {shipment.carrierCode}
+          </span>
+          {(shipment.vessel || shipment.voyage) && (
+            <span style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted }}>
+              {shipment.vessel}{shipment.voyage ? ` / ${shipment.voyage}` : ""}
+            </span>
+          )}
+        </div>
+      )}
+
+      {(shipment.pol || shipment.pod) && (
+        <div style={{ fontFamily: HZ_MONO, fontSize: 12, color: HZ.text, fontWeight: 600 }}>
+          {shipment.pol || "—"} → {shipment.pod || "—"}
+        </div>
+      )}
+
+      {msDotRail}
+
+      {(shipment.etd || shipment.eta) && (
+        <div style={{ display: "flex", justifyContent: "space-between", fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted }}>
+          <span>{shipment.etd ? `ETD ${shipment.etd}${etdCountdown ? ` · ${etdCountdown}` : ""}` : ""}</span>
+          <span>{shipment.eta ? `ETA ${shipment.eta}` : ""}</span>
+        </div>
+      )}
+
+      {nextMs && (
+        <div onClick={() => handleSection("shp-milestones")} role="button" tabIndex={0}
+          style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer",
+            border: `1px solid ${nextMsState === "overdue" ? `${HZ.crit}55` : HZ.border}`,
+            background: nextMsState === "overdue" ? HZ.critBg : HZ.surface,
+            borderRadius: 8, padding: "7px 9px" }}>
+          <span style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, gap: 1 }}>
+            <span style={{ fontFamily: HZ_MONO, fontSize: 9, color: HZ.textFaint, textTransform: "uppercase", letterSpacing: ".06em" }}>
+              Next milestone
+            </span>
+            <span style={{ fontFamily: HZ_BODY, fontSize: 11.5, fontWeight: 600, color: HZ.text,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {nextMs.label}
+            </span>
+          </span>
+          {nextMsState === "overdue" && (
+            <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, color: HZ.crit,
+              background: `${HZ.crit}30`, borderRadius: 4, padding: "2px 6px", flexShrink: 0 }}>
+              Overdue
+            </span>
+          )}
+        </div>
+      )}
+    </>
+  );
+
   return (
-    <aside style={{ width: 240, height: "100vh", position: "sticky", top: 0,
+    <aside style={{ width: railCollapsed ? 64 : 240, height: "100vh", position: "sticky", top: 0,
       background: HZ.surfaceSolid, borderRight: `1px solid ${HZ.border}`,
-      display: "flex", flexDirection: "column", flexShrink: 0, overflow: "hidden" }}>
+      display: "flex", flexDirection: "column", flexShrink: 0, overflow: "hidden",
+      transition: "width 0.2s ease" }}>
 
       {/* Logo */}
-      <div style={{ padding: "22px 20px 18px", borderBottom: `1px solid ${HZ.border}` }}>
+      <div style={{ padding: railCollapsed ? "20px 0 16px" : "22px 20px 18px", borderBottom: `1px solid ${HZ.border}`,
+        display: "flex", flexDirection: "column", alignItems: railCollapsed ? "center" : "flex-start" }}>
         <div style={{ fontFamily: HZ_DISPLAY, fontSize: 17, fontWeight: 800, color: HZ.text,
           display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ width: 26, height: 26, borderRadius: 8, background: HZ.gradCyan,
             display: "flex", alignItems: "center", justifyContent: "center", color: "#04121c", flexShrink: 0 }}>
             <IconAnchor size={14} />
           </span>
-          CargoDesk
+          {!railCollapsed && "CargoDesk"}
         </div>
-        <div style={{ fontFamily: HZ_MONO, fontSize: 9, color: HZ.textFaint, marginTop: 5,
-          letterSpacing: ".16em", textTransform: "uppercase" }}>
-          Freight Management
-        </div>
+        {!railCollapsed && (
+          <div style={{ fontFamily: HZ_MONO, fontSize: 9, color: HZ.textFaint, marginTop: 5,
+            letterSpacing: ".16em", textTransform: "uppercase" }}>
+            Freight Management
+          </div>
+        )}
       </div>
 
       {/* Back */}
-      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${HZ.border}` }}>
-        <button onClick={goBack} style={{
-          display: "flex", alignItems: "center", gap: 8,
-          width: "100%", padding: "8px 12px", borderRadius: 9,
-          background: HZ.surface, border: `1px solid ${HZ.border}`,
+      <div style={{ padding: railCollapsed ? "12px 0" : "12px 16px", borderBottom: `1px solid ${HZ.border}`,
+        display: "flex", justifyContent: "center" }}>
+        <button onClick={goBack} title={window.opener ? "Close tab" : "All Shipments"} style={{
+          display: "flex", alignItems: "center", gap: 8, justifyContent: railCollapsed ? "center" : "flex-start",
+          width: railCollapsed ? 36 : "100%", height: railCollapsed ? 36 : "auto",
+          padding: railCollapsed ? 0 : "8px 12px", borderRadius: 9,
+          background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
           fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text,
           cursor: "pointer", fontWeight: 500, textAlign: "left",
         }}>
-          ← {window.opener ? "Close tab" : "All Shipments"}
+          ← {!railCollapsed && (window.opener ? "Close tab" : "All Shipments")}
         </button>
       </div>
 
-      {/* Shipment context card */}
-      <div style={{ padding: "14px 16px", borderBottom: `1px solid ${HZ.border}`,
-        display: "flex", flexDirection: "column", gap: 7 }}>
-
-        <div
-          title="Click to copy shipment ID"
-          onClick={() => navigator.clipboard.writeText(shipment.id)
-            .then(() => toast.success(`Copied ${shipment.id}`))}
-          style={{ fontFamily: HZ_MONO, fontSize: 14.5, fontWeight: 700, color: HZ.text,
-            cursor: "pointer", userSelect: "none", letterSpacing: ".01em" }}>
-          {shipment.id}
-        </div>
-
-        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontFamily: HZ_MONO, fontSize: 11, fontWeight: 700, borderRadius: 4,
-            padding: "2px 8px", background: sc.bg, color: sc.color }}>
-            {shipment.status}
-          </span>
-          {shipment.carrier && (
-            <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted }}>
-              {shipment.carrier}
-            </span>
+      {/* Shipment context / vitals card */}
+      {railCollapsed ? (
+        <div style={{ padding: "14px 0", borderBottom: `1px solid ${HZ.border}`,
+          display: "flex", flexDirection: "column", alignItems: "center", gap: 8, position: "relative" }}>
+          <div
+            onClick={e => {
+              if (vitalsFlyoutOpen) { setVitalsFlyoutOpen(false); return; }
+              const r = e.currentTarget.getBoundingClientRect();
+              setVitalsFlyoutPos({ x: r.right + 10, y: r.top });
+              setVitalsFlyoutOpen(true);
+            }}
+            title="Shipment summary" role="button" tabIndex={0}
+            style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: "50%", background: sc.color,
+              boxShadow: `0 0 0 3px ${sc.bg}` }} />
+            {shipment.carrierCode && (
+              <span style={{ ...carrierBadgeColors(shipment.carrierCode), fontFamily: HZ_MONO, fontWeight: 700,
+                fontSize: 8, borderRadius: 4, padding: "2px 5px", lineHeight: 1.4 }}>
+                {shipment.carrierCode}
+              </span>
+            )}
+          </div>
+          {vitalsFlyoutOpen && vitalsFlyoutPos && (
+            <div style={{ position: "fixed", left: vitalsFlyoutPos.x, top: vitalsFlyoutPos.y, width: 220,
+              background: "#111729", border: `1px solid ${HZ.borderStrong}`, borderRadius: 10, padding: 12,
+              zIndex: 200, boxShadow: "0 20px 45px -15px rgba(0,0,0,.7)",
+              display: "flex", flexDirection: "column", gap: 7 }}>
+              {vitalsBody}
+            </div>
           )}
         </div>
-
-        {(shipment.pol || shipment.pod) && (
-          <div style={{ fontFamily: HZ_MONO, fontSize: 12, color: HZ.text, fontWeight: 600 }}>
-            {shipment.pol || "—"} → {shipment.pod || "—"}
-          </div>
-        )}
-
-        {shipment.etd && (
-          <div style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted }}>
-            ETD {shipment.etd}
-          </div>
-        )}
-      </div>
+      ) : (
+        <div style={{ padding: "14px 16px", borderBottom: `1px solid ${HZ.border}`,
+          display: "flex", flexDirection: "column", gap: 7 }}>
+          {vitalsBody}
+        </div>
+      )}
 
       {/* Section nav — Explorer-tree pattern, same visual language as TestCasesPage's folder tree */}
-      <nav style={{ padding: "14px 12px", flex: 1, overflowY: "auto" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 12px", marginBottom: 8 }}>
-          <div style={{ fontFamily: HZ_MONO, fontSize: 9, color: HZ.textFaint, fontWeight: 700,
-            textTransform: "uppercase", letterSpacing: ".14em" }}>
-            Explorer
+      <nav style={{ padding: railCollapsed ? "14px 6px 10px" : "14px 12px", flex: 1, overflowY: "auto" }}>
+        {!railCollapsed && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 12px", marginBottom: 8 }}>
+            <div style={{ fontFamily: HZ_MONO, fontSize: 9, color: HZ.textFaint, fontWeight: 700,
+              textTransform: "uppercase", letterSpacing: ".14em" }}>
+              Explorer
+            </div>
+            {/* Admin-only — sets the sidebar order every user sees, not just this admin's own
+                view. See DEFAULT_SIDEBAR_ORDER/reconcileSidebarOrder above. */}
+            {isAdmin && !reorderMode && (
+              <button onClick={startReorder} title="Reorder the sidebar for all users"
+                style={{ background: "none", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 4,
+                  color: HZ.textMuted, fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700,
+                  textTransform: "uppercase", letterSpacing: ".04em", padding: "2px 7px", cursor: "pointer" }}>
+                ⇅ Reorder
+              </button>
+            )}
           </div>
-          {/* Admin-only — sets the sidebar order every user sees, not just this admin's own
-              view. See DEFAULT_SIDEBAR_ORDER/reconcileSidebarOrder above. */}
-          {isAdmin && !reorderMode && (
-            <button onClick={startReorder} title="Reorder the sidebar for all users"
-              style={{ background: "none", border: `1px solid ${HZ.border}`, borderRadius: 4,
-                color: HZ.textMuted, fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700,
-                textTransform: "uppercase", letterSpacing: ".04em", padding: "2px 7px", cursor: "pointer" }}>
-              ⇅ Reorder
-            </button>
-          )}
-        </div>
+        )}
         {reorderMode && (
           <div style={{ marginBottom: 10 }}>
             <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, fontStyle: "italic",
@@ -400,7 +577,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
         )}
         {/* Root node — the shipment in focus. Hidden along with the live tree while
             reordering — the draft list above is the only thing being edited right now. */}
-        {!reorderMode && (
+        {!reorderMode && !railCollapsed && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px",
           fontFamily: HZ_BODY, fontSize: 12, fontWeight: 700, color: HZ.textMuted }}>
           <span style={{ fontSize: 11, width: 10, textAlign: "center" }}>▾</span>
@@ -409,34 +586,73 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
         </div>
         )}
         {/* NavRow — depth-aware row renderer, same visual/indentation pattern as
-            TestCasesPage.jsx's NavRow/NavFolderNode. Accounting is the only nested
-            entry today (a fixed, always-expanded 3-child subtree — no collapse state
-            needed for a subtree this small; more restructuring planned later). */}
+            TestCasesPage.jsx's NavRow/NavFolderNode. GroupRow wraps it with a fold chevron
+            for the four parent+children blocks. */}
         {!reorderMode && (() => {
           const NavRow = ({ id, icon, label, badge, badgeColor = HZ.cyan, depth = 0, selected, promoted, onClick }) => (
             <div key={id} onClick={onClick}
               style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-                padding: `6px 8px 6px ${32 + depth * 14}px`, borderRadius: 6, cursor: "pointer", userSelect: "none",
+                display: "flex", alignItems: "center", justifyContent: railCollapsed ? "center" : "space-between",
+                padding: railCollapsed ? "7px 0" : `6px 8px 6px ${32 + depth * 14}px`,
+                borderRadius: 6, cursor: "pointer", userSelect: "none",
                 background: selected ? HZ.cyanBg : "transparent",
                 color: selected ? HZ.cyan : HZ.text,
                 fontFamily: HZ_BODY, fontSize: 12.7, fontWeight: selected ? 600 : 400,
-                borderLeft: selected ? `2px solid ${HZ.cyan}` : "2px solid transparent",
                 marginBottom: 1,
               }}
-              onMouseEnter={e => { if (!selected) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
-              onMouseLeave={e => { if (!selected) e.currentTarget.style.background = "transparent"; }}
+              onMouseEnter={e => {
+                if (!selected) e.currentTarget.style.background = "rgba(255,255,255,0.04)";
+                if (railCollapsed) {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setHoverTip({ label, badge, x: r.right + 8, y: r.top });
+                }
+              }}
+              onMouseLeave={e => {
+                if (!selected) e.currentTarget.style.background = "transparent";
+                if (railCollapsed) setHoverTip(null);
+              }}
             >
-              <span style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
-                <span style={{ width: 16, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0, opacity: selected ? 1 : .85 }}><AnyIcon icon={icon} size={13} /></span>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
-                {promoted && <span style={{ fontSize: 9, color: HZ.textFaint }}>↗</span>}
+              <span style={{ display: "flex", alignItems: "center", gap: railCollapsed ? 0 : 9, minWidth: 0,
+                justifyContent: railCollapsed ? "center" : "flex-start", width: railCollapsed ? "100%" : "auto" }}>
+                <span style={{
+                  width: railCollapsed ? 36 : 26, height: railCollapsed ? 36 : 26, borderRadius: 7,
+                  display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                  opacity: selected ? 1 : .85,
+                  background: selected ? HZ.gradCyan : "transparent",
+                  color: selected ? "#04121c" : "inherit",
+                }}>
+                  <AnyIcon icon={icon} size={13} />
+                </span>
+                {!railCollapsed && <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>}
+                {!railCollapsed && promoted && <span style={{ fontSize: 9, color: HZ.textFaint }}>↗</span>}
               </span>
-              {badge != null && (
+              {!railCollapsed && badge != null && (
                 <span style={{ fontFamily: HZ_MONO, fontSize: 10, background: `${badgeColor}22`,
                   color: badgeColor, borderRadius: 9, padding: "1px 7px", fontWeight: 700, flexShrink: 0 }}>
                   {badge}
                 </span>
+              )}
+            </div>
+          );
+
+          // GroupRow — a NavRow plus a fold/unfold chevron (hidden in rail mode, where
+          // children never render regardless of fold state, matching how a collapsed rail
+          // already drops every other label/badge).
+          const GroupRow = ({ id, icon, label, hasActive, isOpen, onToggle, onClick }) => (
+            <div style={{ display: "flex", alignItems: "stretch" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <NavRow id={id} icon={icon} label={label} depth={0} selected={hasActive} promoted onClick={onClick} />
+              </div>
+              {!railCollapsed && (
+                <button onClick={e => { e.stopPropagation(); onToggle(); }}
+                  title={isOpen ? `Collapse ${label}` : `Expand ${label}`}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: HZ.textFaint,
+                    padding: "0 6px", display: "flex", alignItems: "center", flexShrink: 0 }}>
+                  <span style={{ display: "inline-flex", transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)",
+                    transition: "transform .15s ease" }}>
+                    <IconArrowDown size={11} />
+                  </span>
+                </button>
               )}
             </div>
           );
@@ -456,19 +672,24 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
           // framing ("the sidebar nav menu makes visible" the page). Genuinely dynamic
           // per-shipment nav shape, unlike the fixed shipmentSections.js array, so it's
           // handled here as its own block — same special-case precedent as Accounting.
-          const renderServiceGroup = (side, types, icon) => types.length === 0 ? null : (
-            <>
-              <NavRow id={`shp-${side.toLowerCase()}-services`} icon={icon} label={`${side} Services`} depth={0}
-                selected={types.some(t => currentPage === servicePageKey(side, t))} promoted
-                onClick={() => handleSection(`shp-${side.toLowerCase()}-services`)} />
-              {types.map(type => (
-                <NavRow key={servicePageKey(side, type)} id={servicePageKey(side, type)}
-                  icon={SERVICE_TYPE_ICON[type] || "•"} label={type} depth={1}
-                  selected={currentPage === servicePageKey(side, type)} promoted
-                  onClick={() => handleSection(servicePageKey(side, type))} />
-              ))}
-            </>
-          );
+          const renderServiceGroup = (side, types, icon) => {
+            if (types.length === 0) return null;
+            const gid = `shp-${side.toLowerCase()}-services`;
+            const hasActive = types.some(t => currentPage === servicePageKey(side, t));
+            const open = isGroupOpen(gid, hasActive);
+            return (
+              <div key={gid}>
+                <GroupRow id={gid} icon={icon} label={`${side} Services`} hasActive={hasActive} isOpen={open}
+                  onToggle={() => toggleGroup(gid)} onClick={() => handleSection(gid)} />
+                {!railCollapsed && open && types.map(type => (
+                  <NavRow key={servicePageKey(side, type)} id={servicePageKey(side, type)}
+                    icon={SERVICE_TYPE_ICON[type] || "•"} label={type} depth={1}
+                    selected={currentPage === servicePageKey(side, type)} promoted
+                    onClick={() => handleSection(servicePageKey(side, type))} />
+                ))}
+              </div>
+            );
+          };
 
           // One render function per admin-reorderable top-level block (DEFAULT_SIDEBAR_ORDER)
           // — the sequence they're called in is now driven entirely by effectiveOrder, not a
@@ -487,46 +708,83 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
             // ordered) grouped under one parent. Unconditional/no role gate, matching the old
             // standalone Carrier Booking row's own zero-gate visibility (not Accounting's
             // finance restriction below, which is unrelated).
-            "shp-booking-routing": () => (
-              <div key="shp-booking-routing">
-                <NavRow id="shp-booking-routing" icon={IconRoute} label="Booking & Routing" depth={0}
-                  selected={BOOKING_ROUTING_ROUTES.includes(currentPage)} promoted
-                  onClick={() => handleSection("shp-booking-routing")} />
-                {bookingRoutingChildren.map(({ id, icon, label, badge, badgeColor }) => (
-                  <NavRow key={id} id={id} icon={icon} label={label} depth={1} badge={badge} badgeColor={badgeColor}
-                    selected={currentPage === PROMOTED_ROUTES[id]} promoted
-                    onClick={() => handleSection(id)} />
-                ))}
-              </div>
-            ),
+            "shp-booking-routing": () => {
+              const hasActive = BOOKING_ROUTING_ROUTES.includes(currentPage);
+              const open = isGroupOpen("shp-booking-routing", hasActive);
+              return (
+                <div key="shp-booking-routing">
+                  <GroupRow id="shp-booking-routing" icon={IconRoute} label="Booking & Routing"
+                    hasActive={hasActive} isOpen={open} onToggle={() => toggleGroup("shp-booking-routing")}
+                    onClick={() => handleSection("shp-booking-routing")} />
+                  {!railCollapsed && open && bookingRoutingChildren.map(({ id, icon, label, badge, badgeColor }) => (
+                    <NavRow key={id} id={id} icon={icon} label={label} depth={1} badge={badge} badgeColor={badgeColor}
+                      selected={currentPage === PROMOTED_ROUTES[id]} promoted
+                      onClick={() => handleSection(id)} />
+                  ))}
+                </div>
+              );
+            },
             "shp-export-services": () => servicesLoading ? (
-              <div key="shp-export-services" style={{ display: "flex", alignItems: "center", gap: 8,
-                padding: "5px 8px 5px 32px", marginBottom: 1 }}>
+              <div key="shp-export-services" style={{ display: "flex", alignItems: "center",
+                gap: railCollapsed ? 0 : 8, justifyContent: railCollapsed ? "center" : "flex-start",
+                padding: railCollapsed ? "5px 0" : "5px 8px 5px 32px", marginBottom: 1 }}>
                 <Spinner size="sm" />
-                <span style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, fontStyle: "italic" }}>Loading services…</span>
+                {!railCollapsed && <span style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, fontStyle: "italic" }}>Loading services…</span>}
               </div>
-            ) : <div key="shp-export-services">{renderServiceGroup("Export", genericExportTypes, IconUpload)}</div>,
+            ) : renderServiceGroup("Export", genericExportTypes, IconUpload),
             "shp-import-services": () => servicesLoading ? null
-              : <div key="shp-import-services">{renderServiceGroup("Import", genericImportTypes, IconDownload)}</div>,
+              : renderServiceGroup("Import", genericImportTypes, IconDownload),
             // Shipment cost lines are hidden from trade_manager entirely — not just the
             // Finance/Margin dashboard's canViewFinance gate, per the role spec.
-            "shp-accounting": () => isTradeManager ? null : (
-              <div key="shp-accounting">
-                <NavRow id="shp-accounting" icon="◈" label="Accounting" depth={0}
-                  selected={ACCOUNTING_ROUTES.includes(currentPage)} promoted
-                  onClick={() => handleSection("shp-accounting")} />
-                {accountingChildren.map(({ id, icon, label }) => (
-                  <NavRow key={id} id={id} icon={icon} label={label} depth={1}
-                    selected={currentPage === PROMOTED_ROUTES[id]} promoted
-                    onClick={() => handleSection(id)} />
-                ))}
-              </div>
-            ),
+            "shp-accounting": () => {
+              if (isTradeManager) return null;
+              const hasActive = ACCOUNTING_ROUTES.includes(currentPage);
+              const open = isGroupOpen("shp-accounting", hasActive);
+              return (
+                <div key="shp-accounting">
+                  <GroupRow id="shp-accounting" icon="◈" label="Accounting" hasActive={hasActive} isOpen={open}
+                    onToggle={() => toggleGroup("shp-accounting")} onClick={() => handleSection("shp-accounting")} />
+                  {!railCollapsed && open && accountingChildren.map(({ id, icon, label }) => (
+                    <NavRow key={id} id={id} icon={icon} label={label} depth={1}
+                      selected={currentPage === PROMOTED_ROUTES[id]} promoted
+                      onClick={() => handleSection(id)} />
+                  ))}
+                </div>
+              );
+            },
           };
 
           return <>{effectiveOrder.map(id => blockRenderers[id]?.())}</>;
         })()}
       </nav>
+
+      {/* Footer — icon-rail collapse toggle. Hidden mid-reorder so there's no path to a
+          reordering-while-rail-collapsed state, which the drag rows aren't designed for. */}
+      {!reorderMode && (
+        <div style={{ borderTop: `1px solid ${HZ.border}`, padding: 10, flexShrink: 0 }}>
+          <button onClick={() => { toggleRail(); setVitalsFlyoutOpen(false); setHoverTip(null); }}
+            title={railCollapsed ? "Expand sidebar" : "Collapse to icon rail"}
+            style={{ display: "flex", alignItems: "center", gap: 8, width: "100%",
+              justifyContent: railCollapsed ? "center" : "flex-start",
+              padding: "7px 8px", borderRadius: 7, background: "none", border: "none",
+              color: HZ.textFaint, fontFamily: HZ_BODY, fontSize: 11, cursor: "pointer" }}
+            onMouseEnter={e => { e.currentTarget.style.background = HZ.surface; e.currentTarget.style.color = HZ.textMuted; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = HZ.textFaint; }}>
+            <span style={{ display: "inline-flex", transform: railCollapsed ? "rotate(180deg)" : "none", transition: "transform .2s ease" }}>◂</span>
+            {!railCollapsed && <span>Collapse</span>}
+          </button>
+        </div>
+      )}
+
+      {/* Rail-mode hover tooltip — floating, follows whichever row is currently hovered. */}
+      {hoverTip && (
+        <div style={{ position: "fixed", left: hoverTip.x, top: hoverTip.y, background: "#151b2e",
+          border: `1px solid ${HZ.borderStrong}`, color: HZ.text, fontFamily: HZ_BODY, fontSize: 11.5,
+          padding: "6px 10px", borderRadius: 7, maxWidth: 220, lineHeight: 1.4, zIndex: 200,
+          boxShadow: "0 12px 30px -10px rgba(0,0,0,.6)", pointerEvents: "none" }}>
+          {hoverTip.label}{hoverTip.badge ? ` — ${hoverTip.badge}` : ""}
+        </div>
+      )}
     </aside>
   );
 };

@@ -74,7 +74,7 @@ const LandedCostEstimateModal = ({ shipmentId, onClose }) => {
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
             {[["Freight", data.freightUsd], ["Est. Duty", data.dutyEstimateUsd], ["Est. Landed Cost", data.landedCostUsd]].map(([label, val]) => (
-              <div key={label} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8, padding: "10px 12px" }}>
+              <div key={label} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8, padding: "10px 12px" }}>
                 <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
                 <div style={{ fontFamily: HZ_MONO, fontSize: 16, fontWeight: 700, color: HZ.text, marginTop: 2 }}>{fmtCurr(val, "USD")}</div>
               </div>
@@ -94,7 +94,7 @@ const LandedCostEstimateModal = ({ shipmentId, onClose }) => {
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {data.byChapter.map(c => (
                   <div key={c.chapter || "unk"} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
-                    padding: "7px 10px", background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 6,
+                    padding: "7px 10px", background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 6,
                     fontFamily: HZ_BODY, fontSize: 11.5 }}>
                     <span style={{ color: HZ.text }}>{c.chapter ? `${c.chapter} — ${c.label}` : c.label}</span>
                     <span style={{ fontFamily: HZ_MONO, color: HZ.textMuted, flexShrink: 0, marginLeft: 10 }}>
@@ -283,11 +283,11 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
       {ctrs.length === 0 && !canEdit ? (
         <div id="shpctr-empty" data-testid="shipment-containers-empty" style={{ padding: 48, textAlign: "center", fontFamily: HZ_BODY,
           fontSize: 13, color: HZ.textMuted, fontStyle: "italic",
-          background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 10 }}>
+          background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10 }}>
           No containers yet.
         </div>
       ) : (
-        <div style={{ display: "flex", alignItems: "flex-start", background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden" }}>
           {/* Left: container + cargo manifest tree — capped height with its own scroll (only
               kicks in once there are enough containers/packages to need it) so a long tree
               never pushes the page's real height around; the right panel below is NOT capped,
@@ -413,7 +413,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
                     <div data-testid="shipment-containers-description-of-goods" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {descriptionOfGoods.map((p, i) => (
                         <div key={p.id} data-testid={`shipment-containers-goods-row-${p.id}`} style={{ display: "flex", alignItems: "center", gap: 8,
-                          padding: "6px 10px", background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 6 }}>
+                          padding: "6px 10px", background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 6 }}>
                           <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted, flexShrink: 0 }}>Item {i + 1}</span>
                           <span style={{ flex: 1, fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text }}>{p.description}</span>
                           <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.cyan, fontWeight: 700, flexShrink: 0 }}>× {p.quantity}</span>

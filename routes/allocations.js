@@ -159,19 +159,31 @@ module.exports = function allocationsRoutes(app, ctx) {
   app.get("/api/allocations/match", async (req, res) => {
     const { pol = "", pod = "", etd = "", needsPolHaulage = "", needsPodHaulage = "",
             pkuLocation = "", delLocation = "" } = req.query;
-    if (!pol || !pod || !etd) return ok(res, []);
+    // Real bug found live: a hard `!etd` gate returned [] unconditionally, even when a real,
+    // currently-valid allocation exists for pol/pod — during shipment CREATION the SEA leg's own
+    // etd is very often still blank at the moment Central is picked (etd usually only lands via
+    // a later sailing search), so the space-configuration search looked like it "never fires" even
+    // though matching contracts (GET /api/contracts/match, whose own date filter is already
+    // optional — see the identical `if (dateRef)` pattern there) showed up fine. Mirrors that same
+    // optional-date-filter behavior here instead: no etd means don't filter by validity window, not
+    // "return nothing."
+    if (!pol || !pod) return ok(res, []);
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     const needsPol = needsPolHaulage === "1" || needsPolHaulage === "true";
     const needsPod = needsPodHaulage === "1" || needsPodHaulage === "true";
     const polAll = [polU, ...(await linkedPortCodes(polU))];
     const podAll = [podU, ...(await linkedPortCodes(podU))];
-    const params = [...polAll, ...podAll, etd, etd];
+    const params = [...polAll, ...podAll];
     const polPh = polAll.map((_, i) => `$${i + 1}`).join(",");
     const podPh = podAll.map((_, i) => `$${polAll.length + i + 1}`).join(",");
+    let dateClause = "";
+    if (etd) {
+      params.push(etd, etd);
+      dateClause = ` AND effective_date <= $${params.length - 1} AND end_date >= $${params.length}`;
+    }
     const allocs = await query(`
       SELECT * FROM allocations
-      WHERE pol IN (${polPh}) AND pod IN (${podPh})
-      AND effective_date <= $${polAll.length + podAll.length + 1} AND end_date >= $${polAll.length + podAll.length + 2}
+      WHERE pol IN (${polPh}) AND pod IN (${podPh})${dateClause}
       ORDER BY effective_date DESC
     `, params);
     const buckets = await loadTeuBuckets();

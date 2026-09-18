@@ -24,7 +24,7 @@ const ShipmentConditionsPage = ({ shipment }) => {
   useHorizonFonts();
   return (
   <div id="shpcond-page" data-testid="shipment-conditions-page" style={{ maxWidth: 640 }}>
-    <div style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, borderRadius: 10, overflow: "hidden" }}>
+    <div style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden" }}>
       <Row id="shpcond-contract-type" label="Contract Type" node={
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <Badge variant={contractVariant(shipment.contractType)}>{shipment.contractType}</Badge>

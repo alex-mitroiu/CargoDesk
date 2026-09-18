@@ -437,6 +437,15 @@ export const api = {
     update: (chapter, d) => req("PUT",  `/duty-rate-chapters/${chapter}`, d),
     remove: (chapter)  => req("DELETE", `/duty-rate-chapters/${chapter}`),
   },
+  hsCodes: {
+    list:     (p = {}) => req("GET",    `/hs-codes?${new URLSearchParams(p)}`),
+    search:   (q)       => req("GET",    `/hs-codes/search?q=${encodeURIComponent(q)}`),
+    euLookup: (term)    => req("GET",    `/hs-codes/eu-lookup?term=${encodeURIComponent(term)}`),
+    get:      (code)    => req("GET",    `/hs-codes/${code}`),
+    create:   (data)    => req("POST",   "/hs-codes", data),
+    update:   (code, data) => req("PUT", `/hs-codes/${code}`, data),
+    remove:   (code)    => req("DELETE", `/hs-codes/${code}`),
+  },
   scheduledReports: {
     list:    ()      => req("GET",    "/scheduled-reports"),
     create:  (d)     => req("POST",   "/scheduled-reports", d),

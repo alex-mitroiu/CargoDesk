@@ -65,7 +65,7 @@ const SectionHeader = ({ n, title }) => {
         {tip && (
           <div style={{
             position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 9999,
-            background: HZ.surfaceSolid, backdropFilter: "blur(16px)", border: `1px solid ${HZ.border}`,
+            background: HZ.surfaceSolid, backdropFilter: "blur(16px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
             borderRadius: 8, padding: "10px 14px",
             boxShadow: "0 8px 24px rgba(0,0,0,.45)",
             minWidth: 240, maxWidth: 300,
@@ -886,7 +886,7 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
             <button
               onClick={() => setSortAsc(a => !a)}
               title={sortAsc ? "Showing oldest first — click for newest first" : "Showing newest first — click for oldest first"}
-              style={{ background: "none", border: `1px solid ${HZ.border}`, borderRadius: 6,
+              style={{ background: "none", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 6,
                 cursor: "pointer", color: HZ.textMuted, fontSize: 12, padding: "4px 10px",
                 fontFamily: HZ_MONO, lineHeight: 1, whiteSpace: "nowrap",
                 transition: "border-color .15s, color .15s" }}
@@ -897,7 +897,7 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
                 : <><IconArrowDown size={11} style={{ marginRight: 4 }} />Newest first</>}
             </button>
             <button onClick={onClose}
-            style={{ background: "none", border: `1px solid ${HZ.border}`, borderRadius: 6,
+            style={{ background: "none", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 6,
               cursor: "pointer", color: HZ.textMuted, fontSize: 15, padding: "4px 10px",
               lineHeight: 1, display: "inline-flex", alignItems: "center" }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = HZ.crit; e.currentTarget.style.color = HZ.crit; }}
@@ -943,7 +943,7 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
               No messages yet. Be the first to post one.
             </div>
           ) : sorted.map(m => (
-            <div key={m.id} style={{ background: HZ.surface, border: `1px solid ${HZ.border}`,
+            <div key={m.id} style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
               borderRadius: 10, padding: "12px 14px" }}>
               {/* Author row */}
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
@@ -1177,7 +1177,7 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
             </div>
           </div>
         ) : (
-          <div style={{ padding: "14px 16px", background: HZ.surface, border: `1px solid ${HZ.border}`,
+          <div style={{ padding: "14px 16px", background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
             borderRadius: 8, fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>
             This shipment has not been screened yet. Run a screening to check all parties against the OFAC SDN list.
           </div>
@@ -1188,7 +1188,7 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
           const rollup = phaseRollup(phase);
           const rollupColor = CHECK_COLOR[rollup] || CHECK_COLOR.pending;
           return (
-            <div key={phase.id} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`,
+            <div key={phase.id} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
               borderRadius: 8, overflow: "hidden" }}>
               {/* Phase header */}
               <div style={{ display: "flex", alignItems: "center", gap: 10,
@@ -1278,7 +1278,7 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
         {/* Override form */}
         {screening?.result === "HIT" && !screening?.overriddenAt && (
           overrideOpen ? (
-            <div style={{ padding: 14, background: HZ.surface, border: `1px solid ${HZ.border}`,
+            <div style={{ padding: 14, background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
               borderRadius: 8, display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ fontFamily: HZ_BODY, fontSize: 12, fontWeight: 600, color: HZ.text }}>
                 Override reason <span style={{ color: HZ.crit }}>*</span>
@@ -1289,7 +1289,7 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
                 placeholder="Explain why this is a false positive or has been cleared by compliance…"
                 rows={3}
                 style={{ fontFamily: HZ_BODY, fontSize: 13, resize: "vertical",
-                  background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 6,
+                  background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 6,
                   padding: "8px 10px", color: HZ.text, outline: "none", width: "100%", boxSizing: "border-box" }}
               />
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -1313,14 +1313,14 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
             onChange={importCsv} style={{ display: "none" }} />
           <button onClick={() => csvInputRef.current?.click()} disabled={syncing}
             style={{ fontFamily: HZ_BODY, fontSize: 12, background: "none",
-              border: `1px solid ${HZ.border}`, borderRadius: 6, padding: "6px 12px",
+              border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 6, padding: "6px 12px",
               color: HZ.textMuted, cursor: syncing ? "default" : "pointer",
               display: "inline-flex", alignItems: "center", gap: 5 }}>
             {syncing ? "Working…" : <><IconArrowUp size={12} />Import sdn.csv</>}
           </button>
           <button onClick={syncFromSource} disabled={syncing}
             style={{ fontFamily: HZ_BODY, fontSize: 12, background: "none",
-              border: `1px solid ${HZ.border}`, borderRadius: 6, padding: "6px 12px",
+              border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 6, padding: "6px 12px",
               color: HZ.textMuted, cursor: syncing ? "default" : "pointer",
               display: "inline-flex", alignItems: "center", gap: 5 }}>
             {syncing ? "Working…" : <><IconRefresh size={12} />Sync from source</>}
@@ -1354,7 +1354,7 @@ const MILESTONE_ICONS = {
 
 const PartiesOfficesCard = ({ id, label, value }) => (
   <div id={id} data-testid={id ? `shipment-parties-card-${id.replace(/^shpparties-/, "")}` : undefined}
-    style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 10, padding: "14px 18px" }}>
+    style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, padding: "14px 18px" }}>
     <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600,
       textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>{label}</div>
     <div style={{ fontFamily: HZ_BODY, fontSize: 16, fontWeight: 700,
@@ -1568,7 +1568,7 @@ const ReassignOfficeModal = ({ field, shipment, offices, onClose, onReassigned }
           <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
             placeholder="e.g. Rotterdam office affected by a regional outage — reassigning to keep the booking moving."
             style={{ width: "100%", fontFamily: HZ_BODY, fontSize: 13, background: HZ.surface, color: HZ.text,
-              border: `1px solid ${HZ.border}`, borderRadius: 6, padding: "8px 10px", resize: "vertical", boxSizing: "border-box" }} />
+              border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 6, padding: "8px 10px", resize: "vertical", boxSizing: "border-box" }} />
         </div>
         <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted }}>
           Logged as its own event on the shipment's History, separate from a routine edit.
@@ -1606,7 +1606,7 @@ const InlineOfficeEdit = ({ id, field, shipment, offices, canEdit, onReassigned,
       {canEdit && (
         <button onClick={() => setOpen(true)} title={`Reassign ${field.label}`}
           data-testid={`shipment-parties-reassign-btn-${field.key}`}
-          style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${HZ.border}`,
+          style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
             background: HZ.bg, color: HZ.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
             cursor: "pointer", marginLeft: "auto" }}>
           <IconPencil size={11} />
@@ -1667,7 +1667,7 @@ const ServiceBranch = ({ service, offices, shipmentOfficeIds, canEdit, onUpdated
         {canEdit && (editing ? (
           <select autoFocus value={service.officeId} disabled={saving} onChange={handleChange} onBlur={() => setEditing(false)}
             data-testid={`shipment-parties-service-${service.id}-office-select`}
-            style={{ flexShrink: 0, fontFamily: HZ_MONO, fontSize: 11, color: HZ.text, border: `1px solid ${HZ.border}`,
+            style={{ flexShrink: 0, fontFamily: HZ_MONO, fontSize: 11, color: HZ.text, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
               background: HZ.surface, borderRadius: 6, padding: "4px 7px", outline: "none",
               cursor: saving ? "wait" : "pointer", maxWidth: 190 }}>
             <option value="">No office set</option>
@@ -1676,7 +1676,7 @@ const ServiceBranch = ({ service, offices, shipmentOfficeIds, canEdit, onUpdated
         ) : (
           <button onClick={() => setEditing(true)} title="Change office"
             data-testid={`shipment-parties-service-${service.id}-edit-office-btn`}
-            style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${HZ.border}`,
+            style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
               background: HZ.bg, color: HZ.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
               cursor: "pointer" }}>
             <IconPencil size={10} />
@@ -1697,7 +1697,7 @@ const OfficeGroupCard = ({ icon, field, officeName, officeCode, pills, services,
   shipmentOfficeIds, canEditOffice, canEditService, onReassigned, shipment, onUpdatedService, emptyLabel, onRemove }) => (
   <div style={{ marginBottom: 14 }}>
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <div style={{ width: 32, height: 32, borderRadius: 9, background: HZ.bg, border: `1px solid ${HZ.border}`,
+      <div style={{ width: 32, height: 32, borderRadius: 9, background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
         display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 }}>
         {icon}
       </div>
@@ -1718,7 +1718,7 @@ const OfficeGroupCard = ({ icon, field, officeName, officeCode, pills, services,
             {onRemove && canEditOffice && (
               <button onClick={onRemove} title="Remove this office"
                 data-testid={`shipment-parties-remove-office-btn-${officeCode}`}
-                style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${HZ.border}`,
+                style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
                   background: HZ.bg, color: HZ.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
                   cursor: "pointer", fontSize: 14, lineHeight: 1 }}>
                 ×
@@ -1776,7 +1776,7 @@ const AddSideOfficeControl = ({ side, dept, offices, excludeIds, onAdd }) => {
     <div data-testid={`shipment-parties-add-${side.toLowerCase()}-office-form`} style={{ display: "flex", gap: 8, padding: 8, borderRadius: 8, border: `1px dashed ${HZ.border}`, background: HZ.bg }}>
       <select autoFocus value={officeId} onChange={e => setOfficeId(e.target.value)}
         data-testid={`shipment-parties-add-${side.toLowerCase()}-office-select`}
-        style={{ flex: 1, fontFamily: HZ_MONO, fontSize: 11.5, color: HZ.text, border: `1px solid ${HZ.border}`,
+        style={{ flex: 1, fontFamily: HZ_MONO, fontSize: 11.5, color: HZ.text, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
           background: HZ.surface, borderRadius: 6, padding: "6px 8px", outline: "none", cursor: "pointer" }}>
         <option value="">Select office…</option>
         {candidates.map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
@@ -1824,7 +1824,7 @@ const OfficeColumn = ({ side, shipment, offices, services, shipmentOfficeIds, si
   };
 
   return (
-    <div data-testid={`shipment-parties-office-column-${side.toLowerCase()}`} style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 12, overflow: "hidden" }}>
+    <div data-testid={`shipment-parties-office-column-${side.toLowerCase()}`} style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 18px",
         borderBottom: `1px solid ${HZ.border}`, background: accent + "14" }}>
         <span style={{ width: 8, height: 8, borderRadius: "50%", background: accent, flexShrink: 0 }} />
@@ -1912,7 +1912,7 @@ const InactiveOfficesSection = ({ offices, isAdmin, onReactivate }) => {
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {list.map(o => (
         <div key={o.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-          gap: 8, background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 7, padding: "7px 10px" }}>
+          gap: 8, background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 7, padding: "7px 10px" }}>
           <div style={{ minWidth: 0 }}>
             <span style={{ fontFamily: HZ_MONO, fontSize: 11.5, color: HZ.textMuted, fontWeight: 700, marginRight: 7 }}>{o.code}</span>
             <span style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text }}>{o.name}</span>
@@ -1926,7 +1926,7 @@ const InactiveOfficesSection = ({ offices, isAdmin, onReactivate }) => {
   );
 
   return (
-    <div data-testid="shipment-parties-inactive-offices-section" style={{ marginTop: 18, border: `1px solid ${HZ.border}`, borderRadius: 10, overflow: "hidden" }}>
+    <div data-testid="shipment-parties-inactive-offices-section" style={{ marginTop: 18, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden" }}>
       <button type="button" onClick={() => setOpen(o => !o)}
         data-testid="shipment-parties-inactive-offices-toggle"
         style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "10px 16px",
@@ -2204,7 +2204,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
     new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 
   return (
-    <div id="shpmiles-panel" data-testid="shipment-milestones-panel" style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, borderRadius: 10, overflow: "hidden" }}>
+    <div id="shpmiles-panel" data-testid="shipment-milestones-panel" style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden" }}>
       {/* Header */}
       <div data-testid="shipment-milestones-header-toggle" style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "14px 18px", borderBottom: collapsed ? "none" : `1px solid ${HZ.border}`,
@@ -2225,7 +2225,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
           {milestones.length > 0 && (
             <button id="shpmiles-reset-btn" data-testid="shipment-milestones-reset-btn" type="button" onClick={e => { e.stopPropagation(); handleInit(true); }} disabled={initializing}
               style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, background: "none",
-                border: `1px solid ${HZ.border}`, borderRadius: 7, padding: "3px 10px",
+                border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 7, padding: "3px 10px",
                 cursor: initializing ? "not-allowed" : "pointer" }}>
               {initializing ? "Resetting…" : "↺ Reset"}
             </button>
@@ -2330,7 +2330,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
                   {/* Expanded edit form */}
                   {isExpanded && !m.completedAt && (
                     <div style={{ marginTop: 10, padding: "12px 14px",
-                      background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8,
+                      background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8,
                       display: "flex", flexDirection: "column", gap: 10 }}>
                       <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
                         <div>
@@ -2343,7 +2343,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
                             value={f.estimatedDate ?? m.estimatedDate}
                             onChange={e => setFields(prev => ({ ...prev, [m.id]: { ...prev[m.id], estimatedDate: e.target.value } }))}
                             style={{ fontFamily: HZ_MONO, fontSize: 12, padding: "5px 8px", borderRadius: 6,
-                              border: `1px solid ${HZ.border}`, background: HZ.surface, color: HZ.text, outline: "none" }} />
+                              border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, background: HZ.surface, color: HZ.text, outline: "none" }} />
                         </div>
                         <div style={{ flex: 1, minWidth: 140 }}>
                           <div style={{ fontFamily: HZ_BODY, fontSize: 10, fontWeight: 600, color: HZ.textMuted,
@@ -2356,7 +2356,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
                             onChange={e => setFields(prev => ({ ...prev, [m.id]: { ...prev[m.id], note: e.target.value } }))}
                             placeholder="Optional note…"
                             style={{ fontFamily: HZ_BODY, fontSize: 12, padding: "5px 8px", borderRadius: 6,
-                              border: `1px solid ${HZ.border}`, background: HZ.surface, color: HZ.text,
+                              border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, background: HZ.surface, color: HZ.text,
                               outline: "none", width: "100%", boxSizing: "border-box" }} />
                         </div>
                       </div>
@@ -2474,7 +2474,7 @@ export const ContainerEventsSteppers = ({ shipment, containers }) => {
   useHorizonFonts();
   if (ctrs.length === 0) return null;
   return (
-    <div id="shpmiles-ctrsteppers" data-testid="shipment-milestones-container-steppers" style={{ background: HZ.surface, backdropFilter: "blur(20px)", borderRadius: 12, border: `1px solid ${HZ.border}`, padding: "18px 20px", marginTop: 20 }}>
+    <div id="shpmiles-ctrsteppers" data-testid="shipment-milestones-container-steppers" style={{ background: HZ.surface, backdropFilter: "blur(20px)", borderRadius: 12, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, padding: "18px 20px", marginTop: 20 }}>
       <div style={{ fontFamily: HZ_DISPLAY, fontSize: 15, fontWeight: 800, color: HZ.text, marginBottom: 16 }}>
         Container Events
       </div>
@@ -3339,7 +3339,7 @@ export const RouteSummaryBar = ({ shipment }) => {
 
   return (
     <div data-testid="shipment-schedules-route-summary-bar" style={{ display: "grid", gridTemplateColumns: gridCols,
-      background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, borderRadius: 12,
+      background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12,
       overflow: "hidden", marginBottom: 22 }}>
 
       {/* PKU door cell */}
@@ -3414,7 +3414,7 @@ export const RouteSummaryBar = ({ shipment }) => {
                     Previously the name only reached a title tooltip, invisible on
                     hover-less/touch use. */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6,
-                  background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 4, padding: "4px 8px" }}>
+                  background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 4, padding: "4px 8px" }}>
                   <IconMapPin size={16} style={{ color: HZ.textMuted, flexShrink: 0 }} />
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
                     <LocationLines code={tsp.code} name={tsp.name || resolvedTspNames[tsp.code]}
@@ -3438,7 +3438,7 @@ export const RouteSummaryBar = ({ shipment }) => {
         })()}
         {shipment.routingTerm && (
           <span style={{ fontFamily: HZ_MONO, fontSize: 11, fontWeight: 700, color: HZ.text,
-            background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 4, padding: "1px 7px" }}>
+            background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 4, padding: "1px 7px" }}>
             {shipment.routingTerm}
           </span>
         )}
@@ -3522,7 +3522,7 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
             const isUpdate = ev.event_type === "UPDATED";
             return (
               <div key={ev.id} data-testid={`shipment-schedules-history-row-${ev.id}`} style={{ display: "flex", flexDirection: "column", gap: 4,
-                padding: "10px 14px", background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8 }}>
+                padding: "10px 14px", background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: "0.03em",
                     padding: "2px 8px", borderRadius: 4, textTransform: "uppercase",
@@ -3591,7 +3591,7 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
                     ) : null}
                     {m.transitDays != null && m.transitDays !== "" && (
                       <span style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted,
-                        background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 4, padding: "1px 7px" }}>
+                        background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 4, padding: "1px 7px" }}>
                         {m.transitDays}d transit
                       </span>
                     )}
@@ -3612,7 +3612,7 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
   if (forceOpen) return body;
 
   return (
-    <div data-testid="shipment-schedules-history-panel" style={{ background: HZ.surface, backdropFilter: "blur(20px)", borderRadius: 12, border: `1px solid ${HZ.border}`, overflow: "hidden" }}>
+    <div data-testid="shipment-schedules-history-panel" style={{ background: HZ.surface, backdropFilter: "blur(20px)", borderRadius: 12, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, overflow: "hidden" }}>
       <button type="button" onClick={() => setExpanded(o => !o)}
         data-testid="shipment-schedules-history-toggle"
         style={{ display: "flex", alignItems: "center", gap: 10, width: "100%",
@@ -3672,7 +3672,7 @@ export const RelatedTicketsPanel = ({ shipmentId, embedded = false }) => {
           {tickets.map(t => (
             <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12,
               padding: "9px 14px", background: HZ.bg,
-              border: `1px solid ${HZ.border}`, borderRadius: 8 }}>
+              border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8 }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
                 background: STATUS_DOT[t.status] || HZ.textMuted }} />
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -3704,7 +3704,7 @@ export const RelatedTicketsPanel = ({ shipmentId, embedded = false }) => {
   if (embedded) return body;
 
   return (
-    <div style={{ background: HZ.surface, backdropFilter: "blur(20px)", borderRadius: 12, border: `1px solid ${HZ.border}`, overflow: "hidden" }}>
+    <div style={{ background: HZ.surface, backdropFilter: "blur(20px)", borderRadius: 12, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "14px 20px", borderBottom: `1px solid ${HZ.border}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -3749,7 +3749,7 @@ export const TicketsDrawer = ({ shipment, onClose }) => {
             ◩ Tickets
           </div>
           <button onClick={onClose}
-            style={{ background: "none", border: `1px solid ${HZ.border}`, borderRadius: 6,
+            style={{ background: "none", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 6,
               cursor: "pointer", color: HZ.textMuted, fontSize: 15, padding: "4px 10px",
               lineHeight: 1, display: "inline-flex", alignItems: "center" }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = HZ.crit; e.currentTarget.style.color = HZ.crit; }}
@@ -3820,7 +3820,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         <div id="shpoverview-viewonly-banner" data-testid="shipment-detail-viewonly-banner" style={{
           display: "flex", alignItems: "center", gap: 9, padding: "9px 16px",
           borderRadius: 8, background: HZ.infoBg, border: `1px solid ${HZ.info}44`,
-          fontFamily: HZ_BODY, fontSize: 12, color: "#7db2f2", marginBottom: 16,
+          fontFamily: HZ_BODY, fontSize: 12, color: HZ.infoPillText, marginBottom: 16,
         }}>
           <IconEye size={14} />
           {lockedByOther

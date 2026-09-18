@@ -69,7 +69,7 @@ const IconTile = ({ items }) => {
   return (
     <div id="shphdr-icontile" data-testid="shipment-detail-header-icon-tile" style={{
       display: "grid", gridTemplateColumns: `repeat(${cols}, 26px)`, gridAutoRows: "26px", gap: 3,
-      background: "rgba(255,255,255,0.03)", border: `1px solid ${HZ.border}`, borderRadius: 10,
+      background: "rgba(255,255,255,0.03)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10,
       padding: 4, flexShrink: 0,
     }}>
       <style>{`@keyframes shb-spin { to { transform: rotate(360deg); } }`}</style>
@@ -368,7 +368,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
 
   return (
     <div id="shphdr" style={{
-      background: HZ.surface, backdropFilter: "blur(22px)", border: `1px solid ${HZ.border}`, borderRadius: 16,
+      background: HZ.surface, backdropFilter: "blur(22px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16,
       padding: "14px 22px", marginBottom: 22, position: "sticky", top: 0, zIndex: 5,
     }}>
       {/* Row 1 — identity, route, dates, DG */}
@@ -468,7 +468,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
         <button id="shphdr-fold-toggle" data-testid="shipment-detail-header-fold-toggle" type="button" onClick={() => setFolded(f => !f)}
           title={folded ? "Expand shipment info" : "Minimize shipment info"}
           style={{ fontFamily: HZ_MONO, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.04em",
-            color: HZ.textMuted, background: "none", border: `1px solid ${HZ.border}`,
+            color: HZ.textMuted, background: "none", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
             borderRadius: 7, padding: "5px 9px", cursor: "pointer",
             display: "inline-flex", alignItems: "center", gap: 5 }}
           onMouseEnter={e => { e.currentTarget.style.color = HZ.text; e.currentTarget.style.borderColor = HZ.cyan; }}
@@ -512,7 +512,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
           <button id="shphdr-contract-match-badge" data-testid="shipment-detail-header-contract-match-badge" type="button" onClick={onNavigateToSchedules}
             title={`${pendingMatches.length} active contract${pendingMatches.length !== 1 ? "s" : ""} match${pendingMatches.length === 1 ? "es" : ""} "${shipment.contractRef}" — click to review`}
             style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, letterSpacing: "0.03em",
-              padding: "3px 9px", borderRadius: 6, background: HZ.infoBg, color: "#7db2f2",
+              padding: "3px 9px", borderRadius: 6, background: HZ.infoBg, color: HZ.infoPillText,
               border: `1px solid ${HZ.info}44`, whiteSpace: "nowrap", cursor: onNavigateToSchedules ? "pointer" : "default",
               display: "inline-flex", alignItems: "center", gap: 4 }}>
             <IconRefresh size={11} />Contract Match Found
@@ -525,7 +525,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
             <button id="shphdr-line-agent-candidates-badge" data-testid="shipment-detail-header-line-agent-candidates-badge" type="button" onClick={onNavigateToParties}
               title={`${count} Line Agent candidate${count !== 1 ? "s" : ""} found — click to pick which one to assign`}
               style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, letterSpacing: "0.03em",
-                padding: "3px 9px", borderRadius: 6, background: HZ.infoBg, color: "#7db2f2",
+                padding: "3px 9px", borderRadius: 6, background: HZ.infoBg, color: HZ.infoPillText,
                 border: `1px solid ${HZ.info}44`, whiteSpace: "nowrap", cursor: onNavigateToParties ? "pointer" : "default",
                 display: "inline-flex", alignItems: "center", gap: 4 }}>
               <IconGroup size={11} />Line Agent Picks Needed
@@ -536,7 +536,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
         {shipmentLock?.locked && !shipmentLock?.ownedByMe && (
           <span id="shphdr-lock-badge" data-testid="shipment-detail-header-lock-badge" title={`${shipmentLock.lockedByName} is currently editing this shipment — you have read-only access until they finish (releases automatically after 30 minutes of inactivity)`}
             style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, letterSpacing: "0.03em",
-            padding: "3px 9px", borderRadius: 6, background: HZ.infoBg, color: "#7db2f2",
+            padding: "3px 9px", borderRadius: 6, background: HZ.infoBg, color: HZ.infoPillText,
             border: `1px solid ${HZ.info}44`, whiteSpace: "nowrap",
             display: "inline-flex", alignItems: "center", gap: 4 }}>
             <IconLock size={11} />Locked by {shipmentLock.lockedByName}

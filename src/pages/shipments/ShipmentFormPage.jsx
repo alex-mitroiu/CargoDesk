@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { toast } from "../../toast";
 import useSaving from "../../hooks/useSaving";
-import { T, STATUSES, INCOTERMS_2020, IMDG_CLASSES, BL_RELEASE_TYPES } from "../../tokens";
+import { T, STATUSES, INCOTERMS_2020, IMDG_CLASSES, BL_RELEASE_TYPES, teuOf, buildTeuLookup } from "../../tokens";
 import { api } from "../../api";
 import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
@@ -459,7 +459,18 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
                           </span>
                         </div>
                       </button>
-                      {isOpen && !contractsLocked && (
+                      {/* Visibility is gated on isOpen alone, matching how a single-member group
+                          (rendered directly via renderCard, no group wrapper at all) already
+                          behaves — contractsLocked only dims/disables a card via renderCard's own
+                          logic, it never hides one. Real bug found live: gating visibility on
+                          !contractsLocked too meant the auto-expand effect above could force a
+                          group open (arrow showing ▾) while contractsLocked was true, rendering
+                          NO cards at all underneath — including the shipment's own already-
+                          assigned contract, if that assignment had gone through the "skip space
+                          configurations" path (skipReason is fresh per-mount state, so contracts
+                          are locked again by default on every reopen regardless of what was
+                          picked last time). */}
+                      {isOpen && (
                         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                           {members.map(c => renderCard(c, { indented: true }))}
                         </div>
@@ -517,7 +528,7 @@ export const deriveHaulageNeeds = (legs) => {
   };
 };
 
-export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation, contractType, carrierCode }) => {
+export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation, contractType, carrierCode, shipmentTEU = 0 }) => {
   const isCentral = contractType === "Central";
   const [matches,    setMatches]    = useState(null);
   const [allocs,     setAllocs]     = useState(null);
@@ -609,7 +620,7 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
         </button>
       )}
       {pickerOpen && (
-        <ContractPickerModal pol={pol} pod={pod} matches={matches} allocs={allocs}
+        <ContractPickerModal pol={pol} pod={pod} matches={matches} allocs={allocs} shipmentTEU={shipmentTEU}
           searchCriteria={{ pol, pod, crd: dateRef || null, carrierCode: carrierCode || null,
             needsPolHaulage, needsPodHaulage, pkuLocation, delLocation }}
           onSelectContract={pickContract} onSelectAllocation={pickAllocation}
@@ -677,7 +688,19 @@ const cellInput = () => ({
   padding: 0,
 });
 
-const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inheritedContractRef, loopCode = "", showContractCols = true, locked = false, onUpdateSchedule = null }) => {
+const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inheritedContractRef, loopCode = "", showContractCols = true, locked = false, onUpdateSchedule = null, theme = T }) => {
+  // Local shadows of the module-level T/cellInput/legTypeColor — every existing T.xxx,
+  // cellInput(), and legTypeColor() reference below (all of them; confirmed via grep that
+  // nothing outside LegRow calls either helper) resolves to these instead whenever a caller
+  // passes a `theme` prop, with zero other changes to this component's body. Used by the
+  // Schedules page to render this shared table in Trade Horizon while the New/Edit Shipment
+  // form (LegsTable's other consumer, out of that redesign's scope) keeps passing nothing and
+  // getting the app's normal theme exactly as before.
+  const T = theme;
+  const cellInput = () => ({ background: "transparent", border: "none", outline: "none",
+    fontFamily: T.mono, fontSize: 12, color: T.text, width: "100%", padding: 0 });
+  const legTypeColor = type => ({ "Pick-up": T.accent, "SEA": T.info, "Delivery": T.textMuted }[type]);
+
   const [d, setD] = useState(leg);
   useEffect(() => setD(leg), [leg]);
   const set   = k => v => setD(p => ({ ...p, [k]: v }));
@@ -1048,11 +1071,22 @@ const orderLegs = legsArr => [...legsArr].sort((a, b) =>
   (LEG_TYPE_RANK[a.legType] ?? 1) - (LEG_TYPE_RANK[b.legType] ?? 1));
 
 export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChange, inheritedCarrier, inheritedContractType, inheritedContractRef, loopCode = "", canEdit, showContractCols = true, extraAction = null, lockedSeaLegs = false, onUpdateSchedule = null,
-  draftBannerText = "Draft — legs will be saved when you create the shipment.", hideDraftBanner = false }) => {
+  draftBannerText = "Draft — legs will be saved when you create the shipment.", hideDraftBanner = false, theme = T }) => {
+  // Same local shadow as LegRow above, plus threaded down to it — see that component's own
+  // comment for why this is safe (nothing outside these two components reads T here).
+  const T = theme;
   const [legs,          setLegs]          = useState([]);
   const [saving,        setSaving]        = useState(null);
   const [selectedLegId, setSelectedLegId] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(null); // leg pending removal confirmation
+  const [addLegMenuOpen, setAddLegMenuOpen] = useState(false);
+  const addLegMenuRef = useRef(null);
+  useEffect(() => {
+    if (!addLegMenuOpen) return;
+    const onDocClick = e => { if (addLegMenuRef.current && !addLegMenuRef.current.contains(e.target)) setAddLegMenuOpen(false); };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [addLegMenuOpen]);
   const isDraft = !shipmentId;
   // Draft legs are already in hand synchronously (from props) — only the non-draft path
   // has a real fetch to wait on, so only it should ever show a loading state.
@@ -1089,7 +1123,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
     onLegsChange?.(newLegs);
   };
 
-  const addLeg = async () => {
+  const addLeg = async (legType = "SEA") => {
     // A leg with no POL/POD/carrier yet is already "blank" — adding another on top of it
     // (e.g. the one New Shipment pre-seeds) silently doubles the empty-leg count and turns
     // "Missing required fields: Leg POL/POD" into a mystery, since the toast doesn't say
@@ -1100,7 +1134,12 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
       return;
     }
     const newLeg = {
-      legType: "SEA", mot: "SEA", pol: "", pod: "", etd: null, eta: null,
+      // mot is the legacy pre-leg_type column (see CLAUDE.md) — always "SEA" here regardless of
+      // the chosen legType, matching how a row's own Leg Type dropdown already leaves it alone
+      // on a type change (only legType/movementType update there); every existing Pick-up/
+      // Delivery leg already carries this same "stale mot: SEA, real type in legType" shape.
+      legType, mot: "SEA", pol: "", pod: "", etd: null, eta: null,
+      movementType: LEG_TYPE_DEFAULT_MT[legType] || "Carrier's Haulage",
       carrierCode: inheritedCarrier || "",
       vessel: "", vesselImo: "", voyage: "",
       contractType: inheritedContractType || "SPOT",
@@ -1213,7 +1252,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
                     editable so its type can still be changed to Pick-up/Delivery. Previously this
                     locked on legType alone, trapping a fresh leg as uneditable the instant it was
                     created whenever any schedule already existed on the shipment. */}
-                <LegRow leg={leg} onSave={saveLeg} canEdit={canEdit} widths={widths} inheritedContractType={inheritedContractType} inheritedContractRef={inheritedContractRef} loopCode={loopCode} showContractCols={showContractCols} locked={lockedSeaLegs && leg.legType === "SEA" && !!(leg.vessel || leg.voyage)} onUpdateSchedule={onUpdateSchedule} />
+                <LegRow leg={leg} onSave={saveLeg} canEdit={canEdit} widths={widths} inheritedContractType={inheritedContractType} inheritedContractRef={inheritedContractRef} loopCode={loopCode} showContractCols={showContractCols} locked={lockedSeaLegs && leg.legType === "SEA" && !!(leg.vessel || leg.voyage)} onUpdateSchedule={onUpdateSchedule} theme={theme} />
               </div>
             );
           })}
@@ -1244,13 +1283,34 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
             </span>
             {canEdit && (
               <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={addLeg} data-testid="shipment-form-add-leg-btn"
-                  style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
-                    padding: "4px 12px", fontFamily: T.body, fontSize: 12, color: T.accent, cursor: "pointer" }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = T.border}>
-                  + Add leg
-                </button>
+                <div ref={addLegMenuRef} style={{ position: "relative" }}>
+                  <button onClick={() => setAddLegMenuOpen(o => !o)} data-testid="shipment-form-add-leg-btn"
+                    style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
+                      padding: "4px 12px", fontFamily: T.body, fontSize: 12, color: T.accent, cursor: "pointer",
+                      display: "flex", alignItems: "center", gap: 5 }}
+                    onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
+                    onMouseLeave={e => e.currentTarget.style.borderColor = T.border}>
+                    + Add leg <span style={{ fontSize: 8 }}>{addLegMenuOpen ? "▴" : "▾"}</span>
+                  </button>
+                  {addLegMenuOpen && (
+                    <div style={{ position: "absolute", bottom: "calc(100% + 4px)", left: 0, zIndex: 20,
+                      background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
+                      boxShadow: "0 8px 24px rgba(0,0,0,.35)", minWidth: 130, overflow: "hidden" }}>
+                      {LEG_TYPE_OPTIONS.map(lt => (
+                        <button key={lt} type="button"
+                          onClick={() => { setAddLegMenuOpen(false); addLeg(lt); }}
+                          data-testid={`shipment-form-add-leg-option-${lt.toLowerCase().replace(/[^a-z]/g, "")}`}
+                          style={{ display: "block", width: "100%", textAlign: "left", padding: "7px 12px",
+                            background: "none", border: "none", cursor: "pointer",
+                            fontFamily: T.body, fontSize: 12.5, color: T.text }}
+                          onMouseEnter={e => e.currentTarget.style.background = T.accentBg}
+                          onMouseLeave={e => e.currentTarget.style.background = "none"}>
+                          {lt}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 {extraAction}
                 <button
                   disabled={!selectedLegId}
@@ -1326,7 +1386,7 @@ const errRing = show => show
 
 // ─── ShipmentForm ─────────────────────────────────────────────────────────────
 
-const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onDraftLegsChange, ctrManagerTrigger = 0 }) => {
+const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onDraftLegsChange, ctrManagerTrigger = 0, containers = [], containerTypeDefs = [] }) => {
   const { canEdit, activeOffice, userOffices, allOffices } = useAuth();
   const [legs,    setLegs]   = useState([]);
   const [touched, setTouch]  = useState({});
@@ -1537,6 +1597,17 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     : [];
 
   const isCentral = f.contractType === "Central";
+  // Feeds ContractField's shipmentTEU (the space-config overage-warning gate in
+  // ContractPickerModal) — previously never passed by this caller either, so that gate was
+  // dead code app-wide. Edit mode reads the shipment's real containers (nothing here tracks
+  // cargo locally once a shipment already exists — that's ShipmentContainersPage's job); create
+  // mode reads whichever of the two local cargo-entry paths is active.
+  const teuDefsMap = useMemo(() => buildTeuLookup(containerTypeDefs), [containerTypeDefs]);
+  const formShipmentTEU = init.id
+    ? containers.filter(c => c.shipmentId === init.id).reduce((sum, c) => sum + teuOf(c.size, c.type, teuDefsMap), 0)
+    : useContainerManager
+      ? draftContainers.reduce((sum, c) => sum + teuOf(c.size, c.type, teuDefsMap), 0)
+      : (parseInt(quickCargo.count, 10) || 0) * teuOf(quickCargo.size, quickCargo.type, teuDefsMap);
   const effectiveCarrierCode = firstSeaLeg?.carrierCode || firstLeg?.carrierCode || f.carrierCode || "";
   // Chronological order hard block (TKT-YGIAXG) — ETD/ETA are ISO "YYYY-MM-DD" strings
   // everywhere in this codebase, so a plain string compare is a correct date compare too.
@@ -2210,6 +2281,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       </div>
       {isCentral && (
         <ContractField
+          shipmentTEU={formShipmentTEU}
           value={{ id: f.contractId, ref: f.contractRef, allocationId: f.allocationId }}
           onChange={({ id, ref, carrierCode, routingId, allocationId, spaceSkipReason, spaceOverageReason }) => {
             setF(p => {
@@ -2656,7 +2728,7 @@ const BLANK_LEG = () => ({
   contractType: "SPOT", contractRef: "",
 });
 
-const ShipmentFormPage = ({ mode, init = {}, onSave, onBack, onDirtyChange, ctrManagerTrigger = 0 }) => {
+const ShipmentFormPage = ({ mode, init = {}, onSave, onBack, onDirtyChange, ctrManagerTrigger = 0, containers = [], containerTypeDefs = [] }) => {
   const [draftLegs, setDraftLegs] = useState(() => mode === "new" ? [BLANK_LEG()] : []);
 
   const isEdit = mode === "edit" && !!init.id;
@@ -2687,6 +2759,8 @@ const ShipmentFormPage = ({ mode, init = {}, onSave, onBack, onDirtyChange, ctrM
           draftLegs={draftLegs}
           onDraftLegsChange={setDraftLegs}
           ctrManagerTrigger={ctrManagerTrigger}
+          containers={containers}
+          containerTypeDefs={containerTypeDefs}
         />
       </div>
     </div>

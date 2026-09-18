@@ -676,14 +676,18 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // concern. contractType is deliberately left as-is (see CLAUDE.md-adjacent plan notes) —
     // this lands on the same "contract type set, no ref yet" empty state already handled by
     // ShipmentSchedulesPage.jsx for a fresh shipment.
-    // Gated on THIS request actually touching cargoReadyDate/etd (real bug found live: since
-    // both are read via field(), which falls back to the already-stored value when a request
-    // doesn't send one, a shipment that once got flagged — say, ETD dragged earlier than an
-    // already-set CRD — re-evaluated the same stale mismatch on every later, unrelated PUT and
-    // wiped contractId again each time, permanently blocking that shipment from ever having a
-    // contract set again through this route. Confirmed live on SHP-S0Z326: a plain "pick a new
-    // Central contract" save (no CRD/ETD in the payload) silently reset contractId to "" and
-    // flipped status to Requires Review, over and over, for exactly this reason.
+    // Gated on THIS request actually CHANGING cargoReadyDate/etd — comparing the effective value
+    // against what's already stored, not merely whether the key was present in the body. An
+    // earlier version of this gate checked `reqBody.cargoReadyDate !== undefined`, which fixed a
+    // bare minimal PUT but NOT the real-world repro: ContractAssignModal.finish() (the actual
+    // "Change Contract" UI) always sends `{...shipment, contractType, ...fields}` — the full
+    // shipment object — so cargoReadyDate/etd are always "present," just unchanged. Once a
+    // shipment ever drifted into a stale cargoReadyDate > etd state, that full-object spread kept
+    // re-triggering this guard forever, wiping every subsequent contract pick right back to blank
+    // in the same request (confirmed live on SHP-S0Z326 AND on a fresh repro, SHP-RN2X5O, after
+    // the first fix had already shipped). Comparing effective-vs-stored values instead correctly
+    // stays quiet on a resend of unchanged data regardless of which caller sent it, while still
+    // firing on a genuine edit.
     let effContractId = contractId, effContractRef = contractRef, effAllocationId = allocationId;
     let effContractRoutingId = contractRoutingId;
     let effStatus = status;
@@ -695,7 +699,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const allocationAutoCleared = contractType !== "Central" && !!effAllocationId;
     if (allocationAutoCleared) effAllocationId = "";
     const existingSchedules = await query("SELECT * FROM shipment_schedules WHERE shipment_id=$1", [req.params.id]);
-    const crdOrEtdChanging = reqBody.cargoReadyDate !== undefined || reqBody.etd !== undefined;
+    const crdOrEtdChanging = (cargoReadyDate || '') !== (existing.cargo_ready_date || '') || (etd || '') !== (existing.etd || '');
     if (crdOrEtdChanging && cargoReadyDate && etd && cargoReadyDate > etd && (contractId || existingSchedules.length > 0)) {
       effContractId = ""; effContractRef = ""; effAllocationId = ""; effContractRoutingId = "";
       effStatus = "Requires Review";
@@ -710,6 +714,16 @@ module.exports = function shipmentsRoutes(app, ctx) {
         await logEvent(req.params.id, 'SCHEDULE_REMOVED', null, `${s.carrier} ${s.vessel_name} ${s.voyage_number}`.trim(), null,
           JSON.stringify({ reason: 'Cargo Ready Date updated past ETD' }), req.user?.name || req.user?.email || "");
       }
+    // Auto-clear a stale Requires Review left over from a PAST firing of the guard above, once
+    // the underlying problem is actually fixed: CRD/ETD no longer conflict AND a fresh contract
+    // is being assigned for the first time since (existing.contract_id was empty). Narrow by
+    // design — never overrides a status the caller explicitly sent this request, and never fires
+    // just because some other contract change happens to land on an already-Requires-Review
+    // shipment for an unrelated reason. Real gap found live: reassigning a contract after fixing
+    // the date mismatch left the shipment permanently reading "Requires Review" with no UI path
+    // back to Active, easy to misread as "the fix didn't take."
+    } else if (reqBody.status === undefined && existing.status === 'Requires Review' && effContractId && !existing.contract_id) {
+      effStatus = 'Active';
     }
 
     let updatedRows;
