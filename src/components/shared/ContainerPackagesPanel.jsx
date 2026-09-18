@@ -4,6 +4,7 @@ import Btn from "../primitives/Btn";
 import { Inp, Sel, BtnToggle } from "../primitives/Form";
 import { AnyIcon, IconWarning } from "../primitives/Icon";
 import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
+import { HsCodeCombobox } from "./HsCodeCombobox";
 
 // ─── Container cargo manifest — shared tree/detail building blocks ────────────
 // NavRow and PackageDetailForm back the unified Containers + Cargo Manifest tree
@@ -118,9 +119,13 @@ const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, conta
         </div>
       </div>
       <div data-testid="shipment-containers-package-form-hscode-field">
-        <Inp id="pkgform-hscode" label="HS Code" value={hsCode} onChange={setHsCode}
-          placeholder={containerHsCode ? `Container default: ${containerHsCode}` : "e.g. 8471.30"}
-          hint="Optional override — leave blank to use the container's own HS code" />
+        <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600,
+          textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 6 }}>HS Code</div>
+        <HsCodeCombobox value={hsCode} onChange={setHsCode}
+          placeholder={containerHsCode ? `Container default: ${containerHsCode}` : "Search by code or description…"} />
+        <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textFaint, marginTop: 4 }}>
+          Optional override — leave blank to use the container's own HS code
+        </div>
       </div>
 
       <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8, padding: "10px 12px" }}>

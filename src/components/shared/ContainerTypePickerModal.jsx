@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { T, CONTAINER_OPTIONS } from "../../tokens";
 import { Field, inputBase } from "../primitives/Form";
 import { Modal } from "../primitives/Modal";
@@ -234,7 +235,13 @@ export const ContainerTypeField = ({ size, type, onChange, required = false, lab
             </button>
           </div>
 
-          {dropOpen && filtered.length > 0 && (
+          {/* Portaled to document.body — found live (2026-09-18) rendering hundreds of pixels
+              from the input when this field sits inside a Trade Horizon glass card (Cargo page):
+              the card's backdropFilter redefines the containing block for a plain
+              position:fixed descendant, the same bug class ColumnFilter.jsx's own portal
+              already documents and works around. dropRef already covers the outside-click
+              check above, so no change needed there. */}
+          {dropOpen && filtered.length > 0 && createPortal(
             <div ref={dropRef} style={{
               ...dropStyle,
               background: T.surface, border: `1px solid ${T.border}`,
@@ -258,7 +265,8 @@ export const ContainerTypeField = ({ size, type, onChange, required = false, lab
                     padding: "1px 6px", flexShrink: 0 }}>{opt.teu} TEU</span>
                 </button>
               ))}
-            </div>
+            </div>,
+            document.body
           )}
         </>
       )}

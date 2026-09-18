@@ -22,6 +22,7 @@ import ActionMenu from "../../components/primitives/ActionMenu";
 import Spinner from "../../components/primitives/Spinner";
 import Badge from "../../components/primitives/Badge";
 import {Inp, Sel, BtnToggle} from "../../components/primitives/Form";
+import { HsCodeCombobox } from "../../components/shared/HsCodeCombobox";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import DatePicker from "../../components/primitives/DatePicker";
 import SailingPickerModal from "../../components/shared/SailingPickerModal";
@@ -281,10 +282,14 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div data-testid="shipment-containers-form-hscode-field">
-          <Inp label="HS Code" value={f.hsCode}
+          <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600,
+            textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 6 }}>HS Code <span style={{ color: HZ.crit }}>*</span></div>
+          <HsCodeCombobox value={f.hsCode}
             onChange={v => { set("hsCode")(v); touch("hsCode"); }}
-            placeholder="e.g. 8471.30" mono required
-            hint="Customs tariff classification number" />
+            placeholder="Search by code or description…" />
+          <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textFaint, marginTop: 4 }}>
+            Customs tariff classification number
+          </div>
           <FieldErr show={touched.hsCode && !hsOk} msg="HS Code is required" />
         </div>
         <div data-testid="shipment-containers-form-description-field">
