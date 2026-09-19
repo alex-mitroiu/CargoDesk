@@ -382,6 +382,7 @@ const BACKEND_DOMAINS = [
   { name: "allocations.js", items: "space configurations" },
   { name: "customers.js", items: "customers, sanctions, FX" },
   { name: "mdm.js", items: "carriers, vessels, ports, lanes, commodities" },
+  { name: "loop-codes.js / hs-codes.js", items: "loop rotations (Eastbound/Westbound), HS-6 registry + live EU lookup" },
   { name: "kanban.js / testcases.js", items: "tickets, test items" },
   { name: "edi.js", items: "carrier EDI log" },
   { name: "auth.js / offices.js / organization.js", items: "users, offices, branches" },
@@ -396,7 +397,7 @@ const DB_DOMAINS = [
   { name: "Contracts & Rates", color: "#2dcc8f", tables: "contracts · contract_legs · contract_rates · entity_events" },
   { name: "Allocations", color: "#2dcc8f", tables: "allocations" },
   { name: "Customers & Compliance", color: "#a855f7", tables: "customers · customer_documents · customer_identifiers · customer_screenings · sanctions_entries · sanctions_syncs" },
-  { name: "MDM Reference Data", color: "#a855f7", tables: "carriers · vessels · port_locations · linked_ports · trade_lanes · country_trade_lanes · regions · countries · commodities" },
+  { name: "MDM Reference Data", color: "#a855f7", tables: "carriers · vessels · port_locations · linked_ports · trade_lanes · country_trade_lanes · regions · countries · commodities · loop_codes · loop_code_ports · hs_codes" },
   { name: "Kanban & Testing", color: "#4db3e8", tables: "tickets · ticket_links · test_items · test_case_links · kb_projects · kb_columns · kb_versions" },
   { name: "EDI Messaging", color: "#4db3e8", tables: "edi_messages" },
   { name: "Auth & Organization", color: "#f5b84c", tables: "users · user_offices · user_scope_items · offices · branches · org_countries" },
@@ -408,6 +409,8 @@ const ARCH_PATTERNS = [
   { name: "Mapper convention", desc: "One function per table (mapShipment, mapCostLine, mapService…), snake_case DB row → camelCase API shape. The frontend never sees a snake_case field from a mapped response — except raw entity_events rows, the one deliberate exception." },
   { name: "Generic audit log — entity_events", desc: "One shared table covers cost lines, documents, services, and schedules, tagged by entity_type. History views read it directly, unmapped — event_type / created_at, not the camelCase you'd expect everywhere else." },
   { name: "Self-fetching shared panels", desc: "ServicesPanel, ContainerEventsPanel, ScheduleHistoryPanel, and ShipmentHeaderBar take just a shipment/id prop and fetch their own data — drop-in anywhere without wiring a parent-level loader." },
+  { name: "Shared table system", desc: "A Shipments-style list is useTableQuery (state, debounced search, stale-response guard) + DataTable/TableToolbar (rendering) on the client and lib/tableQuery.js on the server: filters arrive as repeated params, an empty selection means show nothing, and the header checklists are built from the whole access-filtered set, not the current page. Quotes is the pilot; more lists follow." },
+  { name: "Trade Horizon dual theme", desc: "Dashboard, Command Center and Shipment Details use a page-scoped HZ token object with dark and light variants, swapped in place by applyHzTheme / applyDashboardHzTheme from the app's single isDark flag — the same mutable-object idiom as T / applyTheme. Style from HZ.* only; shared adapters use property getters so a toggle never leaves stale values." },
   { name: "WebSocket broadcast — shipmentSubs", desc: "A per-shipment subscriber map drives live updates. Drawers fall back to 10s polling if the socket errors, so the feature degrades instead of breaking." },
 ];
 
@@ -415,6 +418,8 @@ const ARCH_GOTCHAS = [
   { name: "shipment.pol/pod isn't always the SEA leg", desc: "They're the journey's overall bookends (legs[0]/legs[-1]) — with a Door pickup or a multi-leg TSP journey, that's not the same as the SEA leg's own pol/pod. Anything showing \"the port\" should resolve the actual SEA leg(s)." },
   { name: "VGM isn't linked to a weight field", desc: "VGM is a valid Dedicated Services type (order it, track its status) but nothing connects a confirmed VGM to containers.grossWeightKg or a verified-weight cutoff date yet." },
   { name: "Service vendors aren't sanctions-screened", desc: "screenShipmentById only checks shipper/consignee/principal by a hardcoded field list. A vendor picked via the Services panel gets zero compliance coverage today — deliberate scope cut, tracked in TKT-9DGDNP." },
+  { name: "position: fixed breaks inside glass cards", desc: "A backdrop-filter, filter or transform on any ancestor becomes the containing block for fixed descendants, so a dropdown positioned from getBoundingClientRect() opens far from its input. Render it through createPortal to document.body and check both the trigger and the portaled list in the outside-click handler. ColumnFilter, HsCodeCombobox and ContainerTypePickerModal do; the Port, Carrier and Commodity comboboxes do not yet." },
+  { name: "Tests must provision their own offices", desc: "A fresh CI database has no offices, and emoOfficeId / imoOfficeId are required on shipment creation. Call ensureOffices() (tests/helpers/offices.mjs, cypress/support/offices.js) instead of looking up the first active SE/SI office — the lookup only ever worked on a long-lived local database." },
   { name: "Contract rate auto-import is BUY-only", desc: "importContractRates populates BUY lines from a carrier contract automatically. SELL lines have no contract-driven equivalent — manual entry or mirrored line-by-line from a BUY line." },
 ];
 
@@ -775,7 +780,8 @@ const AboutPage = () => {
     { icon: "✓",  title: "Test Case Management",      desc: "Test Folders, Plans, Runs, and Cases live in their own dedicated repository, separate from the Integration Board. Test Cases link to Stories via a bidirectional Tests / Is tested by relationship for lightweight requirement traceability." },
     { icon: IconBaseStation, title: "EDI Messaging",              desc: "Send carrier booking requests (MAEU, SAFM, MCPU) and receive confirmations directly from the shipment detail page. Every message — sent and received — is logged with a raw/parsed payload toggle; falls back to demo data without a live carrier key." },
     { icon: "📋", title: "Container Lifecycle Events", desc: "Per-container FCL movement tracking — Empty Pickup, Gate In, Loaded, Sailed, Discharged, Gate Out, Empty Return — the foundation for upcoming demurrage/detention tracking." },
-    { icon: "🌗", title: "Light / Dark Theme",        desc: "Apple HIG-compliant light theme alongside the CargoDesk dark theme. Instant toggle in the user menu, preference persisted to localStorage." },
+    { icon: "🌗", title: "Light / Dark Theme",        desc: "Apple HIG-compliant light theme alongside the CargoDesk dark theme. Instant toggle in the user menu, preference persisted to localStorage. The Trade Horizon pages (Dashboard, Shipment Details) carry a full light variant too." },
+    { icon: "🧭", title: "Loop Codes & HS Codes",     desc: "Master Data registries: carrier service loops with separate Eastbound and Westbound port rotations, and a curated set of real 6-digit HS codes with a live EU tariff lookup. Cargo forms pick an HS Code from the registry instead of typing free text." },
     { icon: "📚", title: "User Manual",               desc: "Built-in documentation covering Incoterms® 2020 and IMDG dangerous goods classes (Classes 1–9, 20 sub-classes with full descriptions and source link)." },
     { icon: "🧭", title: "Persistent Shipment Header", desc: "Visible on the Overview page and all 8 promoted sub-pages: ID (click-to-copy), route, dates, Incoterm, vessel, parties, contract, TEU, Loop Code, and a Door → POL → POD → Terminal journey bar that resolves the actual SEA leg — correct even for Door pickups and multi-leg transshipment routings." },
     { icon: "🧰", title: "Dedicated Services",         desc: "Export/Import services dashboard on the shipment Overview page — VGM, Pickup/Loading (Export-only), Delivery/Unloading (Import-only), Fumigation, Storage, Customs Clearance, and more. Each service carries a vendor, an office defaulted from the shipment's Export/Import Managing Office, and a Requested → Confirmed → Completed/Cancelled lifecycle, fully audit-logged." },

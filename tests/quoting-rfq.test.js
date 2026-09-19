@@ -208,6 +208,50 @@ const pastDate = days => new Date(Date.now() - days * 86400000).toISOString().sl
     const listSent = await request("GET", "/api/quotes?status=Sent", null, token);
     assert("status filter returns only Sent quotes", listSent.body.results.every(q => q.status === "Sent"), JSON.stringify(listSent.body.results.map(q => q.status)));
 
+    // Shipments-style table endpoints (lib/tableQuery.js) — two scratch quotes under a unique tag so
+    // every assertion below is scoped to exactly them, whatever else is in the database. One
+    // customer name deliberately contains a comma ("... & Sons, Ltd."): column filters travel as
+    // repeated params precisely so a comma inside a value can't be mistaken for a separator.
+    console.log("\nTable query — multi-value column filters, search, sort, paging, filter-options");
+    const tag = `TBLQ${Date.now().toString(36).toUpperCase()}`;
+    const commaCustomer = `${tag} & Sons, Ltd.`;
+    const tq1 = await request("POST", "/api/quotes", { customerName: commaCustomer, pol: "cnsha", pod: "usnyc", carrierCode: "cmdu" }, token);
+    const tq2 = await request("POST", "/api/quotes", { customerName: `${tag} Freight`, pol: "cnsha", pod: "uslax", carrierCode: "maeu" }, token);
+    assert("both scratch quotes created", tq1.status === 201 && tq2.status === 201, JSON.stringify([tq1.body, tq2.body]));
+    cleanup.quotes.push(tq1.body.id, tq2.body.id);
+    const list = qs => request("GET", `/api/quotes?${qs}`, null, token);
+    const idsOf = r => r.body.results.map(x => x.id);
+    const sortedIds = r => idsOf(r).sort().join(",");
+    const both = [tq1.body.id, tq2.body.id].sort().join(",");
+
+    const multi = await list(`search=${tag}&carrier=CMDU&carrier=MAEU`);
+    assert("repeated params match either value", sortedIds(multi) === both, JSON.stringify(idsOf(multi)));
+    const single = await list(`search=${tag}&carrier=CMDU`);
+    assert("a single value still filters (callers that predate multi-select keep working)", idsOf(single).join() === tq1.body.id, JSON.stringify(idsOf(single)));
+    const comma = await list(`customer=${encodeURIComponent(commaCustomer)}`);
+    assert("a customer name containing a comma filters as ONE value", comma.body.total === 1 && idsOf(comma)[0] === tq1.body.id, JSON.stringify(comma.body));
+    const byRoute = await list(`search=${tag}&route=${encodeURIComponent("CNSHA→USLAX")}`);
+    assert("the route column filters on POL→POD", idsOf(byRoute).join() === tq2.body.id, JSON.stringify(idsOf(byRoute)));
+    const anded = await list(`search=${tag}&carrier=CMDU&route=${encodeURIComponent("CNSHA→USLAX")}`);
+    assert("filters on two columns combine with AND", anded.body.total === 0, JSON.stringify(anded.body.total));
+    const emptySel = await list("status=");
+    assert("an empty selection (?status=) shows nothing rather than being ignored", emptySel.body.total === 0 && emptySel.body.results.length === 0, JSON.stringify(emptySel.body.total));
+    const ci = await list(`search=${tag.toLowerCase()}`);
+    assert("search is case-insensitive and reaches the customer name", ci.body.total === 2, JSON.stringify(ci.body.total));
+    const newest = await list(`search=${tag}`);
+    assert("default order is newest first", idsOf(newest).join() === [tq2.body.id, tq1.body.id].join(), JSON.stringify(idsOf(newest)));
+    const oldest = await list(`search=${tag}&sort=oldest`);
+    assert("sort=oldest reverses it", idsOf(oldest).join() === [tq1.body.id, tq2.body.id].join(), JSON.stringify(idsOf(oldest)));
+    const page2 = await list(`search=${tag}&limit=1&offset=1`);
+    assert("paging applies after filtering (total 2, one row on page 2)", page2.body.total === 2 && page2.body.results.length === 1 && page2.body.offset === 1, JSON.stringify(page2.body));
+
+    const opts = await request("GET", "/api/quotes/filter-options", null, token);
+    assert("filter-options resolves (not swallowed by /:id) with a checklist per column",
+      opts.status === 200 && ["id", "customer", "route", "carrier", "validUntil", "status"].every(k => Array.isArray(opts.body[k])), JSON.stringify(Object.keys(opts.body || {})));
+    assert("a comma-containing customer is a single checklist option", opts.body.customer?.includes(commaCustomer));
+    assert("checklists come from the whole visible set, not a filtered page", opts.body.id?.includes(tq1.body.id) && opts.body.id?.includes(tq2.body.id));
+    assert("route options are POL→POD strings", opts.body.route?.includes("CNSHA→USLAX") && opts.body.route?.includes("CNSHA→USNYC"));
+
     console.log(`\n${passed} passed, ${failed} failed`);
     process.exitCode = failed > 0 ? 1 : 0;
   } catch (e) {

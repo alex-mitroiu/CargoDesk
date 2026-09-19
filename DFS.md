@@ -193,6 +193,9 @@ an `opportunity` (lead-tracking, pre-pricing) that converts into a `quote` (pric
 **Key functions**: track a lead through New → Qualified → Converted (to Quote)/Lost; create a quote
 against a matched contract or spot rate; Draft → Sent → Accepted/Declined/Expired lifecycle;
 convert an accepted quote into a real shipment, carrying parties, containers, and cost lines across.
+The quote list is filterable the way the Shipments list is: an Excel-style checklist on each column
+header, free-text search, sort, and server-side paging (the shared table system, ARCHITECTURE.md
+§8.23 — Quotes is its pilot; other lists follow).
 **Roles**: operator, occ_bk, sales, admin (write); all roles (read, scope-permitting). `sales`
 (v0.91.1) is this domain's dedicated role — owns both objects, no booking authority elsewhere.
 **Primary data**: `opportunities`, `quotes`, `quote_lines`.
@@ -261,12 +264,21 @@ Costs" run — a real, previously-shipped bug. See ARCHITECTURE.md §8.3.
 **Purpose**: the shared reference data every other domain depends on.
 **Key functions**: carriers, vessels, ports (14,269 UN/LOCODEs) with linked-port equivalence, trade
 lanes, countries, commodities, charge codes, pack types, carrier line agents (per-port/country
-representative resolution).
-**Roles**: admin (write); every domain (read, as a dependency, not a direct user-facing action).
+representative resolution), carrier service **loop codes** with a directional (Eastbound/Westbound)
+port rotation, and an **HS Codes** registry of real 6-digit Harmonized System codes that cargo
+forms pick from instead of typing free text.
+**Roles**: admin (write; HS Codes writes also allow operator); every domain (read, as a dependency,
+not a direct user-facing action).
 **Primary data**: owned by the MDM Service when `mdm_source=remote`, monolith-local otherwise.
+Loop Codes (`loop_codes`, `loop_code_ports`) and HS Codes (`hs_codes`) are always monolith-local —
+they are not part of the MDM Service's data set.
 **Business rules**: port-lane and port-country lookups are hot-path, read on every shipment mapped
 — they stay as in-process caches regardless of which mode is active, never a live per-request
-fetch. See ARCHITECTURE.md §8.1.
+fetch. See ARCHITECTURE.md §8.1. A loop's rotation is two independent lists (each stop tagged
+Eastbound or Westbound, a port allowed in both) that a shipment header's Loop field resolves and
+draws. The HS Codes page can look a classification up live from the EU's public tariff service, but
+that result is shown and copied by hand, never stored — the service's terms forbid caching it.
+See ARCHITECTURE.md §8.24.
 
 ### 5.7 Operations — Kanban / Testing (P7 / P7a)
 **Purpose**: internal engineering/ops ticket tracking and manual test-case management, linked to
@@ -329,6 +341,13 @@ class, now closed with a masked-boolean pattern. See ARCHITECTURE.md §8.8, §8.
   clients; nothing polls on a fixed interval for data that has a real push path.
 - **Security**: JWT (8-hour token) + optional SSO; 5-role RBAC scoped further by office/trade lane;
   secrets are write-only through the API (masked booleans on read).
+- **Visual design**: the Dashboard, Command Center and Shipment Details use the "Trade Horizon"
+  glass-card design language, which follows the app's dark/light toggle (a dual-theme token set
+  swapped in place, ARCHITECTURE.md §4). Other pages use the classic theme. Lists that adopt the
+  shared table system (§8.23) behave identically to the Shipments list.
+- **Quality gates**: a backend test chain (`npm test`), a frontend Vitest suite and a Cypress suite
+  all run in CI against a database that starts empty — every test provisions the reference data it
+  needs (e.g. offices) rather than assuming a developer's long-lived local data (ARCHITECTURE.md §10).
 
 Full technical detail (module maps, request lifecycle, ID formats, the complete data model) is in
 ARCHITECTURE.md §§2–7 and is intentionally not duplicated here.
@@ -347,6 +366,10 @@ ARCHITECTURE.md §§2–7 and is intentionally not duplicated here.
 
 PDF Render (P9a) is stateless and owns no data store.
 
+D1 also holds three master-data registries that are deliberately *not* mirrored into D3: `loop_codes`
+and `loop_code_ports` (carrier service loops and their directional rotations) and `hs_codes`
+(curated HS-6 classification codes).
+
 ## 8. Glossary
 
 | Term | Meaning |
@@ -359,3 +382,6 @@ PDF Render (P9a) is stateless and owns no data store.
 | **INCOTERM** | International Commercial Terms — defines which party bears cost/risk at each point in the shipment's journey. |
 | **AIS** | Automatic Identification System — the maritime vessel-tracking protocol this app consumes live via aisstream.io. |
 | **RBAC** | Role-Based Access Control — this app's 5-role permission model (§3). |
+| **HS Code** | Harmonized System code — the international goods-classification number; the first 6 digits are common worldwide (chapter = the first 2). CargoDesk's registry holds real 6-digit codes; national extensions (e.g. the EU's 8-digit CN) are looked up live, never stored. |
+| **Loop code** | A carrier's named recurring service rotation (e.g. `AL1`) — the ordered list of ports one vessel string calls at, out and back. |
+| **Eastbound / Westbound (EB / WB)** | The two directional legs of a loop. By convention transatlantic Europe→US is Westbound and transpacific Asia→US is Eastbound; each stop in a loop's rotation carries one of the two. |

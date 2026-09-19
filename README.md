@@ -3,7 +3,7 @@
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
 [![CI](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.91.4-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.91.5-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-custom-lightgrey)
 
@@ -65,7 +65,8 @@ End-User License Agreement for full terms.
 ### Master Data
 - **Carriers, vessels & ports** — a 349-vessel IMO registry and a 14,269-record UN/LOCODE port directory with linked-port relationships and trade-lane assignment.
 - **Customers** — full CRUD with address/contact detail, searchable typeahead used across every party-picker in the app.
-- **Loop Codes** — a carrier service-loop registry with a rotation-timeline viewer, linkable from any shipment's derived loop code.
+- **Loop Codes** — a carrier service-loop registry with separate Eastbound and Westbound port rotations (a port can appear in both), a rotation-timeline viewer, and a world map of every loop, linkable from any shipment's derived loop code.
+- **HS Codes** — a curated registry of real 6-digit Harmonized System codes with chapter filtering, used by a typeahead picker on cargo forms, plus a live (never stored) EU tariff lookup.
 
 ### Collaboration & Operations
 - **Integration Board** — a 6-column Kanban (Ready→Released) with drag-to-reorder, Epic→Story→sub-task nesting, and per-shipment ticket linking.
@@ -77,7 +78,7 @@ End-User License Agreement for full terms.
 - **Authentication & RBAC** — JWT login with three roles (admin/operator/viewer), whole-shipment edit-locking, and an admin role-switcher for testing lower-privilege views.
 - **Security hardening** — per-IP login rate limiting, a configurable password-expiry policy, and optional Azure AD/Entra SSO.
 - **Landing page** — fleet KPIs, a weather widget, and a live FX currency converter.
-- **Light/dark theme, resizable columns, and a built-in User Manual** covering Incoterms 2020 and IMDG dangerous goods classes.
+- **Light/dark theme (including the Trade Horizon Dashboard and shipment pages), Excel-style column filters and resizable columns on the main lists, and a built-in User Manual** covering Incoterms 2020 and IMDG dangerous goods classes.
 - **System Health** — a one-click check across every internal route and external service dependency.
 
 ---
@@ -182,7 +183,7 @@ refuses to run if it detects the server still listening on :3001, but stop it pr
 of that guard, then restart once seeding finishes:
 
 ```bash
-npm run seed             # re-imports ports, carriers, vessels, regions, commodities
+npm run seed             # re-imports ports, carriers, vessels, regions, commodities, HS codes
 ```
 
 Adding sample carrier contracts to poke around with is the opposite — `npm run seed:contracts`
@@ -209,7 +210,7 @@ On first startup, if no users exist, the server seeds a default admin account:
 |--------|-------------|
 | `npm run dev` | Start API server (port 3001) + Vite dev server (port 5173) concurrently |
 | `npm run setup` | First-time setup — boots the server once, shuts it down cleanly, then seeds MDM data, in the right order |
-| `npm run seed` | Seed ports, carriers, vessels, regions, commodities (server must be **stopped**) |
+| `npm run seed` | Seed ports, carriers, vessels, regions, commodities, HS codes (server must be **stopped**) |
 | `npm run seed:contracts` | Seed sample carrier contracts |
 | `npm run checkdb` | Inspect DB schema and row counts |
 | `npm run export:template` | Regenerate `exports/dashboard-template.xlsx` |
@@ -331,7 +332,7 @@ If you've already run that and still see an empty database (or want to refresh M
 editing `data/*.csv`), stop the server first (see [Stopping the Server](#stopping-the-server)
 above), then:
 ```bash
-npm run seed            # re-imports ports, carriers, vessels, commodities, regions, trade lanes
+npm run seed            # re-imports ports, carriers, vessels, commodities, HS codes, regions, trade lanes
 npm run seed:contracts  # sample carrier contracts (optional, server must be running)
 ```
 
@@ -367,7 +368,7 @@ CargoDesk/
 ├── exports/
 │   └── dashboard-template.xlsx  # Base XLSX template with named ranges (WeeklySummary, ByCarrier, ByLane)
 ├── scripts/
-│   ├── import-mdm-data.js        # Seeds ports, carriers, vessels, regions, commodities (npm run seed)
+│   ├── import-mdm-data.js        # Seeds ports, carriers, vessels, regions, commodities, HS codes (npm run seed)
 │   ├── seed-contracts.js         # Seeds sample carrier contracts (npm run seed:contracts)
 │   ├── checkdb.js                # Dev utility — inspects DB schema and row counts (npm run checkdb)
 │   └── create-export-template.js # Generates exports/dashboard-template.xlsx (npm run export:template)
@@ -508,6 +509,7 @@ Recent releases below; full version history (back to v0.1.0) lives in [CHANGELOG
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.91.5 | Chartroom | Bundled release — Master Data gains a real Eastbound/Westbound loop-rotation editor (Loop Codes, one tabbed edit modal, a port allowed in both directions, AL1 now the real Hapag-Lloyd rotation) and a new HS Codes registry with a live, never-stored EU classification lookup, and the free-text HS Code inputs on cargo forms become a registry-backed picker; the Trade Horizon design (Dashboard, Shipment Details) now has a full light theme that follows the app toggle; dropdowns that opened far from their input inside glass cards (Equipment Type, HS Code) are now portaled; Quotes is rebuilt on a new shared Shipments-style table system (column-header checklists, search, sort, server-side paging) as the pilot for the other list pages; the Shipment Details sidebar gains a collapsible icon rail, group folding and a milestone vitals card; the CRD/ETD contract guard, contract-match dedup and space-configuration search get real fixes; and CI is green again after being red since v0.91.3 — every backend test and Cypress spec now provisions its own offices and the backend login cap is raised to 1000. |
 | 0.91.4 | Ratify | Fix wave — Contract Picker no longer lets a re-opened "Change Contract" silently reselect the already-assigned contract, and a card click now stages behind an explicit Confirm/Cancel step; fixed an app-wide modal background-scroll leak; fixed a real data bug where a stale Cargo Ready Date/ETD mismatch could permanently block a shipment from ever having a contract set again. |
 | 0.91.3 | Horizon | Command Center restyled to Trade Horizon with Excel-style column filters (Shipments + Dashboard) and a bell contract-deep-link fix; the full Shipment Details experience (header, sidebar, Overview/Conditions/Parties & Offices/Contracts & Schedules/Cargo/Milestones & Events) restyled to match; shipment-integrity fix wave (required EMO/IMO offices, container-number uniqueness, non-negative declared value). |
 | 0.91.1 | Bulkhead | Hotfix — User Management/access-scoping redesign (Branch/Country office-visibility grants, a new `sales` role, Quotes/Opportunities office scoping) plus a shipment creation/editing deep-dive; 8 real findings across both QA passes fixed same day, including an office-reassignment authorization bypass and a silent full-replace on shipment edits. |

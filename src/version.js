@@ -2,12 +2,18 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.91.4";
-export const BUILD     = "2026-09-16";
-export const CODENAME  = "Ratify";
-export const BUILD_FINGERPRINT = "e819a4d2";
+export const VERSION   = "0.91.5";
+export const BUILD     = "2026-09-19";
+export const CODENAME  = "Chartroom";
+export const BUILD_FINGERPRINT = "39187818";
 
 export const CHANGELOG = [
+  {
+    version:  "0.91.5",
+    date:     "2026-09-19",
+    codename: "Chartroom",
+    summary:  "Bundled release — Master Data gains a real Eastbound/Westbound loop-rotation editor (Loop Codes, one tabbed edit modal, a port allowed in both directions, AL1 now the real Hapag-Lloyd rotation) and a new HS Codes registry with a live, never-stored EU classification lookup, and the free-text HS Code inputs on cargo forms become a registry-backed picker; the Trade Horizon design (Dashboard, Shipment Details) now has a full light theme that follows the app toggle; dropdowns that opened far from their input inside glass cards (Equipment Type, HS Code) are now portaled; Quotes is rebuilt on a new shared Shipments-style table system (column-header checklists, search, sort, server-side paging) as the pilot for the other list pages; the Shipment Details sidebar gains a collapsible icon rail, group folding and a milestone vitals card; the CRD/ETD contract guard, contract-match dedup and space-configuration search get real fixes; and CI is green again after being red since v0.91.3 — every backend test and Cypress spec now provisions its own offices and the backend login cap is raised to 1000.",
+  },
   {
     version:  "0.91.4",
     date:     "2026-09-16",

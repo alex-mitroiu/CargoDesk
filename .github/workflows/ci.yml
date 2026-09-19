@@ -41,9 +41,13 @@ jobs:
     timeout-minutes: 15
     env:
       NODE_ENV: test
-      # 29 test files each log in once against one continuous server process — well past the
-      # real-world default of 20 per 15 minutes. See routes/auth.js's own comment on this var.
-      LOGIN_RATE_MAX: '200'
+      # The monolith suite (73 files as of 2026-09) logs in a few times per file against one
+      # continuous server process — well past the real-world default of 20 per 15 minutes. 200 was
+      # sized when this was 29 files and ran out around file 60, so the last 14 files failed with
+      # "Too many login attempts" (verified locally on an empty database: all 14 pass at 1000).
+      # Only this job needs the headroom — the Cypress job's own full run fits under 200. See
+      # routes/auth.js's own comment on this var.
+      LOGIN_RATE_MAX: '1000'
       # Same class of problem, shorter fuse: several test files (carrier-booking, document-signing,
       # invoice-reversal, workflow-improvements, ...) generate shipment documents, and the real-world
       # default of 20 per 60 seconds (routes/shipment-ops.js) is exhausted well before the suite

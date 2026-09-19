@@ -1,10 +1,20 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.91.1 "Interchange" · **Date:** 2026-09-12
+**Version:** 0.91.5 "Chartroom" · **Date:** 2026-09-19
 **Audience:** Software architects, senior engineers, technical reviewers
 **See also:** [`DFS.md`](DFS.md) — the Design & Functional Specification (data flow diagrams,
 per-domain functional scope, roles) covers *what* the system does and *how data moves through it*;
 this document covers *how it's built*.
 
+> **2026-09-19 pass (v0.91.5 "Chartroom") — incremental.** Adds §8.23 (Shared Table System) and
+> §8.24 (Master Data Registries: Loop Codes & HS Codes), extends §4's design-token section with
+> the Trade Horizon dual-theme mechanism, adds a Test Infrastructure & CI subsection to §10, and
+> logs four new debts (M11–M14) in §11. The version banner had drifted two releases stale
+> (0.91.1); it is corrected here. Everything else is **not** re-verified — in particular §10's
+> Pagination and Data-integrity blurbs still describe the SQLite era (the latter's
+> `PRAGMA foreign_keys` claim predates the Postgres migration) and are left as written, flagged
+> rather than rewritten. The table count is re-measured: **98** `CREATE TABLE IF NOT EXISTS`
+> statements in `lib/schema.js`, up from the 78 §6 quotes.
+>
 > This document was fully refreshed from a direct pass against the live codebase on 2026-08-13
 > (v0.69.0), replacing a version that had gone stale since v0.30.0. The 2026-08-19 pass was
 > **incremental** — it added §8.14 (Reports) and §8.15 (NVOCC Support), the two subsystems that
@@ -288,6 +298,40 @@ Unchanged in shape from the last review — `T.surface`, `T.bg`, `T.text`, `T.ac
 `T.body`, `T.mono`, etc., all JavaScript strings applied via `style={{ ... }}`, mutated in place
 by `applyTheme(isDark)`. No CSS variables.
 
+#### Trade Horizon: a second, page-scoped token set with its own light theme (v0.91.3–v0.91.5)
+
+The Dashboard, Command Center and the whole Shipment Details experience use a distinct visual
+language, "Trade Horizon" — glass cards over a gradient ground — that deliberately does **not**
+live in `src/tokens.js`; it is page-scoped so the rest of the app's classic look is untouched.
+It has its own token object, `HZ`, defined twice as `HZ_DARK` / `HZ_LIGHT`:
+
+| Surface | Where the tokens live | Swap function |
+|---|---|---|
+| Shipment Details (and everything importing `shipmentDetailTheme.js`) | `src/pages/shipments/shipmentDetailTheme.js` | `applyHzTheme(dark)` |
+| Dashboard | `src/pages/DashboardPage.jsx` (its own local `HZ`) | `applyDashboardHzTheme(dark)` |
+| Command Center | none — follows `isDark` and falls back to the classic `T` in light mode | — |
+
+Each swap function does `Object.assign(HZ, dark ? HZ_DARK : HZ_LIGHT)` — the same mutate-in-place
+idiom as `T`/`applyTheme`, and for the same reason: components read `HZ.x` at render time, so
+swapping the object's contents restyles everything on the next render without prop-drilling. All
+three are called from `App.jsx` on mount and again from `toggleTheme`, driven by the single
+`isDark` flag. Three constraints keep this working:
+
+- **Anything captured at module load goes stale.** `HZ_LEGACY_THEME` (an adapter that lets
+  classic-`T`-shaped components render inside a Trade Horizon page) and `HZ_FILTER_TOKENS` are
+  therefore built with property *getters*, not copied values. `LegsTable`/`LegRow` take an optional
+  `theme` prop and shadow `T` with it (`const T = theme;`) for the same reason.
+- **Tinted pills need their own text tokens** (`goodPillText`, `infoPillText`, `violetPillText`,
+  `chipText`) — a pale-tint pill that reads well in dark mode is unreadable in light if it reuses the
+  dark palette's bright text colour. Light glass cards additionally need `boxShadow: HZ.cardShadow`
+  (and `cardBlur`) to separate from a light background at all.
+- **`position: fixed` inside a glass card is unreliable.** A `backdrop-filter` (also `filter` /
+  `transform`) on any ancestor becomes the containing block for fixed descendants, so a dropdown
+  positioned from `getBoundingClientRect()` viewport coordinates lands off-target. Such dropdowns
+  must render through `createPortal(…, document.body)` and check both the trigger and the portaled
+  list in their outside-click handler (`ColumnFilter`, `HsCodeCombobox`, `ContainerTypePickerModal`).
+  `CommodityCombobox`, `PortCombobox` and `CarrierCombobox` still use the non-portaled form — see M12.
+
 ---
 
 ## 5. Backend Architecture
@@ -500,6 +544,14 @@ PLATFORM
 users · app_settings · system_messages · system_email_settings
 user_scope_items · user_offices
 admin_events
+
+MASTER DATA REGISTRIES (added v0.90.1 / v0.91.5 — see §8.24)
+─────────────────────────────────────────────────────────────
+loop_codes ──── loop_code_ports         (a carrier's named service loop and its ordered rotation;
+                                          each stop carries direction 'EB'|'WB'; port_unlocode
+                                          REFERENCES port_locations directly)
+hs_codes                                (curated HS-6 registry; hs_chapter is a *soft* link to
+                                          duty_rate_chapters — same 2-digit shape, no FK)
 ```
 
 ### ID format
@@ -1817,6 +1869,107 @@ assertions) covers acquire/renew/release/non-holder-release-is-a-no-op/re-acquir
 automatically, the same accepted gap this codebase already has for other short-of-an-hour
 time-based rules with no backdating endpoint (§8.16's own AR-aging-boundary note).
 
+### 8.23 Shared Table System (added v0.91.5)
+
+The Shipments list has the app's richest table: Excel-style header checklists, free-text search,
+sort, server-side paging, resizable columns. `routes/shipments.js` implements it inline and
+`ShipmentsPage.jsx` owns the matching client state. v0.91.5 extracted the reusable core so the
+other list pages can adopt the same behaviour without each growing a private copy that drifts, and
+migrated **Quotes** as the pilot. Shipments itself is *not* yet moved onto it (M13).
+
+```
+   client                                                   server
+   ──────                                                   ──────
+   useTableQuery  ── fetchPage(params) ──► GET /api/<x>?status=A&status=B&search=…&sort=…&limit=50&offset=0
+   (state, debounce,                         load rows → map → access filter   (caller's own route code)
+    stale-response guard)                        │
+        │                                        ▼
+        │                                   lib/tableQuery.js
+        │                                     applyColumnFilters → applySearch → applySort → paginate
+        │                                        │
+        ◄──────── { results, total } ────────────┘
+        │
+   useTableQuery ── fetchOptions() ──► GET /api/<x>/filter-options  (registered BEFORE /:id)
+                                             filterOptions(<whole access-filtered set>, columns)
+        │
+        ▼  rows / options / filters / handlers
+   TableToolbar (search · sort · Clear)   +   DataTable (headers ← ColumnFilter, body, ActionMenu, Pagination)
+```
+
+**Split of responsibility.** `DataTable` is purely presentational: it renders whatever rows,
+filters and options it is handed and reports intent through callbacks. `useTableQuery` owns state
+and fetching. `lib/tableQuery.js` owns the server semantics. A page supplies only its column
+definitions (one `key`, `header`, `render`, optional `filter`), its `fetchPage`/`fetchOptions`, a
+module-level `filterKeys` array, and — on the server — a `{ param: row => value }` column map that
+is shared between filtering and the checklist source so the two cannot disagree.
+
+**Conventions** (the behavioural ones are each covered by a test in `tests/quoting-rfq.test.js`,
+`useTableQuery.test.jsx` or `DataTable.test.jsx`; the first four fail silently if broken):
+
+| Convention | Why |
+|---|---|
+| A column filter is sent as **repeated params** (`?status=A&status=B`), never comma-joined | Shipments' columns are ids and codes; a customer name ("Smith & Sons, Ltd.") contains a comma, and splitting it would turn one value into two that match nothing. A single value still works, so callers that predate multi-select are unaffected. |
+| Absent param = no filter; **present-but-empty param = show nothing** | `ColumnFilter` reports `null` for "all selected" and `[]` for "deselect all". `tableQs()` in `api.js` emits a bare `key=` for `[]`; the server reads it as an empty set that matches no row. Collapsing it into "no filter" would make Clear-all silently show everything. |
+| Checklist options come from the **whole access-filtered visible set**, not the current page or the filtered subset | Otherwise unchecking a value removes it from its own list, and paging would change what can be filtered. It must also run after the same access filter the list uses, or it would leak values from another office's records. |
+| `useTableQuery` discards any response older than the newest request (`seq` ref) | Two quick filter changes can resolve out of order; without the guard the slower, older result overwrites the current one. |
+| `filterKeys` is a module-level constant | The hook documents a stable array as a requirement: its fetch callback lists `filterKeys` as a `useCallback` dependency. An inline array would not loop today (the mount effect deliberately ignores its dependencies), but it makes that callback unstable, so keep it module-level. |
+| Any filter, sort or page-size change returns to page 1; paging alone does not | Otherwise a narrowed result set can leave the user on an empty page 7. |
+
+`GET /api/quotes` (`routes/quotes.js`) is the reference route: `customerId` stays a SQL
+predicate (it is not a column checklist), everything else runs through the pipeline above, and
+`Route` is a *derived* column (`${pol}→${pod}`) whose option list and filter share one
+definition. The old Status `<select>` was removed from `QuotesPage` — the Status column header is
+now the single way to filter that column. **Wave 1 not yet migrated:** Opportunities, Customers, Freight Audit, Credit Overrides,
+Schedules, and Contracts and Space Configurations (which have grouped rows).
+
+### 8.24 Master Data Registries: Loop Codes & HS Codes (Loop Codes v0.90.1, direction v0.91.5; HS Codes v0.91.5)
+
+Two small reference registries under Master Data. Both are **local to the monolith** — like
+`duty_rate_chapters` they are not mirrored to the MDM microservice (§8.1), so `mdm_source=remote`
+has no bearing on them.
+
+**Loop Codes.** `loop_codes` names a carrier's service loop ("AL1") with frequency/round-trip
+metadata; `loop_code_ports` is its ordered rotation, each stop referencing `port_locations` directly
+rather than storing coordinates. A shipment header's live-derived loop string resolves through
+`GET /api/loop-codes/resolve` (which returns `null` rather than 404 on a miss) into
+`LoopRouteModal`, and `LoopMapExplorerPage` draws every loop at once — both reuse `mapCore.jsx`.
+
+v0.91.5 made the rotation *directional*. A loop is really two legs — outbound and return — and the
+earlier flat list forced the UI to guess which stops belonged to which by port longitude, which is
+wrong for any loop that isn't a clean east–west line. `loop_code_ports.direction` (`'EB'|'WB'`,
+default `'EB'`, added by an idempotent `ADD COLUMN IF NOT EXISTS`) records it explicitly.
+Decisions worth keeping:
+
+- **A port may appear in both directions** (a hub such as Rotterdam is called on the way out and
+  back), so the two columns are independent lists, not a partition of one.
+- **The flat `sequence_order` survives.** The rotation `PUT` still takes the whole rotation and
+  full-replaces it, concatenating Eastbound rows then Westbound rows into `sequence_order`. Every
+  pre-existing consumer that reads a single ordered list is unchanged.
+- **Convention, not geography:** transatlantic Europe→US is Westbound; transpacific Asia→US is
+  Eastbound. `LoopRouteModal` now reads `direction` (`WB` iff `=== "WB"`, anything else Eastbound)
+  and renders a real single-stop leg rather than hiding it behind an "empty" message.
+- **Data provenance.** AL1 carries the publicly-sourced Hapag-Lloyd Gemini rotation. The other five
+  seeded loops (AL5, ME9, PL2, PL7, TP3) have correct directional structure but their port lists are
+  **not verified against a public source** (M14).
+
+**HS Codes.** `hs_codes` is a curated set of real 6-digit Harmonized System codes
+(`data/hs-codes.json`, 48 entries, seeded by `scripts/import-mdm-data.js`) with a 2-digit
+`hs_chapter`. It is deliberately **not** `commodities` (CargoDesk's internal freight-cargo grade
+catalogue) and not `duty_rate_chapters` (chapter-level duty percentages) — three registries that
+answer three different questions and were kept apart rather than overloaded. `hs_chapter` matches
+`duty_rate_chapters`' shape for a soft join but carries no foreign key, so either can be edited
+freely. `routes/hs-codes.js` offers CRUD (writes: admin and operator, validating 6-digit code and
+2-digit chapter), a typeahead `/search`, and `/eu-lookup`.
+
+`/eu-lookup` proxies tariffnumber.com's free V1 `cnSuggest` endpoint **server-side and never
+persists the response**: that service's terms forbid storing or caching its data, so the design is
+a pure pass-through (HTML stripped, entities decoded) that the user copies a code out of by hand.
+Do not add a cache to it. The picker on cargo forms is `HsCodeCombobox` (typeahead plus a browse-all
+modal with chapter chips) backed by `/search`; a legacy free-text value that isn't in the registry
+still displays as entered rather than erroring, since old shipments predate the registry. The draft
+container row on `ShipmentFormPage` remains free text (classic-themed, outside the Trade Horizon
+scope of this pass).
+
 ---
 
 ## 9. Data Flow Diagrams
@@ -1888,6 +2041,10 @@ RBAC role list grown from 3 to 5 roles (§8.9); mechanics otherwise unchanged.
 `shipments`, `containers`, `cost_lines`, `tickets`, `allocations`, `quotes`, `carrier_invoices`.
 This is one of the few claims from the last review that held up unchanged — see §11/H3.
 
+> **Update (2026-09-19):** that "not implemented" list is itself stale — §11/H3 already records
+> `shipments`, `quotes` and `carrier_invoices` as done, and `quotes` now runs on the shared table
+> system (§8.23). Read §8.23 and §11/H3 for the current picture; this paragraph is left as written.
+
 ### Data integrity
 
 **No longer accurate as stated.** The last review's own §11 table separately claimed this was
@@ -1895,6 +2052,33 @@ resolved, directly contradicting this section's blanket "no FK constraints are e
 internal contradiction is now fixed by checking directly: `PRAGMA foreign_keys=ON` is set
 globally (`server.js` line 97) and real `REFERENCES` clauses exist throughout the schema (§6).
 Referential integrity is genuinely enforced at the SQLite level, not just by application logic.
+
+### Test infrastructure & CI
+
+The backend suite is a `&&` chain of standalone `tests/*.test.js` files (73 as of 2026-09) run by
+`npm test`; it **stops at the first file that exits non-zero**, so one early failure hides every
+later file. Two rules keep it honest:
+
+- **A CI database starts empty, including offices.** The seed script creates ports, carriers and
+  the like, but no offices, and `emoOfficeId`/`imoOfficeId` have been required on shipment creation
+  since v0.91.3. A test must therefore never look up "the first active SE/SI office" and assume one
+  exists — it calls `ensureOffices()` (`tests/helpers/offices.mjs` for the backend runner,
+  `cypress/support/offices.js` for Cypress). The helper reuses any active office that already
+  exists and only creates a fixed fixture (`FX-FXFIX-SE` / `FX-FXFIX-SI`) when a department has none;
+  its code is deterministic, so it is idempotent, and it reactivates the fixture if another test
+  deactivated it. The name is artificial on purpose so it cannot collide with offices individual
+  tests create. Before this, CI was red from v0.91.3: the first backend file failed and ~65 files
+  never ran, and 19 of 26 Cypress specs died in their `before` hook.
+- **The login limiter is per-IP and every test logs in.** `LOGIN_RATE_MAX` (15-minute window,
+  default 20) is set explicitly in `.github/workflows/ci.yml`. The backend job uses **1000** — the
+  earlier 200 was sized for 29 files and ran out around file 60 of 73. The Cypress job stays at 200
+  because its 26 specs fit under it. A new test file adds a handful of logins, so revisit the number
+  if the file count roughly doubles again.
+
+A faithful local reproduction of CI needs a database with no `pgdata/` (never wipe the real one):
+clone the repo to a scratch directory, overlay the working-tree changes, junction `node_modules`,
+and run there. Cypress additionally needs `ELECTRON_RUN_AS_NODE` unset (`env -u ELECTRON_RUN_AS_NODE`),
+because the host sets it and the Cypress binary then starts as plain Node and fails to launch.
 
 ---
 
@@ -1935,6 +2119,10 @@ Referential integrity is genuinely enforced at the SQLite level, not just by app
 | M8 | **WebSocket clients never cleaned up** | Not re-verified this pass — the subscription model changed (§8.7) since the last review, so this needs a fresh look rather than being carried over. |
 | ~~M9~~ | ~~ShipmentDetailPage section nav has no shared source of truth~~ | **RESOLVED** — see §8.11, `shipmentSections.js`. |
 | ~~M10~~ | ~~Two unrelated "document" systems~~ | **RESOLVED v0.65.0** (unchanged from last review). |
+| M11 | **Trade Horizon has two independent `HZ` token objects** (`shipmentDetailTheme.js` and `DashboardPage.jsx`) that must be kept visually consistent by hand, with two matching `apply…Theme` functions to call from `App.jsx` | Open (v0.91.5). Each edit to a shared token (a pill colour, a shadow) has to be made twice; nothing checks they haven't diverged. Consolidating them is a small refactor but was out of scope for a theming pass. |
+| M12 | **Non-portaled `position: fixed` dropdowns inside glass cards** — `CommodityCombobox`, `PortCombobox`, `CarrierCombobox` still position from viewport coordinates | Open (v0.91.5). Same defect class as the Equipment Type and HS Code dropdowns that were just fixed with portals (§4). Not checked individually inside a glass card; the defect follows from how the CSS containing block works, so any placement under a `backdrop-filter` ancestor should be assumed affected until verified. |
+| M13 | **Two implementations of the list-endpoint filter/sort/search/page logic** — `routes/shipments.js` (inline, comma-joined params) and `lib/tableQuery.js` (repeated params) | Open (v0.91.5). Deliberate for now: the shared module was proven on Quotes first. Migrating Shipments would remove the drift risk and the wire-format inconsistency, at the cost of touching the app's most heavily used route. |
+| M14 | **Five of six seeded loop codes have unverified port lists** (AL5, ME9, PL2, PL7, TP3) | Open (v0.91.5). Only AL1 was checked against a public rotation. The others show a plausible, correctly directional structure but are illustrative until researched. |
 
 ### Shipment-Domain Gap & Dead-Code Audit Log (ongoing, started 2026-09-02)
 

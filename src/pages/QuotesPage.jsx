@@ -10,8 +10,8 @@ import { Field, Sel } from "../components/primitives/Form";
 import { inputBase } from "../components/primitives/Form";
 import DatePicker from "../components/primitives/DatePicker";
 import Spinner from "../components/primitives/Spinner";
-import Pagination from "../components/primitives/Pagination";
-import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
+import DataTable, { TableToolbar } from "../components/shared/DataTable";
+import useTableQuery from "../hooks/useTableQuery";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import CustomerCombobox from "../components/shared/CustomerCombobox";
 import PortField from "../components/shared/PortField";
@@ -473,33 +473,53 @@ const QuoteDetailModal = ({ quoteId, navigate, onClose, onChanged, onShipmentCre
 };
 
 // ─── Main page ───────────────────────────────────────────────────────────────
+// Filterable columns — keys match lib/tableQuery.js's QUOTE_COLUMNS in routes/quotes.js. Module-level
+// so useTableQuery gets a stable array.
+const QUOTE_FILTER_KEYS = ["id", "customer", "route", "carrier", "validUntil", "status"];
+const QUOTE_SORT_OPTIONS = [
+  { value: "",           label: "Newest first" },
+  { value: "oldest",     label: "Oldest first" },
+  { value: "validUntil", label: "Valid until ↑ soonest" },
+  { value: "total",      label: "Total ↓ largest" },
+  { value: "customer",   label: "Customer A–Z" },
+];
+
 const QuotesPage = ({ navigate, onShipmentCreated }) => {
-  const [statusFilter, setStatusFilter] = useState("");
-  const [quotes, setQuotes] = useState(null);
-  const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
-  const [limit, setLimit] = useState(getStoredPageSize);
   const [newOpen, setNewOpen] = useState(false);
   const [detailId, setDetailId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
-  const load = useCallback((opts = {}) => {
-    const off = opts.offset !== undefined ? opts.offset : offset;
-    const lim = opts.limit  !== undefined ? opts.limit  : limit;
-    api.quotes.list({ ...(statusFilter ? { status: statusFilter } : {}), limit: lim, offset: off })
-      .then(r => { setQuotes(r.results); setTotal(r.total ?? (r.results || []).length); })
-      .catch(() => { setQuotes([]); setTotal(0); });
-  }, [statusFilter, offset, limit]);
-  useEffect(() => { setOffset(0); load({ offset: 0 }); }, [statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const goPage = off => { setOffset(off); load({ offset: off }); };
-  const changeLimit = n => { setLimit(n); setOffset(0); load({ limit: n, offset: 0 }); };
+  // Same table behavior as Shipments (column-header checklists, search, sort, paging) — see
+  // useTableQuery/DataTable. The old Status dropdown is gone: the Status column's own header
+  // filter replaces it, rather than keeping a second, possibly-disagreeing way to filter one column.
+  const t = useTableQuery({
+    fetchPage: params => api.quotes.list(params),
+    fetchOptions: () => api.quotes.filterOptions(),
+    filterKeys: QUOTE_FILTER_KEYS,
+  });
 
   const doDelete = async id => {
-    try { await api.quotes.remove(id); toast.success("Quote deleted"); load(); }
+    try { await api.quotes.remove(id); toast.success("Quote deleted"); t.reload(); }
     catch (e) { toast.error(e.message); }
     finally { setConfirmDeleteId(null); }
   };
+
+  const columns = [
+    { key: "id", header: "Quote", width: 130, filter: true,
+      render: q => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{q.id}</span> },
+    { key: "customer", header: "Customer", width: 200, filter: true,
+      render: q => <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{q.customerName || "—"}</span> },
+    { key: "route", header: "Route", width: 150, filter: true,
+      render: q => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{q.pol}→{q.pod}</span> },
+    { key: "carrier", header: "Carrier", width: 90, filter: true,
+      render: q => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{q.carrierCode || "—"}</span> },
+    { key: "validUntil", header: "Valid Until", width: 110, filter: true,
+      render: q => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{q.validUntil || "—"}</span> },
+    { key: "total", header: "Total", width: 110, align: "right",
+      render: q => <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 600, color: T.text }}>{fmtUsd(q.totalAmountUsd)}</span> },
+    { key: "status", header: "Status", width: 100, align: "center", filter: true,
+      render: q => <Badge variant={STATUS_VARIANT[q.status] || "default"}>{q.status}</Badge> },
+  ];
 
   return (
     <div style={{ maxWidth: 1200 }}>
@@ -516,59 +536,27 @@ const QuotesPage = ({ navigate, onShipmentCreated }) => {
         <Btn onClick={() => setNewOpen(true)}>+ New Quote</Btn>
       </div>
 
-      <div style={{ marginBottom: 12, width: 200 }}>
-        <Sel label="Status" value={statusFilter} onChange={setStatusFilter}
-          options={[{ value: "", label: "All Statuses" }, ...["Draft", "Sent", "Accepted", "Declined", "Expired", "Converted"].map(s => ({ value: s, label: s }))]} />
-      </div>
+      <TableToolbar tableId="quotes" search={t.filters.search} onSearch={t.setSearch}
+        searchPlaceholder="Search quote, customer, route, carrier, contract…"
+        sort={t.sort} sortOptions={QUOTE_SORT_OPTIONS} onSort={t.setSort}
+        canClear={t.canClear} onClear={t.clear} />
 
-      {quotes === null ? <Spinner /> : quotes.length === 0 ? (
-        <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>No quotes yet.</p>
-      ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: T.body, fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: `1px solid ${T.border}`, color: T.textMuted, textAlign: "left" }}>
-                {["Quote", "Customer", "Route", "Carrier", "Valid Until", "Total", "Status", ""].map(h => (
-                  <th key={h} style={{ padding: "8px", fontWeight: 600, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {quotes.map(q => (
-                <tr key={q.id} style={{ borderBottom: `1px solid ${T.border}` }}>
-                  <td onClick={() => setDetailId(q.id)} style={{ padding: "10px 8px", fontFamily: T.mono, color: T.accent, cursor: "pointer" }}>{q.id}</td>
-                  <td onClick={() => setDetailId(q.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{q.customerName || "—"}</td>
-                  <td onClick={() => setDetailId(q.id)} style={{ padding: "10px 8px", fontFamily: T.mono, cursor: "pointer" }}>{q.pol}→{q.pod}</td>
-                  <td onClick={() => setDetailId(q.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{q.carrierCode || "—"}</td>
-                  <td onClick={() => setDetailId(q.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{q.validUntil || "—"}</td>
-                  <td onClick={() => setDetailId(q.id)} style={{ padding: "10px 8px", fontFamily: T.mono, cursor: "pointer", textAlign: "right" }}>{fmtUsd(q.totalAmountUsd)}</td>
-                  <td onClick={() => setDetailId(q.id)} style={{ padding: "10px 8px", cursor: "pointer" }}><Badge variant={STATUS_VARIANT[q.status] || "default"}>{q.status}</Badge></td>
-                  <td style={{ padding: "10px 8px", textAlign: "right" }} onClick={e => e.stopPropagation()}>
-                    <ActionMenu items={[
-                      { icon: IconEye,   label: "Open",   onClick: () => setDetailId(q.id) },
-                      { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirmDeleteId(q.id) },
-                    ]} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {quotes !== null && quotes.length > 0 && (
-        <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-          <PageSizeSelect value={limit} onChange={changeLimit} />
-          <div style={{ flex: 1 }}><Pagination total={total} offset={offset} limit={limit} onPage={goPage} /></div>
-        </div>
-      )}
+      <DataTable tableId="quotes" columns={columns} rows={t.rows} loading={t.loading} rowKey={q => q.id}
+        hasFilters={t.hasFilters} filters={t.filters} filterOptions={t.options} onFilterChange={t.setColumnFilter}
+        onRowClick={q => setDetailId(q.id)}
+        rowActions={q => [
+          { icon: IconEye,   label: "Open",   onClick: () => setDetailId(q.id) },
+          { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirmDeleteId(q.id) },
+        ]}
+        emptyMessage="No quotes yet." emptyFilteredMessage="No quotes match your filters."
+        pagination={{ total: t.total, offset: t.offset, limit: t.limit, onPage: t.goPage, onLimit: t.changeLimit }} />
 
       {newOpen && (
         <QuoteFormModal onClose={() => setNewOpen(false)}
-          onSaved={saved => { setNewOpen(false); load(); setDetailId(saved.id); }} />
+          onSaved={saved => { setNewOpen(false); t.reload(); setDetailId(saved.id); }} />
       )}
       {detailId && (
-        <QuoteDetailModal quoteId={detailId} navigate={navigate} onClose={() => setDetailId(null)} onChanged={load}
+        <QuoteDetailModal quoteId={detailId} navigate={navigate} onClose={() => setDetailId(null)} onChanged={() => t.reload()}
           onShipmentCreated={onShipmentCreated} />
       )}
       {confirmDeleteId && (

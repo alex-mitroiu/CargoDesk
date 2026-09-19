@@ -6,7 +6,7 @@ Full-stack freight management app. React 18 + Vite frontend, Express + dual-back
 `lib/db.js`) backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.91.4 "Ratify"**
+- Version: **v0.91.5 "Chartroom"**
 - First-time setup: `npm run setup` (`scripts/setup.js`) — boots the server once to create its
   schema, shuts it down cleanly, then seeds MDM reference data, in the correct order. NOT
   zero-script — a genuinely fresh `pgdata/` has no ports/carriers/vessels/commodities until this
@@ -86,13 +86,36 @@ routes/
                      shape) — Document Template Editor (v0.90.0), BL01 pilot only
   loop-codes.js      /api/loop-codes/* (CRUD, rotation full-replace) + /api/loop-codes/resolve
                      (?code=, returns null rather than 404 on a miss) — Loop Codes MDM registry
-                     (v0.90.1), backs the shipment header's clickable Loop field
+                     (v0.90.1), backs the shipment header's clickable Loop field. Each rotation
+                     port carries a real `direction` ('EB'|'WB', v0.91.5) — the PUT stores it and
+                     concatenates Eastbound-then-Westbound into the flat `sequence_order`
+  hs-codes.js        /api/hs-codes/* (CRUD, admin+operator writes, 6-digit code / 2-digit chapter
+                     validated) + /search (typeahead) + /eu-lookup (live, never-persisted proxy to
+                     tariffnumber.com's free V1 cnSuggest endpoint — its terms forbid storing or
+                     caching, so the result is only ever passed through) — HS Codes MDM (v0.91.5)
+lib/
+  tableQuery.js      Shared server-side table engine (v0.91.5) — applyColumnFilters / filterOptions /
+                     applySearch / applySort / paginate over an already access-filtered row set.
+                     Filter params arrive as REPEATED keys (`?status=Draft&status=Sent`), never
+                     comma-joined (a customer name can contain a comma); a present-but-empty param
+                     means "show nothing", an absent one means "no filter". Checklist options are
+                     built from the WHOLE visible set, not the filtered page. Used by routes/quotes.js;
+                     routes/shipments.js still carries its own older inline copy of this logic
+tests/helpers/
+  offices.mjs        ensureOffices() for backend tests (v0.91.5) — returns the first active SE/SI
+                     office, creating a fixed fixture office (FX-FXFIX-SE / FX-FXFIX-SI) only when a
+                     department has none. A fresh CI database has NO offices, so any test that
+                     creates a shipment must call this rather than hand-rolling an /api/offices lookup
+cypress/support/
+  offices.js         Same ensureOffices() for Cypress specs — a separate implementation because the
+                     runners differ (fetch vs cy.request); keep the two behaviorally identical
 scripts/
   setup.js                         First-time setup (npm run setup) — boots the server once to
                                    create its schema, shuts it down cleanly, then runs
                                    import-mdm-data.js, in the order that avoids the pglite
                                    concurrent-connection corruption bug below
-  import-mdm-data.js               Seeds ports, carriers, vessels, commodities, and the full
+  import-mdm-data.js               Seeds ports, carriers, vessels, commodities, the curated 48-entry
+                                   HS-6 registry (data/hs-codes.json, v0.91.5), and the full
                                    208-country/182-country-trade-lane registry, read directly
                                    from the committed db/cargodesk.sample.db (npm run seed) — must
                                    run with the server stopped (lib/db.js's pgdata/ lock refuses a
@@ -162,7 +185,17 @@ src/
                                    (2357 lines as of v0.87.0, down from 4678 — the document-action
                                    modals and shell components below were split out into their own
                                    files, TKT-MRFL3O)
-  api.js                           All fetch wrappers (api.shipments, api.export, api.auth, api.users…)
+  api.js                           All fetch wrappers (api.shipments, api.export, api.auth, api.users…).
+                                   `tableQs(params)` (top of file, v0.91.5) serialises a table query
+                                   into repeated-key params — array values become one key per item,
+                                   an EMPTY array still emits the bare key (= "show nothing")
+  hooks/
+    useTableQuery.js               Shared table state engine (v0.91.5) — filters/sort/search/page in a
+                                   ref+state pair, a stale-response guard (seq ref, so a slow older
+                                   fetch can't overwrite a newer result), 300ms debounced search,
+                                   checklist options fetched once and refreshed on reload().
+                                   `filterKeys` should be a module-level array (the hook documents a
+                                   stable identity as required; it feeds a useCallback dependency)
   tokens.js                        T object, theme colours, route-matching helpers
   toast.js                         Pub-sub toast emitter
   servicesBus.js                   Tiny pub-sub (same shape as toast.js) — ServicesPanel signals
@@ -244,7 +277,10 @@ src/
     QuotesPage.jsx                 Quoting/RFQ (v0.70.0) — top-level nav item, list + New Quote
                                    modal (customer/route/carrier, "Find Matching Contracts" as a
                                    pricing reference, line items) + lifecycle detail modal
-                                   (Send/Accept/Decline/Convert to Shipment)
+                                   (Send/Accept/Decline/Convert to Shipment). The list is the PILOT
+                                   for the shared table system (v0.91.5): TableToolbar + DataTable +
+                                   useTableQuery, server-side filter/sort/search/paging — the old
+                                   Status dropdown is gone, the Status column header filter replaces it
     OpportunitiesPage.jsx          CRM pre-sales pipeline (v0.85.0) — top-level nav item, above
                                    Quotes in the sidebar (real funnel order). List + New
                                    Opportunity modal (title required, everything else optional —
@@ -267,7 +303,14 @@ src/
       MdmRegionsPage.jsx           Regions
       MdmLoopCodesPage.jsx         Loop Codes registry (v0.90.1) — list + a drag-to-reorder
                                    port-rotation editor per loop, referencing port_locations
-                                   directly rather than storing its own coordinates
+                                   directly rather than storing its own coordinates. As of v0.91.5
+                                   ONE tabbed edit modal (Details + Rotation) and the rotation is
+                                   two columns, Eastbound and Westbound, each independently
+                                   ordered with its own transit days — a port may appear in both
+      MdmHsCodesPage.jsx           HS Codes registry (v0.91.5) — its own nav item under Master Data.
+                                   Search + 2-digit chapter filter, admin/operator CRUD, and a
+                                   "Look up in EU TARIC" helper that queries tariffnumber.com live
+                                   and lets the user copy a code in — the result is never stored
       LoopMapExplorerPage.jsx      World-spanning map browsing every registered carrier loop at
                                    once (Master Data → Loop Codes → Loop Map Explorer) — multi-
                                    select up to 5 loops at a time (readability cap, not a
@@ -298,6 +341,21 @@ src/
                                    Shipments modal, ShipmentSchedulesPage's Space Configuration
                                    panel, ShipmentFormPage's Contract Picker card
       PortCombobox.jsx             position:fixed dropdown (escapes modal overflow)
+      ColumnFilter.jsx             Excel-style header checklist (search, Select all/Clear) — portaled to
+                                   document.body. null = no filter, array = subset, [] = show nothing;
+                                   selecting every option reports null. Shared by Dashboard, Shipments
+                                   and DataTable
+      DataTable.jsx                Presentational Shipments-style table shell (v0.91.5): resizable
+                                   columns (useResizableColumns), ColumnFilter headers, ActionMenu row
+                                   actions, Pagination + PageSizeSelect footer, loading/empty states.
+                                   Owns no data state — useTableQuery does. Named export TableToolbar
+                                   is the search box + sort select + Clear button above it
+      HsCodeCombobox.jsx           HS Code lookup (v0.91.5) — typeahead + browse-all picker with
+                                   chapter chips, backed by the HS Codes registry. Replaces the free-
+                                   text HS Code inputs in ContainerForm's Cargo Details and the
+                                   per-package override; a legacy free-text value not in the registry
+                                   still renders as-is. Exports HsCodeCombobox, HsCodePickerModal,
+                                   ChapterChip, CHAPTER_NAME. Dropdown is portaled (see Key patterns)
       CommodityCombobox.jsx        Typeahead with GradePill + CommodityPickerModal
       VesselCombobox.jsx           {VesselCombobox, VesselField} named exports
       EntityHistoryModal.jsx       Generic audit-log timeline viewer
@@ -437,7 +495,8 @@ are fully validated.
 | shipment_documents | Uploaded documents metadata (filename, type, label). `bl_surrendered_at`/`_by`, `bl_released_at`/`_by` (v0.90.0, House B/L Lifecycle) — post-issuance facts on a confirmed `BL01` row, same sparse per-doc-type idiom `paid_at`/`paid_amount` (FR01/FR02-only) already established. Idempotent, set via `PATCH .../bl-surrender`/`.../bl-release`, logged through the existing `entity_events` mechanism |
 | document_templates | Document Template Editor (v0.90.0) — a free-form canvas layout scoped by `(doc_type, office_id?, carrier_code?)`, `BL01` pilot only. `fields` is a JSON array of absolutely-positioned boxes (bound to a shipment value or free text) or `type:"table"` repeating regions bound to `containers`. No DB-level `UNIQUE` on the scope triple (Postgres treats `NULL <> NULL`, so two generic rows wouldn't collide at the constraint level anyway) — the create route enforces it itself via `IS NOT DISTINCT FROM` |
 | loop_codes | Loop Codes MDM registry (v0.90.1) — a carrier's named service loop (e.g. "AL1") + frequency/round-trip metadata. Gives a shipment header's live-derived `loopCode` string (`deriveLoopCode`, still just `shipment_schedules[0].service`) somewhere real to resolve against via `GET /api/loop-codes/resolve?code=`; no FK from either side, a miss is the normal/expected case |
-| loop_code_ports | Ordered rotation for a `loop_codes` row (v0.90.1) — `port_unlocode` references `port_locations` directly rather than storing its own lat/lng (that table already has it for all 14,269 ports), `sequence_order` + optional `transit_day_offset` per stop. Full-replace on save (drag-to-reorder edits the whole list at once), not row-by-row CRUD |
+| loop_code_ports | Ordered rotation for a `loop_codes` row (v0.90.1) — `port_unlocode` references `port_locations` directly rather than storing its own lat/lng (that table already has it for all 14,269 ports), `sequence_order` + optional `transit_day_offset` per stop. `direction` (v0.91.5, `'EB'\|'WB'`, default `'EB'`) — which of the loop's two directional legs the stop belongs to; a port can legitimately exist in both. Full-replace on save (Eastbound rows then Westbound rows concatenated into one flat `sequence_order`), not row-by-row CRUD |
+| hs_codes | HS Codes MDM registry (v0.91.5) — curated real HS-6 codes (`code` PK, 6 digits), `description`, `hs_chapter` (2-digit, matches `duty_rate_chapters`' shape but deliberately no FK). Separate from `commodities` (internal cargo-grade catalogue) and from the duty-rate tables (chapter-level duty %). Local-only, not mirrored to the MDM microservice |
 | status_log | Shipment status transitions (legacy, kept for compat) |
 | entity_events | Generic audit log for allocations, carriers, contracts |
 | commodities | 294 Maersk freight commodity codes (Grades M/K/E/S/Q) |
@@ -465,6 +524,10 @@ are fully validated.
 
 ## Key patterns
 - **DatePicker with time**: pass `withTime` to get a native time input alongside the calendar in the same popover — `value` becomes `"YYYY-MM-DDTHH:mm"` instead of a bare date (defaults the time to `09:00` the first time a day is picked; reopening lets the time be adjusted independently). The calendar/nav logic internally still operates on just the date part, so every other `DatePicker` call site in the app is unaffected by this prop existing. Used by `LoadingServicePage.jsx`'s per-container planned date field, for both Loading and Unloading — reuse the same prop for any future field that needs date+time rather than building a separate picker.
+- **Dropdowns inside Trade Horizon cards must be portaled (v0.91.5)**: a `backdrop-filter`/`filter`/`transform` on ANY ancestor makes `position: fixed` resolve against that ancestor instead of the viewport, so a dropdown whose coordinates come from `getBoundingClientRect()` lands off-target inside a glass card (found live on Equipment Type). Render such dropdowns via `createPortal(..., document.body)` and make the outside-click handler check BOTH the trigger and the portaled list's own ref — `ColumnFilter.jsx`, `HsCodeCombobox.jsx`, `ContainerTypePickerModal.jsx` are the precedents. `CommodityCombobox`/`PortCombobox`/`CarrierCombobox` still use the non-portaled form and share the risk.
+- **Shared table system (v0.91.5)**: a Shipments-style list is `useTableQuery` (state + fetching) + `DataTable`/`TableToolbar` (rendering) on the client and `lib/tableQuery.js` on the server (`applyColumnFilters → applySearch → applySort → paginate`, plus a `/filter-options` route registered BEFORE `/:id`). Conventions that fail silently if broken: filter params are repeated keys, never comma-joined; a present-but-empty param means show nothing; checklist options come from the whole access-filtered set, not the current page. Also keep `filterKeys` a module-level array. Quotes is the pilot; Opportunities, Contracts, Customers, Space Configurations, Freight Audit, Credit Overrides and Schedules are the queued wave 1.
+- **Trade Horizon is dual-theme (v0.91.5)**: `HZ_DARK`/`HZ_LIGHT` in `shipmentDetailTheme.js` (Shipment Details) and `DashboardPage.jsx` (Dashboard), each a mutable `HZ` object swapped in place by `applyHzTheme(dark)` / `applyDashboardHzTheme(dark)` — the same mutable-object pattern as `T`/`applyTheme`, all three driven from `App.jsx`'s `isDark`/`toggleTheme`. Style through `HZ.*` tokens only (incl. `goodPillText`/`infoPillText`/`violetPillText`/`chipText` for text on tinted pills, `cardBlur`, and `cardShadow`, which light glass cards need on their `boxShadow`); never hardcode a dark literal. `HZ_LEGACY_THEME` uses getters so it stays live after a theme swap. Command Center already followed the app theme via `isDark` → classic `T`.
+- **Every test that creates a shipment provisions its own offices (v0.91.5)**: a CI database starts with no offices, and `emoOfficeId`/`imoOfficeId` are required, so call `ensureOffices()` (`tests/helpers/offices.mjs`, `cypress/support/offices.js`) instead of looking one up. CI's backend job sets `LOGIN_RATE_MAX: '1000'` — the 73-file suite exhausts the old 200 cap around file 60; the Cypress job stays at 200.
 - **PortCombobox dropdown**: always `position: fixed` with `getBoundingClientRect()` to escape modal `overflow:auto` — `CarrierCombobox` and `DatePicker` (as of v0.40.1) follow the same pattern; any *new* dropdown/popover primitive should too, rather than `position: absolute`, which breaks the moment it lands inside any scrolling/clipped container
 - **Paginated responses**: `api.ports.search(...)` returns `{ results: [], total, limit, offset }` — always use `.results`
 - **Page-size dropdown (v0.78.0)**: `<PageSizeSelect value={limit} onChange={setLimit} />` (primitives) rendered next to `<Pagination>` on every table that scales with real usage — 50/75/100, one shared `cargodesk_page_size` localStorage key (not per-table). `GET /api/shipments`/`/linked-ports`/`/carrier-agents` all use the same opt-in shape: omit `limit`/`offset` entirely and get today's bare-array response (every existing zero-arg caller, e.g. App.jsx's own shared full-array load, is unaffected); pass them and get `{results,total,limit,offset}` with `status`/`carrier`/`search`/`sort` also opt-in on `/shipments`. Small/bounded tables (a shipment's own cost lines, containers, milestones; org headcount) deliberately stay unpaginated or get lighter client-side slicing — see ARCHITECTURE.md §8.18 for the full scope split.
@@ -506,6 +569,75 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.91.5 "Chartroom")
+Bundled release — Master Data gains a real Eastbound/Westbound loop editor and an HS Codes
+registry, the Trade Horizon design system gets a light theme, Quotes becomes the pilot for a
+shared Shipments-style table system, and the CI pipeline goes green again after being red since
+v0.91.3. Three of the four commits landed unversioned (a1b52ef, 45b8bee, 7c9015a); this bump
+rolls them up.
+- **Loop Codes MDM: Eastbound/Westbound editor** — "Edit" and "Edit Rotation" are now one tabbed
+  modal (Details / Rotation). The rotation is two independently-ordered columns backed by a real
+  `loop_code_ports.direction` column (`'EB'|'WB'`, default `'EB'`, idempotent `ADD COLUMN IF NOT
+  EXISTS`); a port may legitimately appear in both. On save the two columns are concatenated
+  Eastbound-first into the flat `sequence_order`, so no other consumer had to change. Convention:
+  transatlantic Europe→US is Westbound, transpacific Asia→US is Eastbound. `LoopRouteModal` (the
+  shipment header's Loop field) used to guess direction from port longitude and now reads the
+  stored value; it also renders a genuine single-port leg instead of hiding it behind "No
+  eastbound ports registered". AL1 carries the real Hapag-Lloyd Gemini rotation (Southampton →
+  Rotterdam → Hamburg → Wilhelmshaven → New York → Norfolk → Philadelphia → Saint John, sourced
+  from Kuehne+Nagel's public schedule page). **The other five loops (AL5, ME9, PL2, PL7, TP3) got
+  correct directional splits but their port lists are NOT yet verified against a public source** —
+  that research is still open.
+- **HS Codes MDM + registry-backed lookup** — new `hs_codes` table, `routes/hs-codes.js`,
+  `MdmHsCodesPage`, and a curated 48-entry real HS-6 set (`data/hs-codes.json`, seeded by
+  `import-mdm-data.js`). Deliberately separate from `commodities` (CargoDesk's internal
+  cargo-grade catalogue) and `duty_rate_chapters`. `GET /api/hs-codes/eu-lookup` proxies
+  tariffnumber.com's free endpoint live and never persists the result, because its terms forbid
+  storing or caching. The free-text HS Code inputs in `ContainerForm`'s Cargo Details and the
+  per-package override became `HsCodeCombobox`; a pre-existing free-text value still displays.
+  The draft container row on `ShipmentFormPage` (classic-themed, not Trade Horizon) is still free
+  text.
+- **Trade Horizon light theme** — Dashboard and Shipment Details now follow the app's dark/light
+  toggle. `HZ_DARK`/`HZ_LIGHT` + `applyHzTheme`/`applyDashboardHzTheme` (see Key patterns), new
+  pill-text/chip-text tokens so tinted pills stay legible on white, and a card blur/shadow retrofit
+  so light glass cards separate from a light background. Command Center already supported light.
+- **Dropdowns rendering off-target inside glass cards** — Equipment Type (and the new HS Code
+  combobox, which had the same flaw) opened far from its input: a Trade Horizon card's
+  `backdrop-filter` redefines the containing block for `position: fixed` descendants. Both now
+  render through a portal to `document.body` (see Key patterns for the rule and its remaining
+  exposure in the other comboboxes).
+- **Shared table system, Quotes as the pilot** — `lib/tableQuery.js` (server), `useTableQuery`
+  (state), `DataTable`/`TableToolbar` (rendering); `GET /api/quotes` now does server-side
+  filter/sort/search/paging and `GET /api/quotes/filter-options` feeds the header checklists.
+  Quotes' old Status dropdown was removed — the Status column header filter replaces it rather
+  than leaving two possibly-disagreeing ways to filter one column. The other operational lists
+  are not migrated yet; `routes/shipments.js` still has its own inline copy of the same logic.
+- **Shipment Details sidebar, forms and contract fixes** — the sidebar gains a collapsible icon
+  rail and per-group folding (personal, `localStorage` only) plus a milestone-driven vitals
+  card; "+ Add Leg" opens a Pick-up / SEA / Delivery type menu. Three contract-path fixes:
+  the v0.91.4 CRD-vs-ETD guard fix was incomplete — it gated on the request *containing*
+  `cargoReadyDate`/`etd`, but `ContractAssignModal.finish()` always PUTs the full shipment object,
+  so both were always present and a stale mismatch kept wiping `contractId` (re-confirmed live on
+  SHP-RN2X5O); the guard now compares the effective values to the stored ones. A stale
+  "Requires Review" left by a past firing now auto-clears to Active when a fresh contract is
+  assigned after the dates are fixed (narrow: never overrides a status the caller sent). Contract
+  match results are de-duplicated by `id::routingId`, and `/api/allocations/match` treats `etd` as
+  optional (a blank ETD used to return `[]`, so the space-configuration search looked dead during
+  shipment creation).
+- **CI green again** — CI had been red since v0.91.3, which made `emoOfficeId`/`imoOfficeId`
+  required at shipment creation. ~75 tests looked up "the first active SE/SI office", which only
+  ever existed in the long-lived local dev database, so on CI's empty database the first backend
+  file failed and — because `npm test` is a `&&` chain — ~65 files never ran, and 19 of 26 Cypress
+  specs died in their `before` hook. Every affected test now calls `ensureOffices()` (see Key
+  files). That fix exposed a second one: the backend job's `LOGIN_RATE_MAX` of 200 was sized for 29
+  test files and ran out around file 60 of 73, so it is now 1000 (Cypress job unchanged).
+  Verified against a throwaway clone with no `pgdata/`: backend 73/73, Cypress 26/26.
+- Tests: `tests/quoting-rfq.test.js` +15 assertions (repeated params, comma-in-name, route filter,
+  AND semantics, empty selection, case-insensitive search, newest/oldest, paging, filter-options);
+  new `src/hooks/useTableQuery.test.jsx` and `src/components/shared/DataTable.test.jsx` (23 tests);
+  frontend suite 5 files / 33 tests. Clean `vite build`. No shipment-domain gap audit was run for
+  this release — the last (2026-09-18) was clean and nothing here touches the shipment lifecycle.
 
 ## Recent changes (v0.91.4 "Ratify")
 Fix wave — three real bugs found via direct user testing of the Contract Picker (Shipments >

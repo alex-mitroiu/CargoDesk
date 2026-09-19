@@ -14,6 +14,8 @@
 // quoted price commonly includes a margin the contract rate alone doesn't show. On conversion,
 // those lines become the new shipment's SELL cost lines (source 'quote'); the BUY side still
 // comes from the real matched contract via the existing importContractRates path, unchanged.
+const { applyColumnFilters, filterOptions, applySearch, applySort, paginate } = require("../lib/tableQuery");
+
 module.exports = function quotesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, isUniqueViolation, mapQuote, mapQuoteLine, mapShipment,
           logEvent, logEntityEvent, toUsd, SERVICE_CODE_MAP, importContractRates,
@@ -116,17 +118,60 @@ module.exports = function quotesRoutes(app, ctx) {
   // routes/shipments.js's own GET /api/shipments precedent exactly, for the same reason: the
   // filter is header/JS-driven and can't safely run after a SQL LIMIT/OFFSET without risking a
   // wrong or short page (User Management redesign, 2026-09-12 — quotes had no scoping before this).
-  app.get("/api/quotes", async (req, res) => {
-    const { status = "", customerId = "", limit = "50", offset = "0" } = req.query;
-    const clauses = [], params = [];
-    const p = v => { params.push(v); return `$${params.length}`; };
-    if (status.trim()) clauses.push(`status=${p(status.trim())}`);
-    if (customerId.trim()) clauses.push(`customer_id=${p(customerId.trim())}`);
-    const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
+  // Column → the value the Quotes table shows and filters on. ONE definition feeds both the list
+  // route's column filters and /filter-options, so a header checklist can never offer a value the
+  // filter doesn't understand. `route` is the same "POL→POD" string the Route column renders.
+  const QUOTE_COLUMNS = {
+    id:         q => q.id,
+    customer:   q => q.customerName,
+    route:      q => (q.pol && q.pod ? `${q.pol}→${q.pod}` : ""),
+    carrier:    q => q.carrierCode,
+    validUntil: q => q.validUntil,
+    status:     q => q.status,
+  };
+  const quoteSearchText = q =>
+    [q.id, q.customerName, q.consigneeName, q.pol, q.pod, q.carrierCode, q.contractRef, q.notes].join(" ");
+  // Blanks always sort last, whichever direction — a quote with no valid-until date or customer
+  // yet isn't "earliest" or "A" just because "" compares low.
+  const blanksLast = get => (a, b) => {
+    const x = get(a), y = get(b);
+    if (!x && !y) return 0; if (!x) return 1; if (!y) return -1;
+    return x.localeCompare(y);
+  };
+  // The SQL already returns newest-first (ORDER BY created_at DESC), which is the default and
+  // needs no entry here.
+  const QUOTE_SORTERS = {
+    oldest:     (a, b) => String(a.createdAt).localeCompare(String(b.createdAt)),
+    validUntil: blanksLast(q => q.validUntil),
+    customer:   blanksLast(q => q.customerName),
+    total:      (a, b) => (b.totalAmountUsd || 0) - (a.totalAmountUsd || 0),
+  };
+
+  const loadVisibleQuotes = async (req, where = "", params = []) => {
     const rows = await query(`SELECT * FROM quotes ${where} ORDER BY created_at DESC`, params);
-    const filtered = await applyOfficeScopedAccessFilter(rows.map(mapQuote), req.user, req);
-    const lim = Math.min(parseInt(limit) || 50, 200), off = parseInt(offset) || 0;
-    ok(res, { results: filtered.slice(off, off + lim), total: filtered.length, limit: lim, offset: off });
+    return applyOfficeScopedAccessFilter(rows.map(mapQuote), req.user, req);
+  };
+
+  // `status` used to be a single SQL equality and now goes through the shared column filter with
+  // every other column (so ?status=Sent, still used by tests/quoting-rfq.test.js, behaves exactly
+  // as before, and ?status=Draft&status=Sent works too). customerId stays in SQL — it isn't a
+  // table column, it's the "quotes for this customer" scope other pages pass in.
+  app.get("/api/quotes", async (req, res) => {
+    const { customerId = "", search = "", sort = "" } = req.query;
+    const clauses = [], params = [];
+    if (String(customerId).trim()) { params.push(String(customerId).trim()); clauses.push(`customer_id=$${params.length}`); }
+    const visible = await loadVisibleQuotes(req, clauses.length ? "WHERE " + clauses.join(" AND ") : "", params);
+    let rows = applyColumnFilters(visible, req.query, QUOTE_COLUMNS);
+    rows = applySearch(rows, search, quoteSearchText);
+    rows = applySort(rows, sort, QUOTE_SORTERS);
+    ok(res, paginate(rows, req.query));
+  });
+
+  // Checklist source for each column header's filter — MUST be registered before /api/quotes/:id
+  // (Express matches in registration order; :id would swallow "filter-options" as an id). Built
+  // from the caller's whole visible set, deliberately ignoring the list's own filters/paging.
+  app.get("/api/quotes/filter-options", async (req, res) => {
+    ok(res, filterOptions(await loadVisibleQuotes(req), QUOTE_COLUMNS));
   });
 
   // Upcoming/just-passed expiries for the Header notification bell — MUST be registered before

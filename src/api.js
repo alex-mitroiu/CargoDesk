@@ -5,6 +5,21 @@ export const ACTIVE_OFFICE_KEY = "cargodesk_active_office";
 
 import { toast } from "./toast";
 
+// Query string for the data-table list endpoints (lib/tableQuery.js on the server). A column
+// filter is an array and goes out as a REPEATED param (?status=Draft&status=Sent), not a
+// comma-joined string, so a comma inside a real value ("Smith & Sons, Ltd.") can't split in two.
+// An EMPTY array is the ColumnFilter's deliberate "show nothing" selection — sent as a present but
+// empty param (?status=), which the server treats as matching no row, distinct from an absent param.
+const tableQs = (params = {}) => {
+  const u = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null || v === "") continue;
+    if (Array.isArray(v)) { if (v.length === 0) u.append(k, ""); else v.forEach(x => u.append(k, x)); }
+    else u.append(k, v);
+  }
+  return u.toString();
+};
+
 const req = async (method, path, body) => {
   const token      = localStorage.getItem(TOKEN_KEY);
   const activeRole = localStorage.getItem(ACTIVE_ROLE_KEY);
@@ -744,7 +759,8 @@ export const api = {
       req("POST", "/ai/extract-document", { dataBase64, mimeType, instructions }),
   },
   quotes: {
-    list:    (p = {})    => req("GET",    `/quotes?${new URLSearchParams(p)}`),
+    list:    (p = {})    => req("GET",    `/quotes?${tableQs(p)}`),
+    filterOptions: ()    => req("GET",    "/quotes/filter-options"),
     get:     (id)        => req("GET",    `/quotes/${id}`),
     create:  (data)      => req("POST",   "/quotes", data),
     update:  (id, data)  => req("PUT",    `/quotes/${id}`, data),
