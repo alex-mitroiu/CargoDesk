@@ -150,6 +150,30 @@ async function setSource(token, value) {
       shipHold.body?.creditWarning?.onHold?.some(h => h.customerId === custHoldId), JSON.stringify(shipHold.body?.creditWarning));
     shipHoldId = shipHold.body.id;
 
+    // The Customers table view (routes/customers.js GET /api/customers/table + /filter-options) reads the
+    // WHOLE registry with one call to the service (no paging -> a bare array) and attaches derived roles
+    // from the monolith's own shipments — the one place a remote-owned customer and a local shipment meet.
+    console.log("\n'remote' mode — the Customers table view reads through the service; roles are still derived locally");
+    const tblQs = p => new URLSearchParams(p).toString();
+    const holdName = `Toggle Hold Test Co ${stamp}`;
+    const tblHold = await request("GET", `/api/customers/table?${tblQs({ search: holdName })}`, null, token);
+    assert("table view finds the remote-owned customer", tblHold.status === 200 && tblHold.body.total === 1 && tblHold.body.results[0]?.id === custHoldId, JSON.stringify(tblHold.body).slice(0, 220));
+    assert("its Shipper role is derived from the LOCAL shipment although the customer lives in the service",
+      JSON.stringify(tblHold.body.results[0]?.roles) === JSON.stringify(["Shipper"]), JSON.stringify(tblHold.body.results[0]?.roles));
+    assert("service-owned fields survive (creditHold)", tblHold.body.results[0]?.creditHold === true);
+    const tblLocalOnly = await request("GET", `/api/customers/table?${tblQs({ search: `Toggle Test Local Co ${stamp}` })}`, null, token);
+    assert("the local-only customer is invisible while on remote, exactly like the older list", tblLocalOnly.body.total === 0, `total=${tblLocalOnly.body.total}`);
+    const tblRole = await request("GET", `/api/customers/table?${tblQs({ search: holdName, roles: "Shipper" })}`, null, token);
+    assert("the Roles column filter works on a remote-owned customer", tblRole.body.total === 1, `total=${tblRole.body.total}`);
+    const tblNoBank = await request("GET", `/api/customers/table?${tblQs({ search: holdName, roles: "Bank" })}`, null, token);
+    assert("...and excludes it for a role it does not have", tblNoBank.body.total === 0, `total=${tblNoBank.body.total}`);
+    const tblScope = await request("GET", `/api/customers/table?${tblQs({ search: holdName, role: "Shipper,Consignee" })}`, null, token);
+    assert("the segmented `role` scope works too", tblScope.body.total === 1, `total=${tblScope.body.total}`);
+    const optsRemote = await request("GET", "/api/customers/filter-options", null, token);
+    assert("filter-options come from the service's registry (remote customer in, local-only out)",
+      optsRemote.status === 200 && optsRemote.body.company.includes(holdName) && !optsRemote.body.company.includes(`Toggle Test Local Co ${stamp}`), JSON.stringify(Object.keys(optsRemote.body || {})));
+    assert("...with its derived role offered", optsRemote.body.roles.includes("Shipper"));
+
     const bookingAttempt = await request("POST", `/api/shipments/${shipHoldId}/edi-messages/booking-request`, {}, token);
     assert("booking-request hard-blocked for a held customer (getCustomerRow remote branch, edi.js)", bookingAttempt.status === 409, JSON.stringify(bookingAttempt.body));
 

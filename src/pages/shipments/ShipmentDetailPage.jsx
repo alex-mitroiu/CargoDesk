@@ -66,9 +66,9 @@ const SectionHeader = ({ n, title }) => {
         {tip && (
           <div style={{
             position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 9999,
-            background: HZ.surfaceSolid, backdropFilter: "blur(16px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
+            background: HZ.surfaceSolid, backdropFilter: "blur(16px)", border: `1px solid ${HZ.border}`,
             borderRadius: 8, padding: "10px 14px",
-            boxShadow: "0 8px 24px rgba(0,0,0,.45)",
+            boxShadow: HZ.popoverShadow,
             minWidth: 240, maxWidth: 300,
             fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, lineHeight: 1.6,
             pointerEvents: "none",

@@ -95,6 +95,15 @@ const DatePicker = ({
   }, [datePart]);
 
   // Close on outside click
+  // Escape closes an open calendar. Capture phase + preventDefault so it runs before, and is seen as
+  // handled by, an enclosing Modal's own Escape-to-close (the calendar closes, the modal stays).
+  useEffect(() => {
+    if (!open) return;
+    const h = e => { if (e.key === "Escape") { e.preventDefault(); setOpen(false); setView("days"); } };
+    document.addEventListener("keydown", h, true);
+    return () => document.removeEventListener("keydown", h, true);
+  }, [open]);
+
   useEffect(() => {
     const h = e => { if (ref.current && !ref.current.contains(e.target)) { setOpen(false); setView("days"); } };
     document.addEventListener("mousedown", h);

@@ -14,7 +14,7 @@
 // quoted price commonly includes a margin the contract rate alone doesn't show. On conversion,
 // those lines become the new shipment's SELL cost lines (source 'quote'); the BUY side still
 // comes from the real matched contract via the existing importContractRates path, unchanged.
-const { applyColumnFilters, filterOptions, applySearch, applySort, paginate } = require("../lib/tableQuery");
+const { applyColumnFilters, filterOptions, applySearch, applySort, paginate, blanksLast } = require("../lib/tableQuery");
 
 module.exports = function quotesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, isUniqueViolation, mapQuote, mapQuoteLine, mapShipment,
@@ -131,13 +131,7 @@ module.exports = function quotesRoutes(app, ctx) {
   };
   const quoteSearchText = q =>
     [q.id, q.customerName, q.consigneeName, q.pol, q.pod, q.carrierCode, q.contractRef, q.notes].join(" ");
-  // Blanks always sort last, whichever direction — a quote with no valid-until date or customer
-  // yet isn't "earliest" or "A" just because "" compares low.
-  const blanksLast = get => (a, b) => {
-    const x = get(a), y = get(b);
-    if (!x && !y) return 0; if (!x) return 1; if (!y) return -1;
-    return x.localeCompare(y);
-  };
+  // (blanksLast: a quote with no valid-until date or customer yet sorts last, not first — see lib/tableQuery.js)
   // The SQL already returns newest-first (ORDER BY created_at DESC), which is the default and
   // needs no entry here.
   const QUOTE_SORTERS = {

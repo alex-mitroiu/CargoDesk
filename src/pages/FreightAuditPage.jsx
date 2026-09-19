@@ -9,11 +9,10 @@ import { Field, Inp, Sel } from "../components/primitives/Form";
 import { inputBase } from "../components/primitives/Form";
 import DatePicker from "../components/primitives/DatePicker";
 import Spinner from "../components/primitives/Spinner";
-import Pagination from "../components/primitives/Pagination";
-import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
+import DataTable, { TableToolbar } from "../components/shared/DataTable";
+import useTableQuery from "../hooks/useTableQuery";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import { IconFileCertificate, IconSearch, IconClose, IconUpload, IconEye } from "../components/primitives/Icon";
-import ActionMenu from "../components/primitives/ActionMenu";
 
 // ─── Freight Audit & Payment ────────────────────────────────────────────────
 // Reconciles a carrier's own submitted invoice against what was actually contracted (or already
@@ -375,44 +374,99 @@ const InvoiceDetailModal = ({ invoiceId, shipments, navigate, onClose, onChanged
 };
 
 // ─── Main page ───────────────────────────────────────────────────────────────
+// Filterable columns — keys match routes/carrier-invoices.js's INVOICE_COLUMNS / EXCEPTION_COLUMNS.
+// Module-level so useTableQuery gets stable arrays.
+const INVOICE_FILTER_KEYS = ["invoice", "shipment", "carrier", "date", "status"];
+const INVOICE_SORT_OPTIONS = [
+  { value: "",        label: "Newest first" },
+  { value: "oldest",  label: "Oldest first" },
+  { value: "date",    label: "Latest invoice" },
+  { value: "invoice", label: "Invoice # A–Z" },
+];
+const EXCEPTION_FILTER_KEYS = ["shipment", "invoice", "service", "status"];
+const EXCEPTION_SORT_OPTIONS = [
+  { value: "",       label: "Worst variance" },
+  { value: "amount", label: "Amount ↓ largest" },
+];
+
+// A money cell: header centered over the amounts, amounts still right-aligned to each other (the cell
+// is centered so the header centers too; the figure sits in a fixed-width right-aligned block).
+const moneyCell = (text, color) => (
+  <span style={{ display: "inline-block", minWidth: 88, textAlign: "right", fontFamily: T.mono, fontSize: 13, fontWeight: 600, color: color || T.text }}>{text}</span>
+);
+
 const FreightAuditPage = ({ shipments, navigate }) => {
   const [activeTab, setActiveTab] = useState("all"); // 'all' | 'exceptions'
-  const [invoices, setInvoices] = useState(null);
-  const [invoicesTotal, setInvoicesTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
-  const [limit, setLimit] = useState(getStoredPageSize);
-  const [exceptions, setExceptions] = useState(null);
-  const [statusFilter, setStatusFilter] = useState("");
+  const [exceptionCount, setExceptionCount] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
   const [detailId, setDetailId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
-  const loadInvoices = useCallback((opts = {}) => {
-    const off = opts.offset !== undefined ? opts.offset : offset;
-    const lim = opts.limit  !== undefined ? opts.limit  : limit;
-    api.carrierInvoices.list({ ...(statusFilter ? { status: statusFilter } : {}), limit: lim, offset: off })
-      .then(r => { setInvoices(r.results); setInvoicesTotal(r.total ?? (r.results || []).length); })
-      .catch(() => { setInvoices([]); setInvoicesTotal(0); });
-  }, [statusFilter, offset, limit]);
-  const loadExceptions = useCallback(() => {
-    api.carrierInvoices.exceptions().then(setExceptions).catch(() => setExceptions([]));
+  // Same table behavior as Shipments, Quotes, Contracts, Opportunities and Customers (column-header
+  // checklists, search, sort, paging) — see useTableQuery/DataTable. The old Status dropdown is gone:
+  // the Status column's own header filter replaces it, rather than keeping a second, possibly-disagreeing
+  // way to filter one column.
+  const invoicesT = useTableQuery({
+    fetchPage: params => api.carrierInvoices.list(params),
+    fetchOptions: () => api.carrierInvoices.filterOptions(),
+    filterKeys: INVOICE_FILTER_KEYS,
+  });
+  const exceptionsT = useTableQuery({
+    fetchPage: params => api.carrierInvoices.exceptionsTable(params),
+    fetchOptions: () => api.carrierInvoices.exceptionsFilterOptions(),
+    filterKeys: EXCEPTION_FILTER_KEYS,
+  });
+  // The tab badge counts ALL open exception lines whatever the table is filtered to, so it keeps using
+  // the plain array endpoint rather than the table's (filtered) total.
+  const loadExceptionCount = useCallback(() => {
+    api.carrierInvoices.exceptions().then(list => setExceptionCount(list.length)).catch(() => setExceptionCount(0));
   }, []);
+  useEffect(() => { loadExceptionCount(); }, [loadExceptionCount]);
+  // An approve/dispute/create/delete can move lines between the two tables and the badge, so all three refresh.
+  const reloadAll = () => { invoicesT.reload(); exceptionsT.reload(); loadExceptionCount(); };
 
-  useEffect(() => { setOffset(0); loadInvoices({ offset: 0 }); loadExceptions(); }, [statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const goPage = off => { setOffset(off); loadInvoices({ offset: off }); };
-  const changeLimit = n => { setLimit(n); setOffset(0); loadInvoices({ limit: n, offset: 0 }); };
-
-  const shipmentLabel = id => {
+  const shipmentRoute = id => {
     const s = shipments.find(x => x.id === id);
-    return s ? `${id} (${s.pol}→${s.pod})` : id;
+    return s ? `${s.pol}→${s.pod}` : "";
+  };
+  const shipmentLabel = id => {
+    const route = shipmentRoute(id);
+    return route ? `${id} (${route})` : id;
   };
 
   const doDelete = async id => {
-    try { await api.carrierInvoices.remove(id); toast.success("Invoice deleted"); loadInvoices(); loadExceptions(); }
+    try { await api.carrierInvoices.remove(id); toast.success("Invoice deleted"); reloadAll(); }
     catch (e) { toast.error(e.message); }
     finally { setConfirmDeleteId(null); }
   };
+
+  const invoiceColumns = [
+    { key: "invoice", header: "Invoice #", width: 175, filter: true,
+      render: inv => <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent }}>{inv.invoiceNumber || inv.id}</span> },
+    { key: "shipment", header: "Shipment", width: 270, filter: true, describe: shipmentRoute,
+      render: inv => <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{shipmentLabel(inv.shipmentId)}</span> },
+    { key: "carrier", header: "Carrier", width: 110, filter: true,
+      render: inv => <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{inv.carrierCode || "—"}</span> },
+    { key: "date", header: "Date", width: 130, filter: true,
+      render: inv => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{inv.invoiceDate || "—"}</span> },
+    { key: "status", header: "Status", width: 125, align: "center", filter: true,
+      render: inv => <Badge variant={STATUS_VARIANT[inv.status] || "default"}>{inv.status}</Badge> },
+  ];
+
+  const exceptionColumns = [
+    { key: "shipment", header: "Shipment", width: 260, filter: true, describe: shipmentRoute,
+      render: e => <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{shipmentLabel(e.shipmentId)}</span> },
+    { key: "invoice", header: "Invoice", width: 170, filter: true,
+      render: e => <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent }}>{e.invoiceNumber || e.invoiceId}</span> },
+    { key: "service", header: "Service", width: 110, filter: true,
+      render: e => <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text }}>{e.serviceCode}</span> },
+    { key: "amount", header: "Amount", width: 120, align: "center", render: e => moneyCell(fmtUsd(e.amountUsd)) },
+    { key: "expected", header: "Expected", width: 120, align: "center", render: e => moneyCell(fmtUsd(e.expectedAmountUsd)) },
+    { key: "variance", header: "Variance", width: 120, align: "center",
+      render: e => moneyCell(e.varianceUsd == null ? "—" : fmtUsd(Math.abs(e.varianceUsd)), e.varianceUsd > 0 ? T.danger : T.success) },
+    { key: "status", header: "Status", width: 120, align: "center", filter: true,
+      render: e => <Badge variant={LINE_STATUS_VARIANT[e.status] || "default"}>{e.status}</Badge> },
+  ];
 
   return (
     <div style={{ maxWidth: 1200 }}>
@@ -432,9 +486,9 @@ const FreightAuditPage = ({ shipments, navigate }) => {
       <div style={{ display: "flex", gap: 4, borderBottom: `1px solid ${T.border}`, marginBottom: 16 }}>
         {[
           { key: "all", label: "All Invoices" },
-          { key: "exceptions", label: `Exceptions${exceptions ? ` (${exceptions.length})` : ""}` },
+          { key: "exceptions", label: `Exceptions${exceptionCount != null ? ` (${exceptionCount})` : ""}` },
         ].map(t => (
-          <button key={t.key} onClick={() => setActiveTab(t.key)}
+          <button key={t.key} onClick={() => setActiveTab(t.key)} data-testid={`freight-audit-tab-${t.key}`}
             style={{ padding: "9px 16px", background: "none", border: "none", cursor: "pointer",
               fontFamily: T.body, fontSize: 13, fontWeight: 600,
               color: activeTab === t.key ? T.accent : T.textMuted,
@@ -446,91 +500,43 @@ const FreightAuditPage = ({ shipments, navigate }) => {
 
       {activeTab === "all" && (
         <>
-          <div style={{ marginBottom: 12, width: 200 }}>
-            <Sel label="Status" value={statusFilter} onChange={setStatusFilter}
-              options={[{ value: "", label: "All Statuses" }, ...["Pending", "Reconciled", "Approved", "Disputed"].map(s => ({ value: s, label: s }))]} />
-          </div>
-          {invoices === null ? <Spinner /> : invoices.length === 0 ? (
-            <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>No carrier invoices yet.</p>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: T.body, fontSize: 13 }}>
-                <thead>
-                  <tr style={{ borderBottom: `1px solid ${T.border}`, color: T.textMuted, textAlign: "left" }}>
-                    {["Invoice #", "Shipment", "Carrier", "Date", "Status", ""].map(h => (
-                      <th key={h} style={{ padding: "8px", fontWeight: 600, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoices.map(inv => (
-                    <tr key={inv.id} style={{ borderBottom: `1px solid ${T.border}` }}>
-                      <td onClick={() => setDetailId(inv.id)} style={{ padding: "10px 8px", fontFamily: T.mono, color: T.accent, cursor: "pointer" }}>{inv.invoiceNumber || inv.id}</td>
-                      <td onClick={() => setDetailId(inv.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{shipmentLabel(inv.shipmentId)}</td>
-                      <td onClick={() => setDetailId(inv.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{inv.carrierCode || "—"}</td>
-                      <td onClick={() => setDetailId(inv.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{inv.invoiceDate || "—"}</td>
-                      <td onClick={() => setDetailId(inv.id)} style={{ padding: "10px 8px", cursor: "pointer" }}><Badge variant={STATUS_VARIANT[inv.status] || "default"}>{inv.status}</Badge></td>
-                      <td style={{ padding: "10px 8px", textAlign: "right" }} onClick={e => e.stopPropagation()}>
-                        <ActionMenu items={[
-                          { icon: IconEye,   label: "Open",   onClick: () => setDetailId(inv.id) },
-                          { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirmDeleteId(inv.id) },
-                        ]} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {invoices !== null && invoices.length > 0 && (
-            <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-              <PageSizeSelect value={limit} onChange={changeLimit} />
-              <div style={{ flex: 1 }}><Pagination total={invoicesTotal} offset={offset} limit={limit} onPage={goPage} /></div>
-            </div>
-          )}
+          <TableToolbar tableId="fa-invoices" search={invoicesT.filters.search} onSearch={invoicesT.setSearch}
+            searchPlaceholder="Search invoice, shipment, carrier…"
+            sort={invoicesT.sort} sortOptions={INVOICE_SORT_OPTIONS} onSort={invoicesT.setSort}
+            canClear={invoicesT.canClear} onClear={invoicesT.clear} />
+          <DataTable tableId="fa-invoices" columns={invoiceColumns} rows={invoicesT.rows} loading={invoicesT.loading} rowKey={inv => inv.id}
+            hasFilters={invoicesT.hasFilters} filters={invoicesT.filters} filterOptions={invoicesT.options} onFilterChange={invoicesT.setColumnFilter}
+            onRowClick={inv => setDetailId(inv.id)}
+            rowActions={inv => [
+              { icon: IconEye,   label: "Open",   onClick: () => setDetailId(inv.id) },
+              { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirmDeleteId(inv.id) },
+            ]}
+            emptyMessage="No carrier invoices yet." emptyFilteredMessage="No carrier invoices match your filters."
+            pagination={{ total: invoicesT.total, offset: invoicesT.offset, limit: invoicesT.limit, onPage: invoicesT.goPage, onLimit: invoicesT.changeLimit }} />
         </>
       )}
 
       {activeTab === "exceptions" && (
-        exceptions === null ? <Spinner /> : exceptions.length === 0 ? (
-          <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>No open exceptions — every line has either matched or been resolved.</p>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: T.body, fontSize: 13 }}>
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${T.border}`, color: T.textMuted, textAlign: "left" }}>
-                  {["Shipment", "Invoice", "Service", "Amount", "Expected", "Variance", "Status"].map(h => (
-                    <th key={h} style={{ padding: "8px", fontWeight: 600, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {exceptions.map(e => (
-                  <tr key={e.id} onClick={() => setDetailId(e.invoiceId)} style={{ borderBottom: `1px solid ${T.border}`, cursor: "pointer" }}>
-                    <td style={{ padding: "10px 8px" }}>{shipmentLabel(e.shipmentId)}</td>
-                    <td style={{ padding: "10px 8px", fontFamily: T.mono, color: T.accent }}>{e.invoiceNumber || e.invoiceId}</td>
-                    <td style={{ padding: "10px 8px", fontFamily: T.mono }}>{e.serviceCode}</td>
-                    <td style={{ padding: "10px 8px", fontFamily: T.mono, textAlign: "right" }}>{fmtUsd(e.amountUsd)}</td>
-                    <td style={{ padding: "10px 8px", fontFamily: T.mono, textAlign: "right" }}>{fmtUsd(e.expectedAmountUsd)}</td>
-                    <td style={{ padding: "10px 8px", fontFamily: T.mono, textAlign: "right", color: e.varianceUsd > 0 ? T.danger : T.success }}>
-                      {e.varianceUsd == null ? "—" : fmtUsd(Math.abs(e.varianceUsd))}
-                    </td>
-                    <td style={{ padding: "10px 8px" }}><Badge variant={LINE_STATUS_VARIANT[e.status] || "default"}>{e.status}</Badge></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )
+        <>
+          <TableToolbar tableId="fa-exceptions" search={exceptionsT.filters.search} onSearch={exceptionsT.setSearch}
+            searchPlaceholder="Search shipment, invoice, service…"
+            sort={exceptionsT.sort} sortOptions={EXCEPTION_SORT_OPTIONS} onSort={exceptionsT.setSort}
+            canClear={exceptionsT.canClear} onClear={exceptionsT.clear} />
+          <DataTable tableId="fa-exceptions" columns={exceptionColumns} rows={exceptionsT.rows} loading={exceptionsT.loading} rowKey={e => e.id}
+            hasFilters={exceptionsT.hasFilters} filters={exceptionsT.filters} filterOptions={exceptionsT.options} onFilterChange={exceptionsT.setColumnFilter}
+            onRowClick={e => setDetailId(e.invoiceId)}
+            emptyMessage="No open exceptions — every line has either matched or been resolved." emptyFilteredMessage="No exceptions match your filters."
+            pagination={{ total: exceptionsT.total, offset: exceptionsT.offset, limit: exceptionsT.limit, onPage: exceptionsT.goPage, onLimit: exceptionsT.changeLimit }} />
+        </>
       )}
 
       {newOpen && (
         <NewInvoiceModal shipments={shipments} onClose={() => setNewOpen(false)}
-          onCreated={created => { setNewOpen(false); loadInvoices(); loadExceptions(); setDetailId(created.id); }} />
+          onCreated={created => { setNewOpen(false); reloadAll(); setDetailId(created.id); }} />
       )}
       {detailId && (
         <InvoiceDetailModal invoiceId={detailId} shipments={shipments} navigate={navigate}
-          onClose={() => setDetailId(null)} onChanged={() => { loadInvoices(); loadExceptions(); }} />
+          onClose={() => setDetailId(null)} onChanged={() => reloadAll()} />
       )}
       {confirmDeleteId && (
         <ConfirmModal message="Delete this carrier invoice? This can't be undone." onCancel={() => setConfirmDeleteId(null)} onConfirm={() => doDelete(confirmDeleteId)} />

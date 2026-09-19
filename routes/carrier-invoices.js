@@ -1,5 +1,7 @@
 "use strict";
 
+const { applyColumnFilters, filterOptions, applySearch, applySort, paginate, blanksLast } = require("../lib/tableQuery");
+
 // Freight Audit & Payment — reconciles a carrier's own submitted invoice against what was
 // actually CONTRACTED (contract_rates) and/or already accrued (shipment_cost_lines), instead of
 // trusting the carrier's number at face value. Distinct from the existing accrued->actualized->
@@ -196,11 +198,14 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
   }
 
   // ─── Exception queue — MUST be before /:id ─────────────────────────────────
-  app.get("/api/carrier-invoices/exceptions", async (req, res) => {
-    // Worst-variance-first, capped rather than fully paginated — this is a queue meant to be
-    // worked down to zero (Approve/Dispute each line), not browsed page by page, so a plain
-    // LIMIT here (previously absent entirely) is a reasonable safety cap without adding full
-    // pagination UI to what should rarely have more than a couple hundred open lines at once.
+  // Worst-variance-first, capped rather than fully paginated — this is a queue meant to be
+  // worked down to zero (Approve/Dispute each line), not browsed page by page, so a plain
+  // LIMIT here (previously absent entirely) is a reasonable safety cap without adding full
+  // pagination UI to what should rarely have more than a couple hundred open lines at once.
+  // The cap applies BEFORE the scope filter (unchanged), so a scoped caller can see fewer than 200.
+  // Shared by the bare-array route below (the tab's count badge; tests depend on its exact shape)
+  // and the table view.
+  async function loadExceptionRows(req) {
     const rows = await query(`
       SELECT l.*, i.shipment_id, i.carrier_code, i.invoice_number, i.invoice_date, i.currency AS invoice_currency
       FROM carrier_invoice_lines l JOIN carrier_invoices i ON i.id = l.invoice_id
@@ -208,42 +213,107 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
       ORDER BY ABS(COALESCE(l.variance_usd, 0)) DESC
       LIMIT 200
     `);
-    if (rows.length === 0) return ok(res, []);
+    if (rows.length === 0) return [];
     const shipmentIds = [...new Set(rows.map(r => r.shipment_id))];
     const ph = shipmentIds.map((_, i) => `$${i + 1}`).join(",");
     const shipmentRows = await query(`SELECT * FROM shipments WHERE id IN (${ph})`, shipmentIds);
     const allowedIds = new Set((await applyShipmentAccessFilter(shipmentRows.map(mapShipment), req.user, req)).map(s => s.id));
-    ok(res, rows.filter(r => allowedIds.has(r.shipment_id)).map(r => ({
+    return rows.filter(r => allowedIds.has(r.shipment_id)).map(r => ({
       ...mapCarrierInvoiceLine(r),
       shipmentId: r.shipment_id, carrierCode: r.carrier_code || "",
       invoiceNumber: r.invoice_number || "", invoiceDate: r.invoice_date || "",
-    })));
+    }));
+  }
+
+  app.get("/api/carrier-invoices/exceptions", async (req, res) => {
+    ok(res, await loadExceptionRows(req));
   });
 
+  // ─── Table views (Freight Audit page, shared table system — ARCHITECTURE.md §8.23) ──────────────
+  // Column → what each table shows and filters on; ONE definition per table feeds both its list
+  // filters and its /filter-options, so a header checklist can never offer a value the filter
+  // doesn't understand. `invoice` is the same "number, else id" the Invoice # column renders.
+  const INVOICE_COLUMNS = {
+    invoice:  i => i.invoiceNumber || i.id,
+    shipment: i => i.shipmentId,
+    carrier:  i => i.carrierCode,
+    date:     i => i.invoiceDate,
+    status:   i => i.status,
+  };
+  const invoiceSearchText = i => [i.id, i.invoiceNumber, i.shipmentId, i.carrierCode, i.notes].join(" ");
+  // The SQL already returns newest-created-first, which is the default and needs no entry here.
+  const INVOICE_SORTERS = {
+    oldest:  (a, b) => String(a.createdAt).localeCompare(String(b.createdAt)),
+    date:    blanksLast(i => i.invoiceDate, { desc: true }),
+    invoice: blanksLast(i => i.invoiceNumber),
+  };
+
+  const EXCEPTION_COLUMNS = {
+    shipment: e => e.shipmentId,
+    invoice:  e => e.invoiceNumber || e.invoiceId,
+    service:  e => e.serviceCode,
+    status:   e => e.status,
+  };
+  const exceptionSearchText = e =>
+    [e.shipmentId, e.invoiceNumber, e.invoiceId, e.serviceCode, e.description, e.carrierCode].join(" ");
+  // Default order is worst-variance-first (the SQL's ORDER BY), which is what the queue exists for.
+  const EXCEPTION_SORTERS = {
+    amount: (a, b) => (b.amountUsd || 0) - (a.amountUsd || 0),
+  };
+
+  // Scope-filter BEFORE anything else (2026-09-06 audit — same finding as /exceptions above) so `total`,
+  // the returned page and the checklist options are all correct for a scoped caller, not just safe.
+  // Filters the full matching set in JS rather than SQL since applyShipmentAccessFilter's scope rules
+  // (pol/trade_lane/country) aren't expressible as a WHERE clause against this table.
+  const loadVisibleInvoices = async (req, where = "", params = []) => {
+    const allRows = await query(`SELECT * FROM carrier_invoices ${where} ORDER BY created_at DESC`, params);
+    if (allRows.length === 0) return [];
+    const shipmentIds = [...new Set(allRows.map(r => r.shipment_id))];
+    const ph = shipmentIds.map((_, i) => `$${i + 1}`).join(",");
+    const shipmentRows = await query(`SELECT * FROM shipments WHERE id IN (${ph})`, shipmentIds);
+    const allowedIds = new Set((await applyShipmentAccessFilter(shipmentRows.map(mapShipment), req.user, req)).map(s => s.id));
+    return allRows.filter(r => allowedIds.has(r.shipment_id)).map(mapCarrierInvoice);
+  };
+
+  // `status` used to be a single SQL equality and now goes through the shared column filter with every
+  // other column (so ?status=Pending behaves exactly as before, and ?status=Pending&status=Disputed
+  // works too). shipmentId and carrierCode stay exact SQL scopes — they aren't table columns, they're
+  // the "invoices for this shipment / carrier" scopes. The Freight Audit page is this route's only
+  // UI caller.
   app.get("/api/carrier-invoices", async (req, res) => {
-    const { shipmentId = "", carrierCode = "", status = "", limit = "50", offset = "0" } = req.query;
+    const { shipmentId = "", carrierCode = "", search = "", sort = "" } = req.query;
     const clauses = [], params = [];
     const p = v => { params.push(v); return `$${params.length}`; };
-    if (shipmentId.trim()) clauses.push(`shipment_id=${p(shipmentId.trim())}`);
-    if (carrierCode.trim()) clauses.push(`carrier_code=${p(carrierCode.trim().toUpperCase())}`);
-    if (status.trim()) clauses.push(`status=${p(status.trim())}`);
-    const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
-    const lim = Math.min(parseInt(limit) || 50, 200), off = parseInt(offset) || 0;
-    // Scope-filter BEFORE paginating (2026-09-06 audit — same finding as /exceptions above) so
-    // both `total` and the returned page are correct for a scoped caller, not just safe — filters
-    // the full matching set in JS rather than in SQL since applyShipmentAccessFilter's scope
-    // rules (pol/trade_lane/country) aren't expressible as a WHERE clause against this table.
-    const allRows = await query(`SELECT * FROM carrier_invoices ${where} ORDER BY created_at DESC`, params);
-    let scopedRows = allRows;
-    if (allRows.length > 0) {
-      const shipmentIds = [...new Set(allRows.map(r => r.shipment_id))];
-      const ph = shipmentIds.map((_, i) => `$${i + 1}`).join(",");
-      const shipmentRows = await query(`SELECT * FROM shipments WHERE id IN (${ph})`, shipmentIds);
-      const allowedIds = new Set((await applyShipmentAccessFilter(shipmentRows.map(mapShipment), req.user, req)).map(s => s.id));
-      scopedRows = allRows.filter(r => allowedIds.has(r.shipment_id));
-    }
-    const rows = scopedRows.slice(off, off + lim);
-    ok(res, { results: rows.map(mapCarrierInvoice), total: scopedRows.length, limit: lim, offset: off });
+    if (String(shipmentId).trim()) clauses.push(`shipment_id=${p(String(shipmentId).trim())}`);
+    if (String(carrierCode).trim()) clauses.push(`carrier_code=${p(String(carrierCode).trim().toUpperCase())}`);
+    const visible = await loadVisibleInvoices(req, clauses.length ? "WHERE " + clauses.join(" AND ") : "", params);
+    let rows = applyColumnFilters(visible, req.query, INVOICE_COLUMNS);
+    rows = applySearch(rows, search, invoiceSearchText);
+    rows = applySort(rows, sort, INVOICE_SORTERS);
+    ok(res, paginate(rows, req.query));
+  });
+
+  // Checklist source for each column header — MUST be registered before /api/carrier-invoices/:id (Express
+  // would otherwise read "filter-options" as an id). Built from the caller's whole visible set, ignoring
+  // the list's own filters and paging, so a value just unchecked stays selectable.
+  app.get("/api/carrier-invoices/filter-options", async (req, res) => {
+    ok(res, filterOptions(await loadVisibleInvoices(req), INVOICE_COLUMNS));
+  });
+
+  // The Exceptions tab. A different data set from the invoices (open variance/pending LINES, capped at
+  // the 200 worst — see loadExceptionRows), so it gets its own pair of routes; two path segments, so
+  // /:id can't swallow them.
+  app.get("/api/carrier-invoices/exceptions/table", async (req, res) => {
+    const { search = "", sort = "" } = req.query;
+    let rows = await loadExceptionRows(req);
+    rows = applyColumnFilters(rows, req.query, EXCEPTION_COLUMNS);
+    rows = applySearch(rows, search, exceptionSearchText);
+    rows = applySort(rows, sort, EXCEPTION_SORTERS);
+    ok(res, paginate(rows, req.query));
+  });
+
+  app.get("/api/carrier-invoices/exceptions/filter-options", async (req, res) => {
+    ok(res, filterOptions(await loadExceptionRows(req), EXCEPTION_COLUMNS));
   });
 
   app.get("/api/carrier-invoices/:id", async (req, res) => {

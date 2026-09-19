@@ -57,6 +57,9 @@ const HZ_DARK = {
   // leans on a real drop shadow (see HZ_LIGHT's own comment), so cardShadow is "none" here.
   cardBlur: "blur(20px)",
   cardShadow: "none",
+  // Floating popovers/tooltips (not cards) need a real drop shadow in BOTH themes to lift off the
+  // page — cardShadow is "none" in dark, so it cannot double as this.
+  popoverShadow: "0 8px 24px rgba(0,0,0,.45)",
 };
 
 // Light — TKT-198GZH, published as a design exploration and validated (WCAG contrast pass +
@@ -107,6 +110,8 @@ const HZ_LIGHT = {
   chipText: "#ffffff",
   cardBlur: "blur(20px) saturate(1.3)",
   cardShadow: "0 1px 2px rgba(16,20,40,.05), 0 14px 32px -16px rgba(16,20,40,.20)",
+  // Softer than dark's: a 45%-black shadow reads as a smudge on a light page.
+  popoverShadow: "0 4px 8px -2px rgba(16,20,40,.08), 0 12px 28px -8px rgba(16,20,40,.28)",
 };
 
 // T is mutated in place when the theme switches (src/tokens.js) — HZ follows the identical

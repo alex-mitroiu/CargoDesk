@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { T } from "../tokens";
 import { IconSearch } from "../components/primitives/Icon";
 import { api } from "../api";
@@ -7,9 +7,14 @@ import Spinner from "../components/primitives/Spinner";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
 import Pagination from "../components/primitives/Pagination";
-import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
+import PageSizeSelect from "../components/primitives/PageSizeSelect";
 import { inputBase } from "../components/primitives/Form";
 import PortCombobox from "../components/shared/PortCombobox";
+import ColumnFilter from "../components/shared/ColumnFilter";
+import { TableToolbar } from "../components/shared/DataTable";
+import useTableQuery from "../hooks/useTableQuery";
+import { queryRows, filterOptions, applyColumnFilters } from "../utils/localTableQuery";
+import { RESULT_CAP, SCHEDULE_FILTER_KEYS, SCHEDULE_COLUMNS, buildScheduleSorters, scheduleSortOptions, bestRate, groupByContract } from "../utils/scheduleResults";
 import { Modal } from "../components/primitives/Modal";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -645,22 +650,25 @@ const SearchForm = ({ onSearch, loading }) => {
 
 // ─── Contract row (full-width line format) ────────────────────────────────────
 
+// `filter` names the column's key in SCHEDULE_COLUMNS (src/utils/scheduleResults.js) — the columns that get a
+// header checklist. Validity, Buy Rate and the action column have none: they are ranges/amounts, sorted from the
+// toolbar rather than filtered by value.
 const getCols = (showRate) => [
-  { key: "num",     label: "Contract #",    w: 185, pl: 14 },
-  { key: "carrier", label: "Carrier",       w: 92,  pl: 8  },
-  { key: "account", label: "Named Account", w: null, pl: 8  },  // flex
-  { key: "route",   label: "Route",         w: 215, pl: 8  },
+  { key: "num",     label: "Contract #",    w: 185, pl: 14, filter: "contractNumber" },
+  { key: "carrier", label: "Carrier",       w: 92,  pl: 8,  filter: "carrier" },
+  { key: "account", label: "Named Account", w: null, pl: 8,  filter: "namedAccount" },  // flex
+  { key: "route",   label: "Route",         w: 215, pl: 8,  filter: "route" },
   { key: "valid",   label: "Validity",      w: 200, pl: 8  },
-  { key: "status",  label: "Status",        w: 78,  pl: 8  },
+  { key: "status",  label: "Status",        w: 92,  pl: 8,  filter: "status" },
   ...(showRate ? [{ key: "rate", label: "Buy Rate (USD)", w: 170, pl: 8 }] : []),
   { key: "action",  label: "",              w: 116, pl: 4  },
 ];
 
-const TableHeader = ({ showRate = false }) => (
+const TableHeader = ({ showRate = false, filters = {}, options = {}, onFilterChange }) => (
   <div style={{ display: "flex", alignItems: "center",
     background: T.bg, borderBottom: `1px solid ${T.border}` }}>
     {getCols(showRate).map(col => (
-      <div key={col.key} style={{
+      <div key={col.key} data-testid={`schedules-col-${col.key}`} style={{
         width:     col.w || undefined,
         flex:      col.w ? undefined : 1,
         minWidth:  col.w ? undefined : 0,
@@ -670,7 +678,10 @@ const TableHeader = ({ showRate = false }) => (
         color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em",
         userSelect: "none",
       }}>
-        {col.label}
+        {col.filter && onFilterChange ? (
+          <ColumnFilter label={col.label} available={options[col.filter] || []} selected={filters[col.filter] ?? null}
+            onChange={v => onFilterChange(col.filter, v)} />
+        ) : col.label}
       </div>
     ))}
   </div>
@@ -689,6 +700,7 @@ const GroupHeaderRow = ({ group, isExpanded, onToggle, polQuery, podQuery, conta
 
   return (
     <div
+      data-testid={`schedules-group-${group.key}`}
       onClick={onToggle}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -737,7 +749,7 @@ const GroupHeaderRow = ({ group, isExpanded, onToggle, polQuery, podQuery, conta
           </span>
         )}
       </div>
-      <div style={{ width: 78, flexShrink: 0, padding: "10px 8px" }}>
+      <div style={{ width: 92, flexShrink: 0, padding: "10px 8px" }}>
         <Badge variant={status === "Active" ? "success" : status === "Expired" ? "danger" : "warning"}>
           {status}
         </Badge>
@@ -778,6 +790,7 @@ const ContractRow = ({ contract, selected, onSelect, inGroup, isChild, polQuery,
 
   return (
     <div
+      data-testid={`schedules-row-${contract.id}`}
       onClick={onSelect}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -863,7 +876,7 @@ const ContractRow = ({ contract, selected, onSelect, inGroup, isChild, polQuery,
       </div>
 
       {/* Status */}
-      <div style={{ width: 78, flexShrink: 0, padding: "10px 8px" }}>
+      <div style={{ width: 92, flexShrink: 0, padding: "10px 8px" }}>
         <Badge variant={
           contract.status === "Active"  ? "success" :
           contract.status === "Expired" ? "danger"  : "warning"
@@ -1206,13 +1219,31 @@ const SchedulePanel = ({ contract, polQuery, podQuery, containers = [] }) => {
 const SchedulesPage = () => {
   const [searched,  setSearched]  = useState(false);
   const [loading,   setLoading]   = useState(false);
-  const [results,   setResults]   = useState([]);
-  const [total,     setTotal]     = useState(0);
-  const [offset,    setOffset]    = useState(0);
-  const [limit,     setLimit]     = useState(getStoredPageSize);
+  const [allResults, setAllResults] = useState([]);   // every contract the search returned (up to RESULT_CAP)
+  const [serverTotal, setServerTotal] = useState(0);  // how many the server says matched, which can exceed the cap
   const [lastQuery, setLastQuery] = useState(null);
   const [selected,       setSelected]       = useState(null);
   const [expandedGroups, setExpandedGroups] = useState(new Set());
+
+  const containers = lastQuery?.containers || [];
+  const showRate   = containers.length > 0;
+  const rateTotalOf = useMemo(() => c => computeRateTotal(c.rates || [], containers), [lastQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Schedule Search is a search tool — its FORM is its filter — so the results are fetched once (a search needs
+  // POL, POD and a valid-as-of date, so it is narrow) and the header filters, sort and paging then run in the
+  // browser over that set, through useTableQuery + src/utils/localTableQuery.js (the same client-side tier the
+  // Credit Overrides page uses). Nothing here goes back to the server until the next search. The set lives in a
+  // ref that the table's fetchers read; `spec` is kept current in a ref too, because a sort by rate depends on
+  // the containers chosen in THIS search and doSearch triggers the table before React has re-rendered.
+  const resultsRef = useRef([]);
+  const makeSpec = ctrs => ({ columns: SCHEDULE_COLUMNS, sorters: buildScheduleSorters(c => computeRateTotal(c.rates || [], ctrs)) });
+  const specRef = useRef(makeSpec([]));
+  specRef.current = makeSpec(containers);
+  const t = useTableQuery({
+    fetchPage: async params => queryRows(resultsRef.current, params, specRef.current),
+    fetchOptions: async () => filterOptions(resultsRef.current, SCHEDULE_COLUMNS),
+    filterKeys: SCHEDULE_FILTER_KEYS,
+  });
 
   const toggleGroup = (key, groupContracts) => {
     const willCollapse = expandedGroups.has(key);
@@ -1226,41 +1257,53 @@ const SchedulesPage = () => {
     });
   };
 
-  // Group results by contractNumber so rows sharing a number appear together.
-  const groupedResults = useMemo(() => {
-    const groups = [];
-    const map    = {};
-    (results || []).forEach(c => {
-      const key = c.contractNumber || `_${c.id}`;
-      if (!map[key]) { map[key] = { key, contracts: [] }; groups.push(map[key]); }
-      map[key].contracts.push(c);
-    });
-    return groups;
-  }, [results]);
+  // The contracts on the current table page, grouped so rows sharing a contract number appear together.
+  const groupedResults = useMemo(() => groupByContract(t.rows), [t.rows]);
 
-  const doSearch = useCallback(async (params, off = 0, lim = limit) => {
+  // An open sailings panel belongs to a row; if a filter, sort or page change takes that row out of view,
+  // close the panel rather than leave a selection nobody can see (it would reappear when the row does).
+  useEffect(() => {
+    if (selected && !t.rows.some(c => c.id === selected.id)) setSelected(null);
+  }, [t.rows]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Everything the column filters currently let through, BEFORE paging — what "best rate" is judged against, so
+  // filtering to one carrier re-evaluates BEST among what is actually on screen, and it is correct across all
+  // pages instead of only the one being shown.
+  const filteredAll = useMemo(
+    () => applyColumnFilters(allResults, t.filters, SCHEDULE_COLUMNS),
+    [allResults, t.filters]
+  );
+
+  const applyResults = (list, total, ctrs) => {
+    resultsRef.current = list;
+    specRef.current = makeSpec(ctrs);
+    setAllResults(list);
+    setServerTotal(total);
+    // a new search starts with a clean table: previous column filters/sort could hide every new result
+    t.clear();
+    t.reload();
+  };
+
+  const doSearch = async params => {
     setLoading(true);
     setSelected(null);
     try {
-      const res = await api.contracts.search({ ...params, limit: lim, offset: off });
-      setResults(res.results || []);
-      setTotal(res.total   || 0);
-      setOffset(off);
+      const res = await api.contracts.search({ ...params, limit: RESULT_CAP, offset: 0 });
+      applyResults(res.results || [], res.total || 0, params.containers || []);
       setSearched(true);
     } catch (e) {
       toast.error(e.message || "Search failed");
     }
     setLoading(false);
-  }, [limit]);
-
-  const handleSearch = params => {
-    if (!params) { setSearched(false); setResults([]); setTotal(0); setLastQuery(null); return; }
-    setLastQuery(params);
-    doSearch(params, 0);
   };
 
-  const handlePage = off => { if (lastQuery) doSearch(lastQuery, off); };
-  const changeLimit = n => { setLimit(n); if (lastQuery) doSearch(lastQuery, 0, n); };
+  const handleSearch = params => {
+    if (!params) { setSearched(false); setLastQuery(null); applyResults([], 0, []); return; }
+    setLastQuery(params);
+    doSearch(params);
+  };
+
+  const truncated = serverTotal > allResults.length;
 
   return (
     <div>
@@ -1294,23 +1337,28 @@ const SchedulesPage = () => {
       ) : (
         <>
           {/* Result count */}
-          <div style={{ display: "flex", alignItems: "center",
-            justifyContent: "space-between", marginBottom: 10 }}>
+          <div data-testid="schedules-count" style={{ display: "flex", alignItems: "center",
+            justifyContent: "space-between", marginBottom: 10, gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
               {loading ? "Searching…" : (
-                total === 0
+                allResults.length === 0
                   ? "No contracts found"
-                  : `${total} contract${total !== 1 ? "s" : ""} found${total > limit
-                      ? ` — showing ${limit} per page` : ""}`
+                  : `${allResults.length} contract${allResults.length !== 1 ? "s" : ""} found${t.hasFilters
+                      ? ` · ${filteredAll.length} match${filteredAll.length === 1 ? "es" : ""} the column filters` : ""}`
               )}
             </span>
+            {!loading && truncated && (
+              <span data-testid="schedules-truncated" style={{ fontFamily: T.body, fontSize: 12, color: T.warning }}>
+                Showing the first {allResults.length} of {serverTotal} matching contracts — narrow the search to see the rest.
+              </span>
+            )}
           </div>
 
           {loading ? (
             <div style={{ padding: "32px 0", display: "flex", justifyContent: "center" }}>
               <Spinner />
             </div>
-          ) : results.length === 0 ? (
+          ) : allResults.length === 0 ? (
             <div style={{ padding: "32px 0", textAlign: "center" }}>
               <div style={{ marginBottom: 8, opacity: .5, color: T.textMuted }}><IconSearch size={26} /></div>
               <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
@@ -1322,6 +1370,10 @@ const SchedulesPage = () => {
             </div>
           ) : (
             <>
+              {/* Sort + Clear for the results (no search box: the form above is the search) */}
+              <TableToolbar tableId="schedules" sort={t.sort} sortOptions={scheduleSortOptions(showRate)} onSort={t.setSort}
+                canClear={t.canClear} onClear={t.clear} />
+
               {/* Full-width results table */}
               <div style={{ background: T.surface, border: `1px solid ${T.border}`,
                 borderRadius: 10, overflow: "hidden" }}>
@@ -1329,19 +1381,24 @@ const SchedulesPage = () => {
                 {(() => {
                   const qPol        = lastQuery?.pol || "";
                   const qPod        = lastQuery?.pod || "";
-                  const qContainers = lastQuery?.containers || [];
-                  const showRate    = qContainers.length > 0;
+                  const qContainers = containers;
 
-                  // Compute totals + best rate across all results
+                  // Buy rate per contract, and the best of everything the filters let through
                   const rateTotals = showRate
-                    ? Object.fromEntries(results.map(c => [c.id, computeRateTotal(c.rates || [], qContainers)]))
+                    ? Object.fromEntries(filteredAll.map(c => [c.id, rateTotalOf(c)]))
                     : {};
-                  const allTotals  = Object.values(rateTotals).filter(v => v > 0);
-                  const bestRate   = allTotals.length > 0 ? Math.min(...allTotals) : 0;
+                  const bestOfAll  = showRate ? bestRate(filteredAll, c => rateTotals[c.id] || 0) : 0;
 
                   return (
                     <>
-                      <TableHeader showRate={showRate} />
+                      <TableHeader showRate={showRate} filters={t.filters} options={t.options} onFilterChange={t.setColumnFilter} />
+
+                      {t.rows.length === 0 && (
+                        <div data-testid="schedules-filtered-empty"
+                          style={{ padding: 32, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 13 }}>
+                          No contracts match your column filters.
+                        </div>
+                      )}
 
                       {groupedResults.map(group => {
                         const isMulti    = group.contracts.length > 1;
@@ -1362,7 +1419,7 @@ const SchedulesPage = () => {
                               podQuery={qPod}
                               containers={qContainers}
                               rateTotal={rateTotals[c.id] || 0}
-                              isBest={showRate && bestRate > 0 && rateTotals[c.id] === bestRate}
+                              isBest={showRate && bestOfAll > 0 && rateTotals[c.id] === bestOfAll}
                             />
                             {selected?.id === c.id && (
                               <div style={{
@@ -1399,10 +1456,12 @@ const SchedulesPage = () => {
                 })()}
               </div>
 
-              <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                <PageSizeSelect value={limit} onChange={changeLimit} />
-                <div style={{ flex: 1 }}><Pagination total={total} limit={limit} offset={offset} onPage={handlePage} /></div>
-              </div>
+              {t.total > 0 && (
+                <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <PageSizeSelect value={t.limit} onChange={t.changeLimit} />
+                  <div style={{ flex: 1 }}><Pagination total={t.total} limit={t.limit} offset={t.offset} onPage={t.goPage} /></div>
+                </div>
+              )}
             </>
           )}
         </>

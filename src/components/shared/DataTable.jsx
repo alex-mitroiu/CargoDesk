@@ -123,13 +123,17 @@ const DataTable = ({
 // The bar above the table: free-text search (spans several columns at once), an optional sort
 // dropdown (sorting is not a filter, so it stays a dropdown rather than a header control), and a
 // Clear button that appears only once something is active. `children` takes page-specific extras.
+// Pass no `onSearch` to omit the search box — for a page whose own form already IS the search (Schedule
+// Search), where a second, competing text box over the results would just be confusing.
 export const TableToolbar = ({
   tableId, search, onSearch, searchPlaceholder = "Search…",
   sort, sortOptions, onSort, canClear, onClear, children,
 }) => (
   <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
-    <input data-testid={`${tableId}-search`} value={search} onChange={e => onSearch(e.target.value)}
-      placeholder={searchPlaceholder} style={{ ...inputBase, flex: "1 1 200px", minWidth: 160 }} />
+    {onSearch && (
+      <input data-testid={`${tableId}-search`} value={search} onChange={e => onSearch(e.target.value)}
+        placeholder={searchPlaceholder} style={{ ...inputBase, flex: "1 1 200px", minWidth: 160 }} />
+    )}
     {sortOptions && (
       <select data-testid={`${tableId}-sort`} value={sort} onChange={e => onSort(e.target.value)}
         style={{ ...inputBase, width: 160, cursor: "pointer" }}>

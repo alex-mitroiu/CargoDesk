@@ -7,12 +7,11 @@ import Spinner, { PageSpinner } from "../../components/primitives/Spinner";
 import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
-import Pagination from "../../components/primitives/Pagination";
-import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import ActionMenu from "../../components/primitives/ActionMenu";
 import { IconPencil, IconClose, IconEye } from "../../components/primitives/Icon";
 import { inputBase, Inp, Sel, Textarea } from "../../components/primitives/Form";
-import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
+import DataTable, { TableToolbar } from "../../components/shared/DataTable";
+import useTableQuery from "../../hooks/useTableQuery";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
 import PortCombobox from "../../components/shared/PortCombobox";
 
@@ -922,68 +921,81 @@ const CustomerDetailModal = ({ customer, isNew, onClose, onUpdated }) => {
 // backend still only ever reasons about individual roles (see CUSTOMER_ROLE_USAGE_SQL).
 const CATEGORIES = ["All", ...Object.keys(CUSTOMER_ROLE_CATEGORIES)];
 
+// Filterable columns — keys match routes/customers.js's CUSTOMER_COLUMNS. Module-level so
+// useTableQuery gets stable arrays. `role` is the one non-column filter: the scope the segmented control
+// sends (its category's roles, comma-joined), kept as a plain param rather than a header checklist.
+const CUSTOMER_FILTER_KEYS = ["company", "roles", "location"];
+const CUSTOMER_PARAM_KEYS = ["role"];
+const CUSTOMER_SORT_OPTIONS = [
+  { value: "",        label: "Company A–Z" },
+  { value: "newest",  label: "Newest first" },
+  { value: "city",    label: "City A–Z" },
+  { value: "country", label: "Country A–Z" },
+];
+
 const MdmCustomersPage = () => {
   const { canEdit } = useAuth();
-  const [results,  setResults]  = useState([]);
-  const [total,    setTotal]    = useState(0);
-  const [offset,   setOffset]   = useState(0);
-  const [limit,    setLimit]    = useState(getStoredPageSize);
-  const [search,   setSearch]   = useState("");
-  const [category, setCategory] = useState("All");
-  const [loading,  setLoading]  = useState(true);
-  const [modal,    setModal]    = useState(null); // null | "new" | customer obj
-  const [confirm,  setConfirm]  = useState(null);
-  const timer = useRef(null);
+  const [modal,   setModal]   = useState(null); // null | "new" | customer obj
+  const [confirm, setConfirm] = useState(null);
 
-  const load = useCallback(async (opts = {}) => {
-    setLoading(true);
-    try {
-      const cat = opts.category !== undefined ? opts.category : category;
-      const res = await api.customers.list({
-        search: opts.search !== undefined ? opts.search : search,
-        ...(cat !== "All" ? { role: CUSTOMER_ROLE_CATEGORIES[cat].join(",") } : {}),
-        limit:  opts.limit !== undefined ? opts.limit : limit,
-        offset: opts.offset !== undefined ? opts.offset : offset,
-      });
-      setResults(res.results);
-      setTotal(res.total);
-    } catch {}
-    setLoading(false);
-  }, [search, offset, limit, category]);
+  // Same table behavior as Shipments, Quotes, Contracts and Opportunities (column-header checklists,
+  // search, sort, paging) — see useTableQuery/DataTable. Phone, email and website are searchable but not
+  // filterable (near-unique per customer, a checklist would just duplicate the search box).
+  const t = useTableQuery({
+    fetchPage: params => api.customers.table(params),
+    fetchOptions: () => api.customers.filterOptions(),
+    filterKeys: CUSTOMER_FILTER_KEYS,
+    paramKeys: CUSTOMER_PARAM_KEYS,
+  });
 
-  useEffect(() => { load(); }, []);
-
-  const handleSearch = v => {
-    setSearch(v); setOffset(0);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => load({ search: v, offset: 0 }), 300);
-  };
-
-  const handleCategory = cat => {
-    setCategory(cat); setOffset(0);
-    load({ category: cat, offset: 0 });
-  };
-
-  const goPage = off => { setOffset(off); load({ offset: off }); };
-  const changeLimit = n => { setLimit(n); setOffset(0); load({ limit: n, offset: 0 }); };
+  // The segmented control is a VIEW onto the `role` param, not separate state: Clear resets it, and the
+  // highlighted segment can never disagree with what is actually being sent.
+  const roleParam = cat => CUSTOMER_ROLE_CATEGORIES[cat].join(",");
+  const category = CATEGORIES.find(cat => cat !== "All" && t.filters.role === roleParam(cat)) || "All";
+  const handleCategory = cat => t.setParam("role", cat === "All" ? "" : roleParam(cat));
 
   const handleUpdated = updated => {
-    setResults(prev => prev.map(c => c.id === updated.id ? updated : c));
     setModal(prev => prev && typeof prev === "object" && prev.id === updated.id ? updated : prev);
+    t.reload();
   };
 
   const handleDelete = async id => {
-    try { await api.customers.remove(id); setConfirm(null); load(); }
+    try { await api.customers.remove(id); setConfirm(null); t.reload(); }
     catch (e) { toast.error(e.message); }
   };
 
-  const th = {
-    position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
-    color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em",
-  };
+  const dash = <span style={{ color: T.border }}>—</span>;
+  const clip = { display: "block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 
-  const { template, startResize } = useResizableColumns("mdm-customers", [220, 170, 120, 80, 150, 120, 90]);
-  const headers = ["Company", "Roles", "City / Country", "Phone", "Email", "Website", "Actions"];
+  const columns = [
+    { key: "company", header: "Company", width: 250, filter: true,
+      render: c => (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text }}>{c.companyName}</span>
+            <ScreeningBadge result={c.screeningResult} />
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 2 }}>{c.id}</div>
+        </>
+      ) },
+    { key: "roles", header: "Roles", width: 170, filter: true,
+      render: c => <RoleBadgeList roles={c.roles} /> },
+    { key: "location", header: "City / Country", width: 150, filter: true,
+      render: c => (
+        <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+          {[c.city, c.countryIso2].filter(Boolean).join(" · ") || "—"}
+        </span>
+      ) },
+    { key: "phone", header: "Phone", width: 120,
+      render: c => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{c.phone || dash}</span> },
+    { key: "email", header: "Email", width: 190,
+      render: c => (c.email
+        ? <a href={`mailto:${c.email}`} style={{ ...clip, fontFamily: T.body, fontSize: 12, color: T.accent, textDecoration: "none" }}
+            onClick={e => e.stopPropagation()}>{c.email}</a>
+        : dash) },
+    { key: "website", header: "Website", width: 140,
+      render: c => <span style={{ ...clip, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{c.website || dash}</span> },
+  ];
 
   return (
     <div>
@@ -994,7 +1006,8 @@ const MdmCustomersPage = () => {
             Customers
           </h1>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-            {total} customer{total !== 1 ? "s" : ""} in registry
+            {t.total} customer{t.total !== 1 ? "s" : ""}
+            {t.hasFilters ? " matching filters" : " in registry"}
           </p>
         </div>
         {canEdit && <Btn size="lg" onClick={() => setModal("new")}>＋ Add Customer</Btn>}
@@ -1004,7 +1017,7 @@ const MdmCustomersPage = () => {
       <div style={{ display: "inline-flex", gap: 2, padding: 3, marginBottom: 12,
         background: T.bg, border: `1px solid ${T.border}`, borderRadius: 9 }}>
         {CATEGORIES.map(cat => (
-          <button key={cat} onClick={() => handleCategory(cat)} style={{
+          <button key={cat} onClick={() => handleCategory(cat)} data-testid={`customers-category-${cat.replace(/\s+/g, "-").toLowerCase()}`} style={{
             padding: "6px 14px", fontFamily: T.body, fontSize: 12.5,
             fontWeight: category === cat ? 700 : 500,
             color: category === cat ? T.btnPrimaryText : T.textMuted,
@@ -1014,103 +1027,26 @@ const MdmCustomersPage = () => {
         ))}
       </div>
 
-      {/* Search */}
-      <div style={{ marginBottom: 16 }}>
-        <input value={search} onChange={e => handleSearch(e.target.value)}
-          placeholder="Search company, city, email, phone…"
-          style={{ ...inputBase, width: 320 }} />
-      </div>
+      <TableToolbar tableId="customers" search={t.filters.search} onSearch={t.setSearch}
+        searchPlaceholder="Search company, city, email, phone…"
+        sort={t.sort} sortOptions={CUSTOMER_SORT_OPTIONS} onSort={t.setSort}
+        canClear={t.canClear} onClear={t.clear} />
 
-      {/* Table */}
-      <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: template,
-          padding: "10px 20px", borderBottom: `1px solid ${T.border}`, gap: 0 }}>
-          {headers.map((h, i) => (
-            <div key={i} style={th}>
-              {h}
-              {i < headers.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
-            </div>
-          ))}
-        </div>
-
-        {loading ? (
-          <div style={{ padding: 48 }}><PageSpinner /></div>
-        ) : results.length === 0 ? (
-          <div style={{ padding: 48, textAlign: "center", color: T.textMuted,
-            fontFamily: T.body, fontSize: 14, fontStyle: "italic" }}>
-            {search ? "No customers match your search."
-              : category !== "All" ? `No customers used as a ${category === "Trading Customers" ? "trading customer" : "service provider"} role yet.`
-              : "No customers yet. Add your first one above."}
-          </div>
-        ) : results.map(c => (
-          <div key={c.id}
-            style={{ display: "grid", gridTemplateColumns: template,
-              padding: "13px 20px", borderBottom: `1px solid ${T.border}22`,
-              alignItems: "center", gap: 0, cursor: "pointer", transition: "background .1s" }}
-            onClick={() => setModal(c)}
-            onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-
-            {/* Company + screening badge */}
-            <div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text }}>
-                  {c.companyName}
-                </span>
-                <ScreeningBadge result={c.screeningResult} />
-              </div>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 2 }}>{c.id}</div>
-            </div>
-
-            {/* Roles */}
-            <RoleBadgeList roles={c.roles} />
-
-            {/* City / Country */}
-            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
-              {[c.city, c.countryIso2].filter(Boolean).join(" · ") || "—"}
-            </div>
-
-            {/* Phone */}
-            <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
-              {c.phone || <span style={{ color: T.border }}>—</span>}
-            </div>
-
-            {/* Email */}
-            <div style={{ fontFamily: T.body, fontSize: 12, overflow: "hidden",
-              textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {c.email
-                ? <a href={`mailto:${c.email}`} style={{ color: T.accent, textDecoration: "none" }}
-                    onClick={e => e.stopPropagation()}>{c.email}</a>
-                : <span style={{ color: T.border }}>—</span>}
-            </div>
-
-            {/* Website */}
-            <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {c.website || <span style={{ color: T.border }}>—</span>}
-            </div>
-
-            {/* Actions */}
-            <div style={{ display: "flex", justifyContent: "flex-end" }} onClick={e => e.stopPropagation()}>
-              <ActionMenu items={[
-                { icon: IconEye, label: "Open", onClick: () => setModal(c) },
-                ...(canEdit ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(c.id) }] : []),
-              ]} />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-        <PageSizeSelect value={limit} onChange={changeLimit} />
-        <div style={{ flex: 1 }}><Pagination total={total} limit={limit} offset={offset} onPage={goPage} /></div>
-      </div>
+      <DataTable tableId="customers" columns={columns} rows={t.rows} loading={t.loading} rowKey={c => c.id} actionsWidth={80}
+        hasFilters={t.hasFilters} filters={t.filters} filterOptions={t.options} onFilterChange={t.setColumnFilter}
+        onRowClick={c => setModal(c)}
+        rowActions={c => [
+          { icon: IconEye, label: "Open", onClick: () => setModal(c) },
+          ...(canEdit ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(c.id) }] : []),
+        ]}
+        emptyMessage="No customers yet. Add your first one above." emptyFilteredMessage="No customers match your filters."
+        pagination={{ total: t.total, offset: t.offset, limit: t.limit, onPage: t.goPage, onLimit: t.changeLimit }} />
 
       {modal && (
         <CustomerDetailModal
           customer={modal === "new" ? {} : modal}
           isNew={modal === "new"}
-          onClose={() => { setModal(null); load(); }}
+          onClose={() => { setModal(null); t.reload(); }}
           onUpdated={handleUpdated}
         />
       )}

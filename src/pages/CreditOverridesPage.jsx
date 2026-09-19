@@ -1,14 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState, useRef } from "react";
 import { T } from "../tokens";
 import { api } from "../api";
 import { toast } from "../toast";
 import { useAuth } from "../AuthContext";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
-import Spinner from "../components/primitives/Spinner";
 import { Modal } from "../components/primitives/Modal";
 import { Textarea } from "../components/primitives/Form";
 import { IconCheck } from "../components/primitives/Icon";
+import DataTable, { TableToolbar } from "../components/shared/DataTable";
+import useTableQuery from "../hooks/useTableQuery";
+import { queryRows, filterOptions, blanksLast } from "../utils/localTableQuery";
 
 // Credit Control Depth, third pass (TKT-GLWMFP) — the dedicated, non-Accounting surface a
 // trade_manager needs to actually exercise their exclusive override authority. Deliberately NOT
@@ -48,22 +50,55 @@ const ReasonModal = ({ title, actionLabel, danger, onClose, onConfirm }) => {
 
 const BLOCK_LABEL = { hold: "Credit Hold", over_limit: "Over Credit Limit" };
 
+// Column → what the Credit Overrides table shows and filters on; ONE definition feeds both the row
+// filters and the header checklists, so a checklist can never offer a value the filter doesn't understand.
+const CREDIT_COLUMNS = {
+  shipment: r => r.shipmentId,
+  customer: r => r.companyName,
+  role:     r => r.role,
+  block:    r => BLOCK_LABEL[r.blockType] || r.blockType,
+};
+const CREDIT_SPEC = {
+  columns: CREDIT_COLUMNS,
+  searchText: r => [r.shipmentId, r.companyName, r.role, BLOCK_LABEL[r.blockType], r.detail].join(" "),
+  // The default order is the server's own (held customers' shipments first, then over-limit ones).
+  sorters: {
+    customer: blanksLast(r => r.companyName),
+    shipment: blanksLast(r => r.shipmentId),
+  },
+};
+const CREDIT_FILTER_KEYS = ["shipment", "customer", "role", "block"];
+const CREDIT_SORT_OPTIONS = [
+  { value: "",         label: "Holds first" },
+  { value: "customer", label: "Customer A–Z" },
+  { value: "shipment", label: "Shipment A–Z" },
+];
+
 const CreditOverridesPage = () => {
   const { isAdmin, isTradeManager } = useAuth();
-  const [rows,    setRows]    = useState(null);
   const [actionOn, setActionOn] = useState(null); // { row } — the row a reason modal is open for
 
-  const load = () => {
-    api.creditOverridesQueue().then(setRows).catch(() => setRows([]));
-  };
-  useEffect(load, []);
+  // Same table behavior as the other lists (column-header checklists, search, sort, paging), but the
+  // filtering runs HERE, over the whole queue, rather than on the server. The queue is small by nature
+  // (only shipments currently blocked), unpaginated, and produced by an expensive per-request computation
+  // that also decides what THIS user may act on — so it is fetched once, kept in a ref, and both the rows
+  // and the checklist options are derived from that one response. refresh() drops it and refetches.
+  // (See src/utils/localTableQuery.js; the server-driven pages use lib/tableQuery.js.)
+  const queueRef = useRef(null);
+  const loadQueue = () => (queueRef.current ??= api.creditOverridesQueue().catch(() => []));
+  const t = useTableQuery({
+    fetchPage: async params => queryRows(await loadQueue(), params, CREDIT_SPEC),
+    fetchOptions: async () => filterOptions(await loadQueue(), CREDIT_COLUMNS),
+    filterKeys: CREDIT_FILTER_KEYS,
+  });
+  const refresh = () => { queueRef.current = null; t.reload(); };
 
   const doRelease = async (row, reason) => {
     try {
       await api.customers.releaseCreditHold(row.customerId, { shipmentId: row.shipmentId, reason });
       toast.success(`Credit hold released for ${row.companyName}`);
       setActionOn(null);
-      load();
+      refresh();
     } catch (e) { toast.error(e.message); }
   };
 
@@ -72,11 +107,37 @@ const CreditOverridesPage = () => {
       await api.shipments.creditOverride.approve(row.shipmentId, { reason });
       toast.success(`Over-limit override approved for ${row.companyName} — the shipment's invoice can now be generated`);
       setActionOn(null);
-      load();
+      refresh();
     } catch (e) { toast.error(e.message); }
   };
 
-  if (rows === null) return <div style={{ padding: 24 }}><Spinner /></div>;
+  const columns = [
+    { key: "shipment", header: "Shipment", width: 140, filter: true,
+      render: r => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text, fontWeight: 700 }}>{r.shipmentId}</span> },
+    { key: "customer", header: "Customer", width: 230, filter: true,
+      render: r => <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{r.companyName}</span> },
+    { key: "role", header: "Role", width: 120, filter: true,
+      render: r => <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{r.role}</span> },
+    { key: "block", header: "Block", width: 150, align: "center", filter: true,
+      render: r => <Badge variant={r.blockType === "hold" ? "danger" : "warning"}>{BLOCK_LABEL[r.blockType]}</Badge> },
+    { key: "detail", header: "Detail", width: 290,
+      render: r => (
+        <span title={r.detail} style={{ display: "block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis",
+          whiteSpace: "nowrap", fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>
+          {r.detail || "—"}
+        </span>
+      ) },
+    { key: "action", header: "Action", width: 170,
+      render: r => (r.canAct ? (
+        <Btn size="sm" onClick={() => setActionOn(r)}>
+          <IconCheck size={11} />{r.blockType === "hold" ? "Release" : "Approve"}
+        </Btn>
+      ) : (
+        <span style={{ fontFamily: T.body, fontSize: 11, color: T.border, fontStyle: "italic" }}>
+          {isAdmin || !isTradeManager ? "Lane manager only" : "Not your lane"}
+        </span>
+      )) },
+  ];
 
   return (
     <div>
@@ -92,46 +153,16 @@ const CreditOverridesPage = () => {
         </p>
       </div>
 
-      <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 140px 120px 1fr 140px",
-          padding: "9px 20px", borderBottom: `1px solid ${T.border}`, background: T.bg }}>
-          {["Shipment", "Customer", "Role", "Block", "Detail", "Action"].map(h => (
-            <span key={h} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
-              color: T.border, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
-          ))}
-        </div>
+      <TableToolbar tableId="credit-overrides" search={t.filters.search} onSearch={t.setSearch}
+        searchPlaceholder="Search shipment, customer, role, detail…"
+        sort={t.sort} sortOptions={CREDIT_SORT_OPTIONS} onSort={t.setSort}
+        canClear={t.canClear} onClear={t.clear} />
 
-        {rows.length === 0 ? (
-          <div style={{ padding: 40, textAlign: "center", fontFamily: T.body,
-            fontSize: 14, color: T.textMuted, fontStyle: "italic" }}>
-            Nothing blocked right now.
-          </div>
-        ) : rows.map((r, i) => (
-          <div key={`${r.shipmentId}-${r.blockType}-${i}`}
-            style={{ display: "grid", gridTemplateColumns: "130px 1fr 140px 120px 1fr 140px",
-              padding: "12px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center" }}>
-            <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text, fontWeight: 700 }}>{r.shipmentId}</span>
-            <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{r.companyName}</span>
-            <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{r.role}</span>
-            <Badge variant={r.blockType === "hold" ? "danger" : "warning"}>{BLOCK_LABEL[r.blockType]}</Badge>
-            <span style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.detail}>
-              {r.detail || "—"}
-            </span>
-            <div>
-              {r.canAct ? (
-                <Btn size="sm" onClick={() => setActionOn(r)}>
-                  <IconCheck size={11} />{r.blockType === "hold" ? "Release" : "Approve"}
-                </Btn>
-              ) : (
-                <span style={{ fontFamily: T.body, fontSize: 11, color: T.border, fontStyle: "italic" }}>
-                  {isAdmin || !isTradeManager ? "Lane manager only" : "Not your lane"}
-                </span>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
+      <DataTable tableId="credit-overrides" columns={columns} rows={t.rows} loading={t.loading}
+        rowKey={r => `${r.customerId}|${r.shipmentId}|${r.blockType}`}
+        hasFilters={t.hasFilters} filters={t.filters} filterOptions={t.options} onFilterChange={t.setColumnFilter}
+        emptyMessage="Nothing blocked right now." emptyFilteredMessage="Nothing blocked matches your filters."
+        pagination={{ total: t.total, offset: t.offset, limit: t.limit, onPage: t.goPage, onLimit: t.changeLimit }} />
 
       {actionOn && (
         <ReasonModal

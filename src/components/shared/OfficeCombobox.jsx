@@ -96,7 +96,9 @@ const OfficeCombobox = ({ offices, value, onChange, placeholder = "Search office
     // Escape always exits back to the chip (if there's one to return to) — even with the
     // dropdown already closed or empty, since it's still "cancel this edit," not just "close
     // the list."
-    if (e.key === "Escape") { setOpen(false); setHighlighted(-1); setEditing(false); setQuery(""); return; }
+    // Handled (preventDefault) only when there was something to cancel — otherwise it bubbles to an
+    // enclosing Modal's own Escape-to-close.
+    if (e.key === "Escape") { if (open || editing) e.preventDefault(); setOpen(false); setHighlighted(-1); setEditing(false); setQuery(""); return; }
     if (!open || results.length === 0) return;
     switch (e.key) {
       case "ArrowDown":

@@ -1,5 +1,7 @@
 "use strict";
 
+const { applyColumnFilters, filterOptions, applySearch, applySort, paginate, blanksLast } = require("../lib/tableQuery");
+
 module.exports = function customersRoutes(app, ctx) {
   const { query, ok, err, uid, auth, requireRole,
           mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc, mapCustomerContact,
@@ -153,6 +155,73 @@ module.exports = function customersRoutes(app, ctx) {
       results: rows.map(r => ({ ...mapCustomer(r), roles: rolesByCustomer[r.id] || [] })),
       total: Number(total), limit: lim, offset: off,
     });
+  });
+
+  // ─── Table view (Customers list page, shared table system — ARCHITECTURE.md §8.23) ───────────────
+  // A separate endpoint on purpose: GET /api/customers above has three other callers with their own
+  // param meanings (CustomerCombobox's typeahead and its `role` scope, the Schedules page's customer
+  // search) — `city` is a partial match there, an empty value means "no filter" — while the table's
+  // header checklists need exact matching and "empty selection = show nothing".
+  //
+  // Filtering runs in JS over the whole customer set through lib/tableQuery.js, so it behaves the same
+  // in local and remote customer_source modes. That is cheap here: a customer row is already its final
+  // shape (no child rows to hydrate), and a customer registry is hundreds to low thousands of rows.
+  //
+  // Column → what the Customers table shows and filters on; ONE definition feeds both the list filters
+  // and /filter-options. `roles` is an array (a customer can be Shipper AND Consignee AND Bank): a row
+  // matches when ANY of its roles is selected, and a customer never used in a role matches no selection.
+  // Phone, email and website are deliberately not filterable — near-unique per customer, so a checklist
+  // would just be a second copy of the search box (search reaches phone and email).
+  const CUSTOMER_COLUMNS = {
+    company:  c => c.companyName,
+    roles:    c => c.roles,
+    location: c => [c.city, c.countryIso2].filter(Boolean).join(" · "),
+  };
+  const customerSearchText = c => [c.companyName, c.city, c.countryIso2, c.email, c.phone, c.id].join(" ");
+  // The default order (company A–Z) is the load order — the same ORDER BY company_name the older list
+  // uses, locally and in the Customer Service — and needs no entry here.
+  const CUSTOMER_SORTERS = {
+    newest:  (a, b) => String(b.createdAt).localeCompare(String(a.createdAt)),
+    city:    blanksLast(c => c.city),
+    country: blanksLast(c => c.countryIso2),
+  };
+
+  // Every customer, mapped, with its derived roles attached. Roles are ALWAYS resolved locally — they
+  // are a UNION over shipments/shipment_parties, which stay monolith-owned whatever customer_source is.
+  async function loadAllCustomers() {
+    const rows = (await isRemote())
+      ? await callCustomerService("GET", "/internal/customers")   // no limit/offset -> a bare array of every row
+      : (await query(`${CUST_JOIN} ORDER BY c.company_name`)).map(mapCustomer);
+    const rolesByCustomer = {};
+    for (const r of await query(`SELECT customer_id, role FROM (${CUSTOMER_ROLE_USAGE_SQL}) x`)) {
+      (rolesByCustomer[r.customer_id] ??= []).push(r.role);
+    }
+    return rows.map(c => ({ ...c, roles: rolesByCustomer[c.id] || [] }));
+  }
+
+  // `role` is a scope, not a column: the segmented "Trading Customers / Service Providers" control sends
+  // one comma-joined list of roles (the category→roles mapping lives in the frontend's
+  // CUSTOMER_ROLE_CATEGORIES), same meaning as on the older endpoint. It is separate from the `roles`
+  // COLUMN filter, and /filter-options ignores it, so a category never shrinks the Roles checklist.
+  app.get("/api/customers/table", async (req, res) => {
+    try {
+      const { search = "", sort = "", role = "" } = req.query;
+      let rows = await loadAllCustomers();
+      const roleList = String(role).split(",").map(r => r.trim()).filter(Boolean);
+      if (roleList.length) rows = rows.filter(c => c.roles.some(r => roleList.includes(r)));
+      rows = applyColumnFilters(rows, req.query, CUSTOMER_COLUMNS);
+      rows = applySearch(rows, search, customerSearchText);
+      rows = applySort(rows, sort, CUSTOMER_SORTERS);
+      ok(res, paginate(rows, req.query));
+    } catch (e) { err(res, e.message, e.status || 500); }
+  });
+
+  // Checklist source for each column header — MUST stay registered before /api/customers/:id (Express
+  // would otherwise read "filter-options" as an id). Built from every customer, ignoring the list's own
+  // filters and paging, so a value just unchecked stays selectable.
+  app.get("/api/customers/filter-options", async (req, res) => {
+    try { ok(res, filterOptions(await loadAllCustomers(), CUSTOMER_COLUMNS)); }
+    catch (e) { err(res, e.message, e.status || 500); }
   });
 
   app.get("/api/customers/sanctions-check", async (req, res) => {

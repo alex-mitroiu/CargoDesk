@@ -80,6 +80,61 @@ describe("useTableQuery — what it asks the server for", () => {
   });
 });
 
+describe("useTableQuery — scalar params (paramKeys)", () => {
+  const PARAMS = ["asOf"];   // module-level, like every real caller
+  const setupWithParams = fetchPage =>
+    renderHook(() => useTableQuery({ fetchPage, filterKeys: KEYS, paramKeys: PARAMS }));
+
+  it("sends a scalar param only once it has a value, as a plain string (not an array)", async () => {
+    const fetchPage = vi.fn().mockResolvedValue(page([]));
+    const { result } = setupWithParams(fetchPage);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(fetchPage).toHaveBeenLastCalledWith({ limit: 50, offset: 0 });
+    expect(result.current.filters.asOf).toBe("");
+
+    await act(async () => { result.current.setParam("asOf", "2026-05-01"); });
+    expect(fetchPage).toHaveBeenLastCalledWith({ limit: 50, offset: 0, asOf: "2026-05-01" });
+
+    await act(async () => { result.current.setParam("asOf", ""); });
+    expect(fetchPage).toHaveBeenLastCalledWith({ limit: 50, offset: 0 });   // unset again: param gone
+  });
+
+  it("counts as an active filter, goes back to page 1, and is cleared by clear()", async () => {
+    const fetchPage = vi.fn().mockResolvedValue(page(["A"], 500));
+    const { result } = setupWithParams(fetchPage);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.hasFilters).toBe(false);
+    expect(result.current.canClear).toBe(false);
+
+    await act(async () => { result.current.goPage(100); });
+    await act(async () => { result.current.setParam("asOf", "2026-05-01"); });
+    expect(fetchPage).toHaveBeenLastCalledWith({ limit: 50, offset: 0, asOf: "2026-05-01" });   // reset to page 1
+    expect(result.current.hasFilters).toBe(true);
+    expect(result.current.canClear).toBe(true);
+
+    await act(async () => { result.current.clear(); });
+    expect(fetchPage).toHaveBeenLastCalledWith({ limit: 50, offset: 0 });
+    expect(result.current.filters.asOf).toBe("");
+    expect(result.current.hasFilters).toBe(false);
+  });
+
+  it("combines with column filters in one request", async () => {
+    const fetchPage = vi.fn().mockResolvedValue(page([]));
+    const { result } = setupWithParams(fetchPage);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => { result.current.setColumnFilter("status", ["Active"]); });
+    await act(async () => { result.current.setParam("asOf", "2026-05-01"); });
+    expect(fetchPage).toHaveBeenLastCalledWith({ limit: 50, offset: 0, status: ["Active"], asOf: "2026-05-01" });
+  });
+
+  it("leaves a hook that declares no paramKeys exactly as before", async () => {
+    const fetchPage = vi.fn().mockResolvedValue(page([]));
+    const { result } = setup(fetchPage);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(Object.keys(result.current.filters).sort()).toEqual(["carrier", "search", "status"]);
+  });
+});
+
 describe("useTableQuery — search debounce", () => {
   it("updates the input immediately but only fetches once, after typing pauses", async () => {
     vi.useFakeTimers();

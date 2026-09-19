@@ -193,9 +193,9 @@ an `opportunity` (lead-tracking, pre-pricing) that converts into a `quote` (pric
 **Key functions**: track a lead through New → Qualified → Converted (to Quote)/Lost; create a quote
 against a matched contract or spot rate; Draft → Sent → Accepted/Declined/Expired lifecycle;
 convert an accepted quote into a real shipment, carrying parties, containers, and cost lines across.
-The quote list is filterable the way the Shipments list is: an Excel-style checklist on each column
-header, free-text search, sort, and server-side paging (the shared table system, ARCHITECTURE.md
-§8.23 — Quotes is its pilot; other lists follow).
+The quote and opportunity lists are filterable the way the Shipments list is: an Excel-style checklist
+on each column header, free-text search, sort, and server-side paging (the shared table system,
+ARCHITECTURE.md §8.23 — Quotes is its pilot; other lists follow).
 **Roles**: operator, occ_bk, sales, admin (write); all roles (read, scope-permitting). `sales`
 (v0.91.1) is this domain's dedicated role — owns both objects, no booking authority elsewhere.
 **Primary data**: `opportunities`, `quotes`, `quote_lines`.
@@ -226,7 +226,11 @@ actually committed.
 **Key functions**: contract CRUD (legs, rates, routings, container-type/IMDG filters); contract
 matching by route/date/routing-term; space configuration (TEU allocation per carrier/route/period)
 with conflict detection; real-time Confirmed/Pending/Rejected consumption tracking against each
-allocation.
+allocation. The contracts list is filterable the way the Shipments list is — a checklist on every
+column header, free-text search, sort, an "active as of" date, and server-side paging (the shared
+table system, ARCHITECTURE.md §8.23). Schedule Search finds contracts for a lane (POL/POD, as-of date,
+carrier, account, routing term) and lets the user request sailings on any result; its results can be
+narrowed by column and sorted (including cheapest-first once a container mix is chosen), in the browser.
 **Roles**: admin, operator, trade_manager (write); all roles (read).
 **Primary data**: `contracts`* , `contract_legs`* , `contract_rates`* , `allocations`.
 *(owned by the Contract Management Service when `contract_source=remote`, monolith-local
@@ -253,7 +257,9 @@ review and override, logged. See ARCHITECTURE.md §8.4.
 **Purpose**: reconcile what a carrier actually invoices against what was contracted and accrued.
 **Key functions**: carrier invoice import/matching against contract rates and accrued cost lines;
 Detention & Demurrage pre-audit; a reconciliation modal (Overwrite All / Ignore & Add Missing /
-Discard) when a rate refresh would otherwise silently clobber a manual correction.
+Discard) when a rate refresh would otherwise silently clobber a manual correction. Both the invoice list
+and the open-exceptions queue are filterable the way the Shipments list is — header checklists, search,
+sort, paging (the shared table system, ARCHITECTURE.md §8.23).
 **Roles**: operator, admin, trade_manager (with `canViewFinance`).
 **Primary data**: `shipment_cost_lines`, `carrier_invoices`.
 **Business rules**: a cost line's `source` (contract/manual/automated) must survive a rate refresh
@@ -294,7 +300,12 @@ gaps (e.g. a stale booking).
 **Key functions**: customer CRUD with identifiers/contacts; credit control (AR aging, exposure,
 hold/override authority scoped to the trade lane's own trade manager); customer hierarchy
 (parent/subsidiary rollup); derived roles (shipper/consignee/etc. computed from actual usage, not
-hand-maintained checkboxes).
+hand-maintained checkboxes). The customer list is filterable the way the Shipments list is — checklists
+on company, role and city/country, free-text search, sort, server-side paging — with an All / Trading
+Customers / Service Providers switch on top (the shared table system, ARCHITECTURE.md §8.23). A Credit
+Overrides queue lists every shipment currently blocked by a credit hold or an over-limit customer, with
+the same filtering, search and sort applied in the browser; only the shipment's own lane trade manager
+can release or approve.
 **Roles**: operator, admin (write); trade_manager (credit override, within their lane).
 **Primary data**: owned by the Customer/Organization Service when `customer_source=remote`.
 **Business rules**: credit-hold/over-limit override authority belongs exclusively to the

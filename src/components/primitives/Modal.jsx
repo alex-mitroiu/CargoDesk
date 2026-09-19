@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { T } from "../../tokens";
 import Btn from "./Btn";
 
@@ -22,8 +22,42 @@ const useBodyScrollLock = () => {
   }, []);
 };
 
+// Escape closes the topmost modal — never one underneath it, so a picker opened from inside a form
+// closes on its own Escape and leaves the form. Three things deliberately do NOT close it:
+//   • hideClose modals: the caller gave the user no way to dismiss it (server shutting down, "Demo
+//     Data Reset" whose onClose forces a logout), so Escape must not be a back door.
+//   • an Escape a popup inside the modal already handled (event.defaultPrevented): the comboboxes and
+//     DatePicker close their own dropdown/calendar on the first Escape and call preventDefault, so
+//     the SECOND Escape is the one that closes the modal.
+//   • IME composition.
+// It calls the same onClose the × button does, so a caller's guard (e.g. `() => !busy && onClose()`)
+// applies to Escape too. Like ×, it discards unsaved edits — there is no dirty-form check anywhere here.
+const modalStack = [];
+const useEscapeToClose = (onClose, hideClose) => {
+  const latest = useRef({ onClose, hideClose });
+  latest.current = { onClose, hideClose };
+  useEffect(() => {
+    const token = {};
+    modalStack.push(token);
+    const onKey = e => {
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+      if (modalStack[modalStack.length - 1] !== token) return;
+      if (latest.current.hideClose) return;
+      e.preventDefault();
+      latest.current.onClose?.();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      const i = modalStack.indexOf(token);
+      if (i >= 0) modalStack.splice(i, 1);
+    };
+  }, []);
+};
+
 const Modal = ({ title, onClose, children, width = 520, minHeight, hideClose = false, "data-testid": testId }) => {
   useBodyScrollLock();
+  useEscapeToClose(onClose, hideClose);
   return (
   <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.78)", display: "flex",
       alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>

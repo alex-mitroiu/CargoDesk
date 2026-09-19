@@ -165,12 +165,14 @@ export const ContainerTypeField = ({ size, type, onChange, required = false, lab
   };
 
   const handleKeyDown = e => {
+    // Escape closes the dropdown and is marked handled (preventDefault) so an enclosing Modal's own
+    // Escape-to-close leaves the modal open; with the dropdown already closed it bubbles up to the Modal.
+    if (e.key === "Escape" && dropOpen) { e.preventDefault(); setDropOpen(false); setHighlighted(-1); return; }
     if (!dropOpen || filtered.length === 0) return;
     switch (e.key) {
       case "ArrowDown": e.preventDefault(); setHighlighted(h => Math.min(h + 1, filtered.length - 1)); break;
       case "ArrowUp":   e.preventDefault(); setHighlighted(h => Math.max(h - 1, 0)); break;
       case "Enter":     e.preventDefault(); { const i = highlighted >= 0 ? highlighted : 0; if (filtered[i]) select(filtered[i]); } break;
-      case "Escape":    setDropOpen(false); setHighlighted(-1); break;
     }
   };
 

@@ -515,8 +515,11 @@ const QuotesPage = ({ navigate, onShipmentCreated }) => {
       render: q => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{q.carrierCode || "—"}</span> },
     { key: "validUntil", header: "Valid Until", width: 110, filter: true,
       render: q => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{q.validUntil || "—"}</span> },
-    { key: "total", header: "Total", width: 110, align: "right",
-      render: q => <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 600, color: T.text }}>{fmtUsd(q.totalAmountUsd)}</span> },
+    // Title centered over the amounts, amounts still right-aligned to each other: the cell is
+    // centered (so the header centers too) and the figure sits in a fixed-width right-aligned
+    // block — centering the bare figure would center each amount on its own and ragged the digits.
+    { key: "total", header: "Total", width: 110, align: "center",
+      render: q => <span style={{ display: "inline-block", minWidth: 88, textAlign: "right", fontFamily: T.mono, fontSize: 13, fontWeight: 600, color: T.text }}>{fmtUsd(q.totalAmountUsd)}</span> },
     { key: "status", header: "Status", width: 100, align: "center", filter: true,
       render: q => <Badge variant={STATUS_VARIANT[q.status] || "default"}>{q.status}</Badge> },
   ];

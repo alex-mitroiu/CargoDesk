@@ -236,12 +236,14 @@ const HsCodeCombobox = ({ value, onChange, placeholder = "Search by code or desc
   const handlePickerSelect = h => { select(h); setPickerOpen(false); };
 
   const handleKeyDown = e => {
+    // Escape closes the dropdown and is marked handled (preventDefault) so an enclosing Modal's own
+    // Escape-to-close leaves the modal open; with the dropdown already closed it bubbles up to the Modal.
+    if (e.key === "Escape" && open) { e.preventDefault(); setOpen(false); setHighlighted(-1); return; }
     if (!open || results.length === 0) return;
     switch (e.key) {
       case "ArrowDown": e.preventDefault(); setHighlighted(h => Math.min(h + 1, results.length - 1)); break;
       case "ArrowUp":   e.preventDefault(); setHighlighted(h => Math.max(h - 1, 0)); break;
       case "Enter":     e.preventDefault(); { const idx = highlighted >= 0 ? highlighted : 0; if (results[idx]) select(results[idx]); } break;
-      case "Escape":    setOpen(false); setHighlighted(-1); break;
     }
   };
 

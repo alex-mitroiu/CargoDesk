@@ -1,5 +1,7 @@
 "use strict";
 
+const { applyColumnFilters, filterOptions, applySearch, applySort, paginate, blanksLast } = require("../lib/tableQuery");
+
 // CRM / pre-sales pipeline (TKT-WW8THL, Epic TKT-GTGM6R "Competitive Gap Analysis") — every
 // competitor platform researched for that epic (CargoWise Opportunity Manager, Magaya CRM,
 // Descartes' forwarder-purpose-built CRM) bundles a lead/opportunity-tracking layer ahead of the
@@ -23,20 +25,61 @@ module.exports = function opportunitiesRoutes(app, ctx) {
 
   // ─── CRUD ───────────────────────────────────────────────────────────────────
 
-  // Paginated in JS, after the office/scope access filter — see routes/quotes.js's own GET
-  // /api/quotes for the full rationale (matches routes/shipments.js's precedent).
+  // Filtered, searched, sorted and paginated in JS, after the office/scope access filter — see
+  // routes/quotes.js's own GET /api/quotes for the full rationale (matches routes/shipments.js's
+  // precedent), and lib/tableQuery.js for the shared semantics (repeated params, empty = show nothing).
+  //
+  // Column → the value the Opportunities table shows and filters on. ONE definition feeds both the
+  // list's column filters and /filter-options, so a header checklist can never offer a value the
+  // filter doesn't understand.
+  const OPP_COLUMNS = {
+    id:        o => o.id,
+    title:     o => o.title,
+    customer:  o => o.customerName,
+    closeDate: o => o.estimatedCloseDate,
+    assignee:  o => o.assigneeName,
+    status:    o => o.status,
+  };
+  const oppSearchText = o =>
+    [o.id, o.title, o.customerName, o.assigneeName, o.pol, o.pod, o.carrierCode, o.commodityCode, o.leadSource, o.notes].join(" ");
+  // The SQL already returns newest-first (ORDER BY created_at DESC), which is the default and needs
+  // no entry here.
+  const OPP_SORTERS = {
+    oldest:    (a, b) => String(a.createdAt).localeCompare(String(b.createdAt)),
+    closeDate: blanksLast(o => o.estimatedCloseDate),
+    customer:  blanksLast(o => o.customerName),
+    value:     (a, b) => (b.estimatedValueUsd || 0) - (a.estimatedValueUsd || 0),
+  };
+
+  const loadVisibleOpportunities = async (req, where = "", params = []) => {
+    const rows = await query(`SELECT * FROM opportunities ${where} ORDER BY created_at DESC`, params);
+    return applyOfficeScopedAccessFilter(await resolveAssigneeNames(rows.map(mapOpportunity)), req.user, req);
+  };
+
+  // `status` used to be a single SQL equality and now goes through the shared column filter with
+  // every other column (so ?status=Converted, still used by tests/opportunities.test.js, behaves
+  // exactly as before, and ?status=New&status=Qualified works too). customerId and assigneeId stay
+  // in SQL — they aren't table columns, they're the "opportunities for this customer / person"
+  // scopes other pages pass in. The Dashboard's pipeline card passes only `limit`, so it is unaffected.
   app.get("/api/opportunities", async (req, res) => {
-    const { status = "", customerId = "", assigneeId = "", limit = "50", offset = "0" } = req.query;
+    const { customerId = "", assigneeId = "", search = "", sort = "" } = req.query;
     const clauses = [], params = [];
     const p = v => { params.push(v); return `$${params.length}`; };
-    if (status.trim()) clauses.push(`status=${p(status.trim())}`);
-    if (customerId.trim()) clauses.push(`customer_id=${p(customerId.trim())}`);
-    if (assigneeId.trim()) clauses.push(`assignee_id=${p(assigneeId.trim())}`);
-    const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
-    const rows = await query(`SELECT * FROM opportunities ${where} ORDER BY created_at DESC`, params);
-    const filtered = await applyOfficeScopedAccessFilter(await resolveAssigneeNames(rows.map(mapOpportunity)), req.user, req);
-    const lim = Math.min(parseInt(limit) || 50, 200), off = parseInt(offset) || 0;
-    ok(res, { results: filtered.slice(off, off + lim), total: filtered.length, limit: lim, offset: off });
+    if (String(customerId).trim()) clauses.push(`customer_id=${p(String(customerId).trim())}`);
+    if (String(assigneeId).trim()) clauses.push(`assignee_id=${p(String(assigneeId).trim())}`);
+    const visible = await loadVisibleOpportunities(req, clauses.length ? "WHERE " + clauses.join(" AND ") : "", params);
+    let rows = applyColumnFilters(visible, req.query, OPP_COLUMNS);
+    rows = applySearch(rows, search, oppSearchText);
+    rows = applySort(rows, sort, OPP_SORTERS);
+    ok(res, paginate(rows, req.query));
+  });
+
+  // Checklist source for each column header's filter — MUST be registered before
+  // /api/opportunities/:id (Express matches in registration order; :id would swallow
+  // "filter-options" as an id). Built from the caller's whole visible set, deliberately ignoring the
+  // list's own filters/paging, so a value just unchecked stays selectable.
+  app.get("/api/opportunities/filter-options", async (req, res) => {
+    ok(res, filterOptions(await loadVisibleOpportunities(req), OPP_COLUMNS));
   });
 
   app.get("/api/opportunities/:id", async (req, res) => {

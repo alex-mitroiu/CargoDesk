@@ -324,7 +324,10 @@ three are called from `App.jsx` on mount and again from `toggleTheme`, driven by
 - **Tinted pills need their own text tokens** (`goodPillText`, `infoPillText`, `violetPillText`,
   `chipText`) — a pale-tint pill that reads well in dark mode is unreadable in light if it reuses the
   dark palette's bright text colour. Light glass cards additionally need `boxShadow: HZ.cardShadow`
-  (and `cardBlur`) to separate from a light background at all.
+  (and `cardBlur`) to separate from a light background at all. Floating tooltips and popovers take
+  `HZ.popoverShadow` instead — `cardShadow` is `"none"` in dark, so it cannot lift a popover there,
+  and a hardcoded dark-mode `rgba(0,0,0,.45)` shadow is far too heavy on a light page. (An early
+  light-theme pass left both on one tooltip as a duplicate `boxShadow` key, and the dark literal won.)
 - **`position: fixed` inside a glass card is unreliable.** A `backdrop-filter` (also `filter` /
   `transform`) on any ancestor becomes the containing block for fixed descendants, so a dropdown
   positioned from `getBoundingClientRect()` viewport coordinates lands off-target. Such dropdowns
@@ -1919,8 +1922,187 @@ is shared between filtering and the checklist source so the two cannot disagree.
 predicate (it is not a column checklist), everything else runs through the pipeline above, and
 `Route` is a *derived* column (`${pol}→${pod}`) whose option list and filter share one
 definition. The old Status `<select>` was removed from `QuotesPage` — the Status column header is
-now the single way to filter that column. **Wave 1 not yet migrated:** Opportunities, Customers, Freight Audit, Credit Overrides,
-Schedules, and Contracts and Space Configurations (which have grouped rows).
+now the single way to filter that column.
+
+**Contracts is the second adopter, and it differs from Quotes in four ways** worth knowing before
+migrating the next list:
+
+- **A sibling endpoint, not an in-place change.** `GET /api/contracts` has other callers with their
+  own param meanings — the Schedules page's contract search (`carrier` is a partial match there) and
+  the Health panel — and an empty `status=` there means "no filter", the opposite of the table's
+  "empty selection shows nothing". Repeated array params would also crash its `status.trim()`. So the
+  table view is `GET /api/contracts/table` + `GET /api/contracts/filter-options` (both registered before
+  `/:id`), and the old route is untouched apart from sharing an extracted `hydrateContractRows()`.
+  Quotes could change in place only because nothing else depended on its params.
+- **Filtering runs in JS over per-contract summaries, not in SQL.** Each summary carries just what
+  filtering, search and sort need (number, carrier, account, dates, status, the set of `POL › POD` route
+  labels, the container types). Only the visible page is then fully hydrated (legs, rates, routings).
+  This is what lets one implementation serve both `contract_source` modes: in `remote` mode the
+  monolith pages through the service's own `/internal/contracts` (200 per page) and builds the same
+  summaries, so **the Contract Management Service needed no change** — it cannot share the monolith's
+  `lib/` (its Docker image contains only `services/contract-management/`). The cost is loading every
+  contract's summary per request, which is fine at this list's scale (tens to low hundreds).
+- **Multi-valued columns.** A contract has several legs and several container types. A column getter
+  in `lib/tableQuery.js` may therefore return an array: the row matches when ANY value is selected, and
+  `filterOptions()` lists each value separately. A contract with no values never matches a selection.
+- **A non-column filter.** "Active as of" (a single date) is not a header checklist, so
+  `useTableQuery` gained optional `paramKeys` for plain scalar params: sent only when set, counted by
+  `hasFilters`/`canClear`, reset by `clear()`, changed with `setParam()`.
+
+The page's old carrier/status/DG/container-type dropdowns and its Search button were removed for the
+same reason Quotes' Status dropdown was. Covered by `tests/contracts-table.test.js` (54 assertions,
+including a regression block for the older endpoint) and four new `useTableQuery` tests.
+
+**Opportunities is the third adopter and needed nothing new.** It is Quotes' twin — same office-scoped
+access filter, same in-JS paging, same response shape — and its only other caller (the Dashboard's
+pipeline card) passes just `limit`, so `GET /api/opportunities` changed in place, with `customerId` /
+`assigneeId` staying SQL scopes. Worth recording for the next migration: the build passed with a
+runtime `ReferenceError` in it. The modals below the list still called the removed `load()`, which
+only threw on the first row click; it was caught by driving the page in a browser, and a scope-aware
+no-undef pass over the file (Babel parse + `scope.hasBinding`) catches the same class statically.
+
+**Customers is the fourth adopter.** It follows Contracts' shape (a `/table` sibling, because
+`GET /api/customers` has three other callers — `CustomerCombobox`'s typeahead and its `role` scope, and the
+Schedules page's search — whose `city` is a partial match and whose empty values mean "no filter"), with
+three particulars:
+
+- **One load, not summaries.** A customer row is already its final shape (no legs or rates to hydrate),
+  so `loadAllCustomers()` reads the whole registry — `SELECT … ORDER BY company_name` locally, or a single
+  call to the Customer Service's `/internal/customers` (called without paging it returns a bare array of
+  every mapped row) — and everything after runs through `lib/tableQuery.js`. **The Customer Service needed
+  no change.** Derived roles are always resolved locally, whichever `customer_source` is set, because they
+  are a `UNION` over `shipments`/`shipment_parties`, which never leave the monolith.
+- **A multi-valued Roles column plus a separate scope.** A customer can be Shipper, Consignee and Bank at
+  once, so `roles` is an array column (matches on ANY selected role; a customer never used in a role
+  matches no selection). The segmented "Trading Customers / Service Providers" control is a different
+  thing: it sends one comma-joined `role` scope (the category→roles mapping stays in the frontend's
+  `CUSTOMER_ROLE_CATEGORIES`), applied *before* the column filters and ignored by `/filter-options`, so a
+  category never shrinks the Roles checklist. The control's highlight is derived from `filters.role`
+  (a view onto the param, not separate state), so Clear resets it and it cannot disagree with what is sent.
+- **Not every column is filterable.** Phone, email and website are near-unique per customer, so a
+  checklist would only duplicate the search box; they stay search-only (search reaches phone and email).
+
+Covered by `tests/customers-table.test.js` (52 assertions, including roles derived from one realistic,
+complete Central shipment and a regression block for the older endpoint).
+
+**Freight Audit is the fifth adopter, and the first page with two tables.** Its All Invoices list is Quotes'
+twin (scope-filtered through each invoice's shipment, in-JS paging, only the page itself as a caller), so
+`GET /api/carrier-invoices` changed in place — `shipmentId` and `carrierCode` stay exact SQL scopes. Its
+Exceptions tab is a different data set (open variance/pending *lines*, capped at the 200 worst by
+`loadExceptionRows`), so it gets its own pair of routes, `/exceptions/table` and `/exceptions/filter-options`
+(two path segments, so `/:id` can't swallow them). Three things worth knowing:
+
+- **The bare `GET /exceptions` array survives unchanged.** The tab's count badge needs the total of *all*
+  open lines whatever the table is filtered to, and two existing tests rely on its exact shape, so the page
+  runs two `useTableQuery` instances plus that one array call. An approve/dispute/create/delete refreshes all
+  three through `reloadAll()`.
+- **The 200-line cap is deliberately kept**, and it applies before the scope filter as it always did — a
+  scoped caller can see fewer than 200, and the Exceptions checklists are built from those same lines.
+- **Three money columns** (Amount / Expected / Variance) use the fixed-width right-aligned block centered in
+  its cell, so each header sits centered over its amounts while the digits stay aligned.
+- `lib/tableQuery.js`'s `blanksLast` gained `{ desc: true }` (blanks stay last in both directions) for
+  "latest invoice date first".
+
+Covered by `tests/freight-audit-table.test.js` (69 assertions across both tables, against two realistic,
+complete Central shipments with real 40HC containers and a real contract-rate variance).
+
+**Credit Overrides is the sixth adopter, and the first that filters in the browser.** Every earlier page runs
+its filters on the server; this one does not, on purpose. Its rows come from `GET /api/credit-overrides/queue`,
+which is (a) bounded by nature — only shipments currently blocked by a credit hold or an over-limit customer,
+never paginated; (b) an expensive per-request computation (per-customer AR exposure, plus a remote-customer
+branch); and (c) authorization-bearing — `canAct` and the trade-manager scoping are decided *inside* its loops.
+A server table view would have meant refactoring that security-sensitive code and running the computation twice
+per refresh (once for rows, once for checklist options). Instead the page fetches the queue once into a ref and
+`useTableQuery` runs against it through `src/utils/localTableQuery.js`:
+
+- **Rows and options share one response.** `fetchPage` and `fetchOptions` both await the same cached promise, so
+  the initial load makes one request; filtering, sorting, searching, paging and Clear make none. An approve or
+  release calls `refresh()`, which drops the cache and reloads — one request.
+- **No server change at all.** The endpoint, its role gate and its tests are untouched.
+- **The two implementations are pinned together.** `localTableQuery.js` is `lib/tableQuery.js` in ES-module form
+  plus a `queryRows` pipeline, and `localTableQuery.test.js` feeds every case through both and requires identical
+  answers (three deliberate breakages of the client module — empty selection as no-filter, non-numeric option
+  sort, first-value-only multi-valued matching — each fail it). One intended difference is pinned in the test:
+  `null` means "no filter" on the client. Change one file, change the other.
+- **When to pick this tier:** only when the whole set is small *by nature* and delivered in one response. A list
+  that can grow (invoices, customers, contracts) stays server-driven; nothing about this tier scales.
+
+**Schedule Search is the seventh adopter, the second client-side one, and deliberately the lightest touch.** It is a
+search *tool*, not a browse list: a structured form (contract #, carriers, account, POL/POD, Via Origin/Destination,
+routing term, as-of date, status, container mix) is its filter, and its results are grouped by contract number with
+expandable headers, selectable rows that open an inline sailings panel, and a BEST badge on the cheapest Buy Rate.
+`DataTable` cannot express grouping, row expansion or per-row emphasis, so a full migration would have meant building
+all three into it first — the largest and riskiest option, and the user chose the light one instead: keep the layout,
+add what the shared table adds.
+
+- **One request, then browser-side.** A search needs POL, POD and an as-of date, so it is narrow by construction. The
+  page asks the unchanged `GET /api/contracts` for up to `RESULT_CAP` (200, the server's own page cap) contracts in one
+  request and runs header checklists (Contract #, Carrier, Named Account, Route, Status), a sort and paging over them
+  through `useTableQuery` + `localTableQuery.js`. More than 200 matches shows a visible notice with the true total,
+  never a silent cut-off. Server paging is gone, and BEST is now judged across everything the filters let through
+  instead of only the page on screen (it used to be per server page).
+- **Route is multi-valued** — every leg's "POL › POD", the labels the row's leg pills show — so a contract matches when
+  any leg is selected. "Cheapest first" exists only once containers are chosen, and unpriced contracts sort LAST.
+- **The regression risk was the open sailings panel**, which holds fetched state. It must survive a re-sort and must
+  close when a filter or page change takes its row out of view (else an invisible selection reappears later). Both are
+  covered in a real-browser check, and the page never gates rows on the hook's `loading` flag, which would unmount it
+  on every filter change. A new search resets the table first, so a stale filter cannot hide the new results.
+- `TableToolbar` omits its search box when given no `onSearch` — a second text box over a page whose form is already
+  the search would only confuse. Pure logic is in `src/utils/scheduleResults.js` with its own unit tests.
+
+**Wave 1 remaining: Space Configurations only — assessed below, NOT started; the column set is to be agreed with the user.**
+(An earlier version of this section wrongly said Space Configurations has grouped rows. It does not: one flat row per
+allocation. It was Schedule Search that groups.)
+
+#### Space Configurations — impact assessment (verified against the code on 2026-09-19)
+
+*What the page is.* A flat, eight-column table (Carrier, Name / Route, Contract, TEU, Effective Period, Confirmed,
+Status, Actions), one row per allocation, with a large Add/Edit modal, a Linked Shipments modal, History, and a
+Renew-from-Archive flow.
+
+*Where its data lives — the single most important constraint.* `SpaceConfigurationsPage` fetches nothing for its list. It
+receives `allocations`, `shipments`, `containers`, `carriers` and `containerTypeDefs` as **props from `App.jsx`**, which
+loads `allocations` once at startup (`GET /api/allocations` — every row, no paging, each already carrying the
+server-computed `confirmedTEU`/`pendingTEU`/`rejectedTEU`/`remainingTEU` from `loadTeuBuckets()`) and patches it locally
+on create/update/delete. That one array is also read by the notification bell's alert items, the Landing page, the
+Dashboard's Consumption view, and the Archive page (whose Renew navigates back here via `pendingRenew`). So there is no
+server-side list to paginate, a server table endpoint would create a *second copy* of the data that could disagree with
+the one every other screen reads, and the natural tier is **client-side over the prop, with no new endpoint and no
+server change** (the Credit Overrides shape, but reading a prop instead of fetching).
+
+*What must not change.* Confirmed / Pending / Rejected / Remaining come from the server and are the authoritative
+figures; a table migration is display-only and must not recompute them. The **sparkline** under "Confirmed" is a
+different thing — a per-*carrier* six-week volume trend (shipments filtered by carrier and ETD week, not by allocation
+link or booking status), computed up front for *every* allocation (roughly allocations × 6 weeks × shipments ×
+containers). It looks like consumption but is not, so it must never be sorted or filtered as though it were.
+
+*Derived cell values a filter would have to reproduce exactly.* Status (Future / Active / At Limit / Over Limit — the
+"Ending" label is unreachable, because the page only lists `endDate ≥ today`), utilisation against `alertThreshold ?? 80`,
+the Minimum Quantity Commitment warning (urgent once ≥ 70% of the period has elapsed), and the blank-contract
+"— missing" marker. The blank-contract case matters: `filterOptions` never offers blank values, so "missing" would be
+un-selectable unless it is deliberately given a label.
+
+*The safety net does not exist.* No Cypress spec exercises this page (the one spec that mentions it does so in a comment
+about roles), there is no component test, and the backend tests cover only the API. A rewrite would be unverified unless
+characterisation tests are written first.
+
+*What `DataTable` lacks for it.* A per-row accent (the left border that turns amber/red at the alert threshold) and
+nothing else material — rows are flat, so unlike Schedule Search no grouping or expansion is needed.
+
+*Effects of work already shipped.* The shared `Modal` now closes on Escape, so the Add/Edit form closes on Escape and
+discards unsaved edits (as its × always did). Every popup inside it — the carrier combobox, both date pickers, the port
+fields, the stacked contract and port pickers — consumes its own first Escape, so a half-filled form is only lost on a
+deliberate second Escape. Delete confirmation: Escape cancels. The table components are not used here, so nothing else
+has changed.
+
+*Recommended sequence:* (1) characterisation tests over the current page, so the migration can be proven
+behaviour-preserving; (2) agree the columns with the user; (3) migrate client-side over the `allocations` prop with the
+data flow untouched; (4) verify in a real browser, including Add/Edit/Delete/Renew and the alert accent.
+
+A visual rule learned on the way: a column whose cell is a `Badge` must declare `align: "center"`. `Badge` sets
+`alignSelf: "center"`, which overrides `DataTable`'s left alignment, so in a left-aligned column the badge floats to
+the middle of its cell while the header stays left (Contracts' Carrier and DG and Credit Overrides' Block had this;
+Shipments avoids it by centering Contract and Status).
 
 ### 8.24 Master Data Registries: Loop Codes & HS Codes (Loop Codes v0.90.1, direction v0.91.5; HS Codes v0.91.5)
 

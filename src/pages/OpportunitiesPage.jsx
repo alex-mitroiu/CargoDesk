@@ -10,14 +10,13 @@ import { Field, Sel } from "../components/primitives/Form";
 import { inputBase } from "../components/primitives/Form";
 import DatePicker from "../components/primitives/DatePicker";
 import Spinner from "../components/primitives/Spinner";
-import Pagination from "../components/primitives/Pagination";
-import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
+import DataTable, { TableToolbar } from "../components/shared/DataTable";
+import useTableQuery from "../hooks/useTableQuery";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import CustomerCombobox from "../components/shared/CustomerCombobox";
 import PortField from "../components/shared/PortField";
 import { CommodityCombobox } from "../components/shared/CommodityCombobox";
 import { IconFlag, IconEye, IconClose } from "../components/primitives/Icon";
-import ActionMenu from "../components/primitives/ActionMenu";
 
 // ─── CRM / pre-sales pipeline ────────────────────────────────────────────────
 // An opportunity is a lead-tracking record that precedes and converts into a Quote — New (freely
@@ -247,33 +246,55 @@ const OpportunityDetailModal = ({ opportunityId, navigate, onClose, onChanged })
 };
 
 // ─── Main page ───────────────────────────────────────────────────────────────
+// Filterable columns — keys match routes/opportunities.js's OPP_COLUMNS. Module-level so
+// useTableQuery gets a stable array.
+const OPP_FILTER_KEYS = ["id", "title", "customer", "closeDate", "assignee", "status"];
+const OPP_SORT_OPTIONS = [
+  { value: "",          label: "Newest first" },
+  { value: "oldest",    label: "Oldest first" },
+  { value: "closeDate", label: "Closing soonest" },
+  { value: "value",     label: "Value ↓ largest" },
+  { value: "customer",  label: "Customer A–Z" },
+];
+
 const OpportunitiesPage = ({ navigate }) => {
-  const [statusFilter, setStatusFilter] = useState("");
-  const [opportunities, setOpportunities] = useState(null);
-  const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
-  const [limit, setLimit] = useState(getStoredPageSize);
   const [newOpen, setNewOpen] = useState(false);
   const [detailId, setDetailId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
-  const load = useCallback((opts = {}) => {
-    const off = opts.offset !== undefined ? opts.offset : offset;
-    const lim = opts.limit  !== undefined ? opts.limit  : limit;
-    api.opportunities.list({ ...(statusFilter ? { status: statusFilter } : {}), limit: lim, offset: off })
-      .then(r => { setOpportunities(r.results); setTotal(r.total ?? (r.results || []).length); })
-      .catch(() => { setOpportunities([]); setTotal(0); });
-  }, [statusFilter, offset, limit]);
-  useEffect(() => { setOffset(0); load({ offset: 0 }); }, [statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const goPage = off => { setOffset(off); load({ offset: off }); };
-  const changeLimit = n => { setLimit(n); setOffset(0); load({ limit: n, offset: 0 }); };
+  // Same table behavior as Shipments, Quotes and Contracts (column-header checklists, search, sort,
+  // paging) — see useTableQuery/DataTable. The old Status dropdown is gone: the Status column's own
+  // header filter replaces it, rather than keeping a second, possibly-disagreeing way to filter one column.
+  const t = useTableQuery({
+    fetchPage: params => api.opportunities.list(params),
+    fetchOptions: () => api.opportunities.filterOptions(),
+    filterKeys: OPP_FILTER_KEYS,
+  });
 
   const doDelete = async id => {
-    try { await api.opportunities.remove(id); toast.success("Opportunity deleted"); load(); }
+    try { await api.opportunities.remove(id); toast.success("Opportunity deleted"); t.reload(); }
     catch (e) { toast.error(e.message); }
     finally { setConfirmDeleteId(null); }
   };
+
+  const columns = [
+    { key: "id", header: "Opportunity", width: 135, filter: true,
+      render: o => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{o.id}</span> },
+    { key: "title", header: "Title", width: 230, filter: true,
+      render: o => <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{o.title || "—"}</span> },
+    { key: "customer", header: "Customer", width: 190, filter: true,
+      render: o => <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{o.customerName || "—"}</span> },
+    // Header centered over the amounts, amounts still right-aligned to each other: the cell is
+    // centered (so the header centers too) and the figure sits in a fixed-width right-aligned block.
+    { key: "value", header: "Est. Value", width: 115, align: "center",
+      render: o => <span style={{ display: "inline-block", minWidth: 88, textAlign: "right", fontFamily: T.mono, fontSize: 13, fontWeight: 600, color: T.text }}>{fmtUsd(o.estimatedValueUsd)}</span> },
+    { key: "closeDate", header: "Est. Close", width: 120, filter: true,
+      render: o => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{o.estimatedCloseDate || "—"}</span> },
+    { key: "assignee", header: "Assignee", width: 150, filter: true,
+      render: o => <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{o.assigneeName || "—"}</span> },
+    { key: "status", header: "Status", width: 105, align: "center", filter: true,
+      render: o => <Badge variant={STATUS_VARIANT[o.status] || "default"}>{o.status}</Badge> },
+  ];
 
   return (
     <div style={{ maxWidth: 1200 }}>
@@ -290,59 +311,27 @@ const OpportunitiesPage = ({ navigate }) => {
         <Btn onClick={() => setNewOpen(true)}>+ New Opportunity</Btn>
       </div>
 
-      <div style={{ marginBottom: 12, width: 200 }}>
-        <Sel label="Status" value={statusFilter} onChange={setStatusFilter}
-          options={[{ value: "", label: "All Statuses" }, ...["New", "Qualified", "Converted", "Lost"].map(s => ({ value: s, label: s }))]} />
-      </div>
+      <TableToolbar tableId="opportunities" search={t.filters.search} onSearch={t.setSearch}
+        searchPlaceholder="Search opportunity, title, customer, route, assignee…"
+        sort={t.sort} sortOptions={OPP_SORT_OPTIONS} onSort={t.setSort}
+        canClear={t.canClear} onClear={t.clear} />
 
-      {opportunities === null ? <Spinner /> : opportunities.length === 0 ? (
-        <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>No opportunities yet.</p>
-      ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: T.body, fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: `1px solid ${T.border}`, color: T.textMuted, textAlign: "left" }}>
-                {["Opportunity", "Title", "Customer", "Est. Value", "Est. Close", "Assignee", "Status", ""].map(h => (
-                  <th key={h} style={{ padding: "8px", fontWeight: 600, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {opportunities.map(o => (
-                <tr key={o.id} style={{ borderBottom: `1px solid ${T.border}` }}>
-                  <td onClick={() => setDetailId(o.id)} style={{ padding: "10px 8px", fontFamily: T.mono, color: T.accent, cursor: "pointer" }}>{o.id}</td>
-                  <td onClick={() => setDetailId(o.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{o.title || "—"}</td>
-                  <td onClick={() => setDetailId(o.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{o.customerName || "—"}</td>
-                  <td onClick={() => setDetailId(o.id)} style={{ padding: "10px 8px", fontFamily: T.mono, cursor: "pointer", textAlign: "right" }}>{fmtUsd(o.estimatedValueUsd)}</td>
-                  <td onClick={() => setDetailId(o.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{o.estimatedCloseDate || "—"}</td>
-                  <td onClick={() => setDetailId(o.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{o.assigneeName || "—"}</td>
-                  <td onClick={() => setDetailId(o.id)} style={{ padding: "10px 8px", cursor: "pointer" }}><Badge variant={STATUS_VARIANT[o.status] || "default"}>{o.status}</Badge></td>
-                  <td style={{ padding: "10px 8px", textAlign: "right" }} onClick={e => e.stopPropagation()}>
-                    <ActionMenu items={[
-                      { icon: IconEye,   label: "Open",   onClick: () => setDetailId(o.id) },
-                      { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirmDeleteId(o.id) },
-                    ]} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {opportunities !== null && opportunities.length > 0 && (
-        <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-          <PageSizeSelect value={limit} onChange={changeLimit} />
-          <div style={{ flex: 1 }}><Pagination total={total} offset={offset} limit={limit} onPage={goPage} /></div>
-        </div>
-      )}
+      <DataTable tableId="opportunities" columns={columns} rows={t.rows} loading={t.loading} rowKey={o => o.id}
+        hasFilters={t.hasFilters} filters={t.filters} filterOptions={t.options} onFilterChange={t.setColumnFilter}
+        onRowClick={o => setDetailId(o.id)}
+        rowActions={o => [
+          { icon: IconEye,   label: "Open",   onClick: () => setDetailId(o.id) },
+          { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirmDeleteId(o.id) },
+        ]}
+        emptyMessage="No opportunities yet." emptyFilteredMessage="No opportunities match your filters."
+        pagination={{ total: t.total, offset: t.offset, limit: t.limit, onPage: t.goPage, onLimit: t.changeLimit }} />
 
       {newOpen && (
         <OpportunityFormModal onClose={() => setNewOpen(false)}
-          onSaved={saved => { setNewOpen(false); load(); setDetailId(saved.id); }} />
+          onSaved={saved => { setNewOpen(false); t.reload(); setDetailId(saved.id); }} />
       )}
       {detailId && (
-        <OpportunityDetailModal opportunityId={detailId} navigate={navigate} onClose={() => setDetailId(null)} onChanged={load} />
+        <OpportunityDetailModal opportunityId={detailId} navigate={navigate} onClose={() => setDetailId(null)} onChanged={() => t.reload()} />
       )}
       {confirmDeleteId && (
         <ConfirmModal message="Delete this opportunity? This can't be undone." onCancel={() => setConfirmDeleteId(null)} onConfirm={() => doDelete(confirmDeleteId)} />

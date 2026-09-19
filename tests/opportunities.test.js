@@ -59,6 +59,17 @@ async function login() {
 
 const futureDate = days => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
 
+// Repeated keys (?status=A&status=B), the way src/api.js's tableQs() sends them; a [] value sends the
+// bare key with an empty value — the frontend's "deselect everything".
+const qs = params => {
+  const u = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (Array.isArray(v)) { if (v.length === 0) u.append(k, ""); else v.forEach(x => u.append(k, x)); }
+    else u.append(k, v);
+  }
+  return u.toString();
+};
+
 (async () => {
   const cleanup = { opportunities: [], quotes: [] };
   try {
@@ -156,6 +167,97 @@ const futureDate = days => new Date(Date.now() + days * 86400000).toISOString().
     const listQualified = await request("GET", "/api/opportunities?status=Converted", null, token);
     assert("status filter returns only Converted opportunities", listQualified.body.results.every(o => o.status === "Converted"), JSON.stringify(listQualified.body.results.map(o => o.status)));
     assert("our converted opportunity is in the filtered list", listQualified.body.results.some(o => o.id === oppId));
+
+    // ── Table view: the shared Shipments-style filter/sort/search/page semantics (lib/tableQuery.js) ──
+    // Everything is scoped to three scratch opportunities by a unique title tag, since the database
+    // already holds others.
+    console.log("\nTable view — column filters, search, sort, paging, filter-options");
+    const tag = `TBL${Date.now()}`;
+    const me = await request("GET", "/api/auth/me", null, token);
+    const myId = me.body.id || me.body.user?.id, myName = me.body.name || me.body.user?.name;
+    const commaCustomer = "Smith & Sons, Ltd.";
+    const mkOpp = async payload => {
+      const r = await request("POST", "/api/opportunities", payload, token);
+      assert(`scratch opportunity "${payload.title}" created`, r.status === 201, JSON.stringify(r.body));
+      cleanup.opportunities.push(r.body.id);
+      return r.body;
+    };
+    // Created in this order, so newest-first is C, B, A.
+    const tA = await mkOpp({ title: `${tag} alpha`, customerName: "Acme Trading Co", pol: "NLRTM", pod: "USNYC",
+      estimatedValue: 5000, estimatedCloseDate: futureDate(10), leadSource: "Referral", assigneeId: myId });
+    const tB = await mkOpp({ title: `${tag} beta, phase 2`, customerName: commaCustomer, pol: "CNSHA", pod: "USLAX",
+      estimatedValue: 20000, estimatedCloseDate: futureDate(3), leadSource: "Trade Show" });
+    const tC = await mkOpp({ title: `${tag} gamma`, estimatedValue: 100 });
+    const q1 = await request("POST", `/api/opportunities/${tB.id}/qualify`, {}, token);
+    assert("one scratch opportunity qualified (gives the status column two values)", q1.status === 200, JSON.stringify(q1.body));
+
+    const table = (params = {}) => request("GET", `/api/opportunities?${qs({ search: tag, ...params })}`, null, token);
+    const titles = r => r.body.results.map(o => o.title.replace(`${tag} `, "").split(",")[0]);
+
+    let r = await table();
+    assert("responds with { results, total, limit, offset } and finds all three by title tag",
+      r.status === 200 && r.body.total === 3 && r.body.limit === 50 && r.body.offset === 0, JSON.stringify(r.body).slice(0, 160));
+
+    r = await table({ status: "Qualified" });
+    assert("single-value status filter (also what the older ?status=X callers send)", titles(r).join() === "beta", titles(r).join());
+    r = await table({ status: ["New", "Qualified"] });
+    assert("repeated values are OR-ed within a column", r.body.total === 3);
+    r = await table({ status: "" });
+    assert("a present-but-EMPTY param means show nothing, not no filter", r.status === 200 && r.body.total === 0, `total=${r.body.total}`);
+    r = await table({ customer: commaCustomer });
+    assert("a customer name containing a comma and an ampersand matches as ONE value", titles(r).join() === "beta", titles(r).join());
+    r = await table({ customer: ["Acme Trading Co", commaCustomer] });
+    assert("several customers OR together", titles(r).sort().join() === "alpha,beta", titles(r).join());
+    r = await table({ customer: "Acme Trading Co", status: "Qualified" });
+    assert("columns AND together (Acme's is New, so Qualified matches nothing)", r.body.total === 0, `total=${r.body.total}`);
+    r = await table({ closeDate: futureDate(3) });
+    assert("Est. Close column filter", titles(r).join() === "beta", titles(r).join());
+    r = await table({ title: `${tag} gamma` });
+    assert("Title column filter", titles(r).join() === "gamma", titles(r).join());
+    if (myName) {
+      r = await table({ assignee: myName });
+      assert("Assignee column filters on the resolved name, not the id", titles(r).join() === "alpha", titles(r).join());
+    }
+    r = await request("GET", `/api/opportunities?${qs({ customerId: "NO-SUCH-CUSTOMER", search: tag })}`, null, token);
+    assert("customerId is still an exact SQL scope alongside the table filters", r.body.total === 0);
+
+    r = await request("GET", `/api/opportunities?${qs({ search: "smith & sons" })}`, null, token);
+    assert("search is case-insensitive and reaches the customer name", r.body.results.some(o => o.id === tB.id), `total=${r.body.total}`);
+    r = await request("GET", `/api/opportunities?${qs({ search: "cnsha" })}`, null, token);
+    assert("search reaches the route", r.body.results.some(o => o.id === tB.id) && !r.body.results.some(o => o.id === tA.id));
+    r = await request("GET", `/api/opportunities?${qs({ search: "trade show" })}`, null, token);
+    assert("search reaches the lead source", r.body.results.some(o => o.id === tB.id));
+
+    r = await table();
+    assert("default order is newest first", titles(r).join() === "gamma,beta,alpha", titles(r).join());
+    r = await table({ sort: "oldest" });
+    assert("sort=oldest", titles(r).join() === "alpha,beta,gamma", titles(r).join());
+    r = await table({ sort: "closeDate" });
+    assert("sort=closeDate puts the soonest first and a blank date LAST", titles(r).join() === "beta,alpha,gamma", titles(r).join());
+    r = await table({ sort: "value" });
+    assert("sort=value is largest first", titles(r).join() === "beta,alpha,gamma", titles(r).join());
+    r = await table({ sort: "customer" });
+    assert("sort=customer is A–Z with a blank customer LAST", titles(r).join() === "alpha,beta,gamma", titles(r).join());
+    r = await table({ sort: "nonsense" });
+    assert("an unknown sort key falls back to the default order", titles(r).join() === "gamma,beta,alpha", titles(r).join());
+
+    r = await table({ limit: 2, offset: 0 });
+    assert("first page holds `limit` rows but reports the full total", r.body.results.length === 2 && r.body.total === 3 && r.body.limit === 2);
+    r = await table({ limit: 2, offset: 2 });
+    assert("second page holds the remainder", r.body.results.length === 1 && r.body.offset === 2);
+    r = await request("GET", "/api/opportunities?limit=200", null, token);
+    assert("the Dashboard's bare { limit } call still returns { results, total }", r.status === 200 && Array.isArray(r.body.results) && typeof r.body.total === "number");
+
+    const opts = await request("GET", "/api/opportunities/filter-options", null, token);
+    const optKeys = ["id", "title", "customer", "closeDate", "assignee", "status"];
+    assert("filter-options resolves (not swallowed by /:id) with a checklist per column",
+      opts.status === 200 && optKeys.every(k => Array.isArray(opts.body[k])), JSON.stringify(Object.keys(opts.body || {})));
+    assert("a comma-containing customer is a single checklist option", opts.body.customer?.includes(commaCustomer));
+    assert("blank values (the unassigned/no-customer rows) are never offered", !opts.body.customer.includes("") && !opts.body.assignee.includes("") && !opts.body.closeDate.includes(""));
+    assert("checklists come from the whole visible set", [tA, tB, tC].every(o => opts.body.id.includes(o.id)));
+    assert("status options include both scratch statuses", opts.body.status.includes("New") && opts.body.status.includes("Qualified"));
+    const optsFiltered = await request("GET", `/api/opportunities/filter-options?${qs({ status: "Lost" })}`, null, token);
+    assert("options ignore the list's own filters (a value just unchecked stays selectable)", optsFiltered.body.status.includes("New"));
 
     console.log(`\n${passed} passed, ${failed} failed`);
     process.exitCode = failed > 0 ? 1 : 0;

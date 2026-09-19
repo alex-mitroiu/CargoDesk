@@ -57,14 +57,26 @@ routes/
   edi.js             /api/shipments/:id/edi-messages, /api/shipments/:id/edi-messages/booking-request
   customs-filing.js  /api/shipments/:id/customs-filings/*, /api/customs-filings — simulated
                      AES/EEI + ISF/AMS filing lifecycle, reuses edi_messages — Epic TKT-XW6TQK
-  customers.js       /api/customers/*, /api/fx/*
+  customers.js       /api/customers/*, /api/fx/*. Also the Customers list's table view:
+                     GET /api/customers/table + /filter-options — a SIBLING of the older
+                     GET /api/customers (CustomerCombobox and SchedulesPage still use it, with different
+                     param semantics). Filters the whole registry in JS through lib/tableQuery.js, with
+                     derived roles always attached locally, so local and customer_source=remote agree
   quotes.js          /api/quotes/* — Quoting/RFQ pre-booking stage (v0.70.0), converts into a shipment
-  opportunities.js   /api/opportunities/* — CRM pre-sales pipeline (v0.85.0), converts into a quote
+  opportunities.js   /api/opportunities/* — CRM pre-sales pipeline (v0.85.0), converts into a quote.
+                     The list (+ /filter-options) runs on lib/tableQuery.js, changed in place like Quotes
   sanctions.js       /api/sanctions/* — extracted out of customers.js at v0.81.0 as the first
                      step of the Screening Service extraction (services/screening/)
-  contracts.js       /api/contracts/*, /api/entity-events/*
+  contracts.js       /api/contracts/*, /api/entity-events/*. Also the Contracts list's table view:
+                     GET /api/contracts/table + /filter-options — a SIBLING of the older
+                     GET /api/contracts (which other callers, e.g. SchedulesPage, still use with
+                     different param semantics), filtering per-contract summaries in JS through
+                     lib/tableQuery.js so local and contract_source=remote behave identically
   carrier-invoices.js /api/carrier-invoices/*, /api/carrier-invoice-lines/:id/(approve|dispute) —
-                     Freight Audit & Payment (v0.69.0)
+                     Freight Audit & Payment (v0.69.0). Both tables on the page run on lib/tableQuery.js:
+                     the invoice list (GET /api/carrier-invoices, changed in place, + /filter-options)
+                     and the Exceptions tab (GET /exceptions/table + /exceptions/filter-options). The bare
+                     GET /exceptions array is unchanged — it feeds the tab's count badge and other tests
   command-center.js  /api/milestones/overdue-summary, /api/exceptions/queue,
                      /api/command-center/carrier-scorecard, /api/command-center/transit-time-trend
                      — Command Center Quality & Exception Management (v0.77.0, Epic TKT-IBHB0K)
@@ -99,8 +111,13 @@ lib/
                      Filter params arrive as REPEATED keys (`?status=Draft&status=Sent`), never
                      comma-joined (a customer name can contain a comma); a present-but-empty param
                      means "show nothing", an absent one means "no filter". Checklist options are
-                     built from the WHOLE visible set, not the filtered page. Used by routes/quotes.js;
-                     routes/shipments.js still carries its own older inline copy of this logic
+                     built from the WHOLE visible set, not the filtered page. A column getter may
+                     return an ARRAY (a contract's several legs / container types): the row matches
+                     when ANY value is selected and each value is its own checklist option. Also
+                     exports blanksLast(get, { desc }) for sorters (blanks last in BOTH directions).
+                     Used by routes/quotes.js, contracts.js, opportunities.js, customers.js and
+                     carrier-invoices.js; routes/shipments.js still carries its own older inline
+                     copy of this logic
 tests/helpers/
   offices.mjs        ensureOffices() for backend tests (v0.91.5) — returns the first active SE/SI
                      office, creating a fixed fixture office (FX-FXFIX-SE / FX-FXFIX-SI) only when a
@@ -195,7 +212,11 @@ src/
                                    fetch can't overwrite a newer result), 300ms debounced search,
                                    checklist options fetched once and refreshed on reload().
                                    `filterKeys` should be a module-level array (the hook documents a
-                                   stable identity as required; it feeds a useCallback dependency)
+                                   stable identity as required; it feeds a useCallback dependency).
+                                   Optional `paramKeys` (also module-level) are non-column scalar
+                                   filters such as an "active as of" date — sent only when set,
+                                   counted by hasFilters/canClear, reset by clear(), changed with
+                                   setParam(key, value)
   tokens.js                        T object, theme colours, route-matching helpers
   toast.js                         Pub-sub toast emitter
   servicesBus.js                   Tiny pub-sub (same shape as toast.js) — ServicesPanel signals
@@ -273,7 +294,12 @@ src/
                                    cross-shipment exceptions queue, invoice detail with
                                    Approve/Dispute; nested under the Dashboard nav group. New
                                    Carrier Invoice modal has an "Extract from document" upload
-                                   (v0.70.0) — POST /api/ai/extract-document pre-fills the form
+                                   (v0.70.0) — POST /api/ai/extract-document pre-fills the form.
+                                   Both tabs are on the shared table system (fifth adopter): two
+                                   useTableQuery instances (the tab badge still comes from the bare
+                                   exceptions array, so it counts ALL open lines whatever the table
+                                   is filtered to). An approve/dispute/create/delete calls reloadAll(),
+                                   refreshing both tables and the badge; the old Status dropdown is gone
     QuotesPage.jsx                 Quoting/RFQ (v0.70.0) — top-level nav item, list + New Quote
                                    modal (customer/route/carrier, "Find Matching Contracts" as a
                                    pricing reference, line items) + lifecycle detail modal
@@ -286,14 +312,49 @@ src/
                                    Opportunity modal (title required, everything else optional —
                                    customer via CustomerCombobox in its unresolved/name-only
                                    state) + lifecycle detail modal (Qualify/Mark Lost/Convert to
-                                   Quote). Flat table, not a kanban board — see Recent Changes
+                                   Quote). Flat table, not a kanban board — see Recent Changes. The
+                                   list is on the shared table system (TableToolbar + DataTable +
+                                   useTableQuery, third adopter): header checklists on every column
+                                   except Est. Value, search, sort, paging; the old Status dropdown is gone
     DashboardArchivePage.jsx       Expired allocations + renew flow
+    CreditOverridesPage.jsx        Credit Overrides queue (TKT-GLWMFP) — every shipment blocked by a
+                                   credit hold or over-limit customer; only the shipment's own lane
+                                   trade manager gets Release/Approve (server-computed `canAct`). The
+                                   sixth table-system adopter and the FIRST CLIENT-SIDE one: the
+                                   unchanged GET /api/credit-overrides/queue is fetched once into a
+                                   ref, and useTableQuery filters/sorts/pages it in the browser via
+                                   src/utils/localTableQuery.js — rows and checklist options share
+                                   that one response, and refresh() drops it after an action
+    SchedulesPage.jsx              "Schedule Search" (nav) — a SEARCH TOOL, not a browse list: a structured
+                                   form (contract #, carriers, account, POL/POD, Via Origin/Destination,
+                                   routing term, as-of, status, container mix for rate estimates) whose
+                                   results are grouped by contract number, expandable, and open an inline
+                                   sailings panel; a BEST badge marks the cheapest Buy Rate. Seventh
+                                   table-system adopter, deliberately the LIGHT touch (client-side tier):
+                                   the search fetches up to RESULT_CAP (200) contracts in one request and
+                                   header checklists (Contract #, Carrier, Account, Route, Status), a sort
+                                   dropdown (incl. Cheapest first once containers are chosen) and paging
+                                   then run in the browser; grouping, the sailings panel and BEST are kept.
+                                   No search box — the form is the search. More than 200 matches shows a
+                                   visible notice. Pure helpers live in src/utils/scheduleResults.js
     KanbanPage.jsx                 Integration board with drag-to-reorder
     AppSettingsPage.jsx            API Controls + Finance + Users (admin only) tabs
     AboutPage.jsx                  DB schema, features, changelog
     mdm/
       MdmCommoditiesPage.jsx       294 Maersk commodity codes
-      MdmContractsPage.jsx         Carrier contracts with legs (incl. pol/pod loc type) and IMDG filters
+      MdmContractsPage.jsx         Carrier contracts with legs (incl. pol/pod loc type) and IMDG filters.
+                                   The list is on the shared table system (TableToolbar + DataTable +
+                                   useTableQuery, second adopter after Quotes): all nine data columns
+                                   have a header checklist, plus search, sort and an "Active as of"
+                                   date. The old carrier/status/DG/container-type
+                                   dropdowns and the Search button are gone
+      MdmCustomersPage.jsx         Customer registry + a tabbed detail modal (Profile / Billing Cycle /
+                                   Contacts / Identifiers / Compliance / Documents). The list is on the
+                                   shared table system (fourth adopter): header checklists on Company,
+                                   Roles and City / Country (phone/email/website are search-only), plus
+                                   search and sort. The All / Trading Customers / Service Providers
+                                   segmented control is kept and is a VIEW onto the `role` param — its
+                                   highlight is derived from `filters.role`, so Clear resets it
       MdmCountriesPage.jsx         Countries + port count + trade lane assignments
       MdmLinkedPortsPage.jsx       Linked port pairs
       MdmPortLocationsPage.jsx     14,269 UN/LOCODE ports
@@ -415,6 +476,17 @@ CI01/CI02/PL01/CO01/CD01/IC01/DG01/AN01/DO01) + `DOC_TYPES`/`docTypeLabel`/`disp
 `getMissingDocRequirements`, extracted from App.jsx alongside the modals above (v0.87.0) — the same
 kind of pure HTML-string builder `src/utils/invoiceGenerator.js` already houses for FR01/FR02/
 LP01-family documents (which `dispatchDocBuilder` calls into for those codes).
+`src/utils/localTableQuery.js` — the browser twin of `lib/tableQuery.js` (v0.91.5+): the same
+`applyColumnFilters`/`filterOptions`/`applySearch`/`applySort`/`paginate`/`blanksLast` plus a
+`queryRows(rows, params, { columns, searchText, sorters })` pipeline whose `params` and return value are
+exactly what `useTableQuery` sends/receives, so a small bounded list can use the shared table with no
+server changes. `src/utils/localTableQuery.test.js` runs every case through BOTH implementations and
+requires identical answers (one intended difference, pinned: `null` means "no filter" client-side) — if
+you change one file, change the other.
+`src/utils/scheduleResults.js` — the pure logic behind Schedule Search's results table (what each column
+filters on, incl. the multi-valued route; the sorters, where "Cheapest first" puts unpriced contracts LAST;
+`bestRate`, judged against whatever the filters let through; `groupByContract`; `RESULT_CAP`), split out so it
+is unit-tested (`scheduleResults.test.js`) without rendering the page.
 `src/utils/templateRenderer.js` — the Document Template Editor's own renderer (v0.90.0):
 `renderTemplateHtml(template, data)` walks a saved `document_templates` row's field array into a
 real HTML string, `resolvePath(data, path)` does the dot-path lookup into the exact same resolved
@@ -524,9 +596,10 @@ are fully validated.
 
 ## Key patterns
 - **DatePicker with time**: pass `withTime` to get a native time input alongside the calendar in the same popover — `value` becomes `"YYYY-MM-DDTHH:mm"` instead of a bare date (defaults the time to `09:00` the first time a day is picked; reopening lets the time be adjusted independently). The calendar/nav logic internally still operates on just the date part, so every other `DatePicker` call site in the app is unaffected by this prop existing. Used by `LoadingServicePage.jsx`'s per-container planned date field, for both Loading and Unloading — reuse the same prop for any future field that needs date+time rather than building a separate picker.
+- **Escape closes the topmost `Modal`; a popup inside one must consume its own Escape**: `Modal` (primitives) listens for Escape on `document` and calls the same `onClose` as its × button, so a caller's guard (`() => !busy && onClose()`) covers Escape too. It closes only the TOPMOST modal (a module-level stack — a picker opened from a form closes alone), ignores `hideClose` modals (non-dismissible on purpose: server shutdown, and "Demo Data Reset" whose `onClose` forces a logout), ignores IME composition, and ignores any Escape whose `defaultPrevented` is already set. That last rule is the contract for everything that pops up inside a modal: **on Escape, if you closed something, `e.preventDefault()`** — then the first Escape closes your dropdown/calendar and only the second closes the modal. Done in `CarrierCombobox`, `CommodityCombobox`, `HsCodeCombobox`, `PortCombobox`, `OfficeCombobox`, `ContainerTypePickerModal` (input `onKeyDown`) and `DatePicker` (capture-phase `document` listener while open). Do it only when the popup was actually open, so an Escape with nothing to close still reaches the modal. Like ×, Escape discards unsaved edits — there is no dirty-form check anywhere. `ColumnFilter` and `ActionMenu` do not consume Escape (they live in tables, not modals); add it there if one is ever placed inside a modal.
 - **Dropdowns inside Trade Horizon cards must be portaled (v0.91.5)**: a `backdrop-filter`/`filter`/`transform` on ANY ancestor makes `position: fixed` resolve against that ancestor instead of the viewport, so a dropdown whose coordinates come from `getBoundingClientRect()` lands off-target inside a glass card (found live on Equipment Type). Render such dropdowns via `createPortal(..., document.body)` and make the outside-click handler check BOTH the trigger and the portaled list's own ref — `ColumnFilter.jsx`, `HsCodeCombobox.jsx`, `ContainerTypePickerModal.jsx` are the precedents. `CommodityCombobox`/`PortCombobox`/`CarrierCombobox` still use the non-portaled form and share the risk.
-- **Shared table system (v0.91.5)**: a Shipments-style list is `useTableQuery` (state + fetching) + `DataTable`/`TableToolbar` (rendering) on the client and `lib/tableQuery.js` on the server (`applyColumnFilters → applySearch → applySort → paginate`, plus a `/filter-options` route registered BEFORE `/:id`). Conventions that fail silently if broken: filter params are repeated keys, never comma-joined; a present-but-empty param means show nothing; checklist options come from the whole access-filtered set, not the current page. Also keep `filterKeys` a module-level array. Quotes is the pilot; Opportunities, Contracts, Customers, Space Configurations, Freight Audit, Credit Overrides and Schedules are the queued wave 1.
-- **Trade Horizon is dual-theme (v0.91.5)**: `HZ_DARK`/`HZ_LIGHT` in `shipmentDetailTheme.js` (Shipment Details) and `DashboardPage.jsx` (Dashboard), each a mutable `HZ` object swapped in place by `applyHzTheme(dark)` / `applyDashboardHzTheme(dark)` — the same mutable-object pattern as `T`/`applyTheme`, all three driven from `App.jsx`'s `isDark`/`toggleTheme`. Style through `HZ.*` tokens only (incl. `goodPillText`/`infoPillText`/`violetPillText`/`chipText` for text on tinted pills, `cardBlur`, and `cardShadow`, which light glass cards need on their `boxShadow`); never hardcode a dark literal. `HZ_LEGACY_THEME` uses getters so it stays live after a theme swap. Command Center already followed the app theme via `isDark` → classic `T`.
+- **Shared table system (v0.91.5)**: a Shipments-style list is `useTableQuery` (state + fetching) + `DataTable`/`TableToolbar` (rendering) on the client and `lib/tableQuery.js` on the server (`applyColumnFilters → applySearch → applySort → paginate`, plus a `/filter-options` route registered BEFORE `/:id`). Conventions that fail silently if broken: filter params are repeated keys, never comma-joined; a present-but-empty param means show nothing; checklist options come from the whole access-filtered set, not the current page. Also keep `filterKeys` a module-level array. Adopters: Quotes (the pilot), Contracts, Opportunities, Customers and Freight Audit (two tables) — all server-driven — plus Credit Overrides, the first CLIENT-SIDE one (a small, bounded, unpaginated list whose server computation is expensive and authorization-bearing: fetch it once, filter it with `src/utils/localTableQuery.js`; pick this tier only when the whole set is small by nature, and note that it makes no further requests while filtering); Schedule Search is the second client-side adopter, and a deliberately LIGHT one (it keeps its grouped layout, inline panel and BEST badge; `DataTable` cannot express grouping, expansion or per-row emphasis, and forcing it would have been the largest, riskiest option — the user chose the light one). `TableToolbar` omits its search box when given no `onSearch`, for a page whose own form is the search. Space Configurations is the only queued page (**agree the column set with the user BEFORE starting** — they asked to decide which columns are reworked; see ARCHITECTURE.md §8.23 for the impact assessment) (Credit Overrides is small but its rows come from an expensive per-request computation with a remote-customer branch — extract that into a function first). After swapping a page's list, **exercise row click, create and delete in a browser**: the modals below the list still call the old `load`/`doLoad`, which is now a runtime `ReferenceError` the build cannot catch (found on Opportunities — the page rendered fine and only threw on the first row click); a scope-aware no-undef pass over the file (Babel parse + `scope.hasBinding`) also catches it. **A column whose cell is a `Badge` must declare `align: "center"`** (as Shipments does for Contract and Status): `Badge` sets `alignSelf: "center"`, which overrides `DataTable`'s left alignment, so a badge in a left-aligned column floats to the middle of its cell while its header stays left. If the list endpoint you are migrating already has other callers whose params mean something different (Contracts' `carrier` was a partial match and an empty `status=` meant "no filter"), add a `/table` sibling endpoint rather than changing it — Quotes could change in place only because nothing else depended on its params. Set explicit column widths whose sum (plus the actions column and 40px padding) fits the ~1150px available at a 1500px viewport: `useResizableColumns` builds a fixed-pixel grid, so an over-wide table is silently clipped, not wrapped.
+- **Trade Horizon is dual-theme (v0.91.5)**: `HZ_DARK`/`HZ_LIGHT` in `shipmentDetailTheme.js` (Shipment Details) and `DashboardPage.jsx` (Dashboard), each a mutable `HZ` object swapped in place by `applyHzTheme(dark)` / `applyDashboardHzTheme(dark)` — the same mutable-object pattern as `T`/`applyTheme`, all three driven from `App.jsx`'s `isDark`/`toggleTheme`. Style through `HZ.*` tokens only (incl. `goodPillText`/`infoPillText`/`violetPillText`/`chipText` for text on tinted pills, `cardBlur`, and `cardShadow`, which light glass cards need on their `boxShadow`; floating tooltips/popovers use `popoverShadow` instead, since `cardShadow` is `"none"` in dark); never hardcode a dark literal — including a `rgba(0,0,0,…)` shadow, which reads as a smudge on a light page. `HZ_LEGACY_THEME` uses getters so it stays live after a theme swap. Command Center already followed the app theme via `isDark` → classic `T`.
 - **Every test that creates a shipment provisions its own offices (v0.91.5)**: a CI database starts with no offices, and `emoOfficeId`/`imoOfficeId` are required, so call `ensureOffices()` (`tests/helpers/offices.mjs`, `cypress/support/offices.js`) instead of looking one up. CI's backend job sets `LOGIN_RATE_MAX: '1000'` — the 73-file suite exhausts the old 200 cap around file 60; the Cypress job stays at 200.
 - **PortCombobox dropdown**: always `position: fixed` with `getBoundingClientRect()` to escape modal `overflow:auto` — `CarrierCombobox` and `DatePicker` (as of v0.40.1) follow the same pattern; any *new* dropdown/popover primitive should too, rather than `position: absolute`, which breaks the moment it lands inside any scrolling/clipped container
 - **Paginated responses**: `api.ports.search(...)` returns `{ results: [], total, limit, offset }` — always use `.results`

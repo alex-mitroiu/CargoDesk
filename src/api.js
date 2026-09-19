@@ -256,6 +256,9 @@ export const api = {
   },
   customers: {
     list:           (p = {})   => req("GET",    `/customers?${new URLSearchParams(p)}`),
+    // Table view (Customers list page) — repeated-key column filters, see routes/customers.js.
+    table:          (p = {})   => req("GET",    `/customers/table?${tableQs(p)}`),
+    filterOptions:  ()         => req("GET",    "/customers/filter-options"),
     get:            (id)       => req("GET",    `/customers/${id}`),
     create:         (data)     => req("POST",   "/customers", data),
     update:         (id, data) => req("PUT",    `/customers/${id}`, data),
@@ -331,6 +334,9 @@ export const api = {
   },
   contracts: {
     search:     (p = {})  => req("GET",    `/contracts?${new URLSearchParams(p)}`),
+    // Table view (Contracts list page) — repeated-key column filters, see routes/contracts.js.
+    table:         (p = {}) => req("GET",  `/contracts/table?${tableQs(p)}`),
+    filterOptions: ()       => req("GET",  "/contracts/filter-options"),
     find:       (p = {})  => req("GET",    `/contracts/search?${new URLSearchParams(p)}`),
     match:      (p = {})  => req("GET",    `/contracts/match?${new URLSearchParams(p)}`),
     expiring:   (days)    => req("GET",    `/contracts/expiring${days ? `?days=${days}` : ""}`),
@@ -375,8 +381,13 @@ export const api = {
     adjust:         (shipmentId, lineId, d)    => req("POST",   `/shipments/${shipmentId}/cost-lines/${lineId}/adjust`, d),
   },
   carrierInvoices: {
-    list:      (p = {})    => req("GET",    `/carrier-invoices?${new URLSearchParams(p)}`),
+    list:      (p = {})    => req("GET",    `/carrier-invoices?${tableQs(p)}`),
+    filterOptions: ()      => req("GET",    "/carrier-invoices/filter-options"),
+    // The bare array (up to the 200 worst open lines) — the Exceptions tab's count badge.
     exceptions: ()         => req("GET",    "/carrier-invoices/exceptions"),
+    // The same lines as a table view (filters/sort/search/paging), see routes/carrier-invoices.js.
+    exceptionsTable:         (p = {}) => req("GET", `/carrier-invoices/exceptions/table?${tableQs(p)}`),
+    exceptionsFilterOptions: ()       => req("GET", "/carrier-invoices/exceptions/filter-options"),
     get:       (id)        => req("GET",    `/carrier-invoices/${id}`),
     create:    (d)         => req("POST",   "/carrier-invoices", d),
     remove:    (id)        => req("DELETE", `/carrier-invoices/${id}`),
@@ -772,7 +783,8 @@ export const api = {
     expiring: (days)     => req("GET",    `/quotes/expiring${days ? `?days=${days}` : ""}`),
   },
   opportunities: {
-    list:    (p = {})    => req("GET",    `/opportunities?${new URLSearchParams(p)}`),
+    list:    (p = {})    => req("GET",    `/opportunities?${tableQs(p)}`),
+    filterOptions: ()    => req("GET",    "/opportunities/filter-options"),
     get:     (id)        => req("GET",    `/opportunities/${id}`),
     create:  (data)      => req("POST",   "/opportunities", data),
     update:  (id, data)  => req("PUT",    `/opportunities/${id}`, data),

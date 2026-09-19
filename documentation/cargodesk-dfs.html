@@ -108,7 +108,7 @@
       <li><a href="#s41" class="sub">4.1 Level 0 — Context</a></li>
       <li><a href="#s42" class="sub">4.2 Level 1 — Processes</a></li>
       <li><a href="#s5">5 · Functional Spec by Domain</a></li>
-      <li><a href="#s51" class="sub">5.1 Pre-Booking / Quoting</a></li>
+      <li><a href="#s51" class="sub">5.1 Pre-Booking / Quoting &amp; Pipeline</a></li>
       <li><a href="#s52" class="sub">5.2 Shipment &amp; Cargo</a></li>
       <li><a href="#s53" class="sub">5.3 Commercial — Contracts</a></li>
       <li><a href="#s54" class="sub">5.4 Compliance Screening</a></li>
@@ -166,11 +166,20 @@
         <tr><td><span class="role-badge">operator</span></td><td>Day-to-day operations staff</td><td>Full shipment/contract/booking read-write, no admin config</td></tr>
         <tr><td><span class="role-badge">occ_bk</span></td><td>Operations / booking desk</td><td>Shipment and booking read-write, narrower than operator on admin-adjacent actions</td></tr>
         <tr><td><span class="role-badge">trade_manager</span></td><td>Trade-lane owner</td><td>Read-write scoped to their trade lane / office; owns credit-hold override authority</td></tr>
+        <tr><td><span class="role-badge">sales</span> <span class="mono" style="color:var(--text-muted);font-size:12px">(v0.91.1)</span></td><td>Quoting / pipeline owner</td><td>Read-write on Quotes and Opportunities only; deliberately no booking authority (not granted on shipment/booking/EDI/customs-filing writes)</td></tr>
         <tr><td><span class="role-badge">viewer</span></td><td>Read-only stakeholder</td><td>Read access only, scope-limited the same way as other roles</td></tr>
       </table>
-      <p>A user can hold more than one role. Access is further scoped by office and/or trade lane
-      independent of role — two <code>operator</code>s can see disjoint sets of shipments. See
-      <code>ARCHITECTURE.md</code> §8.9 for the full mechanics (JWT, idle-timeout, SSO).</p>
+      <p>A user can hold more than one role; <code>occ_bk</code> / <code>trade_manager</code> /
+      <code>sales</code> are co-equal, non-hierarchical specialty grants (same rank), not rungs on the
+      admin/operator/viewer ladder. Access is further scoped by office and/or trade lane
+      (<code>allOffices</code>/<code>userOffices</code>, <code>scopeItems</code>) independent of role —
+      two <code>operator</code>s can see disjoint sets of shipments. Since v0.91.1, office scoping also
+      supports a <strong>Branch or Country grant</strong> — a single admin action that cascades to every
+      office under it (inheriting new offices added later), with an optional narrower exclusion carved
+      back out — instead of only ever assigning one office at a time; this same office-scoping
+      mechanism now also governs Quotes/Opportunities visibility, which had none before. See
+      <code>USER-MANAGEMENT-REDESIGN.md</code> for the full model and <code>ARCHITECTURE.md</code> §8.9
+      for the underlying mechanics (JWT, idle-timeout, SSO).</p>
     </section>
 
     <section id="s4">
@@ -205,17 +214,29 @@
       <strong>Roles</strong>, <strong>Primary Data</strong>, and one or two business rules worth
       knowing before touching it.</p>
 
-      <h3 id="s51"><span class="num">5.1</span>Pre-Booking / Quoting <span class="mono" style="color:var(--text-muted);font-size:14px">(P2)</span></h3>
+      <h3 id="s51"><span class="num">5.1</span>Pre-Booking / Quoting &amp; Pipeline <span class="mono" style="color:var(--text-muted);font-size:14px">(P2)</span></h3>
       <div class="card">
-        <p><strong>Purpose</strong> — capture and price freight demand before a real shipment exists.</p>
-        <p><strong>Key functions</strong> — create a quote against a matched contract or spot rate;
-        Draft → Sent → Accepted/Declined/Expired lifecycle; convert an accepted quote into a real
-        shipment, carrying parties, containers, and cost lines across.</p>
-        <p><strong>Roles</strong> — operator, occ_bk, admin (write); all roles (read, scope-permitting).</p>
-        <p><strong>Primary data</strong> — <code>quotes</code>, <code>quote_lines</code>.</p>
+        <p><strong>Purpose</strong> — capture and price freight demand before a real shipment exists — a
+        two-stage funnel: an <code>opportunity</code> (lead-tracking, pre-pricing) that converts into a
+        <code>quote</code> (priced, customer-facing).</p>
+        <p><strong>Key functions</strong> — track a lead through New → Qualified → Converted (to
+        Quote) / Lost; create a quote against a matched contract or spot rate; Draft → Sent →
+        Accepted/Declined/Expired lifecycle; convert an accepted quote into a real shipment, carrying
+        parties, containers, and cost lines across. The quote and opportunity lists are
+        filterable the way the Shipments list is: an Excel-style checklist on each column header,
+        free-text search, sort, and server-side paging (the shared table system,
+        <code>ARCHITECTURE.md</code> §8.23 — Quotes is its pilot; other lists follow).</p>
+        <p><strong>Roles</strong> — operator, occ_bk, sales, admin (write); all roles (read,
+        scope-permitting). <code>sales</code> (v0.91.1) is this domain's dedicated role — owns both
+        objects, no booking authority elsewhere.</p>
+        <p><strong>Primary data</strong> — <code>opportunities</code>, <code>quotes</code>,
+        <code>quote_lines</code>.</p>
         <div class="rules"><b>Rule —</b> an expired quote cannot be accepted; conversion splits BUY
         (from the matched contract) and SELL (from the quote's own price) cost lines — independent
-        figures, not derived from each other.</div>
+        figures, not derived from each other. Since v0.91.1 both objects carry an
+        <code>office_id</code> and are office-scoped the same way shipments are (previously neither had
+        any access scoping at all) — the office and any trade-lane restriction on the acting user's
+        scope both apply.</div>
       </div>
 
       <h3 id="s52"><span class="num">5.2</span>Shipment &amp; Cargo Management <span class="mono" style="color:var(--text-muted);font-size:14px">(P1)</span></h3>
@@ -243,7 +264,13 @@
         <p><strong>Key functions</strong> — contract CRUD (legs, rates, routings, container-type/
         IMDG filters); contract matching by route/date/routing-term; space configuration (TEU
         allocation per carrier/route/period) with conflict detection; real-time Confirmed/Pending/
-        Rejected consumption tracking against each allocation.</p>
+        Rejected consumption tracking against each allocation. The contracts list is filterable the
+        way the Shipments list is — a checklist on every column header, free-text search, sort, an
+        "active as of" date, and server-side paging (the shared table system,
+        <code>ARCHITECTURE.md</code> §8.23). Schedule Search finds contracts for a lane (POL/POD,
+        as-of date, carrier, account, routing term) and lets the user request sailings on any
+        result; its results can be narrowed by column and sorted (including cheapest-first once a
+        container mix is chosen), in the browser.</p>
         <p><strong>Roles</strong> — admin, operator, trade_manager (write); all roles (read).</p>
         <p><strong>Primary data</strong> — <code>contracts</code>*, <code>contract_legs</code>*,
         <code>contract_rates</code>*, <code>allocations</code>. <em>*owned by the Contract
@@ -278,7 +305,9 @@
         <p><strong>Key functions</strong> — carrier invoice import/matching against contract rates
         and accrued cost lines; Detention &amp; Demurrage pre-audit; a reconciliation modal
         (Overwrite All / Ignore &amp; Add Missing / Discard) when a rate refresh would otherwise
-        silently clobber a manual correction.</p>
+        silently clobber a manual correction. Both the invoice list and the open-exceptions queue
+        are filterable the way the Shipments list is — header checklists, search, sort, paging
+        (the shared table system, <code>ARCHITECTURE.md</code> §8.23).</p>
         <p><strong>Roles</strong> — operator, admin, trade_manager (with finance visibility).</p>
         <p><strong>Primary data</strong> — <code>shipment_cost_lines</code>, <code>carrier_invoices</code>.</p>
         <div class="rules"><b>Rule —</b> a cost line's source (contract/manual/automated) must
@@ -291,13 +320,23 @@
         <p><strong>Purpose</strong> — the shared reference data every other domain depends on.</p>
         <p><strong>Key functions</strong> — carriers, vessels, ports (14,269 UN/LOCODEs) with
         linked-port equivalence, trade lanes, countries, commodities, charge codes, pack types,
-        carrier line agents (per-port/country representative resolution).</p>
-        <p><strong>Roles</strong> — admin (write); every domain (read, as a dependency).</p>
+        carrier line agents (per-port/country representative resolution), carrier service
+        <strong>loop codes</strong> with a directional (Eastbound/Westbound) port rotation, and an
+        <strong>HS Codes</strong> registry of real 6-digit Harmonized System codes that cargo forms pick
+        from instead of typing free text.</p>
+        <p><strong>Roles</strong> — admin (write; HS Codes writes also allow operator); every domain
+        (read, as a dependency).</p>
         <p><strong>Primary data</strong> — owned by the MDM Service when
-        <code>mdm_source=remote</code>, monolith-local otherwise.</p>
+        <code>mdm_source=remote</code>, monolith-local otherwise. Loop Codes
+        (<code>loop_codes</code>, <code>loop_code_ports</code>) and HS Codes (<code>hs_codes</code>) are
+        always monolith-local — they are not part of the MDM Service's data set.</p>
         <div class="rules"><b>Rule —</b> port-lane and port-country lookups are hot-path, read on
         every shipment mapped — they stay as in-process caches regardless of which mode is active,
-        never a live per-request fetch.</div>
+        never a live per-request fetch. A loop's rotation is two independent lists (each stop tagged
+        Eastbound or Westbound, a port allowed in both) that a shipment header's Loop field resolves
+        and draws. The HS Codes page can look a classification up live from the EU's public tariff
+        service, but that result is shown and copied by hand, never stored — the service's terms
+        forbid caching it.</div>
       </div>
 
       <h3 id="s57"><span class="num">5.7</span>Operations — Kanban / Testing <span class="mono" style="color:var(--text-muted);font-size:14px">(P7 / P7a)</span></h3>
@@ -319,7 +358,13 @@
         <p><strong>Key functions</strong> — customer CRUD with identifiers/contacts; credit control
         (AR aging, exposure, hold/override authority scoped to the trade lane's own trade manager);
         customer hierarchy (parent/subsidiary rollup); derived roles computed from actual usage,
-        not hand-maintained checkboxes.</p>
+        not hand-maintained checkboxes. The customer list is filterable the way the Shipments list
+        is — checklists on company, role and city/country, free-text search, sort, server-side
+        paging — with an All / Trading Customers / Service Providers switch on top (the shared
+        table system, <code>ARCHITECTURE.md</code> §8.23). A Credit Overrides queue lists every
+        shipment currently blocked by a credit hold or an over-limit customer, with the same
+        filtering, search and sort applied in the browser; only the shipment's own lane trade
+        manager can release or approve.</p>
         <p><strong>Roles</strong> — operator, admin (write); trade_manager (credit override, within
         their lane).</p>
         <p><strong>Primary data</strong> — owned by the Customer/Organization Service when
@@ -378,6 +423,15 @@
       updates to open clients; nothing polls on a fixed interval for data that has a real push path.</p>
       <p><strong>Security</strong> — JWT (8-hour token) + optional SSO; 5-role RBAC scoped further
       by office/trade lane; secrets are write-only through the API (masked booleans on read).</p>
+      <p><strong>Visual design</strong> — the Dashboard, Command Center and Shipment Details use the
+      "Trade Horizon" glass-card design language, which follows the app's dark/light toggle (a
+      dual-theme token set swapped in place, <code>ARCHITECTURE.md</code> §4). Other pages use the
+      classic theme. Lists that adopt the shared table system (§8.23) behave identically to the
+      Shipments list.</p>
+      <p><strong>Quality gates</strong> — a backend test chain (<code>npm test</code>), a frontend
+      Vitest suite and a Cypress suite all run in CI against a database that starts empty — every
+      test provisions the reference data it needs (e.g. offices) rather than assuming a developer's
+      long-lived local data (<code>ARCHITECTURE.md</code> §10).</p>
       <p style="color:var(--text-muted);font-size:14px">Full technical detail (module maps, request
       lifecycle, ID formats, the complete data model) is in <code>ARCHITECTURE.md</code> §§2–7 and
       is intentionally not duplicated here.</p>
@@ -396,6 +450,10 @@
         <tr><td class="mono">D7</td><td>Doc Distribution DB</td><td><code>services/document-distribution/</code></td><td>webhook configs, delivery attempts</td></tr>
       </table>
       <p style="color:var(--text-muted);font-size:14px">PDF Render (P9a) is stateless and owns no data store.</p>
+      <p style="color:var(--text-muted);font-size:14px">D1 also holds three master-data registries that are
+      deliberately <em>not</em> mirrored into D3: <code>loop_codes</code> and <code>loop_code_ports</code>
+      (carrier service loops and their directional rotations) and <code>hs_codes</code> (curated HS-6
+      classification codes).</p>
     </section>
 
     <section id="s8">
@@ -409,6 +467,9 @@
         <dt>INCOTERM</dt><dd>International Commercial Terms — defines which party bears cost/risk at each point in the shipment's journey.</dd>
         <dt>AIS</dt><dd>Automatic Identification System — the maritime vessel-tracking protocol this app consumes live via aisstream.io.</dd>
         <dt>RBAC</dt><dd>Role-Based Access Control — this app's 5-role permission model (§3).</dd>
+        <dt>HS Code</dt><dd>Harmonized System code — the international goods-classification number; the first 6 digits are common worldwide (chapter = the first 2). CargoDesk's registry holds real 6-digit codes; national extensions (e.g. the EU's 8-digit CN) are looked up live, never stored.</dd>
+        <dt>Loop code</dt><dd>A carrier's named recurring service rotation (e.g. <code>AL1</code>) — the ordered list of ports one vessel string calls at, out and back.</dd>
+        <dt>Eastbound / Westbound (EB / WB)</dt><dd>The two directional legs of a loop. By convention transatlantic Europe→US is Westbound and transpacific Asia→US is Eastbound; each stop in a loop's rotation carries one of the two.</dd>
       </dl>
     </section>
   </main>

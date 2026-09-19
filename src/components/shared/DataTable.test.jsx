@@ -137,6 +137,13 @@ describe("TableToolbar", () => {
     expect(onSearch).toHaveBeenCalledWith("acme");
   });
 
+  it("omits the search box when no onSearch is given (a page whose own form is the search)", () => {
+    toolbar({ onSearch: undefined, sortOptions: [{ value: "", label: "Newest first" }], canClear: true });
+    expect(screen.queryByTestId("t-search")).toBeNull();
+    expect(screen.getByTestId("t-sort")).toBeInTheDocument();      // the rest of the bar is unaffected
+    expect(screen.getByTestId("t-clear")).toBeInTheDocument();
+  });
+
   it("renders the sort dropdown only when sortOptions are given, and reports the choice", () => {
     const onSort = vi.fn();
     const { unmount } = toolbar();

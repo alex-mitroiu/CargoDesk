@@ -1,5 +1,7 @@
 "use strict";
 
+const { applyColumnFilters, filterOptions, applySearch, applySort, paginate, blanksLast } = require("../lib/tableQuery");
+
 module.exports = function contractsRoutes(app, ctx) {
   const { query, transaction, ok, err, uid, requireRole, mapContract, mapLeg, mapRate, mapContractRouting, logEntityEvent, toUsd, findMatchingContractLegs,
           getSettings, callContractService, callMdmService, schemaReady } = ctx;
@@ -124,6 +126,23 @@ module.exports = function contractsRoutes(app, ctx) {
       .forEach(r => { (classesByContract[r.contract_id] ||= []).push(r.imdg_class); });
     list.forEach(c => { c.containerTypes = typesByContract[c.id] || []; c.imdgClasses = classesByContract[c.id] || []; });
     return mappedOrList;
+  }
+
+  // The full list-row shape for a set of raw `contracts` rows — legs, rates, routings, plus the
+  // container-type/IMDG arrays. Shared by GET /api/contracts and the table view further down.
+  async function hydrateContractRows(rows) {
+    const ids = rows.map(r => r.id);
+    let legsMap = {}, ratesMap = {}, routingsMap = {};
+    if (ids.length > 0) {
+      const ph = ids.map((_, i) => `$${i + 1}`).join(',');
+      (await query(`SELECT * FROM contract_legs  WHERE contract_id IN (${ph}) ORDER BY leg_order`, ids))
+        .forEach(l => { (legsMap[l.contract_id]  = legsMap[l.contract_id]  || []).push(mapLeg(l)); });
+      (await query(`SELECT * FROM contract_rates WHERE contract_id IN (${ph}) ORDER BY sort_order`, ids))
+        .forEach(r => { (ratesMap[r.contract_id] = ratesMap[r.contract_id] || []).push(mapRate(r)); });
+      (await query(`SELECT * FROM contract_routings WHERE contract_id IN (${ph}) ORDER BY sort_order`, ids))
+        .forEach(rt => { (routingsMap[rt.contract_id] = routingsMap[rt.contract_id] || []).push(mapContractRouting(rt)); });
+    }
+    return withContractArrays(rows.map(r => ({ ...mapContract(r), legs: legsMap[r.id] || [], rates: ratesMap[r.id] || [], routings: routingsMap[r.id] || [] })));
   }
 
   // contract_rates rows get a brand-new id on every save (saveRates always DELETEs and
@@ -454,18 +473,100 @@ module.exports = function contractsRoutes(app, ctx) {
     const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
     const [{ n: total }] = await query(`SELECT COUNT(*) AS n FROM contracts c ${where}`, params);
     const rows  = await query(`SELECT c.* FROM contracts c ${where} ORDER BY c.valid_from DESC, c.created_at DESC LIMIT ${p(lim)} OFFSET ${p(off)}`, params);
-    const ids = rows.map(r => r.id);
-    let legsMap = {}, ratesMap = {}, routingsMap = {};
-    if (ids.length > 0) {
-      const ph = ids.map((_, i) => `$${i + 1}`).join(',');
-      (await query(`SELECT * FROM contract_legs  WHERE contract_id IN (${ph}) ORDER BY leg_order`, ids))
-        .forEach(l => { (legsMap[l.contract_id]  = legsMap[l.contract_id]  || []).push(mapLeg(l)); });
-      (await query(`SELECT * FROM contract_rates WHERE contract_id IN (${ph}) ORDER BY sort_order`, ids))
-        .forEach(r => { (ratesMap[r.contract_id] = ratesMap[r.contract_id] || []).push(mapRate(r)); });
-      (await query(`SELECT * FROM contract_routings WHERE contract_id IN (${ph}) ORDER BY sort_order`, ids))
-        .forEach(rt => { (routingsMap[rt.contract_id] = routingsMap[rt.contract_id] || []).push(mapContractRouting(rt)); });
+    ok(res, { results: await hydrateContractRows(rows), total: Number(total), limit: lim, offset: off });
+  });
+
+  // ─── Table view (Contracts list page, shared table system — ARCHITECTURE.md §8.23) ───────────────
+  // A separate endpoint on purpose: GET /api/contracts above has other callers (the Schedules page's
+  // contract search, the Health panel) whose params mean something different — `carrier` is a partial
+  // match there, an empty `status=` means "no filter" — and the table's header checklists need exact
+  // matching and "empty selection = show nothing". Filtering runs in JS over per-contract SUMMARIES
+  // through lib/tableQuery.js rather than in SQL, so it behaves identically in local and remote
+  // contract_source modes and can't drift from Quotes. Only the visible page is fully hydrated.
+  //
+  // Column → what the Contracts table shows and filters on. One definition feeds both the list's
+  // filters and /filter-options. `route` and `containerType` are arrays: a contract matches when ANY
+  // of its legs / container types is selected. `route` uses the same "POL › POD" the Route column shows.
+  const CONTRACT_COLUMNS = {
+    contractNumber: c => c.contractNumber,
+    carrier:        c => c.carrierCode,
+    namedAccount:   c => c.namedAccount,
+    route:          c => c.routes,
+    containerType:  c => c.containerTypes,
+    dg:             c => (c.dgAllowed ? "DG allowed" : "No DG"),
+    validFrom:      c => c.validFrom,
+    validTo:        c => c.validTo,
+    status:         c => c.status,
+  };
+  const contractSearchText = c => [c.contractNumber, c.contractRef, c.namedAccount, c.carrierCode, c.legText].join(" ");
+  // The default order (valid-from newest first, then created) is the load order and needs no entry.
+  const CONTRACT_SORTERS = {
+    oldest:         blanksLast(c => c.validFrom),
+    validTo:        blanksLast(c => c.validTo),
+    contractNumber: blanksLast(c => c.contractNumber),
+    carrier:        blanksLast(c => c.carrierCode),
+  };
+
+  // `full` is the row the page renders: already in hand in remote mode (the service returns hydrated
+  // rows), filled in for just the visible page in local mode.
+  const summariseContract = (c, legs, containerTypes, full) => ({
+    id: c.id, contractNumber: c.contractNumber, contractRef: c.contractRef, carrierCode: c.carrierCode,
+    namedAccount: c.namedAccount, dgAllowed: !!c.dgAllowed, validFrom: c.validFrom, validTo: c.validTo, status: c.status,
+    routes: [...new Set(legs.filter(l => l.pol && l.pod).map(l => `${l.pol} › ${l.pod}`))],
+    containerTypes,
+    legText: legs.map(l => [l.pol, l.pod, l.polName, l.podName].join(" ")).join(" "),
+    full,
+  });
+
+  async function loadContractSummaries() {
+    if (await isRemote()) {
+      // The service owns the data and caps a page at 200, so page through it.
+      const all = [];
+      for (let off = 0; ; off += 200) {
+        const page = await callContractService("GET", `/internal/contracts?limit=200&offset=${off}`);
+        const batch = page.results || [];
+        all.push(...batch);
+        if (batch.length === 0 || all.length >= page.total) break;
+      }
+      return all.map(c => summariseContract(c, c.legs || [], c.containerTypes || [], c));
     }
-    ok(res, { results: await withContractArrays(rows.map(r => ({ ...mapContract(r), legs: legsMap[r.id] || [], rates: ratesMap[r.id] || [], routings: routingsMap[r.id] || [] }))), total: Number(total), limit: lim, offset: off });
+    const rows = (await query("SELECT * FROM contracts ORDER BY valid_from DESC, created_at DESC")).map(mapContract);
+    const legsBy = {}, typesBy = {};
+    (await query("SELECT contract_id, pol, pod, pol_name, pod_name FROM contract_legs ORDER BY leg_order"))
+      .forEach(l => { (legsBy[l.contract_id] ||= []).push({ pol: l.pol, pod: l.pod, polName: l.pol_name, podName: l.pod_name }); });
+    (await query("SELECT contract_id, container_type FROM contract_container_types"))
+      .forEach(r => { (typesBy[r.contract_id] ||= []).push(r.container_type); });
+    return rows.map(c => summariseContract(c, legsBy[c.id] || [], typesBy[c.id] || [], null));
+  }
+
+  app.get("/api/contracts/table", async (req, res) => {
+    try {
+      const { search = "", sort = "", asOf = "" } = req.query;
+      let rows = await loadContractSummaries();
+      // "Active as of" — the one non-column filter here, same rule the older list applies in SQL.
+      if (String(asOf).trim()) rows = rows.filter(c => c.validFrom && c.validTo && c.validFrom <= asOf && c.validTo >= asOf);
+      rows = applyColumnFilters(rows, req.query, CONTRACT_COLUMNS);
+      rows = applySearch(rows, search, contractSearchText);
+      rows = applySort(rows, sort, CONTRACT_SORTERS);
+      const page = paginate(rows, req.query);
+      const missing = page.results.filter(s => !s.full).map(s => s.id);
+      if (missing.length > 0) {
+        const ph = missing.map((_, i) => `$${i + 1}`).join(",");
+        const hydrated = await hydrateContractRows(await query(`SELECT * FROM contracts WHERE id IN (${ph})`, missing));
+        const byId = Object.fromEntries(hydrated.map(c => [c.id, c]));
+        page.results.forEach(s => { if (!s.full) s.full = byId[s.id]; });
+      }
+      // A contract deleted between the two reads simply drops out of the page.
+      ok(res, { ...page, results: page.results.map(s => s.full).filter(Boolean) });
+    } catch (e) { err(res, e.message, e.status || 500); }
+  });
+
+  // Checklist source for each column header — MUST stay registered before /api/contracts/:id
+  // (Express would otherwise read "filter-options" as an id). Built from every contract, ignoring
+  // the list's own filters and paging, so a value just unchecked stays selectable.
+  app.get("/api/contracts/filter-options", async (req, res) => {
+    try { ok(res, filterOptions(await loadContractSummaries(), CONTRACT_COLUMNS)); }
+    catch (e) { err(res, e.message, e.status || 500); }
   });
 
   // Pending-contract revalidation — MUST be before /api/contracts/:id

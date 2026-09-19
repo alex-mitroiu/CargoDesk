@@ -1,24 +1,21 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import useSaving from "../../hooks/useSaving";
 import { T, IMDG_CLASSES, CONTAINER_OPTIONS as CONTAINER_OPTION_DEFS } from "../../tokens";
 import { api } from "../../api";
 import { useAuth } from "../../AuthContext";
 import { toast } from "../../toast";
-import Spinner, { PageSpinner } from "../../components/primitives/Spinner";
+import Spinner from "../../components/primitives/Spinner";
 import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import { Modal } from "../../components/primitives/Modal";
-import Pagination from "../../components/primitives/Pagination";
-import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import { inputBase, Field } from "../../components/primitives/Form";
 import DatePicker from "../../components/primitives/DatePicker";
-import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
-import ActionMenu from "../../components/primitives/ActionMenu";
 import { IconPencil, IconClose, IconArrowUp, IconArrowDown, IconCalendar, IconClipboard } from "../../components/primitives/Icon";
+import DataTable, { TableToolbar } from "../../components/shared/DataTable";
+import useTableQuery from "../../hooks/useTableQuery";
 import EntityHistoryModal from "../../components/shared/EntityHistoryModal";
 import PortCombobox from "../../components/shared/PortCombobox";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
-import CarrierCombobox from "../../components/shared/CarrierCombobox";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -47,7 +44,6 @@ const UNITS = ["per_container","per_bl","per_kg","per_cbm"];
 const MOVEMENT_TYPES = ["FCL","LCL"];
 const CONTRACT_STATUSES = ["Active","Draft","Expired","On Hold"];
 
-const EMPTY_FILTERS = { search:"", carrier:"", status:"", dg:"", asOf:"", containerType:"" };
 
 const EMPTY_FORM = {
   contractNumber: "", contractRef: "", carrierCode: "", namedAccountId: "", namedAccount: "",
@@ -1043,41 +1039,38 @@ const SchedulesModal = ({ contract, onClose }) => {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+// Filterable columns — keys match routes/contracts.js's CONTRACT_COLUMNS. Module-level so
+// useTableQuery gets stable arrays. `asOf` is the one non-column filter: a single "active on this
+// date" value, kept as a plain param rather than a header checklist.
+const CONTRACT_FILTER_KEYS = ["contractNumber", "carrier", "namedAccount", "route", "containerType", "dg", "validFrom", "validTo", "status"];
+const CONTRACT_PARAM_KEYS = ["asOf"];
+const CONTRACT_SORT_OPTIONS = [
+  // Labels stay short: TableToolbar's sort select is 160px wide. "Newest/oldest" mean by Valid From.
+  { value: "",               label: "Newest first" },
+  { value: "oldest",         label: "Oldest first" },
+  { value: "validTo",        label: "Expiring soonest" },
+  { value: "contractNumber", label: "Contract # A–Z" },
+  { value: "carrier",        label: "Carrier A–Z" },
+];
+
 const MdmContractsPage = ({ highlightContractId, onHighlightHandled } = {}) => {
   const { canManageConfigs } = useAuth();
-  const [results, setResults] = useState([]);
-  const [total,   setTotal]   = useState(0);
-  const [offset,  setOffset]  = useState(0);
-  const [limit,   setLimit]   = useState(getStoredPageSize);
-  const [filters, setFilters] = useState(EMPTY_FILTERS);
-  const [loading, setLoading] = useState(true);
   const [modal,            setModal]            = useState(null);
   const [cloneSource,      setCloneSource]      = useState(null);
   const [historyContract,   setHistoryContract]   = useState(null);
   const [routingContract,   setRoutingContract]   = useState(null);
   const [schedulesContract, setSchedulesContract] = useState(null);
-  const timer = useRef(null);
 
-  const doLoad = useCallback(async (f, off, lim) => {
-    setLoading(true);
-    try {
-      const res = await api.contracts.search({
-        search:        f.search,
-        carrier:       f.carrier,
-        status:        f.status,
-        dg:            f.dg,
-        asOf:          f.asOf,
-        containerType: f.containerType,
-        limit:         lim ?? limit,
-        offset:        off,
-      });
-      setResults(res.results || []);
-      setTotal(res.total || 0);
-    } catch {}
-    setLoading(false);
-  }, [limit]);
-
-  useEffect(() => { doLoad(EMPTY_FILTERS, 0); }, []);
+  // Same table behavior as Shipments and Quotes (column-header checklists, search, sort, paging) —
+  // see useTableQuery/DataTable. The old carrier/status/DG/container-type dropdowns and the Search
+  // button are gone: each column's own header filter replaces its dropdown, and search runs as you
+  // type, rather than keeping two possibly-disagreeing ways to filter one column.
+  const t = useTableQuery({
+    fetchPage: params => api.contracts.table(params),
+    fetchOptions: () => api.contracts.filterOptions(),
+    filterKeys: CONTRACT_FILTER_KEYS,
+    paramKeys: CONTRACT_PARAM_KEYS,
+  });
 
   // Deep-link from the notification bell's Contract Expiry section — open that specific
   // contract's edit modal directly rather than landing on the plain filtered list, since the
@@ -1096,12 +1089,7 @@ const MdmContractsPage = ({ highlightContractId, onHighlightHandled } = {}) => {
     })();
   }, [highlightContractId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSearch = () => { setOffset(0); doLoad(filters, 0); };
-  const handleClear  = () => { setFilters(EMPTY_FILTERS); setOffset(0); doLoad(EMPTY_FILTERS, 0); };
-  const goPage = off => { setOffset(off); doLoad(filters, off); };
-  const changeLimit = n => { setLimit(n); setOffset(0); doLoad(filters, 0, n); };
-
-  const handleSaved = () => { setModal(null); setCloneSource(null); doLoad(filters, offset); };
+  const handleSaved = () => { setModal(null); setCloneSource(null); t.reload(); };
 
   const handleDuplicate = async c => {
     try {
@@ -1118,7 +1106,7 @@ const MdmContractsPage = ({ highlightContractId, onHighlightHandled } = {}) => {
     try {
       await api.contracts.remove(id);
       toast.success("Contract deleted");
-      doLoad(filters, offset);
+      t.reload();
     } catch (e) {
       toast.error(e.message);
     }
@@ -1128,7 +1116,7 @@ const MdmContractsPage = ({ highlightContractId, onHighlightHandled } = {}) => {
     try {
       await api.contracts.publish(id);
       toast.success("Contract published — now selectable for shipments");
-      doLoad(filters, offset);
+      t.reload();
     } catch (e) {
       toast.error(e.message);
     }
@@ -1139,37 +1127,105 @@ const MdmContractsPage = ({ highlightContractId, onHighlightHandled } = {}) => {
     try {
       await api.contracts.withdraw(id);
       toast.success("Contract withdrawn to Draft");
-      doLoad(filters, offset);
+      t.reload();
     } catch (e) {
       toast.error(e.message);
     }
   };
 
-  const handleSearchChange = (key, val) => {
-    const next = { ...filters, [key]: val };
-    setFilters(next);
-    clearTimeout(timer.current);
-    if (key === "search") {
-      timer.current = setTimeout(() => { setOffset(0); doLoad(next, 0); }, 300);
-    } else if (key === "carrier") {
-      // CarrierCombobox only calls onChange on an actual selection (click or Enter on a real
-      // match) or its own clear button — never per-keystroke, typing lives in the combobox's
-      // own internal query state — so unlike the free-text search box above, this is already a
-      // discrete, validated pick and doesn't need a debounce; filter immediately.
-      setOffset(0); doLoad(next, 0);
-    }
-  };
+  const dash = <span style={{ color: T.border }}>—</span>;
 
-  const hasFilters = Object.values(filters).some(v => v !== "");
-
-  // Column resizer
-  const { template, startResize } = useResizableColumns("mdm-contracts", [120,100,120,180,140,50,100,100,90,80]);
-  const headers = ["Contract #","Carrier","Named Account","Route","Containers","DG","Valid From","Valid To","Status","Actions"];
-
-  const th = {
-    position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
-    color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em",
-  };
+  // Each cell is the same markup the list always had; the header filter for a column reads the
+  // matching key in routes/contracts.js's CONTRACT_COLUMNS, so what a cell shows is what its
+  // checklist offers.
+  const columns = [
+    { key: "contractNumber", header: "Contract #", width: 130, filter: true,
+      render: c => (
+        <>
+          <div style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
+            {c.contractNumber || "—"}
+          </div>
+          {c.contractRef && (
+            <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.text, marginTop: 2 }}>{c.contractRef}</div>
+          )}
+          <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 2 }}>{c.id}</div>
+        </>
+      ) },
+    { key: "carrier", header: "Carrier", width: 80, align: "center", filter: true,
+      render: c => <Badge variant="info">{c.carrierCode || "—"}</Badge> },
+    { key: "namedAccount", header: "Named Account", width: 130, filter: true,
+      render: c => (
+        <div style={{ fontFamily: T.body, fontSize: 13, color: T.text, maxWidth: "100%",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {c.namedAccount || dash}
+        </div>
+      ) },
+    { key: "route", header: "Route", width: 180, filter: true,
+      render: c => {
+        const legs = c.legs || [];
+        const routings = c.routings || [];
+        if (legs.length === 0) return dash;
+        return (
+          <>
+            <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text, fontWeight: 600 }}>
+              {legs[0].pol} <span style={{ color: T.border }}>›</span> {legs[0].pod}
+            </div>
+            {(legs[0].polName || legs[0].podName) && (
+              <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 1, maxWidth: "100%",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {legs[0].polName} › {legs[0].podName}
+              </div>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+              {legs.length > 1 && (
+                <button type="button"
+                  onClick={e => { e.stopPropagation(); setRoutingContract(c); }}
+                  style={{ background: "none", border: "none", padding: 0,
+                    cursor: "pointer", fontFamily: T.body, fontSize: 10.5, color: T.accent,
+                    textDecoration: "underline", textDecorationStyle: "dotted" }}>
+                  +{legs.length - 1} more leg{legs.length - 1 > 1 ? "s" : ""}
+                </button>
+              )}
+              {/* Named routings (e.g. "Via Rotterdam" vs "Via Hamburg") are a distinct
+                  concept from raw leg count — surfaced here so a multi-priced-path
+                  contract is visible straight from the list. */}
+              {routings.length > 1 && (
+                <span title={routings.map(r => r.name || "Unnamed").join(", ")}>
+                  <Badge variant="info">{routings.length} routings</Badge>
+                </span>
+              )}
+            </div>
+          </>
+        );
+      } },
+    { key: "containerType", header: "Containers", width: 140, filter: true,
+      render: c => {
+        const ctypes = c.containerTypes || [];
+        const shown = ctypes.slice(0, 3);
+        const more  = ctypes.length - shown.length;
+        return (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+            {shown.map(ct => (
+              <span key={ct} style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                color: T.textMuted, background: T.bg, border: `1px solid ${T.border}`,
+                borderRadius: 4, padding: "1px 5px" }}>
+                {ct}
+              </span>
+            ))}
+            {more > 0 && <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>+{more}</span>}
+            {ctypes.length === 0 && dash}
+          </div>
+        );
+      } },
+    { key: "dg", header: "DG", width: 70, align: "center", filter: true,
+      render: c => (c.dgAllowed ? <Badge variant="success">DG</Badge> : dash) },
+    { key: "validFrom", header: "Valid From", width: 105, filter: true,
+      render: c => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{c.validFrom || dash}</span> },
+    { key: "validTo", header: "Valid To", width: 105, filter: true,
+      render: c => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{c.validTo || dash}</span> },
+    { key: "status", header: "Status", width: 100, align: "center", filter: true,
+      render: c => <Badge variant={contractStatusVariant(c.status)}>{c.status}</Badge> },
+  ];
 
   return (
     <div>
@@ -1180,212 +1236,39 @@ const MdmContractsPage = ({ highlightContractId, onHighlightHandled } = {}) => {
             Contracts
           </h1>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-            {total} contract{total !== 1 ? "s" : ""}
-            {hasFilters ? " matching filters" : " in registry"}
+            {t.total} contract{t.total !== 1 ? "s" : ""}
+            {t.hasFilters ? " matching filters" : " in registry"}
           </p>
         </div>
         {canManageConfigs && <Btn size="lg" onClick={() => setModal("new")}>＋ New Contract</Btn>}
       </div>
 
-      {/* Filter bar */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-        <input
-          value={filters.search}
-          onChange={e => handleSearchChange("search", e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") handleSearch(); }}
-          placeholder="Search contract #, carrier, account, route…"
-          style={{ ...inputBase, flex: "1 1 220px", minWidth: 180 }}
-        />
-        {/* Was a plain free-text input — the backend already does an exact carrier_code=?
-            match here (routes/contracts.js), never a partial LIKE, so a typo silently
-            returned zero results with no feedback, and Enter didn't trigger search at all
-            (no onKeyDown, unlike the search box above). CarrierCombobox validates against the
-            real carrier registry as you type, closing both gaps at once. */}
-        <div style={{ width: 160 }}>
-          <CarrierCombobox value={filters.carrier} onChange={code => handleSearchChange("carrier", code)} />
-        </div>
-        <select value={filters.status} onChange={e => handleSearchChange("status", e.target.value)}
-          style={{ ...inputBase, width: 120, cursor: "pointer" }}>
-          <option value="">All Statuses</option>
-          {CONTRACT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <select value={filters.dg} onChange={e => handleSearchChange("dg", e.target.value)}
-          style={{ ...inputBase, width: 110, cursor: "pointer" }}>
-          <option value="">DG: All</option>
-          <option value="1">DG Allowed</option>
-          <option value="0">No DG</option>
-        </select>
-        <input
-          type="date"
-          value={filters.asOf}
-          onChange={e => handleSearchChange("asOf", e.target.value)}
-          title="Active as of date"
-          style={{ ...inputBase, width: 140, fontFamily: T.mono, fontSize: 12 }}
-        />
-        <select value={filters.containerType} onChange={e => handleSearchChange("containerType", e.target.value)}
-          style={{ ...inputBase, width: 90, cursor: "pointer", fontFamily: T.mono }}>
-          <option value="">All Types</option>
-          {CONTAINER_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <Btn onClick={handleSearch}>Search</Btn>
-        {hasFilters && <Btn variant="secondary" onClick={handleClear}>Clear</Btn>}
-      </div>
+      <TableToolbar tableId="contracts" search={t.filters.search} onSearch={t.setSearch}
+        searchPlaceholder="Search contract #, carrier, account, route…"
+        sort={t.sort} sortOptions={CONTRACT_SORT_OPTIONS} onSort={t.setSort}
+        canClear={t.canClear} onClear={t.clear}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+          Active as of
+          <input type="date" data-testid="contracts-asof" value={t.filters.asOf}
+            onChange={e => t.setParam("asOf", e.target.value)}
+            title="Show only contracts valid on this date"
+            style={{ ...inputBase, width: 140, fontFamily: T.mono, fontSize: 12 }} />
+        </label>
+      </TableToolbar>
 
-      {/* Table */}
-      <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        {/* Column headers */}
-        <div style={{ display: "grid", gridTemplateColumns: template,
-          padding: "10px 20px", borderBottom: `1px solid ${T.border}`, gap: 0 }}>
-          {headers.map((h, i) => (
-            <div key={i} style={th}>
-              {h}
-              {i < headers.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
-            </div>
-          ))}
-        </div>
-
-        {loading ? (
-          <div style={{ padding: 48 }}><PageSpinner /></div>
-        ) : results.length === 0 ? (
-          <div style={{ padding: 48, textAlign: "center", color: T.textMuted,
-            fontFamily: T.body, fontSize: 14, fontStyle: "italic" }}>
-            {hasFilters ? "No contracts match your filters." : "No contracts yet. Create your first one above."}
-          </div>
-        ) : results.map(c => {
-          const legs = c.legs || [];
-          const routings = c.routings || [];
-          const ctypes = c.containerTypes || [];
-          const shown = ctypes.slice(0, 3);
-          const more  = ctypes.length - shown.length;
-          return (
-            <div key={c.id}
-              style={{ display: "grid", gridTemplateColumns: template,
-                padding: "13px 20px", borderBottom: `1px solid ${T.border}22`,
-                alignItems: "center", gap: 0 }}>
-
-              {/* Contract # */}
-              <div>
-                <div style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
-                  {c.contractNumber || "—"}
-                </div>
-                {c.contractRef && (
-                  <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.text, marginTop: 2 }}>
-                    {c.contractRef}
-                  </div>
-                )}
-                <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
-                  {c.id}
-                </div>
-              </div>
-
-              {/* Carrier */}
-              <div>
-                <Badge variant="info">{c.carrierCode || "—"}</Badge>
-              </div>
-
-              {/* Named Account */}
-              <div style={{ fontFamily: T.body, fontSize: 13, color: T.text,
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {c.namedAccount || <span style={{ color: T.border }}>—</span>}
-              </div>
-
-              {/* Route */}
-              <div>
-                {legs.length === 0 ? (
-                  <span style={{ color: T.border }}>—</span>
-                ) : (
-                  <>
-                    <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text, fontWeight: 600 }}>
-                      {legs[0].pol} <span style={{ color: T.border }}>›</span> {legs[0].pod}
-                    </div>
-                    {(legs[0].polName || legs[0].podName) && (
-                      <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 1,
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {legs[0].polName} › {legs[0].podName}
-                      </div>
-                    )}
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                      {legs.length > 1 && (
-                        <button type="button"
-                          onClick={e => { e.stopPropagation(); setRoutingContract(c); }}
-                          style={{ background: "none", border: "none", padding: 0,
-                            cursor: "pointer", fontFamily: T.body, fontSize: 10.5, color: T.accent,
-                            textDecoration: "underline", textDecorationStyle: "dotted" }}>
-                          +{legs.length - 1} more leg{legs.length - 1 > 1 ? "s" : ""}
-                        </button>
-                      )}
-                      {/* Named routings (e.g. "Via Rotterdam" vs "Via Hamburg") are a distinct
-                          concept from raw leg count — surfaced here so a multi-priced-path
-                          contract is visible straight from the list. */}
-                      {routings.length > 1 && (
-                        <span title={routings.map(r => r.name || "Unnamed").join(", ")}>
-                          <Badge variant="info">{routings.length} routings</Badge>
-                        </span>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Container types */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                {shown.map(ct => (
-                  <span key={ct} style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
-                    color: T.textMuted, background: T.bg, border: `1px solid ${T.border}`,
-                    borderRadius: 4, padding: "1px 5px" }}>
-                    {ct}
-                  </span>
-                ))}
-                {more > 0 && (
-                  <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>+{more}</span>
-                )}
-                {ctypes.length === 0 && <span style={{ color: T.border }}>—</span>}
-              </div>
-
-              {/* DG */}
-              <div>
-                {c.dgAllowed
-                  ? <Badge variant="success">DG</Badge>
-                  : <span style={{ color: T.border }}>—</span>}
-              </div>
-
-              {/* Valid From */}
-              <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
-                {c.validFrom || <span style={{ color: T.border }}>—</span>}
-              </div>
-
-              {/* Valid To */}
-              <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
-                {c.validTo || <span style={{ color: T.border }}>—</span>}
-              </div>
-
-              {/* Status */}
-              <div>
-                <Badge variant={contractStatusVariant(c.status)}>{c.status}</Badge>
-              </div>
-
-              {/* Actions */}
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <ActionMenu items={[
-                  ...(canManageConfigs ? [{ icon: IconPencil,  label: "Edit",      onClick: () => setModal(c) }] : []),
-                  ...(canManageConfigs && c.status === "Draft"  ? [{ icon: IconArrowUp, label: "Publish",  onClick: () => handlePublish(c.id) }] : []),
-                  ...(canManageConfigs && c.status === "Active" ? [{ icon: IconArrowDown, label: "Withdraw to Draft", onClick: () => handleWithdraw(c.id) }] : []),
-                  ...(canManageConfigs ? [{ icon: "⧉",  label: "Duplicate", onClick: () => handleDuplicate(c) }] : []),
-                  { icon: IconCalendar, label: "Schedules",  onClick: () => setSchedulesContract(c) },
-                  { icon: IconClipboard, label: "History",   onClick: () => setHistoryContract(c) },
-                  ...(canManageConfigs ? [{ icon: IconClose,  label: "Delete",    variant: "danger", onClick: () => handleDelete(c.id) }] : []),
-                ]} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Pagination */}
-      <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-        <PageSizeSelect value={limit} onChange={changeLimit} />
-        <div style={{ flex: 1 }}><Pagination total={total} limit={limit} offset={offset} onPage={goPage} /></div>
-      </div>
+      <DataTable tableId="contracts" columns={columns} rows={t.rows} loading={t.loading} rowKey={c => c.id} actionsWidth={80}
+        hasFilters={t.hasFilters} filters={t.filters} filterOptions={t.options} onFilterChange={t.setColumnFilter}
+        rowActions={c => [
+          ...(canManageConfigs ? [{ icon: IconPencil,  label: "Edit",      onClick: () => setModal(c) }] : []),
+          ...(canManageConfigs && c.status === "Draft"  ? [{ icon: IconArrowUp, label: "Publish",  onClick: () => handlePublish(c.id) }] : []),
+          ...(canManageConfigs && c.status === "Active" ? [{ icon: IconArrowDown, label: "Withdraw to Draft", onClick: () => handleWithdraw(c.id) }] : []),
+          ...(canManageConfigs ? [{ icon: "⧉",  label: "Duplicate", onClick: () => handleDuplicate(c) }] : []),
+          { icon: IconCalendar, label: "Schedules",  onClick: () => setSchedulesContract(c) },
+          { icon: IconClipboard, label: "History",   onClick: () => setHistoryContract(c) },
+          ...(canManageConfigs ? [{ icon: IconClose,  label: "Delete",    variant: "danger", onClick: () => handleDelete(c.id) }] : []),
+        ]}
+        emptyMessage="No contracts yet. Create your first one above." emptyFilteredMessage="No contracts match your filters."
+        pagination={{ total: t.total, offset: t.offset, limit: t.limit, onPage: t.goPage, onLimit: t.changeLimit }} />
 
       {/* Contract modal */}
       {modal && (

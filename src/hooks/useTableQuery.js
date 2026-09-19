@@ -9,8 +9,13 @@ import { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 //     fetchPage:    params => api.quotes.list(params),   // -> { results, total }
 //     fetchOptions: () => api.quotes.filterOptions(),    // -> { [filterKey]: string[] }  (optional)
 //     filterKeys:   QUOTE_FILTER_KEYS,                    // MUST be a stable (module-level) array
+//     paramKeys:    ["asOf"],                             // optional: plain scalar params (a date), see below
 //     initialSort:  "",
 //   });
+//
+// `paramKeys` are filters that are NOT a column checklist — a single value such as an "active as
+// of" date. They live in `filters` as strings ("" = unset), are sent only when set, count towards
+// hasFilters/canClear, are cleared by clear(), and are changed with setParam(key, value).
 //
 // `filters` holds one entry per filterKey — ColumnFilter's own convention: null = no filter, an
 // array = the chosen subset, and an EMPTY array is a deliberate "show nothing" (not the same as
@@ -24,8 +29,14 @@ import { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 // (StrictMode's dev-only double mount and two quick filter clicks both fire overlapping requests;
 // a slower, older one resolving last would otherwise overwrite the current results with stale
 // ones).
-export default function useTableQuery({ fetchPage, fetchOptions, filterKeys, initialSort = "", searchDelay = 300 }) {
-  const blankFilters = () => ({ search: "", ...Object.fromEntries(filterKeys.map(k => [k, null])) });
+const NO_KEYS = [];   // module-level so the default keeps a stable identity
+
+export default function useTableQuery({ fetchPage, fetchOptions, filterKeys, paramKeys = NO_KEYS, initialSort = "", searchDelay = 300 }) {
+  const blankFilters = () => ({
+    search: "",
+    ...Object.fromEntries(filterKeys.map(k => [k, null])),
+    ...Object.fromEntries(paramKeys.map(k => [k, ""])),
+  });
 
   const [query, setQuery] = useState(() => ({ filters: blankFilters(), sort: initialSort, offset: 0, limit: getStoredPageSize() }));
   const [rows, setRows] = useState([]);
@@ -46,6 +57,7 @@ export default function useTableQuery({ fetchPage, fetchOptions, filterKeys, ini
     try {
       const params = { limit: q.limit, offset: q.offset };
       filterKeys.forEach(k => { if (Array.isArray(q.filters[k])) params[k] = q.filters[k]; });
+      paramKeys.forEach(k => { if (q.filters[k]) params[k] = q.filters[k]; });
       if (q.filters.search) params.search = q.filters.search;
       if (q.sort) params.sort = q.sort;
       const r = await fetchPageRef.current(params);
@@ -57,7 +69,7 @@ export default function useTableQuery({ fetchPage, fetchOptions, filterKeys, ini
       setRows([]); setTotal(0);
     }
     if (seq === seqRef.current) setLoading(false);
-  }, [filterKeys]);
+  }, [filterKeys, paramKeys]);
 
   const loadOptions = useCallback(() => {
     fetchOptionsRef.current?.().then(o => setOptions(o || {})).catch(() => {});
@@ -89,7 +101,7 @@ export default function useTableQuery({ fetchPage, fetchOptions, filterKeys, ini
   };
 
   const { filters } = query;
-  const hasFilters = !!(filters.search || filterKeys.some(k => filters[k] != null));
+  const hasFilters = !!(filters.search || filterKeys.some(k => filters[k] != null) || paramKeys.some(k => filters[k]));
 
   return {
     rows, total, loading, options,
@@ -99,6 +111,7 @@ export default function useTableQuery({ fetchPage, fetchOptions, filterKeys, ini
     canClear: hasFilters || query.sort !== initialSort,
     setSearch,
     setColumnFilter: (key, value) => change({ filters: { ...queryRef.current.filters, [key]: value } }),
+    setParam: (key, value) => change({ filters: { ...queryRef.current.filters, [key]: value } }),
     setSort: sort => change({ sort }),
     clear: () => change({ filters: blankFilters(), sort: initialSort }),
     goPage: offset => run(apply({ offset })),
