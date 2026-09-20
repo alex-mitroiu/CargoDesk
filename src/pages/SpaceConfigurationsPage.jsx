@@ -11,13 +11,14 @@ import PortField from "../components/shared/PortField";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import Spinner from "../components/primitives/Spinner";
-import Pagination from "../components/primitives/Pagination";
-import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 import DatePicker from "../components/primitives/DatePicker";
-import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
-import ActionMenu from "../components/primitives/ActionMenu";
 import EntityHistoryModal from "../components/shared/EntityHistoryModal";
 import ConsumptionBar from "../components/shared/ConsumptionBar";
+import LanePill from "../components/shared/LanePill";
+import DataTable, { TableToolbar } from "../components/shared/DataTable";
+import useTableQuery from "../hooks/useTableQuery";
+import { queryRows, filterOptions } from "../utils/localTableQuery";
+import { buildSpaceRows, portLookupsNeeded, SPACE_COLUMNS, SPACE_FILTER_KEYS, SPACE_SORT_OPTIONS, SPACE_SPEC } from "../utils/spaceConfigTable";
 import { IconCheck, IconClose, IconPencil, IconWarning, IconForbid, IconLink,
   IconClipboard, IconArchive, IconSettings, IconSearch } from "../components/primitives/Icon";
 
@@ -59,6 +60,22 @@ const LanePair = ({ origin, dest }) => (
     {dest
       ? <Badge variant={LANE_BADGE_VARIANT[dest] || "default"}>{dest}</Badge>
       : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.border }}>—</span>}
+  </div>
+);
+
+// One half of the form's Trade panel — the origin's or the destination's trade lane, with the port it was
+// worked out from. (The panel used to show one "Trade Lane Route" pill pair; the table now has a column for
+// each side, and the form says the same words.)
+const TradeCard = ({ testId, label, code, name, from }) => (
+  <div data-testid={testId} style={{ border: `1px solid ${T.border}`, borderRadius: 7, background: T.surface,
+    padding: "10px 12px", display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
+    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+      textTransform: "uppercase", letterSpacing: ".08em" }}>{label}</div>
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {code ? <LanePill code={code} /> : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.border }}>—</span>}
+      {name && <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.text }}>{name}</span>}
+    </div>
+    {from && <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>{from}</span>}
   </div>
 );
 
@@ -277,19 +294,21 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
   const conflictTimer = useRef(null);
 
   useEffect(() => {
-    if (init.pol) fetchLane(init.pol, setOriginLane, setOriginOptions, true);
-    if (init.pod) fetchLane(init.pod, setDestLane,   setDestOptions,   true);
+    if (init.pol) fetchLane(init.pol, setOriginLane, setOriginOptions, init.originLane);
+    if (init.pod) fetchLane(init.pod, setDestLane,   setDestOptions,   init.destLane);
   }, []);
 
-  const fetchLane = async (unlocode, setLane, setOptions, keepExisting = false) => {
+  // `existing` is the lane already stored on the configuration being edited: keep it, and only refresh the
+  // options list beside it. Picking a different port passes nothing, so the lane is re-derived from that port.
+  // (This used to test `setLane.toString().includes(unlocode)` — the source text of a state setter — which is
+  // never true, so opening Edit silently swapped a deliberately chosen non-primary lane for the port's own.)
+  const fetchLane = async (unlocode, setLane, setOptions, existing = "") => {
     if (!unlocode) { setLane(""); setOptions([]); return; }
     setLaneLoading(true);
     try {
       const data = await api.portLanes(unlocode);
       setOptions(data.lanes || []);
-      if (!keepExisting || !setLane.toString().includes(unlocode)) {
-        if (data.primary) setLane(data.primary);
-      }
+      if (!existing && data.primary) setLane(data.primary);
     } catch {}
     setLaneLoading(false);
   };
@@ -390,6 +409,8 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
     });
   };
 
+  const laneNameOf = code => [...originOptions, ...destOptions, ...tradeLanes].find(l => l.code === code)?.name || "";
+
   const laneSelOpts = (options, fallback) => [
     ...((options.length ? options : tradeLanes).map(l => ({ value: l.code, label: `${l.code} – ${l.name}` }))),
     ...(fallback && !options.find(o => o.code === fallback) ? [{ value: fallback, label: fallback }] : []),
@@ -408,13 +429,10 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
 
       {(polPort || podPort) && (
         <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 16px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: laneOverride ? 12 : 0 }}>
-            <div>
-              <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-                textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
-                Trade Lane Route {laneLoading && <span style={{ fontWeight: 400, color: T.border }}>· detecting…</span>}
-              </div>
-              <LanePair origin={originLane} dest={destLane} />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+            <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+              textTransform: "uppercase", letterSpacing: ".08em" }}>
+              Trade {laneLoading && <span style={{ fontWeight: 400, color: T.border }}>· detecting…</span>}
             </div>
             <button type="button" onClick={() => setLaneOverride(o => !o)}
               style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
@@ -425,11 +443,17 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
                 : <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconPencil size={10} />Override</span>}
             </button>
           </div>
-          {laneOverride && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "end", marginTop: 4 }}>
-              <Sel label="Origin Lane" value={originLane} onChange={setOriginLane} options={laneSelOpts(originOptions, originLane)} />
-              <div style={{ fontFamily: T.mono, fontSize: 18, color: T.textMuted, fontWeight: 700, paddingBottom: 9, userSelect: "none" }}>›</div>
-              <Sel label="Destination Lane" value={destLane} onChange={setDestLane} options={laneSelOpts(destOptions, destLane)} />
+          {laneOverride ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <Sel label="Origin Trade" value={originLane} onChange={setOriginLane} options={laneSelOpts(originOptions, originLane)} />
+              <Sel label="Destination Trade" value={destLane} onChange={setDestLane} options={laneSelOpts(destOptions, destLane)} />
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <TradeCard testId="trade-origin" label="Origin Trade" code={originLane} name={laneNameOf(originLane)}
+                from={polPort?.unlocode ? `from POL · ${polPort.unlocode}` : ""} />
+              <TradeCard testId="trade-destination" label="Destination Trade" code={destLane} name={laneNameOf(destLane)}
+                from={podPort?.unlocode ? `from POD · ${podPort.unlocode}` : ""} />
             </div>
           )}
         </div>
@@ -604,10 +628,6 @@ const SpaceConfigurationsPage = ({
   const [linkedPorts,   setLinkedPorts]   = useState([]);
   const [contractsById, setContractsById] = useState({});
 
-  const { template: allocTemplate, startResize: allocStartResize } =
-    useResizableColumns("space-configs", [150, 200, 160, 100, 150, 110, 100, 56]);
-  const allocHeaders = ["Carrier", "Name / Route", "Contract", "TEU", "Effective Period", "Confirmed", "Status", "Actions"];
-
   const today = new Date().toISOString().slice(0, 10);
 
   useEffect(() => { api.tradeLanes.list().then(setTradeLanes).catch(() => {}); }, []);
@@ -676,12 +696,149 @@ const SpaceConfigurationsPage = ({
     return m;
   }, [allocations, shipments, containers, teuDefs]);
 
-  const currentAllocs = allocations.filter(a => a.endDate >= today);
-  const [allocOffset, setAllocOffset] = useState(0);
-  const [allocLimit,  setAllocLimit]  = useState(getStoredPageSize);
-  // A create/delete/expiry can shrink the result set below whatever page was showing.
-  useEffect(() => { setAllocOffset(0); }, [currentAllocs.length]);
-  const pageAllocs = currentAllocs.slice(allocOffset, allocOffset + allocLimit);
+  const activeCount = allocations.filter(a => a.endDate >= today).length;
+
+  // The table: the shared Shipments-style behaviour (header checklists, search, sort, paging) run
+  // CLIENT-side over the `allocations` prop — that array is App-level state the bell, Landing, Dashboard
+  // and Archive also read, patched in place on create/edit/delete, so this page filters its own prop rather
+  // than fetch a second copy. The rows, filters and sorts are src/utils/spaceConfigTable.js; the server's
+  // confirmed/pending/rejected/remaining figures pass through untouched.
+  //
+  // What the prop lacks is port names and, for older configurations, a trade lane: only some rows store
+  // originLane/destLane. A missing side is worked out from its port's primary lane — the same lookup the
+  // Add/Edit form uses — and marked as derived. Lookups are made once per port per page visit, and only for
+  // what the table shows (portLookupsNeeded); the table waits for them, so lanes never pop in afterwards.
+  const allocRef = useRef(allocations);  allocRef.current = allocations;
+  const carriersRef = useRef(carriers);  carriersRef.current = carriers;
+  const portCache = useRef({ names: new Map(), lanes: new Map() });
+  const [portNames, setPortNames] = useState({});
+
+  const buildRows = async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const need = portLookupsNeeded(allocRef.current, day);
+    const cache = portCache.current;
+    // A lookup that fails (an unknown port, a slow or unreachable service) must only cost that port its name or
+    // lane — never blank the table — so every load, even one that throws before returning a promise, ends in null.
+    const once = (map, code, load) => { if (!map.has(code)) map.set(code, Promise.resolve().then(load).catch(() => null)); return map.get(code); };
+    await Promise.all([
+      ...need.names.map(c => once(cache.names, c, () => api.ports.get(c).then(p => p?.name || ""))),
+      ...need.lanes.map(c => once(cache.lanes, c, () => api.portLanes(c).then(d => d?.primary || null))),
+    ]);
+    const names = {}, lanes = {};
+    for (const c of need.names) names[c] = (await cache.names.get(c)) || "";
+    for (const c of need.lanes) lanes[c] = await cache.lanes.get(c);
+    setPortNames(names);
+    return buildSpaceRows({ allocations: allocRef.current, carriers: carriersRef.current, portInfo: { names, lanes }, today: day });
+  };
+  const t = useTableQuery({
+    fetchPage: async params => queryRows(await buildRows(), params, SPACE_SPEC),
+    fetchOptions: async () => filterOptions(await buildRows(), SPACE_COLUMNS),
+    filterKeys: SPACE_FILTER_KEYS,
+  });
+  // The hook fetches on mount by itself; after that a create/edit/delete (or a carrier rename) changes the
+  // props, and the table re-derives its rows and checklists.
+  const seenProps = useRef(false);
+  useEffect(() => {
+    if (!seenProps.current) { seenProps.current = true; return; }
+    t.reload();
+  }, [allocations, carriers]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const carrierName = code => carriers.find(c => c.code === code)?.name || "";
+  const laneName = code => tradeLanes.find(l => l.code === code)?.name || "";
+  const STATUS_COLOR = { "Over Limit": T.danger, "At Limit": T.warning, Active: T.success, Future: T.accent, Ending: T.warning };
+
+  const laneCell = (lane, port, side) => !lane
+    ? <span style={{ fontFamily: T.mono, fontSize: 12, color: T.border }}>—</span>
+    : (
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}
+        title={lane.derived ? `Derived from ${side} ${port} — not stored on this configuration` : "Stored on this configuration"}>
+        <LanePill code={lane.code} derived={lane.derived} />
+        {laneName(lane.code) && (
+          <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, lineHeight: 1.25 }}>{laneName(lane.code)}</span>
+        )}
+      </div>
+    );
+
+  const columns = [
+    { key: "carrier", header: "Carrier", width: 90, filter: true, describe: carrierName,
+      render: r => <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700 }}>{r.carrierCode}</span> },
+    { key: "route", header: "Name / Route", width: 168, filter: true,
+      describe: v => { const [pol, pod] = v.split(" › "); return portNames[pol] && portNames[pod] ? `${portNames[pol]} › ${portNames[pod]}` : ""; },
+      render: r => (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{r.carrierName || "—"}</span>
+          {r.route && (
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+              {r.pol} <span style={{ color: T.border }}>›</span> {r.pod}
+            </span>
+          )}
+          {r.notes && (
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, fontStyle: "italic",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 150 }}>
+              {r.notes}
+            </span>
+          )}
+        </div>
+      ) },
+    { key: "origin", header: "Origin", group: "Trade", width: 96, filter: true, describe: laneName,
+      render: r => laneCell(r.origin, r.pol, "POL") },
+    { key: "dest", header: "Destination", group: "Trade", width: 108, filter: true, describe: laneName,
+      render: r => laneCell(r.dest, r.pod, "POD") },
+    { key: "contract", header: "Contract", width: 148, filter: true,
+      render: r => r.contract
+        ? <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 600 }}>{r.contract}</span>
+        : <span style={{ fontFamily: T.body, fontSize: 12, color: T.danger }}>— missing</span> },
+    { key: "teu", header: "TEU", width: 100,
+      render: r => (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{r.allocated} TEU</span>
+          <ConsumptionBar allocated={r.allocated} confirmed={r.confirmed} pending={r.pending} rejected={r.rejected} height={4} width={72} />
+          <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T[r.barLevel] }}>
+            {r.pct.toFixed(0)}% <span style={{ color: T.border }}>/ {r.thresh}%</span>
+          </span>
+        </div>
+      ) },
+    { key: "period", header: "Effective Period", width: 132,
+      render: r => (
+        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.text }}>{r.a.effectiveDate || "—"}</span>
+          <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>{r.a.endDate ? `→ ${r.a.endDate}` : ""}</span>
+        </div>
+      ) },
+    // The cells show the server's figures as they are. The header's control is a SORT only (awarded TEU or
+    // consumption, each both ways) — there is nothing to pick from a list of confirmed-TEU values.
+    { key: "confirmed", header: "Confirmed", width: 110, sortOptions: SPACE_SORT_OPTIONS,
+      render: r => {
+        const spark = sparkPerAlloc[r.id] || [];
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <span style={{ fontFamily: T.mono, fontSize: 13, color: r.confirmed > 0 ? T.success : T.textMuted, fontWeight: 600 }}>
+              {r.confirmed} TEU
+            </span>
+            <Sparkline data={spark} color={r.pct > 5 ? T.success : r.pct < -5 ? T.danger : T.textMuted} />
+            {(r.pending > 0 || r.rejected > 0) && (
+              <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted }}>
+                {r.pending > 0 && <span style={{ color: T.warning }}>+{r.pending} pending</span>}
+                {r.pending > 0 && r.rejected > 0 && " · "}
+                {r.rejected > 0 && <span style={{ color: T.danger }}>+{r.rejected} rejected</span>}
+              </span>
+            )}
+            {r.belowMinimum && (
+              <span title={`Committed to ${r.a.minimumTEU} TEU by ${r.a.endDate} — ${r.confirmed} confirmed so far`}
+                style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, color: r.mqcUrgent ? T.danger : T.info }}>
+                ⚠ MQC {r.confirmed}/{r.a.minimumTEU}
+              </span>
+            )}
+          </div>
+        );
+      } },
+    { key: "status", header: "Status", width: 90, filter: true,
+      render: r => (
+        <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: r.status.endsWith("Limit") ? 700 : 600, color: STATUS_COLOR[r.status] }}>
+          ● {r.status}
+        </span>
+      ) },
+  ];
 
   return (
     <div>
@@ -699,7 +856,7 @@ const SpaceConfigurationsPage = ({
           </div>
           <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Space Configurations</h1>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-            {currentAllocs.length} active configuration{currentAllocs.length !== 1 ? "s" : ""} · click <IconSettings size={12} style={{ position: "relative", top: 2 }} /> to edit or view history
+            {activeCount} active configuration{activeCount !== 1 ? "s" : ""} · click <IconSettings size={12} style={{ position: "relative", top: 2 }} /> to edit or view history
           </p>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -709,156 +866,26 @@ const SpaceConfigurationsPage = ({
       </div>
 
       {/* ── Table ── */}
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
-        {/* Header row */}
-        <div style={{ display: "grid", gridTemplateColumns: allocTemplate,
-          padding: "9px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {allocHeaders.map((h, i) => (
-            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5,
-              fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
-              {h}{i < allocHeaders.length - 1 && <ColResizer onStart={e => allocStartResize(i, e)} />}
-            </div>
-          ))}
-        </div>
+      <TableToolbar tableId="space-configs" search={t.filters.search} onSearch={t.setSearch}
+        searchPlaceholder="Search carrier, route, contract, notes…"
+        canClear={t.canClear} onClear={t.clear} />
 
-        {currentAllocs.length === 0 ? (
-          <div style={{ padding: 48, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
-            No active configurations. Use "+ Add Configuration" to set up carrier space allocations.
-          </div>
-        ) : pageAllocs.map(a => {
-          const confirmed = a.confirmedTEU ?? 0;
-          const pending   = a.pendingTEU ?? 0;
-          const rejected  = a.rejectedTEU ?? 0;
-          const remaining = a.remainingTEU ?? Math.max(0, a.allocatedTEU - confirmed);
-          const pct       = a.allocatedTEU > 0 ? (confirmed / a.allocatedTEU) * 100 : 0;
-          const carrier   = carriers.find(c => c.code === a.carrierCode);
-          const thresh    = a.alertThreshold ?? 80;
-          const barColour = pct >= 100 ? T.danger : pct >= thresh ? (thresh >= 90 ? T.danger : T.warning) : T.success;
-          const spark     = sparkPerAlloc[a.id] || [];
-          const sparkColor = pct > 5 ? T.success : pct < -5 ? T.danger : T.textMuted;
-
-          const isActive = a.effectiveDate <= today && a.endDate >= today;
-          const isFuture = a.effectiveDate > today;
-          const statusLabel = isFuture ? "Future" : isActive ? "Active" : "Ending";
-          const statusColor = isFuture ? T.accent : isActive ? T.success : T.warning;
-
-          const alertColor = pct >= 100 ? T.danger : T.warning;
-          const isAlerting = pct >= thresh;
-
-          // Minimum Quantity Commitment — the floor, opposite of the ceiling alertThreshold
-          // guards above. Urgency scales with how much of the period has already elapsed: being
-          // under commitment on day 2 of a 90-day period is normal, being under it on day 85
-          // isn't — same "how much runway is left" framing the free-time/demurrage badges
-          // elsewhere in this app already use.
-          const belowMinimum = a.minimumTEU != null && confirmed < a.minimumTEU;
-          const periodTotalDays = Math.max(1, diffDays(a.effectiveDate, a.endDate) + 1);
-          const periodElapsedPct = Math.min(100, Math.max(0, (diffDays(a.effectiveDate, today) / periodTotalDays) * 100));
-          const mqcUrgent = belowMinimum && periodElapsedPct >= 70;
-
-          return (
-            <div key={a.id}
-              style={{ display: "grid", gridTemplateColumns: allocTemplate,
-                padding: "13px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
-                borderLeft: isAlerting ? `3px solid ${alertColor}` : "3px solid transparent",
-                transition: "background .1s" }}
-              onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-
-              {/* Carrier */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700 }}>{a.carrierCode}</span>
-                {(a.originLane || a.destLane) && <div style={{ display: "flex" }}><LanePair origin={a.originLane} dest={a.destLane} /></div>}
-              </div>
-
-              {/* Name / Route */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{carrier?.name || "—"}</span>
-                {(a.pol && a.pod) && (
-                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                    {a.pol} <span style={{ color: T.border }}>›</span> {a.pod}
-                  </span>
-                )}
-                {a.notes && (
-                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, fontStyle: "italic",
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
-                    {a.notes}
-                  </span>
-                )}
-              </div>
-
-              {/* Contract */}
-              <div>
-                {a.contractNumber
-                  ? <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 600 }}>{a.contractNumber}</span>
-                  : <span style={{ fontFamily: T.body, fontSize: 12, color: T.danger }}>— missing</span>}
-              </div>
-
-              {/* TEU */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{a.allocatedTEU} TEU</span>
-                <ConsumptionBar allocated={a.allocatedTEU} confirmed={confirmed} pending={pending} rejected={rejected} height={4} width={72} />
-                <span style={{ fontFamily: T.mono, fontSize: 9.5, color: barColour }}>
-                  {pct.toFixed(0)}% <span style={{ color: T.border }}>/ {thresh}%</span>
-                </span>
-              </div>
-
-              {/* Effective Period */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.text }}>{a.effectiveDate || "—"}</span>
-                <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>{a.endDate ? `→ ${a.endDate}` : ""}</span>
-              </div>
-
-              {/* Confirmed */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 13, color: confirmed > 0 ? T.success : T.textMuted, fontWeight: 600 }}>
-                  {confirmed} TEU
-                </span>
-                <Sparkline data={spark} color={sparkColor} />
-                {(pending > 0 || rejected > 0) && (
-                  <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted }}>
-                    {pending > 0 && <span style={{ color: T.warning }}>+{pending} pending</span>}
-                    {pending > 0 && rejected > 0 && " · "}
-                    {rejected > 0 && <span style={{ color: T.danger }}>+{rejected} rejected</span>}
-                  </span>
-                )}
-                {belowMinimum && (
-                  <span title={`Committed to ${a.minimumTEU} TEU by ${a.endDate} — ${confirmed} confirmed so far`}
-                    style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700,
-                      color: mqcUrgent ? T.danger : T.info }}>
-                    ⚠ MQC {confirmed}/{a.minimumTEU}
-                  </span>
-                )}
-              </div>
-
-              {/* Status */}
-              {isActive && isAlerting ? (
-                <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: alertColor }}>
-                  ● {pct >= 100 ? "Over Limit" : "At Limit"}
-                </span>
-              ) : (
-                <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: statusColor }}>● {statusLabel}</span>
-              )}
-
-              {/* Cog menu */}
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <ActionMenu items={[
-                  ...(canManageConfigs ? [{ icon: IconPencil, label: "Edit", onClick: () => setAllocModal(a) }] : []),
-                  { icon: IconLink,      label: "Linked Shipments",  onClick: () => setLinkedAlloc(a) },
-                  { icon: IconClipboard, label: "History",           onClick: () => setHistoryAlloc(a) },
-                  ...(canManageConfigs ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirmAlloc(a.id) }] : []),
-                ]} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {currentAllocs.length > 0 && (
-        <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-          <PageSizeSelect value={allocLimit} onChange={n => { setAllocLimit(n); setAllocOffset(0); }} />
-          <div style={{ flex: 1 }}><Pagination total={currentAllocs.length} offset={allocOffset} limit={allocLimit} onPage={setAllocOffset} /></div>
-        </div>
-      )}
+      {/* Wider than the other shared tables (two trade columns), so it scrolls sideways on a narrow window
+          instead of clipping Status and Actions. Sorting lives in the Confirmed header, not a dropdown. */}
+      <DataTable tableId="space-configs" columns={columns} rows={t.rows} loading={t.loading}
+        rowKey={r => r.id} scrollX uppercaseHeaders actionsWidth={56}
+        rowAccent={r => r.alertLevel === "over" ? T.danger : r.alertLevel === "at" ? T.warning : null}
+        hasFilters={t.hasFilters} filters={t.filters} filterOptions={t.options} onFilterChange={t.setColumnFilter}
+        sort={t.sort} onSort={t.setSort}
+        rowActions={r => [
+          ...(canManageConfigs ? [{ icon: IconPencil, label: "Edit", onClick: () => setAllocModal(r.a) }] : []),
+          { icon: IconLink,      label: "Linked Shipments",  onClick: () => setLinkedAlloc(r.a) },
+          { icon: IconClipboard, label: "History",           onClick: () => setHistoryAlloc(r.a) },
+          ...(canManageConfigs ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirmAlloc(r.id) }] : []),
+        ]}
+        emptyMessage={'No active configurations. Use "+ Add Configuration" to set up carrier space allocations.'}
+        emptyFilteredMessage="No configurations match your filters."
+        pagination={{ total: t.total, offset: t.offset, limit: t.limit, onPage: t.goPage, onLimit: t.changeLimit }} />
 
       {/* ── Add / Edit modal ── */}
       {allocModal === "add" && (

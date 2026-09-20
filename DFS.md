@@ -231,6 +231,9 @@ column header, free-text search, sort, an "active as of" date, and server-side p
 table system, ARCHITECTURE.md §8.23). Schedule Search finds contracts for a lane (POL/POD, as-of date,
 carrier, account, routing term) and lets the user request sailings on any result; its results can be
 narrowed by column and sorted (including cheapest-first once a container mix is chosen), in the browser.
+The Space Configurations list shows each configuration's trade as an Origin Trade and a Destination Trade
+(lanes not stored on an older configuration are worked out from its ports and marked as such), and can be
+searched, filtered by carrier / route / trade / contract / status, and sorted by awarded TEU or consumption.
 **Roles**: admin, operator, trade_manager (write); all roles (read).
 **Primary data**: `contracts`* , `contract_legs`* , `contract_rates`* , `allocations`.
 *(owned by the Contract Management Service when `contract_source=remote`, monolith-local

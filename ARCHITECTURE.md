@@ -1,10 +1,15 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.91.5 "Chartroom" · **Date:** 2026-09-19
+**Version:** 0.91.6 "Concourse" · **Date:** 2026-09-20
 **Audience:** Software architects, senior engineers, technical reviewers
 **See also:** [`DFS.md`](DFS.md) — the Design & Functional Specification (data flow diagrams,
 per-domain functional scope, roles) covers *what* the system does and *how data moves through it*;
 this document covers *how it's built*.
 
+> **2026-09-20 pass (v0.91.6 "Concourse") — incremental.** Extends §8.23 (Shared Table System) with its
+> remaining adopters — Space Configurations is the eighth and last of Wave 1 — and adds §8.25 (Financials Navigation
+> Group). Updates §8.20's sidebar note and the M12 debt (the containing-block defect also hit modals: the shipment header's
+> overlays). Everything else is **not** re-verified.
+>
 > **2026-09-19 pass (v0.91.5 "Chartroom") — incremental.** Adds §8.23 (Shared Table System) and
 > §8.24 (Master Data Registries: Loop Codes & HS Codes), extends §4's design-token section with
 > the Trade Horizon dual-theme mechanism, adds a Test Infrastructure & CI subsection to §10, and
@@ -1429,7 +1434,8 @@ higher-ranked role.
     again days later needs a fresh approval); long enough to cover any realistic one-batch
     generation. GET /api/shipments/:id/credit-override surfaces the current valid override (or
     null) so the frontend can skip straight to generating instead of re-showing the block.
-  - New "Credit Overrides" page (src/pages/CreditOverridesPage.jsx, top-level nav — deliberately
+  - New "Credit Overrides" page (src/pages/CreditOverridesPage.jsx, top-level nav at the time — now inside the
+    Financials group, see §8.25 — deliberately
     NOT nested under Accounting, which stays hidden from trade_manager's nav per v0.29.0, a
     narrow carve-out so this one exclusive authority stays reachable) lists every currently-
     blocked shipment via GET /api/credit-overrides/queue, server-scoped per viewer: admin/
@@ -1682,8 +1688,9 @@ list-page/detail-modal frontend shape; `tests/opportunities.test.js` mirrors
 `tests/quoting-rfq.test.js`'s scaffolding, including chaining a full happy-path conversion
 straight into the resulting quote's own already-shipped Send/Accept/Convert-to-shipment
 lifecycle — proving the two features compose, not just that the conversion response shape looks
-right. Sidebar places Opportunities directly above Quotes (`App.jsx`'s `NavBtn` order), matching
-the real funnel: Opportunity → Quote → Shipment.
+right. In the sidebar Opportunities sits in the **Financials** group beside Quotes (§8.25) — first directly above
+Quotes (mirroring the funnel Opportunity → Quote → Shipment), briefly nested under it, now flat in the group; its page key
+and `#opportunities` address never changed.
 
 **Flat table + modal, not a kanban-style pipeline board** — explicitly chosen after confirming no
 reusable stage/column component exists anywhere in the codebase (`KanbanPage.jsx`'s own board is
@@ -2050,54 +2057,63 @@ add what the shared table adds.
 - `TableToolbar` omits its search box when given no `onSearch` — a second text box over a page whose form is already
   the search would only confuse. Pure logic is in `src/utils/scheduleResults.js` with its own unit tests.
 
-**Wave 1 remaining: Space Configurations only — assessed below, NOT started; the column set is to be agreed with the user.**
-(An earlier version of this section wrongly said Space Configurations has grouped rows. It does not: one flat row per
-allocation. It was Schedule Search that groups.)
+**Space Configurations is the eighth adopter, the third client-side one, and the last of Wave 1.** It was assessed on
+2026-09-19 (a flat table whose data is an App-level prop, not grouped rows) and deferred; it came back on 2026-09-20 as a
+mockup-first change — split Trade Lane into **Origin Trade** and **Destination Trade** — and was built once the
+interactive mockup was approved. Decisions taken with the user: layout **C** (one "Trade" heading over the two columns);
+the shared filters and search; **Confirmed keeps its cells exactly as they are and its header is a sort-only control**;
+TEU and Effective Period are plain headings.
 
-#### Space Configurations — impact assessment (verified against the code on 2026-09-19)
-
-*What the page is.* A flat, eight-column table (Carrier, Name / Route, Contract, TEU, Effective Period, Confirmed,
-Status, Actions), one row per allocation, with a large Add/Edit modal, a Linked Shipments modal, History, and a
-Renew-from-Archive flow.
-
-*Where its data lives — the single most important constraint.* `SpaceConfigurationsPage` fetches nothing for its list. It
-receives `allocations`, `shipments`, `containers`, `carriers` and `containerTypeDefs` as **props from `App.jsx`**, which
-loads `allocations` once at startup (`GET /api/allocations` — every row, no paging, each already carrying the
-server-computed `confirmedTEU`/`pendingTEU`/`rejectedTEU`/`remainingTEU` from `loadTeuBuckets()`) and patches it locally
-on create/update/delete. That one array is also read by the notification bell's alert items, the Landing page, the
-Dashboard's Consumption view, and the Archive page (whose Renew navigates back here via `pendingRenew`). So there is no
-server-side list to paginate, a server table endpoint would create a *second copy* of the data that could disagree with
-the one every other screen reads, and the natural tier is **client-side over the prop, with no new endpoint and no
-server change** (the Credit Overrides shape, but reading a prop instead of fetching).
-
-*What must not change.* Confirmed / Pending / Rejected / Remaining come from the server and are the authoritative
-figures; a table migration is display-only and must not recompute them. The **sparkline** under "Confirmed" is a
-different thing — a per-*carrier* six-week volume trend (shipments filtered by carrier and ETD week, not by allocation
-link or booking status), computed up front for *every* allocation (roughly allocations × 6 weeks × shipments ×
-containers). It looks like consumption but is not, so it must never be sorted or filtered as though it were.
-
-*Derived cell values a filter would have to reproduce exactly.* Status (Future / Active / At Limit / Over Limit — the
-"Ending" label is unreachable, because the page only lists `endDate ≥ today`), utilisation against `alertThreshold ?? 80`,
-the Minimum Quantity Commitment warning (urgent once ≥ 70% of the period has elapsed), and the blank-contract
-"— missing" marker. The blank-contract case matters: `filterOptions` never offers blank values, so "missing" would be
-un-selectable unless it is deliberately given a label.
-
-*The safety net does not exist.* No Cypress spec exercises this page (the one spec that mentions it does so in a comment
-about roles), there is no component test, and the backend tests cover only the API. A rewrite would be unverified unless
-characterisation tests are written first.
-
-*What `DataTable` lacks for it.* A per-row accent (the left border that turns amber/red at the alert threshold) and
-nothing else material — rows are flat, so unlike Schedule Search no grouping or expansion is needed.
-
-*Effects of work already shipped.* The shared `Modal` now closes on Escape, so the Add/Edit form closes on Escape and
-discards unsaved edits (as its × always did). Every popup inside it — the carrier combobox, both date pickers, the port
-fields, the stacked contract and port pickers — consumes its own first Escape, so a half-filled form is only lost on a
-deliberate second Escape. Delete confirmation: Escape cancels. The table components are not used here, so nothing else
-has changed.
-
-*Recommended sequence:* (1) characterisation tests over the current page, so the migration can be proven
-behaviour-preserving; (2) agree the columns with the user; (3) migrate client-side over the `allocations` prop with the
-data flow untouched; (4) verify in a real browser, including Add/Edit/Delete/Renew and the alert accent.
+- **Client-side over the prop, no new endpoint.** `SpaceConfigurationsPage` fetches nothing for its list: `allocations` is
+  App-level state (loaded once, patched on create/edit/delete) that the bell, Landing, Dashboard's Consumption view and
+  the Archive page also read, each row already carrying the server-computed `confirmedTEU`/`pendingTEU`/`rejectedTEU`/
+  `remainingTEU`. A server table endpoint would have been a second copy that could disagree with the one every other
+  screen reads. The page runs `useTableQuery` + `localTableQuery.js` over its own prop and re-runs when the prop changes.
+  The server's figures pass through untouched; the only figure the table derives is consumption (confirmed ÷ awarded —
+  the percentage already printed under the TEU bar). The Confirmed **sparkline stays a per-carrier trend, not
+  consumption**, and is never sorted or filtered.
+- **Pure logic in `src/utils/spaceConfigTable.js`** (24 unit tests): the row view-model (`buildSpaceRows`), the status
+  wording (Future / Active / At Limit / Over Limit — "Ending" stays unreachable, since only `endDate ≥ today` is listed),
+  the alert level and bar colour, the MQC flag (urgent once ≥ 70% of the period has elapsed), the filter columns, the four
+  sorters and the search text (carrier, carrier name, ports and port names, route, contract, notes).
+- **Origin / Destination Trade.** `originLane`/`destLane` were already stored separately (`allocations.origin_lane`/
+  `dest_lane`); the table just gives each its own column. Only some rows store them (one of seven in the dev database), so
+  a missing side is **derived from its port's primary lane** — the very lookup the Add/Edit form uses
+  (`GET /api/port-locations/:code/lanes` → `primary`) — and drawn as a **dashed** pill, versus a solid one for a stored
+  lane; a side whose port has no lane stays empty. Lookups run once per port per page visit, only for the sides that need
+  one (`portLookupsNeeded`), and the table waits for them so lanes never pop in. **A failed lookup costs only that port its
+  name or lane — it can never blank the table** (every load ends in `null`, even one that throws before returning a
+  promise). Saving an older configuration from the form stores the lanes the form shows, so it writes them to the database.
+  Blank lanes never appear in a checklist (`filterOptions` never offers blanks), so a row with no lane on a side drops out
+  as soon as that column is filtered — the rule every shared table follows.
+- **Port names** come from the same per-port lookups (`api.ports.get`) and appear beside each route in the Name / Route
+  checklist and in search. (The API object is `api.ports`, not `portLocations`: the page's unit-test mock had originally
+  invented the wrong name, the tests passed, and the real page came up empty. The mock now mirrors the real object.)
+- **`DataTable` gained opt-in abilities; none changes any other table.** `column.group` (a shared heading over adjacent
+  columns → a two-row header); `column.sortOptions` (a **sort-only header control**, `ColumnSort`, for a column worth
+  ordering but not picking from — lit only while the table's sort is one of *its* options, with a small marker, `TEU` or
+  `%`, naming what is sorted); `rowAccent(row)` (the alert stripe — reserves its 3px on every row and the header so the
+  columns stay aligned); `scrollX` (scroll sideways instead of clipping); and `uppercaseHeaders` (a header *button* does not
+  inherit `text-transform`, so every table has always shown filterable headings in the case they were written in, beside
+  uppercase plain ones — this table opts into uppercase throughout, the others are unchanged). The shared `LanePill` draws a
+  lane code with a visible fill: NAM/CAR/SAM/OCE map to `Badge`'s "default", which paints the card's own colour, so they used
+  to read as bare text beside a green EU-N.
+- **Width.** Measured in the running app, the columns have 1,143 px of room in a 1500 px window, 1,009 at 1366 and 1,563 at
+  1920. The ten columns total 1,098 px, so this is the first table to use `scrollX`: at 1366 it scrolls sideways (the ⚙
+  menu stays reachable) instead of clipping Status and Actions. Saved column widths from the old 8-column layout are
+  ignored once (`useResizableColumns` discards an array of the wrong length) and the defaults apply.
+- **Sorting lives only in the Confirmed header** (awarded TEU and consumption, each both ways; ties keep their incoming
+  order) — there is no Sort dropdown in this page's toolbar.
+- **Tests.** `SpaceConfigurationsPage.test.jsx` (32) — its first blocks were written *before* the migration and pin what a
+  row shows (server figures, status wording, alert stripe, MQC, cog menu); the rest cover the trade split, filters, search,
+  the Confirmed sort, the props-driven refresh and the form. The new behaviours were mutation-checked (six deliberate
+  breakages, all caught). A real-browser pass covered all seven live rows, both themes, 1366 vs 1500 px and the form.
+- **A latent bug this exposed and fixed.** The Add/Edit form's lane loader tested `setLane.toString().includes(unlocode)` —
+  the source text of a React state setter, never true — so *opening Edit swapped a deliberately chosen non-primary lane for
+  the port's own primary lane*. It now keeps the stored lane and only refreshes the options list; choosing a different port
+  still re-derives it. The form's "Trade Lane Route" pill pair became two cards, **Origin Trade** and **Destination Trade**
+  (each with the lane's full name and the port it came from); Override swaps them for two selectors.
+- Not changed: the Archive page and the Dashboard keep their own local `LanePair` copies (they were not part of the mockup).
 
 A visual rule learned on the way: a column whose cell is a `Badge` must declare `align: "center"`. `Badge` sets
 `alignSelf: "center"`, which overrides `DataTable`'s left alignment, so in a left-aligned column the badge floats to
@@ -2153,6 +2169,50 @@ container row on `ShipmentFormPage` remains free text (classic-themed, outside t
 scope of this pass).
 
 ---
+
+### 8.25 Financials Navigation Group (added after v0.91.5)
+
+Quotes, Opportunities, Reports, Freight Audit and Credit Overrides used to sit in three places: Quotes (with
+Opportunities nested under it) and Credit Overrides and Reports at the top level, Freight Audit inside the Dashboard
+group. They are now one foldable **Financials** group in the sidebar, directly after Dashboard, with a real hub page
+(`FinancialsPage.jsx`, `#financials`) built like Master Data → Finance (`MdmFinancePage.jsx`): the sidebar parent is a
+page of cards rather than a bare label, each card is a direct way in, and the sidebar keeps its own link to every child.
+It was designed mockup-first with the user; the decisions were the group's position (after Dashboard), its name
+(Financials), the child order (Quotes, Opportunities, Reports, Freight Audit, Credit Overrides), Opportunities **beside**
+Quotes rather than under it (which replaced the nesting described in §8.20), and Credit Overrides **inside** the group.
+
+- **Nothing about the pages changed.** Every child keeps its own page key and address (`#quotes`, `#opportunities`,
+  `#reports`, `#freight-audit`, `#credit-overrides`), so bookmarks, the notification bell (it opens Quotes and Reports) and
+  every `navigate("quotes")` call keep working. The only new address is `#financials`, gated by the same
+  `api_shipments_enabled` switch as the pages under it. Dashboard's group now holds Space Configurations and Archive;
+  Freight Audit no longer lights it up.
+- **One access rule, two consumers.** `src/utils/financialsNav.js` (`visibleFinancialsPages`, 10 unit tests) decides which of
+  the five a person sees, and App.jsx feeds the same list to the sidebar group and to the hub's cards, so a card can never
+  point at a link the sidebar hides. The rules are the ones each link already followed on its own — grouping moved the links,
+  it did not change who gets them: Quotes, Opportunities and Freight Audit for every role; **Credit Overrides** for admin,
+  operator and trade_manager (the roles the backend queue accepts); **Reports** for admin, anyone with finance access, or a
+  trade_manager (whose lane-scoped Invoice Collections override lives there), and only while the finance view is enabled in
+  Application Settings. The module switch (`isEnabled`) is applied on top. The group shows for everyone, since three of its
+  pages are open to every role.
+- **Credit Overrides was deliberately a standalone top-level link** (TKT-GLWMFP: not under a section that is hidden from a
+  trade_manager, so the one action only they may take stayed one click away). Inside a collapsed group it is one fold away,
+  so **the group unfolds by itself whenever one of its pages is open** — a sidebar click, a bell link or a bookmark. That
+  effect is keyed on the page alone: folding the group by hand while on one of its pages sticks until you move to another,
+  and opening the hub itself leaves the fold as it was. The fold persists under `cd_navfold_financials`; the old
+  `cd_navfold_quotes` key is simply never read again.
+- **The hub's figures** are each page's own number, fetched by the hub: quotes and opportunities (the list endpoints'
+  `total`), the open freight-audit exceptions (the same bare array the Freight Audit tab badge uses) and the credit-blocked
+  shipments (`GET /api/credit-overrides/queue`, which is already scoped to the viewer, so a trade manager sees their own lane's
+  count). Reports has no figure. A count that fails to load — even one that throws before returning a promise — only leaves
+  its card without a number. Only the cards on show are fetched.
+- **Tests.** `financialsNav.test.js` (the role matrix), `FinancialsPage.test.jsx` (cards, counts singular/plural, failure
+  handling, navigation) and, in `App.test.jsx`, eleven tests that render the REAL shell as different roles and read the real
+  sidebar: what is top level, what is inside each group, who sees what, that the group unfolds for a bookmarked page, and that
+  Freight Audit lights Financials rather than Dashboard. The new behaviours were mutation-checked (six deliberate
+  breakages; two that first slipped through led to tighter assertions). A real-browser pass covered all five pages, the hub
+  counts against the live API, deep links and both themes.
+- **Not built:** the alternatives that were mocked and set aside — a hub with no children in the sidebar, and one page with
+  five tabs (which would have changed every address).
 
 ## 9. Data Flow Diagrams
 
@@ -2302,7 +2362,7 @@ because the host sets it and the Cypress binary then starts as plain Node and fa
 | ~~M9~~ | ~~ShipmentDetailPage section nav has no shared source of truth~~ | **RESOLVED** — see §8.11, `shipmentSections.js`. |
 | ~~M10~~ | ~~Two unrelated "document" systems~~ | **RESOLVED v0.65.0** (unchanged from last review). |
 | M11 | **Trade Horizon has two independent `HZ` token objects** (`shipmentDetailTheme.js` and `DashboardPage.jsx`) that must be kept visually consistent by hand, with two matching `apply…Theme` functions to call from `App.jsx` | Open (v0.91.5). Each edit to a shared token (a pill colour, a shadow) has to be made twice; nothing checks they haven't diverged. Consolidating them is a small refactor but was out of scope for a theming pass. |
-| M12 | **Non-portaled `position: fixed` dropdowns inside glass cards** — `CommodityCombobox`, `PortCombobox`, `CarrierCombobox` still position from viewport coordinates | Open (v0.91.5). Same defect class as the Equipment Type and HS Code dropdowns that were just fixed with portals (§4). Not checked individually inside a glass card; the defect follows from how the CSS containing block works, so any placement under a `backdrop-filter` ancestor should be assumed affected until verified. |
+| M12 | **Non-portaled `position: fixed` dropdowns inside glass cards** — `CommodityCombobox`, `PortCombobox`, `CarrierCombobox` still position from viewport coordinates | Open (v0.91.5). Same defect class as the Equipment Type and HS Code dropdowns that were just fixed with portals (§4). Not checked individually inside a glass card; the defect follows from how the CSS containing block works, so any placement under a `backdrop-filter` ancestor should be assumed affected until verified. **Update (v0.91.6): the same defect hit modals.** `ShipmentHeaderBar` rendered its Loop route, compliance, contract-mismatch and tracking-link modals and its Messages/Tickets drawers *inside* `#shphdr`, which has `backdrop-filter`; the overlay shrank to the header card and the Loop modal's × sat off the top of the screen, so it could not be closed. All overlays now render as siblings of the card (`ShipmentHeaderBar.test.jsx` guards it). A static scan of every component's JSX for a `<Modal>` or `position: fixed` element nested inside an element styled with `backdropFilter`/`filter`/`transform` finds no other same-component case; an overlay reached through a child component is not covered by it, so the rule stands: never render an overlay inside such an element. |
 | M13 | **Two implementations of the list-endpoint filter/sort/search/page logic** — `routes/shipments.js` (inline, comma-joined params) and `lib/tableQuery.js` (repeated params) | Open (v0.91.5). Deliberate for now: the shared module was proven on Quotes first. Migrating Shipments would remove the drift risk and the wire-format inconsistency, at the cost of touching the app's most heavily used route. |
 | M14 | **Five of six seeded loop codes have unverified port lists** (AL5, ME9, PL2, PL7, TP3) | Open (v0.91.5). Only AL1 was checked against a public rotation. The others show a plausible, correctly directional structure but are illustrative until researched. |
 

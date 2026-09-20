@@ -102,6 +102,8 @@ import DocumentTemplatesPage  from "./pages/mdm/DocumentTemplatesPage";
 import MdmContainerTypesPage  from "./pages/mdm/MdmContainerTypesPage";
 import MdmEquipmentPage       from "./pages/mdm/MdmEquipmentPage";
 import MdmFinancePage         from "./pages/mdm/MdmFinancePage";
+import FinancialsPage         from "./pages/FinancialsPage";
+import { FINANCIALS_PAGES, visibleFinancialsPages } from "./utils/financialsNav";
 import MdmLocationsPage       from "./pages/mdm/MdmLocationsPage";
 import MdmCustomersPage           from "./pages/mdm/MdmCustomersPage";
 import MdmSanctionedCustomersPage from "./pages/mdm/MdmSanctionedCustomersPage";
@@ -165,6 +167,7 @@ function App() {
     "freight-audit":   "api_shipments_enabled",
     "credit-overrides":"api_shipments_enabled",
     reports:           "api_shipments_enabled",
+    financials:        "api_shipments_enabled",   // the hub over Quotes/Opportunities/Reports/Freight Audit/Credit Overrides
     // Promoted shipment sub-pages inherit the same gate "detail" uses — otherwise
     // disabling the Shipments module only hides Overview, not Cargo/Accounting/etc.
     // Flat (non-Accounting) entries come from the shared config; Accounting's own
@@ -304,6 +307,7 @@ function App() {
   const [orgOpen,      setOrgOpen]      = useFoldState("cd_navfold_org");
   const [dashboardNavOpen, setDashboardNavOpen] = useFoldState("cd_navfold_dashboard");
   const [kanbanNavOpen,    setKanbanNavOpen]    = useFoldState("cd_navfold_kanban");
+  const [financialsNavOpen, setFinancialsNavOpen] = useFoldState("cd_navfold_financials");
   const [financeNavOpen,   setFinanceNavOpen]   = useFoldState("cd_navfold_mdm_finance");
   const [locationsNavOpen, setLocationsNavOpen] = useFoldState("cd_navfold_mdm_locations");
   const [customersNavOpen, setCustomersNavOpen] = useFoldState("cd_navfold_mdm_customers");
@@ -311,6 +315,12 @@ function App() {
   const [carriersNavOpen,  setCarriersNavOpen]  = useFoldState("cd_navfold_mdm_carriers");
   const [loopCodesNavOpen, setLoopCodesNavOpen] = useFoldState("cd_navfold_mdm_loop_codes");
   const [portsNavOpen,     setPortsNavOpen]     = useFoldState("cd_navfold_mdm_ports");
+  // Opening any page in the Financials group (a sidebar click, a bell link, a bookmark) unfolds the group, so
+  // the page you are on is never hidden inside a collapsed parent — that matters most for Credit Overrides,
+  // which used to be a top-level link so a trade manager stayed one click from the one action only they may
+  // take. Keyed on the page ALONE: folding the group by hand while on one of its pages sticks until you move to
+  // another, and opening the hub itself leaves the fold as it was.
+  useEffect(() => { if (FINANCIALS_PAGES.includes(page)) setFinancialsNavOpen(true); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
   const [detailAction, setDetailAction] = useState(null);
   const [user,         setUser]         = useState(null);
   const [authLoading,  setAuthLoading]  = useState(true);
@@ -762,6 +772,7 @@ function App() {
 
   const PAGE_TITLES = {
     home:               "Home",
+    financials:         "Financials",
     quotes:             "Quotes",
     opportunities:      "Opportunities",
     shipments:          "Shipments",
@@ -1757,6 +1768,21 @@ function App() {
     setActiveOffice,
   };
 
+  // The Financials group's pages this person may see — one list feeding both the sidebar group and the hub's
+  // cards (rules in src/utils/financialsNav.js). Reports keeps its finance-view switch from Application Settings.
+  const financialsPages = visibleFinancialsPages({
+    roles: effectiveRoles,
+    canViewFinance: !!user?.canViewFinance,
+    financeViewEnabled: appSettings.finance_view_enabled !== 'false',
+  }, isEnabled);
+  const FINANCIALS_NAV = {
+    quotes:             { icon: IconReceipt,         label: "Quotes" },
+    opportunities:      { icon: IconFlag,            label: "Opportunities" },
+    reports:            { icon: IconChartBar,        label: "Reports" },
+    "freight-audit":    { icon: IconFileCertificate, label: "Freight Audit" },
+    "credit-overrides": { icon: IconWarning,         label: "Credit Overrides" },
+  };
+
   return (
   <AuthContext.Provider value={authCtxValue}>
     <div style={{ display: "flex", minHeight: "100vh", background: T.bg, fontFamily: T.body, color: T.text }}>
@@ -1794,40 +1820,35 @@ function App() {
           <nav data-testid="main-nav" style={{ padding: "14px 12px", flex: 1, overflowY: "auto" }}>
 
             {/* Top-level items */}
-            <NavBtn pageKey="opportunities" icon={IconFlag} label="Opportunities" />
-            <NavBtn pageKey="quotes" icon={IconReceipt} label="Quotes" />
             <NavBtn pageKey="shipments" icon={IconSailboat} label="Shipments" />
-
-            {/* Credit Overrides (TKT-GLWMFP) — deliberately a standalone top-level item, NOT
-                nested under Accounting (that whole section is hidden from trade_manager's nav,
-                v0.29.0) — a narrow carve-out so the one action a trade_manager IS exclusively
-                authorized for stays reachable. Gated to the same 3 roles the backend queue
-                endpoint itself accepts, so occ_bk/viewer never see a link that would just 403. */}
-            {effectiveRoles.some(r => ["admin", "operator", "trade_manager"].includes(r)) && (
-              <NavBtn pageKey="credit-overrides" icon={IconWarning} label="Credit Overrides" />
-            )}
 
             {/* Dashboard sub-group — folded by default (see NavBtn's foldable prop) */}
             <NavBtn pageKey="dashboard" icon={IconDashboard} label="Dashboard"
-              activeExtra={["space-configs", "dashboard-archive", "freight-audit"].includes(page)}
+              activeExtra={["space-configs", "dashboard-archive"].includes(page)}
               foldable open={dashboardNavOpen} onToggleFold={() => setDashboardNavOpen(o => !o)} />
             {dashboardNavOpen && (
               <>
                 <NavBtn pageKey="space-configs"  icon={IconFlash} label="Space Configurations" indent />
                 <NavBtn pageKey="dashboard-archive" icon={IconArchive} label="Archive"           indent />
-                <NavBtn pageKey="freight-audit" icon={IconFileCertificate} label="Freight Audit" indent />
               </>
             )}
 
-            {/* Reports — same finance-access gate as Dashboard's Margin tab for the GP/Billing
-                tabs (the backend hard-403s a non-finance user rather than serving redacted
-                data); a trade_manager also sees this link even without canViewFinance, since
-                Invoice Collections is where their own lane-scoped status-override authority
-                actually gets exercised — ReportsPage itself hides the finance-only tabs and
-                defaults straight to Collections for a trade_manager-only visitor. */}
-            {(appSettings.finance_view_enabled !== 'false' && (effectiveRoles.includes('admin') || !!(user?.canViewFinance) || authCtxValue.isTradeManager)) && (
-              <NavBtn pageKey="reports" icon={IconChartBar} label="Reports" />
-            )}
+            {/* Financials sub-group — Quotes, Opportunities, Reports, Freight Audit and Credit Overrides,
+                a real hub page (FinancialsPage) like Master Data → Finance, with every child still listed
+                here for one-click access. Each child keeps its own page key and address; only where the
+                link sits changed. Who sees which child is src/utils/financialsNav.js — the SAME rules each
+                link followed on its own before (Credit Overrides: admin/operator/trade_manager; Reports:
+                finance access or a trade_manager, whose lane-scoped Invoice Collections override lives
+                there; the rest: everyone), shared with the hub's cards so the two cannot disagree.
+                Credit Overrides used to be a standalone top-level link so a trade_manager stayed one click
+                from the one action only they may take; the group now unfolds by itself whenever one of its
+                pages is open (see the effect beside the fold state) to make up for that. */}
+            <NavBtn pageKey="financials" icon={IconCoin} label="Financials"
+              activeExtra={FINANCIALS_PAGES.includes(page)}
+              foldable open={financialsNavOpen} onToggleFold={() => setFinancialsNavOpen(o => !o)} />
+            {financialsNavOpen && financialsPages.map(key => (
+              <NavBtn key={key} pageKey={key} icon={FINANCIALS_NAV[key].icon} label={FINANCIALS_NAV[key].label} indent />
+            ))}
 
             <NavBtn pageKey="kanban" icon={IconClipboard} label="Integration Board"
               activeExtra={["releases", "test-plans", "test-runs", "test-cases", "test-tools"].includes(page)}
@@ -2324,6 +2345,8 @@ function App() {
         )}
 
         {page === "opportunities" && <OpportunitiesPage navigate={navigate} />}
+
+        {page === "financials" && isEnabled("financials") && <FinancialsPage pages={financialsPages} navigate={navigate} />}
 
         {page === "quotes" && (
           <QuotesPage navigate={navigate}

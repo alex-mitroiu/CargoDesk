@@ -3,7 +3,7 @@
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
 [![CI](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.91.5-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.91.6-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-custom-lightgrey)
 
@@ -46,11 +46,12 @@ End-User License Agreement for full terms.
 ### Contracts & Space Allocation
 - **Carrier contracts** — rate contracts with route legs, POL/POD location type, validity, and IMDG class filters, MDM-managed.
 - **Contract matching** — resolves eligible contracts from a shipment's route/dates/routing term, with inclusive carrier-haulage logic.
-- **Space configurations** — TEU allocation per carrier/route with conflict detection, utilisation sparklines, and an alert-threshold badge, plus a renewal archive for expired configs.
+- **Space configurations** — TEU allocation per carrier/route with conflict detection, utilisation sparklines, and an alert-threshold badge, a trade split into Origin and Destination Trade, search, column filters and a sort by awarded TEU or consumption, plus a renewal archive for expired configs.
 - **Linked Shipments & consumption tracking** — see every shipment consuming a config's space (contract-aware, resolves linked-port equivalents), and a Dashboard view of Allocated vs. Consumed TEU per contract.
 - **Requires Attention** — a landing-page section surfacing over-threshold allocations and shipments needing review, worst-first.
 
 ### Accounting & Reporting
+- **Financials hub** — Quotes, Opportunities, Reports, Freight Audit and Credit Overrides share one sidebar group and a hub page of cards with live counts; each page keeps its own address and access rules.
 - **Operational accounting** — per-shipment BUY/SELL cost lines with charge codes, multi-currency FX, per-container assignment, and a full change-history modal.
 - **Margin & GP reporting** — Buy/Sell/Gross Profit/Margin KPIs with a 6-week trend and carrier/trade-lane breakdowns, computed server-side in USD.
 - **Billing Performance report** — every invoice, enriched and filterable by status/office/customer/lane/carrier.
@@ -432,6 +433,7 @@ CargoDesk/
         ├── DashboardPage.jsx            # Overview + Contract Consumption + Margin (⬇ XLSX) tabs
         ├── SpaceConfigurationsPage.jsx  # Standalone Space Configs page with Linked Shipments modal
         ├── DashboardArchivePage.jsx     # Expired allocations + renew flow
+        ├── FinancialsPage.jsx           # Hub for the Financials sidebar group (Quotes, Opportunities, Reports, Freight Audit, Credit Overrides)
         ├── KanbanPage.jsx               # Ticket board with drag-to-reorder, nesting, WIP limits
         ├── AppSettingsPage.jsx          # API Controls + Finance + Users (admin only) tabs
         ├── UserManualPage.jsx           # Incoterms 2020 + IMDG reference
@@ -509,6 +511,7 @@ Recent releases below; full version history (back to v0.1.0) lives in [CHANGELOG
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.91.6 | Concourse | Bundled release — the shared Shipments-style table system (column-header checklists, search, sort, paging) now runs on every list page: Quotes, Opportunities, Contracts, Customers, Freight Audit (both tabs), Credit Overrides, Schedule Search and Space Configurations; Space Configurations splits Trade Lane into Origin Trade and Destination Trade; Quotes, Opportunities, Reports, Freight Audit and Credit Overrides move into a new Financials sidebar group with a hub page of live counts; the shared Modal closes on Escape; and the shipment header's Loop route modal, which could not be closed, is fixed along with every other overlay that header opens. |
 | 0.91.5 | Chartroom | Bundled release — Master Data gains a real Eastbound/Westbound loop-rotation editor (Loop Codes, one tabbed edit modal, a port allowed in both directions, AL1 now the real Hapag-Lloyd rotation) and a new HS Codes registry with a live, never-stored EU classification lookup, and the free-text HS Code inputs on cargo forms become a registry-backed picker; the Trade Horizon design (Dashboard, Shipment Details) now has a full light theme that follows the app toggle; dropdowns that opened far from their input inside glass cards (Equipment Type, HS Code) are now portaled; Quotes is rebuilt on a new shared Shipments-style table system (column-header checklists, search, sort, server-side paging) as the pilot for the other list pages; the Shipment Details sidebar gains a collapsible icon rail, group folding and a milestone vitals card; the CRD/ETD contract guard, contract-match dedup and space-configuration search get real fixes; and CI is green again after being red since v0.91.3 — every backend test and Cypress spec now provisions its own offices and the backend login cap is raised to 1000. |
 | 0.91.4 | Ratify | Fix wave — Contract Picker no longer lets a re-opened "Change Contract" silently reselect the already-assigned contract, and a card click now stages behind an explicit Confirm/Cancel step; fixed an app-wide modal background-scroll leak; fixed a real data bug where a stale Cargo Ready Date/ETD mismatch could permanently block a shipment from ever having a contract set again. |
 | 0.91.3 | Horizon | Command Center restyled to Trade Horizon with Excel-style column filters (Shipments + Dashboard) and a bell contract-deep-link fix; the full Shipment Details experience (header, sidebar, Overview/Conditions/Parties & Offices/Contracts & Schedules/Cargo/Milestones & Events) restyled to match; shipment-integrity fix wave (required EMO/IMO offices, container-number uniqueness, non-negative declared value). |

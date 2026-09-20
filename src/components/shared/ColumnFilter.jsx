@@ -15,6 +15,11 @@ import { T } from "../../tokens";
 // an optional secondary label shown next to the raw value (Carrier/POL/POD use it for a name;
 // most columns leave it blank since the cell's own value is already the whole story).
 //
+// `labelStyle` is merged onto the header button — a button does not inherit `text-transform` or
+// `letter-spacing` from its cell, so a filterable heading renders in the case it was written in next to
+// plain uppercase headings. A table that wants them to match passes { textTransform: "inherit",
+// letterSpacing: "inherit" } (DataTable's `uppercaseHeaders`).
+//
 // `tokens` lets a caller override the visual palette without forking this component — the
 // Dashboard's Overview tab uses its own page-scoped Trade Horizon palette (never the shared `T`
 // system, by deliberate design), while every other page uses the app's normal theme-aware `T`
@@ -32,7 +37,7 @@ import { T } from "../../tokens";
 // ancestor property, since the trigger's position is wherever the header cell happens to land, not
 // a fixed layout element worth restructuring per page.
 const ColumnFilter = ({
-  label, available, selected, onChange, describe = () => "",
+  label, available, selected, onChange, describe = () => "", labelStyle,
   tokens = { bg: T.surface, border: T.border, borderSoft: T.borderMid, ink: T.text, inkMuted: T.textMuted, accent: T.accent, fontMono: T.mono, fontBody: T.body },
 }) => {
   const [open, setOpen] = useState(false);
@@ -101,7 +106,7 @@ const ColumnFilter = ({
     <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
       <button ref={btnRef} type="button" onClick={() => setOpen(o => !o)}
         style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none",
-          padding: 0, margin: 0, cursor: "pointer", color: active ? tokens.accent : "inherit", font: "inherit" }}>
+          padding: 0, margin: 0, cursor: "pointer", color: active ? tokens.accent : "inherit", font: "inherit", ...labelStyle }}>
         {label}
         <svg width="10" height="10" viewBox="0 0 10 10" style={{ flexShrink: 0 }}>
           <path d="M0.5 1 L9.5 1 L6 5.2 L6 9 L4 9.5 L4 5.2 Z"

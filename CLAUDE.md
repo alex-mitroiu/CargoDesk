@@ -6,7 +6,7 @@ Full-stack freight management app. React 18 + Vite frontend, Express + dual-back
 `lib/db.js`) backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.91.5 "Chartroom"**
+- Version: **v0.91.6 "Concourse"**
 - First-time setup: `npm run setup` (`scripts/setup.js`) — boots the server once to create its
   schema, shuts it down cleanly, then seeds MDM reference data, in the correct order. NOT
   zero-script — a genuinely fresh `pgdata/` has no ports/carriers/vessels/commodities until this
@@ -289,10 +289,20 @@ src/
                                    (VGM, Haulage, Fumigation, Storage, CY Storage, Warehousing,
                                    Pickup/Delivery, Customs Clearance) — notes + generic "OT" doc.
     DashboardPage.jsx              Overview + Contract Consumption + Margin (XLSX export) tabs
-    SpaceConfigurationsPage.jsx    Standalone Space Configs page with Linked Shipments modal
+    SpaceConfigurationsPage.jsx    Standalone Space Configs page with Linked Shipments modal. The list
+                                   is on the shared table system, CLIENT-side over the App-level
+                                   `allocations` prop (no endpoint; the server's confirmed/pending/
+                                   rejected/remaining figures pass through untouched): search, header
+                                   checklists on Carrier / Name-Route / Origin / Destination / Contract /
+                                   Status, and a sort-only Confirmed header (awarded TEU or consumption,
+                                   each both ways). Trade Lane is split into Origin Trade + Destination
+                                   Trade under one "Trade" heading; older rows with no stored lane derive
+                                   it from the port (dashed pill = derived). Add/Edit form's Trade panel
+                                   is two cards (Origin Trade / Destination Trade). Logic in
+                                   src/utils/spaceConfigTable.js. See ARCHITECTURE.md §8.23
     FreightAuditPage.jsx           Freight Audit & Payment (v0.69.0) — carrier invoice list,
                                    cross-shipment exceptions queue, invoice detail with
-                                   Approve/Dispute; nested under the Dashboard nav group. New
+                                   Approve/Dispute; in the Financials nav group. New
                                    Carrier Invoice modal has an "Extract from document" upload
                                    (v0.70.0) — POST /api/ai/extract-document pre-fills the form.
                                    Both tabs are on the shared table system (fifth adopter): two
@@ -300,15 +310,15 @@ src/
                                    exceptions array, so it counts ALL open lines whatever the table
                                    is filtered to). An approve/dispute/create/delete calls reloadAll(),
                                    refreshing both tables and the badge; the old Status dropdown is gone
-    QuotesPage.jsx                 Quoting/RFQ (v0.70.0) — top-level nav item, list + New Quote
+    QuotesPage.jsx                 Quoting/RFQ (v0.70.0) — in the Financials nav group, list + New Quote
                                    modal (customer/route/carrier, "Find Matching Contracts" as a
                                    pricing reference, line items) + lifecycle detail modal
                                    (Send/Accept/Decline/Convert to Shipment). The list is the PILOT
                                    for the shared table system (v0.91.5): TableToolbar + DataTable +
                                    useTableQuery, server-side filter/sort/search/paging — the old
                                    Status dropdown is gone, the Status column header filter replaces it
-    OpportunitiesPage.jsx          CRM pre-sales pipeline (v0.85.0) — top-level nav item, above
-                                   Quotes in the sidebar (real funnel order). List + New
+    OpportunitiesPage.jsx          CRM pre-sales pipeline (v0.85.0) — in the Financials nav group, beside
+                                   Quotes (not nested). Page key/hash `opportunities` unchanged. List + New
                                    Opportunity modal (title required, everything else optional —
                                    customer via CustomerCombobox in its unresolved/name-only
                                    state) + lifecycle detail modal (Qualify/Mark Lost/Convert to
@@ -317,7 +327,13 @@ src/
                                    useTableQuery, third adopter): header checklists on every column
                                    except Est. Value, search, sort, paging; the old Status dropdown is gone
     DashboardArchivePage.jsx       Expired allocations + renew flow
-    CreditOverridesPage.jsx        Credit Overrides queue (TKT-GLWMFP) — every shipment blocked by a
+    FinancialsPage.jsx             Financials hub (#financials) — a card per page in the Financials sidebar
+                                   group (Quotes, Opportunities, Reports, Freight Audit, Credit Overrides)
+                                   with each page's own live count, built like Master Data → Finance. The
+                                   list of pages comes in as a prop from App.jsx, decided once by
+                                   src/utils/financialsNav.js and shared with the sidebar group so a card
+                                   can never point at a link the sidebar hides. See ARCHITECTURE.md §8.25
+    CreditOverridesPage.jsx        Credit Overrides queue (TKT-GLWMFP; in the Financials nav group) — every shipment blocked by a
                                    credit hold or over-limit customer; only the shipment's own lane
                                    trade manager gets Release/Approve (server-computed `canAct`). The
                                    sixth table-system adopter and the FIRST CLIENT-SIDE one: the
@@ -410,7 +426,20 @@ src/
                                    columns (useResizableColumns), ColumnFilter headers, ActionMenu row
                                    actions, Pagination + PageSizeSelect footer, loading/empty states.
                                    Owns no data state — useTableQuery does. Named export TableToolbar
-                                   is the search box + sort select + Clear button above it
+                                   is the search box + sort select + Clear button above it. Opt-in extras
+                                   (all off by default, no other table changes): column.group (shared
+                                   two-row header), column.sortOptions (sort-only header control →
+                                   ColumnSort), rowAccent(row) (3px left stripe), scrollX (scroll sideways
+                                   instead of clipping), uppercaseHeaders (filterable headings inherit the
+                                   uppercase — a header button doesn't)
+      ColumnSort.jsx               Sort-only header control (v0.91.5+): a popover of choices (grouped, with
+                                   an arrow and a marker like TEU / % shown beside the heading while active),
+                                   Clear sort, Escape closes. Lit only while the table's sort is one of ITS
+                                   options. Used by DataTable for columns with sortOptions
+      LanePill.jsx                 A trade-lane code as a filled pill by LANE_BADGE_VARIANT; lanes the map
+                                   leaves at "default" get a visible neutral fill (Badge's default paints the
+                                   card's own colour). derived → dashed outline (worked out from a port, not
+                                   stored). Used by Space Configurations' table and form
       HsCodeCombobox.jsx           HS Code lookup (v0.91.5) — typeahead + browse-all picker with
                                    chapter chips, backed by the HS Codes registry. Replaces the free-
                                    text HS Code inputs in ContainerForm's Cargo Details and the
@@ -487,6 +516,13 @@ you change one file, change the other.
 filters on, incl. the multi-valued route; the sorters, where "Cheapest first" puts unpriced contracts LAST;
 `bestRate`, judged against whatever the filters let through; `groupByContract`; `RESULT_CAP`), split out so it
 is unit-tested (`scheduleResults.test.js`) without rendering the page.
+`src/utils/financialsNav.js` — who sees which of the Financials group's five pages (`visibleFinancialsPages`, the
+role matrix): the single rule the sidebar group and the hub's cards both use. Unit-tested in `financialsNav.test.js`.
+`src/utils/spaceConfigTable.js` — the same split for Space Configurations: `buildSpaceRows` (row view-model:
+consumption = confirmed ÷ awarded, status wording, alert level, MQC flag, stored-or-derived trade lanes),
+`SPACE_COLUMNS`/`SPACE_FILTER_KEYS`/`SPACE_SORTERS`/`SPACE_SORT_OPTIONS`/`spaceSearchText`, and
+`portLookupsNeeded` (which ports still need a name or a lane, so the page looks up only those). It never
+recomputes the server's confirmed/pending/rejected/remaining. Unit-tested in `spaceConfigTable.test.js`.
 `src/utils/templateRenderer.js` — the Document Template Editor's own renderer (v0.90.0):
 `renderTemplateHtml(template, data)` walks a saved `document_templates` row's field array into a
 real HTML string, `resolvePath(data, path)` does the dot-path lookup into the exact same resolved
@@ -642,6 +678,34 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.91.6 "Concourse")
+Bundled release — the shared table system reaches every list page, Space Configurations gets an Origin/Destination
+Trade split, five pages move into a Financials sidebar group, and a shipment-header modal that could not be closed is
+fixed. Rolls up the unversioned commit 37e4d13. Not run: a shipment-domain gap audit.
+- **Shared table system, all list pages** — Contracts and Customers via `/table` siblings, Opportunities and Freight
+  Audit in place, and a client-side tier (`src/utils/localTableQuery.js`) for Credit Overrides, Schedule Search and Space
+  Configurations. See ARCHITECTURE.md §8.23 for each adopter's decisions.
+- **Space Configurations** — Origin Trade / Destination Trade columns under one "Trade" heading (missing lanes derived from
+  ports, dashed pill); search, header checklists, sort-only Confirmed header (awarded TEU / consumption); scrolls sideways when
+  narrow; form Trade panel as two cards. New: `ColumnSort`, `LanePill`, `src/utils/spaceConfigTable.js`, and opt-in DataTable
+  features (`column.group`, `column.sortOptions`, `rowAccent`, `scrollX`, `uppercaseHeaders`).
+- **Financials sidebar group + hub** — `FinancialsPage.jsx` (`#financials`), `src/utils/financialsNav.js` (one role rule for
+  sidebar and cards), group after Dashboard, unfolds by itself for its own pages, Opportunities beside Quotes, Freight Audit no
+  longer under Dashboard. Every page keeps its address. See ARCHITECTURE.md §8.25.
+- **Fixed: overlays inside the shipment header** — `#shphdr` has `backdrop-filter`, which makes it the containing block for
+  `position: fixed`, so the Loop route modal (and the compliance, contract-mismatch and tracking-link modals and the Messages
+  and Tickets drawers) laid out against the header card and could not be closed. They now render as siblings of the card;
+  `ShipmentHeaderBar.test.jsx` guards it. **Rule: never render an overlay inside an element that sets `backdrop-filter`,
+  `filter` or `transform`.**
+- **Fixed: Edit overwrote a chosen trade lane** — the space-configuration form's lane loader tested the source text of a state
+  setter, never true, so opening Edit replaced a non-primary lane with the port's primary. It now keeps the stored lane.
+- **Modal closes on Escape** — topmost only, never a `hideClose` modal, IME-safe; popups inside a modal consume their own first
+  Escape. Like ×, it discards unsaved edits.
+- **Test-mock lesson** — a vitest mock of `../api` must copy names from `src/api.js` (a mocked `api.portLocations`, real
+  `api.ports`, let tests pass while the real page came up empty). The App-shell tests mirror the real object for this reason.
+- **Tests** — 194 frontend tests in 13 files (was 87 at the end of the table-system rollout); backend contracts-table, customers-table,
+  freight-audit-table and opportunities suites. Mutation-checked; every page driven in a real browser.
 
 ## Recent changes (v0.91.5 "Chartroom")
 Bundled release — Master Data gains a real Eastbound/Westbound loop editor and an HS Codes

@@ -367,6 +367,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
   useHorizonFonts();
 
   return (
+    <>
     <div id="shphdr" style={{
       background: HZ.surface, backdropFilter: "blur(22px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16,
       padding: "14px 22px", marginBottom: 22, position: "sticky", top: 0, zIndex: 5,
@@ -574,7 +575,15 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
           </div>
         </>
       )}
+    </div>
 
+    {/* Every modal and drawer this header opens is rendered HERE, as a sibling of #shphdr — never inside it.
+        #shphdr carries `backdrop-filter`, and a filtered element becomes the containing block for its
+        `position: fixed` descendants. A modal rendered inside it was therefore laid out against the header
+        card instead of the window: the overlay shrank to the card's box, the dialog was centred on that box
+        and ran up off the top of the screen, and its × (and a drawer's whole edge) ended up unreachable —
+        the Loop code's route modal could not be closed. Keep overlays out of any element that sets
+        `backdrop-filter`, `filter` or `transform`. */}
       {complianceOpen && (
         <ComplianceModal
           shipment={shipment}
@@ -622,7 +631,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
         <LoopRouteModal code={loopCode} polCode={shipment.pol} podCode={shipment.pod}
           onClose={() => setLoopModalOpen(false)} />
       )}
-    </div>
+    </>
   );
 };
 
