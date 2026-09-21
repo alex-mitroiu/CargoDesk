@@ -1,8 +1,14 @@
-# Wires the 4 backend processes together for a self-hosted/single-operator deployment.
-# NOT independently verified by actually running in this environment (no Docker available
-# here) — see each Dockerfile's own note. Build-test before relying on this, especially the
-# volume mounts below (SQLite-file bind mounts are simple but easy to get subtly wrong, and
-# there was no way to actually confirm these against a running container).
+# Wires all 8 processes (the monolith + 7 microservices) together for a self-hosted/single-operator deployment.
+# Verified for real on 2026-09-21 (Docker Desktop 4.91 / WSL2, v0.91.6): all 8 images build, `docker compose up`
+# brings the whole stack up on the embedded pglite databases, the monolith's /api/health reports all 7 services
+# reachable, pdf-render renders a real PDF through its in-container Chromium, and `docker compose down` stops it.
+# NOT verified: running against a real Postgres (the *_DATABASE_URL vars below), an orchestrator, or the
+# authenticated monolith -> service calls that only start once an admin flips an app_settings.*_source toggle.
+# (On a network that re-signs TLS, such as antivirus HTTPS scanning, `npm ci` fails inside every build. Every
+# Dockerfile here has the same optional extra-CA build-secret hook — see the root Dockerfile's note — but
+# `docker compose build` does NOT pass it. Build each image by hand with `docker build --secret
+# id=extra_ca,src=docker-secrets/extra_ca.crt -f <Dockerfile> -t cargodesk-<name> .`, then `docker compose up -d`
+# WITHOUT --build: compose's default image names (cargodesk-<service>) match those tags.)
 #
 # Secrets use Docker Compose's native `secrets:` mechanism (file-based, mounted at
 # /run/secrets/<name> inside each container) rather than plain `environment:` values — a
@@ -25,16 +31,13 @@
 #      (docker-secrets/ is gitignored — see .gitignore. These files are the actual secrets;
 #      treat them the same as you would a committed .env, i.e. never commit them for real.)
 #   2. cp .env.example .env — fills in LOGIN_RATE_MAX and anything else non-secret
-#   3. mkdir -p docker-data && touch docker-data/cargodesk.db
-#      (REQUIRED — Docker bind-mounts a host path that doesn't exist yet as a DIRECTORY, not a
-#      file, which would break `new DatabaseSync('/app/cargodesk.db')` since it expects a real
-#      file path. Creating an empty file first sidesteps this well-known bind-mount gotcha.
-#      document-distribution, screening, customers, kanban, contract-management, and mdm are NOT
-#      in this list anymore — all six are migrated to Postgres (ARCHITECTURE.md §13), see their
-#      own DATABASE_URL environment entries below instead of a SQLite bind mount. The monolith
-#      itself (cargodesk.db above) is the only piece still on node:sqlite.)
-#   4. mkdir -p docker-data/uploads
-#   5. docker compose up -d --build
+#   3. mkdir -p docker-data/uploads
+#      (The monolith and all 6 microservices are Postgres-backed now, ARCHITECTURE.md §13 — none
+#      of them uses a SQLite file any more, so there's no bind-mount-target-file to pre-create the
+#      way earlier drafts of this file needed. Left unset, DATABASE_URL below, each falls back to
+#      an embedded @electric-sql/pglite instance with no volume backing it, so data would not
+#      survive a container recreation — see each service's own comment below.)
+#   4. docker compose up -d --build
 #
 # The contract-management/mdm/screening/kanban/customers services run ALONGSIDE the monolith's own
 # local tables, not in place of them (app_settings.contract_source/mdm_source/screening_source/
@@ -87,6 +90,18 @@ services:
       CUSTOMER_SERVICE_URL: http://customers:3008
       CUSTOMER_SERVICE_SECRET_FILE: /run/secrets/customer_service_secret
       LOGIN_RATE_MAX: ${LOGIN_RATE_MAX:-20}
+      # Postgres-backed via lib/db.js (ARCHITECTURE.md §13). Set MONOLITH_DATABASE_URL in .env to a
+      # real Postgres instance. Left empty (the default), falls back to an embedded
+      # @electric-sql/pglite instance writing to /app/pgdata inside the container, with no volume
+      # backing it below, so data would not survive a container recreation — fine for a quick local
+      # compose-up, not a real deployment. Same pattern for every service below.
+      DATABASE_URL: ${MONOLITH_DATABASE_URL:-}
+      # The first admin account seedAdmin() creates on a fresh database. Left empty it is the PUBLISHED
+      # default admin@cargodesk.com / admin123 — set both in .env for anything reachable by anyone else.
+      # (NODE_ENV=production also names ADMIN_EMAIL as the SSO break-glass account. The test-fixture admin is
+      # never created in production; see seedTestFixtureAdmin in server.js.)
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     secrets:
       - jwt_secret
       - distribution_service_secret
@@ -97,13 +112,9 @@ services:
       - kanban_service_secret
       - customer_service_secret
     volumes:
-      # Bind-mounted to specific host paths deliberately, NOT a named volume mounted over the
+      # Bind-mounted to a specific host path deliberately, NOT a named volume mounted over the
       # whole /app directory — that would hide the image's own application code (server.js,
-      # dist/, node_modules) behind an empty volume and break the container outright. The host
-      # file must already exist (see step 3 above) — its contents don't matter, server.js
-      # creates the real schema on first boot, but Docker creates a DIRECTORY at a bind-mount
-      # target that doesn't exist yet, which would break DatabaseSync entirely.
-      - ./docker-data/cargodesk.db:/app/cargodesk.db
+      # dist/, node_modules) behind an empty volume and break the container outright.
       - ./docker-data/uploads:/app/uploads
     depends_on:
       - document-distribution
@@ -124,11 +135,11 @@ services:
     environment:
       NODE_ENV: production
       DISTRIBUTION_SERVICE_SECRET_FILE: /run/secrets/distribution_service_secret
-      # Migrated to Postgres (ARCHITECTURE.md §13, Phase 0) — point this at a real Postgres
+      # Migrated to Postgres (ARCHITECTURE.md §13, Phase 0) — set the matching *_DATABASE_URL in .env to a real Postgres
       # instance. Left unset, the service falls back to an embedded @electric-sql/pglite instance
       # with no volume backing it below, so its data would not survive a container recreation —
       # fine for a quick local compose-up, not a real production setup.
-      DATABASE_URL: postgres://user:password@your-postgres-host:5432/cargodesk_distribution
+      DATABASE_URL: ${DISTRIBUTION_DATABASE_URL:-}
     secrets:
       - distribution_service_secret
     restart: unless-stopped
@@ -155,10 +166,10 @@ services:
     environment:
       NODE_ENV: production
       CONTRACT_SERVICE_SECRET_FILE: /run/secrets/contract_service_secret
-      # Migrated to Postgres (ARCHITECTURE.md §13, Phase 4) — point this at a real Postgres
+      # Migrated to Postgres (ARCHITECTURE.md §13, Phase 4) — set the matching *_DATABASE_URL in .env to a real Postgres
       # instance. Left unset, falls back to an embedded @electric-sql/pglite instance with no
       # volume backing it below, so data would not survive a container recreation.
-      DATABASE_URL: postgres://user:password@your-postgres-host:5432/cargodesk_contracts
+      DATABASE_URL: ${CONTRACTS_DATABASE_URL:-}
     secrets:
       - contract_service_secret
     restart: unless-stopped
@@ -172,11 +183,11 @@ services:
     environment:
       NODE_ENV: production
       MDM_SERVICE_SECRET_FILE: /run/secrets/mdm_service_secret
-      # Migrated to Postgres (ARCHITECTURE.md §13, Phase 5, the last microservice phase) — point
-      # this at a real Postgres instance. Left unset, falls back to an embedded
+      # Migrated to Postgres (ARCHITECTURE.md §13, Phase 5, the last microservice phase) — set the
+      # matching *_DATABASE_URL in .env to a real Postgres instance. Left unset, falls back to an embedded
       # @electric-sql/pglite instance with no volume backing it below, so data would not survive
       # a container recreation.
-      DATABASE_URL: postgres://user:password@your-postgres-host:5432/cargodesk_mdm
+      DATABASE_URL: ${MDM_DATABASE_URL:-}
     secrets:
       - mdm_service_secret
     restart: unless-stopped
@@ -190,10 +201,10 @@ services:
     environment:
       NODE_ENV: production
       SCREENING_SERVICE_SECRET_FILE: /run/secrets/screening_service_secret
-      # Migrated to Postgres (ARCHITECTURE.md §13, Phase 1) — point this at a real Postgres
+      # Migrated to Postgres (ARCHITECTURE.md §13, Phase 1) — set the matching *_DATABASE_URL in .env to a real Postgres
       # instance. Left unset, falls back to an embedded @electric-sql/pglite instance with no
       # volume backing it below, so data would not survive a container recreation.
-      DATABASE_URL: postgres://user:password@your-postgres-host:5432/cargodesk_screening
+      DATABASE_URL: ${SCREENING_DATABASE_URL:-}
     secrets:
       - screening_service_secret
     restart: unless-stopped
@@ -207,10 +218,10 @@ services:
     environment:
       NODE_ENV: production
       KANBAN_SERVICE_SECRET_FILE: /run/secrets/kanban_service_secret
-      # Migrated to Postgres (ARCHITECTURE.md §13, Phase 3) — point this at a real Postgres
+      # Migrated to Postgres (ARCHITECTURE.md §13, Phase 3) — set the matching *_DATABASE_URL in .env to a real Postgres
       # instance. Left unset, falls back to an embedded @electric-sql/pglite instance with no
       # volume backing it below, so data would not survive a container recreation.
-      DATABASE_URL: postgres://user:password@your-postgres-host:5432/cargodesk_kanban
+      DATABASE_URL: ${KANBAN_DATABASE_URL:-}
     secrets:
       - kanban_service_secret
     restart: unless-stopped
@@ -224,10 +235,10 @@ services:
     environment:
       NODE_ENV: production
       CUSTOMER_SERVICE_SECRET_FILE: /run/secrets/customer_service_secret
-      # Migrated to Postgres (ARCHITECTURE.md §13, Phase 2) — point this at a real Postgres
+      # Migrated to Postgres (ARCHITECTURE.md §13, Phase 2) — set the matching *_DATABASE_URL in .env to a real Postgres
       # instance. Left unset, falls back to an embedded @electric-sql/pglite instance with no
       # volume backing it below, so data would not survive a container recreation.
-      DATABASE_URL: postgres://user:password@your-postgres-host:5432/cargodesk_customers
+      DATABASE_URL: ${CUSTOMERS_DATABASE_URL:-}
     secrets:
       - customer_service_secret
     restart: unless-stopped

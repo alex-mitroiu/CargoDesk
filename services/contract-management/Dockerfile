@@ -12,7 +12,12 @@
 FROM node:22-slim
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+# Optional extra CA for networks that re-sign TLS (antivirus HTTPS scanning, a corporate proxy) — without it
+# `npm ci` fails with UNABLE_TO_VERIFY_LEAF_SIGNATURE. Off by default; explained in the root Dockerfile:
+#   docker build --secret id=extra_ca,src=docker-secrets/extra_ca.crt -f services/contract-management/Dockerfile -t cargodesk-contract-management .
+RUN --mount=type=secret,id=extra_ca,required=false \
+    if [ -f /run/secrets/extra_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/extra_ca; fi; \
+    npm ci --omit=dev
 COPY services/contract-management ./services/contract-management
 
 ENV NODE_ENV=production

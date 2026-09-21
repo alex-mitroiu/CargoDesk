@@ -19,7 +19,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends chromium \
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+# Optional extra CA for networks that re-sign TLS (antivirus HTTPS scanning, a corporate proxy) — without it
+# `npm ci` fails with UNABLE_TO_VERIFY_LEAF_SIGNATURE. Off by default; explained in the root Dockerfile:
+#   docker build --secret id=extra_ca,src=docker-secrets/extra_ca.crt -f services/pdf-render/Dockerfile -t cargodesk-pdf-render .
+RUN --mount=type=secret,id=extra_ca,required=false \
+    if [ -f /run/secrets/extra_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/extra_ca; fi; \
+    npm ci --omit=dev
 COPY services/pdf-render ./services/pdf-render
 
 ENV NODE_ENV=production

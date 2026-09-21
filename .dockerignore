@@ -1,11 +1,22 @@
 node_modules
 services/*/node_modules
 dist
+# The monolith and every microservice are Postgres-backed via lib/db.js (ARCHITECTURE.md §13),
+# falling back to an embedded @electric-sql/pglite instance persisted to its own pgdata/ directory
+# when DATABASE_URL is unset — real local dev/test data, not build input. Without this, `COPY . .`
+# in the Dockerfiles below would bake it straight into the image (confirmed: 150-500MB per
+# directory in a normal dev checkout).
+pgdata
+services/*/pgdata
+# Pre-Postgres SQLite leftovers — no longer used by anything, but a checkout that predates the migration
+# still has them lying around (34MB here), and `COPY . .` would otherwise carry them into the build stage.
 cargodesk.db
 cargodesk.db-shm
 cargodesk.db-wal
 services/document-distribution/distribution.db
 uploads/documents
+# Local agent config — includes test-fixture credentials, never build input.
+.claude
 .git
 .env
 .env.*

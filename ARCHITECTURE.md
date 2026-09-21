@@ -142,8 +142,8 @@ own data rather than owning any of its own.
 | Backend testing | Node's built-in test runner (`node:assert`-style scripts) | — | 36 files, `npm test` |
 | Frontend testing | Vitest + Testing Library | — | `npm run test:frontend`, 2 files |
 | CI | GitHub Actions | — | `.github/workflows/ci.yml` — frontend tests, backend tests + build, all in parallel jobs |
-| Containerization | Docker + Docker Compose | — | `Dockerfile` per process (monolith + 3 services), `docker-compose.yml` wires them together |
-| Dev tooling | `concurrently` | 8.2 | Runs monolith + Vite + all 3 microservices in parallel (`npm run dev`) |
+| Containerization | Docker + Docker Compose | — | `Dockerfile` per process (monolith + 7 services), `docker-compose.yml` wires them together |
+| Dev tooling | `concurrently` | 8.2 | Runs monolith + Vite + all 7 microservices in parallel (`npm run dev`) |
 
 **Still true:** no TypeScript, no CSS framework, no ORM, no migration framework, no message
 queue. **No longer true (as of this pass):** "no test framework" — both a backend and a frontend
@@ -159,31 +159,37 @@ suite now exist; "no containerization" — Docker artifacts exist for every proc
 Developer machine
 │
 ├─ npm run dev  (via `concurrently`)
-│  ├─ node server.js                              → :3001  (Express + SQLite + WebSocket)
+│  ├─ node server.js                              → :3001  (Express + Postgres/pglite + WebSocket)
 │  ├─ vite                                         → :5173  (React dev server + HMR)
 │  ├─ node services/document-distribution/server.js → :3002
 │  ├─ node services/pdf-render/server.js            → :3003
 │  ├─ node services/contract-management/server.js   → :3004
 │  ├─ node services/mdm/server.js                    → :3005
 │  ├─ node services/screening/server.js              → :3006
-│  └─ node services/kanban/server.js                 → :3007
+│  ├─ node services/kanban/server.js                 → :3007
+│  └─ node services/customers/server.js              → :3008
 │         │
 │         └─ Vite proxies /api and /ws → :3001 (monolith only — the browser never talks
-│            directly to any of the six microservices)
+│            directly to any of the seven microservices)
 │
-├─ cargodesk.db                (monolith's own file, co-located with server.js)
-├─ services/document-distribution/*.db
+├─ pgdata/                             (monolith's own embedded pglite instance — its own
+│                                        directory, DATABASE_URL unset; a real Postgres connection
+│                                        string replaces it, ARCHITECTURE.md §13)
+├─ services/document-distribution/pgdata/  (same pglite-or-Postgres shape, only holds live data
+│                                            when the matching *_source setting is 'remote', §8.1)
 ├─ services/pdf-render/            (stateless — no database)
-├─ services/contract-management/*.db   (only holds live data when contract_source='remote', §8.1)
-├─ services/mdm/*.db                   (only holds live data when mdm_source='remote', §8.1)
-├─ services/screening/*.db             (only holds live data when screening_source='remote', §8.1)
-└─ services/kanban/*.db                (only holds live data when kanban_source='remote', §8.1)
+├─ services/contract-management/pgdata/
+├─ services/mdm/pgdata/
+├─ services/screening/pgdata/
+├─ services/kanban/pgdata/
+└─ services/customers/pgdata/
 ```
 
 The monolith calls each microservice over plain HTTP, gated by a shared static secret per
 service (`DISTRIBUTION_SERVICE_SECRET`, `PDF_RENDER_SERVICE_SECRET`, `CONTRACT_SERVICE_SECRET`,
-`MDM_SERVICE_SECRET`, `SCREENING_SERVICE_SECRET`, `KANBAN_SERVICE_SECRET`) read via
-`lib/dockerSecret.js` (env var, or a `_FILE`-suffixed path for Docker/Compose secrets).
+`MDM_SERVICE_SECRET`, `SCREENING_SERVICE_SECRET`, `KANBAN_SERVICE_SECRET`,
+`CUSTOMER_SERVICE_SECRET`) read via `lib/dockerSecret.js` (env var, or a `_FILE`-suffixed path
+for Docker/Compose secrets).
 Every monolith→service call follows the same shape: a short timeout (10s), and a clean `503` back
 to the caller if the service is unreachable — never a hang, a 500, or a crash.
 
@@ -203,11 +209,26 @@ NODE_ENV=production node server.js
 
 ### Docker / Compose
 
-`docker-compose.yml` wires all four processes (monolith + 3 microservices) together, with the
+`docker-compose.yml` wires all 8 processes (monolith + 7 microservices) together, with the
 service-to-service secrets passed as Compose secrets rather than plain env vars. Each process has
-its own `Dockerfile`. This is a first draft — not yet exercised against a real orchestrator
-(Kubernetes, ECS, etc.) — but it replaces the previous "no container runtime, single-host only"
-state entirely; a production deployment path now genuinely exists, even if unproven at scale.
+its own `Dockerfile`. Status (2026-09-21): **all eight images build and the whole compose stack has
+been run for real** — every process boots on its embedded pglite database, the monolith's `/api/health`
+reports all 7 services reachable, pdf-render renders a real PDF through its in-container Chromium, and the
+monolith restarts after a hard kill and seeds fully. Nothing has run against a real Postgres or an
+orchestrator, and the authenticated monolith-to-service calls (which only start once an
+`app_settings.*_source` toggle is flipped) were not exercised. That first real build surfaced four
+defects the untested drafts had hidden, all fixed: `.dockerignore` didn't exclude
+`pgdata/` (the Dockerfiles' `COPY . .` would have baked the local database into the image); the
+runtime image lacked `db/cargodesk.sample.db`, so `import-mdm-data.js` silently loaded **0 countries and
+0 trade lanes**, leaving every derived lane empty; `lib/db.js`'s stale-lock check treated a hard-killed
+container's lock as live (the server is always PID 1, so it found *itself* — with `restart:
+unless-stopped` that is a permanent crash loop); and `npm ci` fails behind TLS-inspecting networks
+(an optional extra-CA build-secret hook, now on every Dockerfile — see README). A fifth finding was a
+security one: `seedTestFixtureAdmin()` (`claudeagent@localhost` with a password published in this repo)
+was unconditional, so every image shipped a known-credential admin; it now returns immediately under
+`NODE_ENV=production` (which the images set; CI and dev don't), and the break-glass default follows suit.
+Still true: `seedAdmin()` creates the published `admin@cargodesk.com` / `admin123` unless `ADMIN_EMAIL` /
+`ADMIN_PASSWORD` are set, so set them before exposing a container.
 
 ---
 

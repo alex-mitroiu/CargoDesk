@@ -233,12 +233,15 @@ On first startup, if no users exist, the server seeds a default admin account:
 
 ## Deployment
 
-CargoDesk is 4 backend processes (the monolith, `services/document-distribution/`,
-`services/pdf-render/`, `services/contract-management/`) plus a static frontend build. `npm run
-dev` runs all of this in dev mode (Vite's own dev server + proxy). The contract-management
-service runs alongside the monolith's own local contract tables, not in place of them — see
-`app_settings.contract_source` in Application Settings. For anything else, there's a first-draft
-Docker path:
+CargoDesk is 8 backend processes (the monolith plus 7 extracted microservices —
+`services/document-distribution/`, `services/pdf-render/`, `services/contract-management/`,
+`services/mdm/`, `services/screening/`, `services/kanban/`, `services/customers/`) plus a static
+frontend build. `npm run dev` runs all of this in dev mode (Vite's own dev server + proxy). Each
+microservice runs alongside the monolith's own local tables, not in place of them, until an admin
+flips the matching `app_settings.*_source` toggle in Application Settings (see
+ARCHITECTURE.md §8.1/§13). The monolith and every microservice are Postgres-backed
+(`DATABASE_URL`), falling back to an embedded `@electric-sql/pglite` instance with no persistence
+across a container recreation when it's unset. For anything else, there's a Docker path:
 
 ```bash
 mkdir -p docker-secrets
@@ -246,31 +249,66 @@ openssl rand -hex 32 > docker-secrets/jwt_secret
 openssl rand -hex 32 > docker-secrets/distribution_service_secret
 openssl rand -hex 32 > docker-secrets/pdf_render_service_secret
 openssl rand -hex 32 > docker-secrets/contract_service_secret
+openssl rand -hex 32 > docker-secrets/mdm_service_secret
+openssl rand -hex 32 > docker-secrets/screening_service_secret
+openssl rand -hex 32 > docker-secrets/kanban_service_secret
+openssl rand -hex 32 > docker-secrets/customer_service_secret
 cp .env.example .env          # non-secret config (LOGIN_RATE_MAX, etc.) — see below
-mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/distribution.db docker-data/contracts.db
 mkdir -p docker-data/uploads
 docker compose up -d --build
 ```
 
-**This has not been build-tested in a real Docker environment** — it was written against this
-repo's actual npm scripts, dependencies, and ports, but no Docker install was available to
-actually build and run it while writing it. Treat `Dockerfile`, `services/*/Dockerfile`, and
-`docker-compose.yml` as a first draft to verify before relying on for anything real, not as
-proven-working.
+**What has actually been verified (2026-09-21, Docker Desktop 4.91 on WSL2, v0.91.6):** all eight
+images build; `docker compose up` starts the whole stack on the embedded pglite databases and the
+monolith's `/api/health` reports all seven services reachable; the monolith boots in ~6 seconds, serves
+the frontend and API, survives a hard kill and restart, and can be fully seeded (below); pdf-render
+renders a real PDF through its in-container Chromium; `docker compose down` stops everything.
+**Not verified:** running against a real Postgres (`*_DATABASE_URL`), any orchestrator, or the
+authenticated monolith-to-service calls that only begin once an admin flips an `app_settings.*_source`
+toggle.
+
+Things to know before running it:
+
+- **Fresh containers start empty.** Seed the reference data (14,269 ports, carriers, vessels,
+  commodities, HS codes, 208 countries and their trade lanes) once, with the server **stopped** —
+  the embedded database allows only one process:
+  ```bash
+  docker run -d --name cargodesk -v cargodesk-pgdata:/app/pgdata -p 127.0.0.1:3001:3001 \
+    -e JWT_SECRET="$(openssl rand -hex 32)" cargodesk-monolith   # first boot creates the schema
+  docker stop cargodesk                                          # graceful, so the database closes cleanly
+  docker run --rm -v cargodesk-pgdata:/app/pgdata cargodesk-monolith node scripts/import-mdm-data.js
+  docker start cargodesk
+  ```
+  Without a volume on `/app/pgdata` the data disappears when the container is recreated. Always stop
+  it with `docker stop`, never `docker kill`. (The seed script prints "0 inserted" rather than failing
+  if a reference file is missing — check the counts it reports.)
+- **Set `ADMIN_EMAIL` and `ADMIN_PASSWORD`.** The first admin account is otherwise the published default
+  `admin@cargodesk.com` / `admin123`. Under `docker compose` they are read from `.env`; with a bare
+  `docker run` pass them with `-e`. (Under `NODE_ENV=production`, which the images set, `ADMIN_EMAIL` is
+  also the default SSO break-glass account, and the test-fixture admin `claudeagent@localhost` is never
+  created.) They only take effect on a fresh database — an already-seeded one keeps its existing admin.
+- **Behind antivirus HTTPS scanning or a corporate proxy** (Avast "Web/Mail Shield" was the cause
+  here), `npm ci` inside the build fails with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, because the container
+  doesn't trust the interceptor's certificate. Export that root certificate to
+  `docker-secrets/extra_ca.crt` (gitignored, and a public certificate, not a key) and build with
+  `docker build --secret id=extra_ca,src=docker-secrets/extra_ca.crt -t cargodesk-monolith .` (every
+  service Dockerfile has the same optional hook: `-f services/<name>/Dockerfile -t cargodesk-<name>`).
 
 ### Secrets management
 
-The 4 processes share 4 secrets (`JWT_SECRET`, `DISTRIBUTION_SERVICE_SECRET`,
-`PDF_RENDER_SERVICE_SECRET`, `CONTRACT_SERVICE_SECRET`). Running via `docker compose`, they're passed using Compose's
-native file-based `secrets:` mechanism — mounted at `/run/secrets/<name>` inside each
-container, never exposed via `docker inspect` or a process-env dump the way a plain
-`environment:` value is. Each process reads its own secret via a `<NAME>_FILE` env var pointing
-at the mounted path (`lib/dockerSecret.js`, duplicated per-service since there's no shared
-module between independent processes — same reasoning as `roundCents()`'s own duplication),
-falling back to a plain `<NAME>` env var and then an insecure dev default if neither is set —
-so `npm run dev` and a bare `docker run -e JWT_SECRET=...` both still work unchanged.
-`docker-secrets/*` (the actual secret files) and `.env` are both gitignored; `.env.example`
-documents the plain-env-var fallback path for anything not going through Compose secrets.
+The 8 processes share 8 secrets — one per process (`JWT_SECRET` for the monolith, plus one
+`<NAME>_SERVICE_SECRET` per microservice — see `docker-compose.yml`'s own `secrets:` block for the
+current list, which is the source of truth this section is kept in sync with). Running via
+`docker compose`, they're passed using Compose's native file-based `secrets:` mechanism — mounted
+at `/run/secrets/<name>` inside each container, never exposed via `docker inspect` or a
+process-env dump the way a plain `environment:` value is. Each process reads its own secret via a
+`<NAME>_FILE` env var pointing at the mounted path (`lib/dockerSecret.js`, duplicated per-service
+since there's no shared module between independent processes — same reasoning as
+`roundCents()`'s own duplication), falling back to a plain `<NAME>` env var and then an insecure
+dev default if neither is set — so `npm run dev` and a bare `docker run -e JWT_SECRET=...` both
+still work unchanged. `docker-secrets/*` (the actual secret files) and `.env` are both gitignored;
+`.env.example` documents the plain-env-var fallback path for anything not going through Compose
+secrets.
 
 Beyond "generate real random values and keep the files/env out of version control," there is
 no actual secrets-management story here: no vault, no rotation, no per-environment separation.

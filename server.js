@@ -490,7 +490,16 @@ async function seedAdmin() {
 // `Fatal: Login failed (401)` on the very first test file. Idempotent and unconditional, same
 // as seedAdmin() above — same disclosed-insecure-default tradeoff, since it's a fixed, publicly
 // documented password purely for automated verification, never meant to gate anything real.
+//
+// NEVER in production. That password is published in this repo, and there is no environment override for
+// it (unlike seedAdmin's ADMIN_EMAIL/ADMIN_PASSWORD), so a production deployment — the Docker image sets
+// NODE_ENV=production, as does every real deployment (see routes/auth.js) — would otherwise ship an ADMIN
+// login anyone could read off GitHub. CI runs with NODE_ENV=test and local dev leaves it unset, so tests are
+// unaffected. The guard lives inside the function so both callers are covered: the boot chain below and the
+// Reset Demo Data panel (routes/admin-reset.js). BREAK_GLASS_EMAILS' production default moves off this
+// account for the same reason.
 async function seedTestFixtureAdmin() {
+  if (process.env.NODE_ENV === "production") return;
   const EMAIL = "claudeagent@localhost";
   const PW    = "TestFixture!2026Zq";
   const [exists] = await query("SELECT id FROM users WHERE email = $1", [EMAIL]);
@@ -3555,8 +3564,15 @@ setInterval(() => {
 // already-documented standing recovery accounts (fallback-admin@cargodesk.local,
 // claudeagent@localhost — see CLAUDE.md), not something meant to gate a real deployment's real
 // break-glass list, which is exactly what the env var override is for.
+// In production the test fixture is neither created (see seedTestFixtureAdmin) nor trusted here: the
+// default names the account that IS seeded there (ADMIN_EMAIL, else admin@cargodesk.com). Without that,
+// turning on sso_enforce_exclusive with BREAK_GLASS_EMAILS unset would leave a break-glass list naming only
+// accounts that don't exist, and everyone would be locked out of local login if SSO failed.
+const DEFAULT_BREAK_GLASS = process.env.NODE_ENV === "production"
+  ? `fallback-admin@cargodesk.local,${process.env.ADMIN_EMAIL || "admin@cargodesk.com"}`
+  : "fallback-admin@cargodesk.local,claudeagent@localhost";
 const BREAK_GLASS_EMAILS = new Set(
-  (process.env.BREAK_GLASS_EMAILS || "fallback-admin@cargodesk.local,claudeagent@localhost")
+  (process.env.BREAK_GLASS_EMAILS || DEFAULT_BREAK_GLASS)
     .split(",").map(e => e.trim().toLowerCase()).filter(Boolean)
 );
 
