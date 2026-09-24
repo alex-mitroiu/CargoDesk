@@ -56,15 +56,16 @@ describe("Users & Finance Gating Suite", () => {
       });
     });
 
-    it("POST /api/users creates a new operator user → {ok:true}", () => {
+    it("POST /api/users creates a new operator user", () => {
       api("POST", "/users", {
         email: FRESH_EMAIL,
         name: "Cypress Finance Tester",
         role: "operator",
         password: FRESH_PASSWORD,
       }).then(res => {
-        expect(res.status).to.eq(200);
-        expect(res.body.ok).to.eq(true);
+        // Returns the created user + 201, not the old {ok:true}/200 (2026-09-23 QA finding).
+        expect(res.status).to.eq(201);
+        expect(res.body.email).to.eq(FRESH_EMAIL);
       });
     });
 

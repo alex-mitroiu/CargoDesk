@@ -156,7 +156,8 @@ async function login() {
       email: `org-test-${rand.toLowerCase()}@example.com`, name: "Org Test User",
       roles: ["viewer"], password: "OrgTestFixture!2026Zq",
     }, token);
-    assert("scratch user created", scratchUser.status === 200, JSON.stringify(scratchUser.body));
+    // POST /api/users now returns the created user + 201, not the old {ok:true}/200 (2026-09-23 QA finding).
+    assert("scratch user created", scratchUser.status === 201, JSON.stringify(scratchUser.body));
     const scratchUsers = await request("GET", "/api/users", null, token);
     const userId = scratchUsers.body.find(u => u.email === `org-test-${rand.toLowerCase()}@example.com`)?.id;
     assert("scratch user resolvable by email", !!userId);

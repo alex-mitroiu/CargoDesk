@@ -80,7 +80,10 @@ describe("Invoice Entry + Reversal Suite", () => {
     });
 
     it("Generate Invoice is disabled while there are zero charge lines", () => {
-      cy.get("#shpacct-invoices-lines-empty", { timeout: 10000 }).should("be.visible");
+      // An editor sees the actionable lines-table card (with Add Line) instead of the dead-end
+      // #shpacct-invoices-lines-empty message, which is reserved for read-only viewers.
+      cy.get("#shpacct-invoices-lines-table", { timeout: 10000 }).should("be.visible")
+        .and("contain.text", "No invoice lines yet");
       cy.get("#shpacct-invoices-generate-btn").should("be.disabled");
       cy.get("#shpacct-invoices-generate-percontainer-btn").should("be.disabled");
     });
@@ -116,7 +119,8 @@ describe("Invoice Entry + Reversal Suite", () => {
 
     it("confirms the invoice via Preview → Confirm Document", () => {
       visitInvoiceEntry();
-      cy.contains("button", "Preview Invoice", { timeout: 10000 }).click();
+      // Restyled to an icon+"Preview" dashed button, matching every other row action on this page.
+      cy.contains("button", "Preview", { timeout: 10000 }).click();
       cy.contains("button", "Confirm Document", { timeout: 8000 }).click();
       cy.contains("Invoice confirmed", { timeout: 10000 }).should("be.visible");
       cy.get("button").contains("×").click({ force: true });

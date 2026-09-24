@@ -441,7 +441,8 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
           <div key={label} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
             borderRadius: 8, padding: "10px 12px" }}>
             <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
-            <div style={{ fontFamily: HZ_MONO, fontSize: 16, fontWeight: 700, color: HZ.text, marginTop: 2 }}>{value}</div>
+            <div id={label === "Total Sell" ? "shpacct-invoices-total-sell" : undefined}
+              style={{ fontFamily: HZ_MONO, fontSize: 16, fontWeight: 700, color: HZ.text, marginTop: 2 }}>{value}</div>
           </div>
         ))}
       </div>
