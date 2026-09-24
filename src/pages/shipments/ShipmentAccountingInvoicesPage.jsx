@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { T, todayIso } from "../../tokens";
+import { todayIso } from "../../tokens";
 import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
@@ -12,6 +12,7 @@ import { toast } from "../../toast";
 import { Textarea, Inp } from "../../components/primitives/Form";
 import DatePicker from "../../components/primitives/DatePicker";
 import { IconCheck, IconWarning, IconClipboard, IconReceipt, IconPackage, IconEye } from "../../components/primitives/Icon";
+import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
 
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = s => s ? new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -31,13 +32,13 @@ const ReverseInvoiceModal = ({ doc, busy, onClose, onConfirm }) => {
   return (
     <Modal title="Reverse Invoice" onClose={onClose} width={460}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, lineHeight: 1.5 }}>
           This creates locked, negative-amount adjusting charge lines and a new Credit / Debit
-          Note reversing <strong style={{ color: T.text }}>{doc.filename}</strong>. The original
-          invoice will be marked <strong style={{ color: T.text }}>Voided</strong>. This cannot be undone.
+          Note reversing <strong style={{ color: HZ.text }}>{doc.filename}</strong>. The original
+          invoice will be marked <strong style={{ color: HZ.text }}>Voided</strong>. This cannot be undone.
         </div>
         <div>
-          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 6 }}>Reason (optional)</div>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginBottom: 6 }}>Reason (optional)</div>
           <Textarea value={reason} onChange={setReason} rows={3} placeholder="e.g. Duplicate charge, rate correction…" />
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
@@ -66,8 +67,8 @@ const MarkPaidModal = ({ doc, defaultAmount, busy, onClose, onConfirm }) => {
   return (
     <Modal title="Mark as Paid" onClose={() => !busy && onClose()} width={420}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
-          Records payment receipt for <strong style={{ color: T.text }}>{doc.filename}</strong>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, lineHeight: 1.5 }}>
+          Records payment receipt for <strong style={{ color: HZ.text }}>{doc.filename}</strong>
           {defaultAmount != null && <> — invoiced total {fmtUsd(defaultAmount)}</>}.
         </div>
         <DatePicker label="Paid On" required value={paidAt} onChange={setPaidAt} maxDate={todayIso()} />
@@ -76,8 +77,8 @@ const MarkPaidModal = ({ doc, defaultAmount, busy, onClose, onConfirm }) => {
         <Inp label="Transaction ID (optional)" value={transactionId} onChange={setTransactionId}
           placeholder="e.g. wire reference, bank confirmation #" />
         {isPartial && (
-          <div style={{ padding: "8px 12px", borderRadius: 6, background: `${T.warning}18`,
-            border: `1px solid ${T.warning}44`, fontFamily: T.body, fontSize: 11.5, color: T.text }}>
+          <div style={{ padding: "8px 12px", borderRadius: 6, background: HZ.warnBg,
+            border: `1px solid ${HZ.warn}44`, fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.text }}>
             Partial payment — {fmtUsd(defaultAmount - amountNum)} will remain outstanding.
           </div>
         )}
@@ -101,10 +102,10 @@ const MarkPaidModal = ({ doc, defaultAmount, busy, onClose, onConfirm }) => {
 const OverLimitBlockModal = ({ responsibleParty, onClose }) => (
   <Modal title="Blocked — Over Credit Limit" onClose={onClose} width={460}>
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ padding: "10px 14px", borderRadius: 8, background: `${T.danger}18`,
-        border: `1px solid ${T.danger}44`, display: "flex", gap: 10, alignItems: "flex-start" }}>
-        <span style={{ color: T.danger, flexShrink: 0, marginTop: 1 }}><IconWarning size={15} /></span>
-        <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, lineHeight: 1.5 }}>
+      <div style={{ padding: "10px 14px", borderRadius: 8, background: HZ.critBg,
+        border: `1px solid ${HZ.crit}44`, display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <span style={{ color: HZ.crit, flexShrink: 0, marginTop: 1 }}><IconWarning size={15} /></span>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, lineHeight: 1.5 }}>
           <strong>{responsibleParty.companyName}</strong> already has {fmtUsd(responsibleParty.outstandingAr)} in
           confirmed, unpaid invoices{responsibleParty.committedExposure > 0
             ? <> plus {fmtUsd(responsibleParty.committedExposure)} accrued but not yet invoiced</> : null}.
@@ -303,9 +304,9 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
     const isConfirmed = doc.status === "confirmed";
     const isVoided    = doc.status === "voided";
     const label = isVoided ? "Voided" : isConfirmed ? <><IconCheck size={9} />Confirmed</> : doc.isStale ? <><IconWarning size={9} />Outdated</> : "Draft";
-    const color = isVoided ? T.textMuted : isConfirmed ? T.success : doc.isStale ? T.warning : T.textMuted;
-    return <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color,
-      background: color + "18", border: `1px solid ${color}44`, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap",
+    const color = isVoided ? HZ.textMuted : isConfirmed ? HZ.good : doc.isStale ? HZ.warn : HZ.textMuted;
+    return <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, color,
+      background: color + "22", borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap",
       display: "inline-flex", alignItems: "center", gap: 3 }}>{label}</span>;
   };
 
@@ -407,110 +408,128 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
     setMarkPaidBusy(false);
   };
 
-  const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
-    textTransform: "uppercase", letterSpacing: ".07em" };
+  // Outstanding AR — confirmed invoices minus whatever's already been received against them
+  // (partial payments included), for the New Style stat strip's own "Outstanding" tile.
+  const outstandingUsd = docs
+    .filter(d => d.status === "confirmed")
+    .reduce((sum, d) => sum + Math.max(0, (docTotalFor(d) || 0) - (d.paidAmount || 0)), 0);
+  const confirmedDocsCount = docs.filter(d => d.status === "confirmed").length;
+
+  const dashedBtn = (accent, disabled) => ({
+    padding: "7px 12px", background: "none", cursor: disabled ? "not-allowed" : "pointer",
+    border: `1px dashed ${accent ? HZ.cyan + "55" : HZ.border}`, borderRadius: 6,
+    fontFamily: HZ_BODY, fontSize: 12, color: accent ? HZ.cyan : HZ.textMuted,
+    opacity: disabled ? 0.5 : 1, display: "inline-flex", alignItems: "center", gap: 5,
+  });
+
+  useHorizonFonts();
 
   return (
     <div id="shpacct-invoices-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
-      {/* Invoice lines — the charge lines an invoice is generated from */}
-      <div id="shpacct-invoices-toolbar" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-          <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
-            {sellLines.length} line{sellLines.length !== 1 ? "s" : ""}
-          </span>
-          <span id="shpacct-invoices-total-sell" style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
-            Total Sell: {fmtUsd(totalSell)}
-          </span>
-          {hasVat && (
-            <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted }}>
-              VAT: {fmtUsd(totalVat)} · Incl. VAT: {fmtUsd(totalSell + totalVat)}
-            </span>
-          )}
-        </div>
-        {canEdit && (
-          <div style={{ display: "flex", gap: 8 }}>
-            <Btn id="shpacct-invoices-split-btn" size="sm" variant="secondary" disabled={!canSplit}
-              title={!canSplit ? "No shipment-level lines to split — either none exist or all are already container-tagged" : undefined}
-              onClick={() => setSplitConfirm(true)}>
-              ◫ Split per Container
-            </Btn>
-            <Btn id="shpacct-invoices-history-btn" size="sm" variant="secondary" onClick={() => setHistOpen(true)}><IconClipboard size={12} />History</Btn>
-            <Btn id="shpacct-invoices-add-btn" size="sm" onClick={() => setLineModal("add")}>＋ Add Line</Btn>
+      {/* Cargo-style stat strip — real totals, same treatment as the Cargo tab's New Style
+          (approved mockup: https://claude.ai/artifact/25ygL745mmMfvYWBXZWoAE). */}
+      <div id="shpacct-invoices-stat-strip" style={{ display: "grid",
+        gridTemplateColumns: `repeat(${hasVat ? 6 : 5}, 1fr)`, gap: 10, marginBottom: 16 }}>
+        {[
+          ["Lines", `${sellLines.length}`],
+          ["Total Sell", fmtUsd(totalSell)],
+          ...(hasVat ? [["VAT", `${fmtUsd(totalVat)}`]] : []),
+          ["Invoices", `${docs.length}`],
+          ["Confirmed", `${confirmedDocsCount}`],
+          ["Outstanding", fmtUsd(outstandingUsd)],
+        ].map(([label, value]) => (
+          <div key={label} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
+            borderRadius: 8, padding: "10px 12px" }}>
+            <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+            <div style={{ fontFamily: HZ_MONO, fontSize: 16, fontWeight: 700, color: HZ.text, marginTop: 2 }}>{value}</div>
           </div>
-        )}
+        ))}
       </div>
 
+      {/* Invoice lines — the charge lines an invoice is generated from */}
       {loading ? (
-        <div style={{ padding: 40, textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted, marginBottom: 22 }}>Loading…</div>
-      ) : sellLines.length === 0 ? (
-        <div id="shpacct-invoices-lines-empty" style={{ padding: 48, textAlign: "center", fontFamily: T.body,
-          fontSize: 13, color: T.textMuted, fontStyle: "italic", marginBottom: 22,
-          background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10 }}>
+        <div style={{ padding: 40, textAlign: "center", fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, marginBottom: 22 }}>Loading…</div>
+      ) : sellLines.length === 0 && !canEdit ? (
+        <div id="shpacct-invoices-lines-empty" style={{ padding: 48, textAlign: "center", fontFamily: HZ_BODY,
+          fontSize: 13, color: HZ.textMuted, fontStyle: "italic", marginBottom: 22,
+          background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10 }}>
           No invoice lines yet.
         </div>
       ) : (
-        <div id="shpacct-invoices-lines-table" style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface, marginBottom: 22 }}>
-          <div style={{ display: "flex", alignItems: "center", padding: "7px 16px",
-            borderBottom: `1px solid ${T.border}`, background: T.bg }}>
-            <div style={{ ...th, width: 60 }}>Type</div>
-            <div style={{ ...th, flex: 1 }}>Charge</div>
-            <div style={{ ...th, width: 100, paddingLeft: 4 }}>Container</div>
-            <div style={{ ...th, width: 160, paddingLeft: 4 }}>Source</div>
-            <div style={{ ...th, width: 80 }}>Currency</div>
-            <div style={{ ...th, width: 100, textAlign: "right" }}>Exch. Rate</div>
-            <div style={{ ...th, width: 110, textAlign: "right" }}>Amount (USD)</div>
-            <div style={{ ...th, width: 100, paddingLeft: 8 }}>Status</div>
-            <div style={{ width: 36 }} />
-          </div>
-          {sellLines.map(l => (
-            <CostLineRow key={l.id} line={l} containers={ctrs} showActions
-              onEdit={() => setLineModal(l)} onDelete={() => setConfirm(l.id)}
-              onActualize={() => setActualizeLine(l)} onPost={() => setConfirmPost(l)} />
-          ))}
+        <div id="shpacct-invoices-lines-table" style={{ background: HZ.surface, backdropFilter: "blur(20px)",
+          border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden", marginBottom: 22 }}>
+          {sellLines.length === 0 ? (
+            <div style={{ padding: "18px 16px", fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, fontStyle: "italic" }}>
+              No invoice lines yet — add one below.
+            </div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: HZ.bg, borderBottom: `1px solid ${HZ.border}` }}>
+                  {["Type", "Charge", "Container", "Source", "Currency", "Exch. Rate", "Amount (USD)", "Status", ""].map((h, i) => (
+                    <th key={h || i} style={{ textAlign: [5, 6].includes(i) ? "right" : "left", padding: "9px 14px",
+                      fontFamily: HZ_BODY, fontSize: 10, fontWeight: 700, color: HZ.textMuted,
+                      textTransform: "uppercase", letterSpacing: ".06em" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sellLines.map(l => (
+                  <CostLineRow key={l.id} line={l} containers={ctrs} showActions
+                    onEdit={() => setLineModal(l)} onDelete={() => setConfirm(l.id)}
+                    onActualize={() => setActualizeLine(l)} onPost={() => setConfirmPost(l)} />
+                ))}
+              </tbody>
+            </table>
+          )}
+          {canEdit && (
+            <div style={{ display: "flex", gap: 8, padding: "10px 14px", borderTop: `1px solid ${HZ.border}` }}>
+              <button id="shpacct-invoices-split-btn" type="button" disabled={!canSplit}
+                title={!canSplit ? "No shipment-level lines to split — either none exist or all are already container-tagged" : undefined}
+                onClick={() => setSplitConfirm(true)} style={dashedBtn(false, !canSplit)}>◫ Split per Container</button>
+              <button id="shpacct-invoices-history-btn" type="button" onClick={() => setHistOpen(true)} style={dashedBtn(false)}>
+                <IconClipboard size={12} />History
+              </button>
+              <button id="shpacct-invoices-add-btn" type="button" onClick={() => setLineModal("add")} style={dashedBtn(true)}>＋ Add Line</button>
+            </div>
+          )}
         </div>
       )}
 
       {/* Invoices — generated FR01/FR02 documents, one consolidated or one per container.
           Generation is disabled entirely while there are no charge lines above. */}
-      <div id="shpacct-invoices-docs-header" style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
+      <div id="shpacct-invoices-docs-header" style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 700,
         textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8, display: "flex",
         alignItems: "center", justifyContent: "space-between" }}>
         <span>Invoices</span>
         {canEdit && (
           <div style={{ display: "flex", gap: 8, textTransform: "none", letterSpacing: 0 }}>
-            <Btn id="shpacct-invoices-generate-btn" size="sm" variant="secondary" disabled={genBusy || loading || !hasChargeLines}
+            <button id="shpacct-invoices-generate-btn" type="button" disabled={genBusy || loading || !hasChargeLines}
               title={!hasChargeLines ? "Add at least one charge line first" : undefined}
-              onClick={() => handleGenerate(false)}>
+              onClick={() => handleGenerate(false)} style={dashedBtn(false, genBusy || loading || !hasChargeLines)}>
               <IconReceipt size={12} />Generate Invoice
-            </Btn>
-            <Btn id="shpacct-invoices-generate-percontainer-btn" size="sm" variant="secondary" disabled={genBusy || loading || !hasChargeLines || ctrs.length === 0}
+            </button>
+            <button id="shpacct-invoices-generate-percontainer-btn" type="button"
+              disabled={genBusy || loading || !hasChargeLines || ctrs.length === 0}
               title={!hasChargeLines ? "Add at least one charge line first" : undefined}
-              onClick={() => handleGenerate(true)}>
+              onClick={() => handleGenerate(true)} style={dashedBtn(false, genBusy || loading || !hasChargeLines || ctrs.length === 0)}>
               <IconPackage size={12} />Generate Per-Container Invoices
-            </Btn>
+            </button>
           </div>
         )}
       </div>
       {docsLoading ? (
-        <div style={{ padding: 24, textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Loading…</div>
+        <div style={{ padding: 24, textAlign: "center", fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>Loading…</div>
       ) : docs.length === 0 ? (
-        <div id="shpacct-invoices-docs-empty" style={{ padding: 32, textAlign: "center", fontFamily: T.body,
-          fontSize: 13, color: T.textMuted, fontStyle: "italic",
-          background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10 }}>
+        <div id="shpacct-invoices-docs-empty" style={{ padding: 32, textAlign: "center", fontFamily: HZ_BODY,
+          fontSize: 13, color: HZ.textMuted, fontStyle: "italic",
+          background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10 }}>
           No invoices generated yet.
         </div>
       ) : (
-        <div id="shpacct-invoices-docs-table" style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface }}>
-          <div style={{ display: "flex", alignItems: "center", padding: "7px 16px",
-            borderBottom: `1px solid ${T.border}`, background: T.bg }}>
-            <div style={{ ...th, width: 60 }}>Type</div>
-            <div style={{ ...th, flex: 1 }}>Invoice</div>
-            <div style={{ ...th, width: 110 }}>Status</div>
-            <div style={{ ...th, width: 100 }}>Created</div>
-            <div style={{ ...th, flex: 1 }}>Responsible Party</div>
-            <div style={{ width: 320 }} />
-          </div>
-          {docs.map(doc => {
+        <div id="shpacct-invoices-docs-table" style={{ background: HZ.surface, backdropFilter: "blur(20px)",
+          border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden" }}>
+          {docs.map((doc, i) => {
             const isVoided = doc.status === "voided";
             const relatedDoc = doc.relatedDocId ? docs.find(d => d.id === doc.relatedDocId) : null;
             const canReverse = canEdit && doc.docType !== "CN01" && doc.status === "confirmed" && !doc.relatedDocId;
@@ -518,54 +537,44 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
             return (
             <div key={doc.id} id={`shpacct-invoices-doc-${doc.id}`}
               onDoubleClick={() => setPreviewDoc(doc)}
-              style={{ display: "flex", alignItems: "center", padding: "9px 16px",
-                borderBottom: `1px solid ${T.border}22`, cursor: "pointer", opacity: isVoided ? 0.6 : 1 }}
-              onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-              <div style={{ width: 60 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: T.accent,
-                  background: T.accent + "18", border: `1px solid ${T.accent}44`,
-                  borderRadius: 6, padding: "2px 6px" }}>{doc.docType}</span>
-              </div>
-              <div style={{ flex: 1, fontFamily: T.body, fontSize: 13, color: T.text, textDecoration: isVoided ? "line-through" : "none" }}>
+              style={{ display: "flex", alignItems: "center", padding: "10px 16px", gap: 12,
+                borderTop: i === 0 ? "none" : `1px solid ${HZ.border}`, cursor: "pointer", opacity: isVoided ? 0.6 : 1 }}>
+              <span style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, color: HZ.good,
+                background: HZ.goodBg, borderRadius: 4, padding: "2px 7px", flexShrink: 0 }}>{doc.docType}</span>
+              <div style={{ flex: 1, minWidth: 0, fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, textDecoration: isVoided ? "line-through" : "none" }}>
                 {invoiceLabel(doc)}
                 {doc.docType === "CN01" && (
-                  <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, textDecoration: "none", marginTop: 2 }}>
-                    Reverses {relatedDoc?.filename || "an invoice"}
-                  </div>
+                  <span style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, textDecoration: "none" }}> — Reverses {relatedDoc?.filename || "an invoice"}</span>
                 )}
+                <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, textDecoration: "none" }}> — {doc.responsibleParty || "no responsible party set"}</span>
               </div>
-              <div style={{ width: 110, display: "flex", flexDirection: "column", gap: 3 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                 {statusPill(doc)}
                 {doc.firstSentAt && (
                   <span title={`First sent ${fmtDate(doc.firstSentAt)}`}
-                    style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, color: T.info,
-                      background: T.info + "18", border: `1px solid ${T.info}44`, borderRadius: 6,
-                      padding: "2px 7px", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 3, width: "fit-content" }}>
+                    style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, color: HZ.info,
+                      background: HZ.infoBg, borderRadius: 4, padding: "2px 6px", whiteSpace: "nowrap" }}>
                     Sent
                   </span>
                 )}
                 {doc.paidAt && (
                   <span title={`Paid ${fmtDate(doc.paidAt)}${doc.transactionId ? ` · ${doc.transactionId}` : ""}`}
-                    style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, color: T.success,
-                      background: T.success + "18", border: `1px solid ${T.success}44`, borderRadius: 6,
-                      padding: "2px 7px", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 3, width: "fit-content" }}>
+                    style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, color: HZ.good,
+                      background: HZ.goodBg, borderRadius: 4, padding: "2px 6px", whiteSpace: "nowrap",
+                      display: "inline-flex", alignItems: "center", gap: 3 }}>
                     <IconCheck size={9} />{fmtUsd(doc.paidAmount)} paid
                   </span>
                 )}
               </div>
-              <div style={{ width: 100, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{fmtDate(doc.createdAt)}</div>
-              <div style={{ flex: 1, fontFamily: T.body, fontSize: 12, color: doc.responsibleParty ? T.text : T.border }}>
-                {doc.responsibleParty || "—"}
-              </div>
-              <div style={{ width: 320, textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 6 }}>
+              <span style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textFaint, flexShrink: 0 }}>{fmtDate(doc.createdAt)}</span>
+              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                 {canMarkPaid && (
-                  <Btn size="sm" variant="secondary" onClick={() => setMarkPaidDoc(doc)}><IconCheck size={12} />Mark Paid</Btn>
+                  <button type="button" onClick={() => setMarkPaidDoc(doc)} style={{ ...dashedBtn(false), padding: "5px 10px" }}><IconCheck size={11} />Mark Paid</button>
                 )}
                 {canReverse && (
-                  <Btn size="sm" variant="secondary" onClick={() => setReverseDoc(doc)}>↩ Reverse</Btn>
+                  <button type="button" onClick={() => setReverseDoc(doc)} style={{ ...dashedBtn(false), padding: "5px 10px" }}>↩ Reverse</button>
                 )}
-                <Btn size="sm" variant="secondary" onClick={() => setPreviewDoc(doc)}><IconEye size={12} />Preview Invoice</Btn>
+                <button type="button" onClick={() => setPreviewDoc(doc)} style={{ ...dashedBtn(false), padding: "5px 10px" }}><IconEye size={11} />Preview</button>
               </div>
             </div>
             );
@@ -587,7 +596,7 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       {splitConfirm && (
         <Modal title="Split per Container" onClose={() => !splitBusy && setSplitConfirm(false)} width={440}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
+            <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, lineHeight: 1.5 }}>
               Split {untaggedSellLines.length} shipment-level line{untaggedSellLines.length !== 1 ? "s" : ""} evenly
               across {ctrs.length} container{ctrs.length !== 1 ? "s" : ""}. Each line's amount is divided across the
               containers and replaced with one line per container — the original line{untaggedSellLines.length !== 1 ? "s are" : " is"} removed.
@@ -613,15 +622,15 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       {currencyModal && (
         <Modal title="Multiple Currencies" onClose={() => !genBusy && setCurrencyModal(null)} width={460}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
+            <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, lineHeight: 1.5 }}>
               These charge lines are in multiple currencies ({currencyModal.distinctCurrencies.join(", ")}).
               {currencyModal.isFallback ? (
                 <> No currency is configured on this shipment's Principal — the grand total will default
-                  to <strong style={{ color: T.text }}>{currencyModal.currency}</strong>. Set a Principal
+                  to <strong style={{ color: HZ.text }}>{currencyModal.currency}</strong>. Set a Principal
                   (with a currency on their customer profile) on Parties &amp; Offices to change this.</>
               ) : (
                 <> The grand total will be converted to and shown
-                  in <strong style={{ color: T.text }}>{currencyModal.currency}</strong> —
+                  in <strong style={{ color: HZ.text }}>{currencyModal.currency}</strong> —
                   {" "}{currencyModal.principalName || "the Principal"}'s configured currency on their customer profile.</>
               )}
             </div>

@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
-import { T } from "../../tokens";
 import { api } from "../../api";
 import { IconSendPlane, IconSearch } from "../../components/primitives/Icon";
 import CustomsFilingGateModal from "../../components/shared/CustomsFilingGateModal";
 import ShipmentCustomsFilingDetailsPage from "./ShipmentCustomsFilingDetailsPage";
 import ShipmentCustomsFilingReviewPage from "./ShipmentCustomsFilingReviewPage";
+import { HZ, HZ_BODY } from "./shipmentDetailTheme";
 
 // ─── Customs & Regulatory Filing (Epic TKT-XW6TQK) ─────────────────────────────
 // Single page with in-page Details/Review tabs, same underline-tab shape as
@@ -24,6 +24,15 @@ const ShipmentCustomsFilingPage = ({ shipment, onBack, navigate, initialTab = "d
   const [activeTab, setActiveTab] = useState(initialTab);
   const [parties,   setParties]   = useState(undefined); // undefined = still checking
   const [packages,  setPackages]  = useState([]);         // flattened container_packages, shared with children
+
+  // initialTab only seeds activeTab on first mount — App.jsx renders this same component
+  // instance for both "shipment-customs-filing-details" and "-review" (no `key` prop, so no
+  // remount), just with a different initialTab. Without this, navigating the hash from
+  // .../customs-filing/details to .../customs-filing/review while this page is already
+  // mounted left the tab strip and content stuck on whichever tab was active when the page
+  // first mounted, even though the URL/breadcrumb had moved on — same bug as
+  // ShipmentCarrierBookingPage.jsx, fixed the same way there.
+  useEffect(() => { setActiveTab(initialTab); }, [initialTab]);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,15 +74,15 @@ const ShipmentCustomsFilingPage = ({ shipment, onBack, navigate, initialTab = "d
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 24, borderBottom: `1px solid ${T.border}`,
+      <div style={{ display: "flex", gap: 24, borderBottom: `1px solid ${HZ.border}`,
         maxWidth: 1100, margin: "0 auto 20px" }}>
         {TABS.map(t => (
           <button key={t.key} onClick={() => setActiveTab(t.key)}
             style={{ background: "none", border: "none", cursor: "pointer",
               padding: "0 0 10px", display: "flex", alignItems: "center", gap: 6,
-              fontFamily: T.body, fontSize: 14, fontWeight: activeTab === t.key ? 700 : 400,
-              color: activeTab === t.key ? T.accent : T.textMuted,
-              borderBottom: `2px solid ${activeTab === t.key ? T.accent : "transparent"}` }}>
+              fontFamily: HZ_BODY, fontSize: 14, fontWeight: activeTab === t.key ? 700 : 400,
+              color: activeTab === t.key ? HZ.cyan : HZ.textMuted,
+              borderBottom: `2px solid ${activeTab === t.key ? HZ.cyan : "transparent"}` }}>
             <t.icon size={14} />{t.label}
           </button>
         ))}

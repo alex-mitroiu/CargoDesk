@@ -154,16 +154,25 @@ const LoopOverlayBox = ({ boxLoops, state, setState, onHoverLoop }) => {
                   fontWeight: 800, background: carrierColor(carrier) }}>{carrier}</span>
                 {entries.length} loop{entries.length !== 1 ? "s" : ""}
               </div>
-              {entries.map(({ loop, ports }) => (
-                <div key={loop.id} onMouseEnter={() => onHoverLoop(loop.id)} onMouseLeave={() => onHoverLoop(null)}
-                  style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>
-                    <b style={{ color: T.text }}>{loop.code}</b> · {loop.name}
+              {entries.map(({ loop, ports }) => {
+                // Same split LoopRouteModal's own Timeline pair uses (loop_code_ports.direction,
+                // 2026-09-18) — the two mini-timelines below used to both render the loop's whole
+                // unsplit rotation (one of them under a `reversed` prop Timeline never declared or
+                // read), so a comparison meant to spot EB/WB mismatches instead showed one track
+                // duplicated in a second color (2026-09-23 QA finding).
+                const wbPorts = ports.filter(p => p.direction === "WB");
+                const ebPorts = ports.filter(p => p.direction !== "WB");
+                return (
+                  <div key={loop.id} onMouseEnter={() => onHoverLoop(loop.id)} onMouseLeave={() => onHoverLoop(null)}
+                    style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>
+                      <b style={{ color: T.text }}>{loop.code}</b> · {loop.name}
+                    </div>
+                    {wbPorts.length >= 2 && <Timeline ports={wbPorts} dirLabel="Westbound" accentColor={T.accent} />}
+                    {ebPorts.length >= 2 && <Timeline ports={ebPorts} dirLabel="Eastbound" accentColor={T.purple} />}
                   </div>
-                  <Timeline ports={ports} />
-                  <Timeline ports={ports} reversed accentColor={T.purple} />
-                </div>
-              ))}
+                );
+              })}
             </div>
           ))}
         </div>

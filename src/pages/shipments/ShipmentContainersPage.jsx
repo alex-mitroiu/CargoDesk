@@ -13,6 +13,7 @@ import { api } from "../../api";
 import { toast } from "../../toast";
 import { setNavigationGuard, clearNavigationGuard } from "../../navigationGuard";
 import { dgPolicyConflict } from "../../utils/dgPolicy";
+import { canEditShipmentSide } from "../../utils/officeSide";
 import { IconWarning, IconClipboard, IconPackage, IconArchive, IconClose, IconCoin } from "../../components/primitives/Icon";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
 
@@ -56,6 +57,15 @@ const CARGO_VALUE_SOURCE_LABEL = {
   "pack-items": "Based on real priced cargo line items",
   "shipment-declared-value": "Based on the shipment's single declared value (no cargo line items priced yet)",
   "none": "No pricing available — price cargo line items or set a declared value to estimate duty",
+};
+
+// VGM status → pill color (Cargo "New Style" table's VGM column) — same 4 statuses
+// VgmServicePage.jsx/TestToolsPage.jsx already drive (Pending/Submitted/Accepted/Rejected).
+const VGM_PILL_STYLE = {
+  Accepted:  () => ({ bg: HZ.goodBg, color: HZ.good }),
+  Submitted: () => ({ bg: HZ.infoBg, color: HZ.info }),
+  Rejected:  () => ({ bg: HZ.critBg, color: HZ.crit }),
+  Pending:   () => ({ bg: HZ.surface2, color: HZ.textMuted }),
 };
 
 const LandedCostEstimateModal = ({ shipmentId, onClose }) => {
@@ -116,9 +126,18 @@ const LandedCostEstimateModal = ({ shipmentId, onClose }) => {
 };
 
 const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, onEditContainer, onDeleteContainer, onImportContainers }) => {
-  const { canEditShipments: canEdit } = useAuth();
+  const { canEditShipments: canEditRole, isAdmin, activeRoles, allOffices } = useAuth();
+  // Cargo/Containers is export-edit per the Office-Side Permissions Epic (TKT-Z0LB0W) — an
+  // import-side user still sees everything here (Read-only per the approved mockup), just can't
+  // add/edit/remove a container or its packages.
+  const canEdit = canEditShipmentSide({ canEditShipments: canEditRole, isAdmin, activeRoles, allOffices }, shipment, "export");
   const ctrs     = containers.filter(c => c.shipmentId === shipment.id);
   const totalTEU = ctrs.reduce((sum, c) => sum + teuOf(c.size), 0);
+  // Cargo "New Style" stat strip (approved mockup: https://claude.ai/artifact/KmxNCy2HYyu192jg2NBBGE) —
+  // a scan-at-a-glance summary above the table, same real fields the table's own columns show.
+  const totalGrossWeightKg = ctrs.reduce((sum, c) => sum + (c.grossWeightKg || 0), 0);
+  const totalVolumeCbm     = ctrs.reduce((sum, c) => sum + (c.volumeCbm || 0), 0);
+  const vgmPendingCount    = ctrs.filter(c => (c.vgmStatus || "Pending") === "Pending").length;
 
   const [packagesByCtr, setPackagesByCtr] = useState({}); // { [containerId]: Package[] }
   const [packTypes,     setPackTypes]     = useState([]);
@@ -287,51 +306,114 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
           No containers yet.
         </div>
       ) : (
-        <div style={{ display: "flex", alignItems: "flex-start", background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden" }}>
-          {/* Left: container + cargo manifest tree — capped height with its own scroll (only
-              kicks in once there are enough containers/packages to need it) so a long tree
-              never pushes the page's real height around; the right panel below is NOT capped,
-              so its content (and the Save/Cancel and Add Package buttons at the end of it)
-              flows naturally in the page instead of being buried inside a second nested
-              scroll box — a real bug found live: those buttons were unreachable-looking,
-              stuck deep inside a small fixed-height (560px) scrollable panel. */}
-          <div style={{ width: 260, flexShrink: 0, maxHeight: 640, background: HZ.bg, borderRight: `1px solid ${HZ.border}`,
-            display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <div style={{ padding: "10px 10px 8px", borderBottom: `1px solid ${HZ.border}`, flexShrink: 0 }}>
-              <span style={{ fontFamily: HZ_BODY, fontSize: 10.5, fontWeight: 700, letterSpacing: ".07em",
-                textTransform: "uppercase", color: HZ.textMuted }}>Containers</span>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "6px 4px" }}>
-              {ctrs.length === 0 ? (
-                <div style={{ padding: "16px 10px", fontFamily: HZ_BODY, fontSize: 11.5,
-                  color: HZ.textMuted, fontStyle: "italic", lineHeight: 1.5 }}>
-                  No containers yet — add one below.
-                </div>
-              ) : ctrs.map(c => {
-                const pkgs = packagesByCtr[c.id] || [];
-                const roots = pkgs.filter(p => !p.parentId);
-                const isOpen = navOpen[c.id] !== false;
-                return (
-                  <div key={c.id} data-testid={`shipment-containers-row-${c.id}`}>
-                    <NavRow id={`shpctr-${c.id}-row`} icon={IconArchive}
-                      label={`${c.containerNumber || c.id} · ${c.size}ft ${c.type}`}
-                      badge={`${teuOf(c.size)} TEU`}
-                      dgClass={c.isDg ? c.dgClass : null}
-                      incomplete={!c.containerNumber || !c.hsCode || !c.cargoDescription || !(c.grossWeightKg > 0) || !(c.volumeCbm > 0)}
-                      depth={0} selected={selection?.kind === "container" && selection.id === c.id}
-                      onClick={() => setSelection({ kind: "container", id: c.id })}
-                      onToggle={roots.length > 0 ? () => toggleNav(c.id) : null}
-                      hasChildren={roots.length > 0} isOpen={isOpen} />
-                    {isOpen && roots.map(pkg => (
-                      <PackageTreeNode key={pkg.id} pkg={pkg} allPackages={pkgs} containerId={c.id} depth={1}
-                        navOpen={navOpen} onToggle={toggleNav} selection={selection} onSelect={setSelection} packTypeById={packTypeById} />
-                    ))}
-                  </div>
-                );
-              })}
-            </div>
+        <>
+          {/* Cargo "New Style" stat strip (approved mockup: cargo-offices-style.html,
+              published https://claude.ai/artifact/KmxNCy2HYyu192jg2NBBGE) — scan-at-a-glance
+              totals above the table, same real fields the table's own columns show. */}
+          <div data-testid="shipment-containers-stat-strip" style={{ display: "grid",
+            gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 14 }}>
+            {[
+              ["Containers", ctrs.length],
+              ["Total TEU", totalTEU],
+              ["Gross Weight", `${totalGrossWeightKg.toLocaleString()} kg`],
+              ["Volume", `${Number.isInteger(totalVolumeCbm) ? totalVolumeCbm : totalVolumeCbm.toFixed(1)} cbm`],
+              ["VGM Pending", `${vgmPendingCount}/${ctrs.length}`],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
+                borderRadius: 8, padding: "10px 12px" }}>
+                <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+                <div style={{ fontFamily: HZ_MONO, fontSize: 16, fontWeight: 700, color: HZ.text, marginTop: 2 }}>{value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Cargo table — one row per container; expanding a row reveals its own pack-item
+              breakdown (container_packages) via the same PackageTreeNode as before, now nested
+              under the table instead of living in a separate 260px sidebar. */}
+          <div style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`,
+            boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: HZ.bg, borderBottom: `1px solid ${HZ.border}` }}>
+                  {["Container", "Size/Type", "Weight", "Volume", "DG", "VGM"].map(h => (
+                    <th key={h} style={{ textAlign: "left", padding: "9px 14px", fontFamily: HZ_BODY, fontSize: 10,
+                      fontWeight: 700, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {ctrs.length === 0 ? (
+                  <tr><td colSpan={6} style={{ padding: "18px 14px", fontFamily: HZ_BODY, fontSize: 12,
+                    color: HZ.textMuted, fontStyle: "italic" }}>
+                    No containers yet — add one below.
+                  </td></tr>
+                ) : ctrs.map(c => {
+                  const pkgs = packagesByCtr[c.id] || [];
+                  const roots = pkgs.filter(p => !p.parentId);
+                  const isOpen = navOpen[c.id] !== false;
+                  const selected = selection?.kind === "container" && selection.id === c.id;
+                  const incomplete = !c.containerNumber || !c.hsCode || !c.cargoDescription || !(c.grossWeightKg > 0) || !(c.volumeCbm > 0);
+                  const vgmStyle = (VGM_PILL_STYLE[c.vgmStatus] || VGM_PILL_STYLE.Pending)();
+                  return [
+                    <tr key={c.id} id={`shpctr-${c.id}-row`} data-testid={`shipment-containers-row-${c.id}`}
+                      aria-selected={selected} onClick={() => setSelection({ kind: "container", id: c.id })}
+                      style={{ cursor: "pointer", background: selected ? HZ.cyanBg : "transparent", borderBottom: `1px solid ${HZ.border}` }}>
+                      <td style={{ padding: "10px 14px", fontFamily: HZ_BODY, fontSize: 12.5, fontWeight: selected ? 600 : 500,
+                        color: selected ? HZ.cyan : HZ.text }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          {roots.length > 0 ? (
+                            <span onClick={e => { e.stopPropagation(); toggleNav(c.id); }}
+                              style={{ fontSize: 9, color: HZ.textMuted, width: 10, flexShrink: 0, textAlign: "center", cursor: "pointer" }}>
+                              {isOpen ? "▾" : "▸"}
+                            </span>
+                          ) : <span style={{ width: 10, flexShrink: 0 }} />}
+                          <IconArchive size={13} />
+                          <span>{c.containerNumber || c.id}</span>
+                          {incomplete && (
+                            <span title="Missing container number, HS code, cargo description, weight, or volume"
+                              style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, color: "#06111f",
+                                background: HZ.warn, borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>⚠ Incomplete</span>
+                          )}
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 14px", fontFamily: HZ_MONO, fontSize: 12, color: HZ.textMuted }}>
+                        {c.size}ft {c.type}
+                      </td>
+                      <td style={{ padding: "10px 14px", fontFamily: HZ_MONO, fontSize: 12, color: HZ.textMuted }}>
+                        {c.grossWeightKg ? `${c.grossWeightKg.toLocaleString()} kg` : "—"}
+                      </td>
+                      <td style={{ padding: "10px 14px", fontFamily: HZ_MONO, fontSize: 12, color: HZ.textMuted }}>
+                        {c.volumeCbm ? `${c.volumeCbm} cbm` : "—"}
+                      </td>
+                      <td style={{ padding: "10px 14px" }}>
+                        {c.isDg && c.dgClass ? (
+                          <span style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, color: "#fff",
+                            background: HZ.crit, borderRadius: 4, padding: "2px 6px" }}>⚠ {c.dgClass}</span>
+                        ) : <span style={{ fontFamily: HZ_MONO, fontSize: 12, color: HZ.textFaint }}>—</span>}
+                      </td>
+                      <td style={{ padding: "10px 14px" }}>
+                        <span style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase",
+                          color: vgmStyle.color, background: vgmStyle.bg, borderRadius: 4, padding: "2px 6px" }}>
+                          {c.vgmStatus || "Pending"}
+                        </span>
+                      </td>
+                    </tr>,
+                    isOpen && roots.length > 0 && (
+                      <tr key={`${c.id}-packages`} style={{ borderBottom: `1px solid ${HZ.border}` }}>
+                        <td colSpan={6} style={{ padding: "4px 14px 10px 40px", background: HZ.bg }}>
+                          {roots.map(pkg => (
+                            <PackageTreeNode key={pkg.id} pkg={pkg} allPackages={pkgs} containerId={c.id} depth={0}
+                              navOpen={navOpen} onToggle={toggleNav} selection={selection} onSelect={setSelection} packTypeById={packTypeById} />
+                          ))}
+                        </td>
+                      </tr>
+                    ),
+                  ];
+                })}
+              </tbody>
+            </table>
             {canEdit && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: 8 }}>
+              <div style={{ display: "flex", gap: 8, padding: "10px 14px", borderTop: `1px solid ${HZ.border}` }}>
                 <button id="shpctr-add-btn" data-testid="shipment-containers-add-btn" type="button" onClick={() => setSelection({ kind: "new-container" })}
                   style={{ padding: "7px 12px", background: "none", border: `1px dashed ${HZ.cyan}55`,
                     borderRadius: 6, cursor: "pointer", fontFamily: HZ_BODY, fontSize: 12, color: HZ.cyan }}>
@@ -351,10 +433,12 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
               onImported={created => { onImportContainers(created); setImportOpen(false); }} />
           )}
 
-          {/* Right: detail — no internal scroll; flows naturally in the page so its own
-              action buttons (ContainerForm's Save/Cancel, Add Package) are always reachable
-              by scrolling the page, not hidden inside a small nested scroll box. */}
-          <div style={{ flex: 1, minWidth: 0, minHeight: 400, padding: 20 }}>
+          {/* Detail panel — appears full-width below the table once something's selected;
+              same ContainerForm/PackageDetailForm content as before Cargo's New Style pass,
+              just no longer squeezed into a flex-1 column beside a 260px sidebar. */}
+          {selection && (
+          <div data-testid="shipment-containers-detail-panel" style={{ background: HZ.surface, backdropFilter: "blur(20px)",
+            border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, minHeight: 200, padding: 20 }}>
             {selection?.kind === "new-container" ? (
               <>
                 <h3 style={{ fontFamily: HZ_DISPLAY, fontSize: 15, fontWeight: 700, color: HZ.text, margin: "0 0 16px" }}>Add Container</h3>
@@ -407,7 +491,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
                   </div>
                   {descriptionOfGoods.length === 0 ? (
                     <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, fontStyle: "italic" }}>
-                      No packing breakdown recorded yet — add pallets/cartons on the left.
+                      No packing breakdown recorded yet{canEdit ? " — use “＋ Add Package” above to record one." : "."}
                     </div>
                   ) : (
                     <div data-testid="shipment-containers-description-of-goods" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -442,13 +526,14 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
                 init={selectedPkg} onSave={handleSavePackage} onDelete={handleDeletePackage}
                 onAddChild={() => setSelection({ kind: "new-package", containerId: selection.containerId, parentId: selectedPkg.id })} />
             ) : (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%",
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 160,
                 textAlign: "center", fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, fontStyle: "italic" }}>
-                Select a container or a pack item on the left, or add a container to get started.
+                Nothing selected.
               </div>
             )}
           </div>
-        </div>
+          )}
+        </>
       )}
 
       {/* Lifecycle events */}

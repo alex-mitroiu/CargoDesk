@@ -11,8 +11,9 @@ import {
 import { SERVICE_TYPES, SERVICE_TYPE_ICON, servicePageKey } from "../../shipmentServicePages";
 import {
   AnyIcon, IconAnchor, IconArrowDown, IconBaseStation, IconChartBar, IconClipboard, IconCoin, IconDownload,
-  IconFileCertificate, IconMapPin, IconReceipt, IconRoute, IconUpload,
+  IconFileCertificate, IconLock, IconMapPin, IconReceipt, IconRoute, IconUpload,
 } from "../primitives/Icon";
+import { canEditShipmentSide } from "../../utils/officeSide";
 import { parseIso, todayIso } from "../../tokens";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts, carrierBadgeColors } from "../../pages/shipments/shipmentDetailTheme";
 
@@ -56,7 +57,16 @@ const safeSet = (key, val) => { try { localStorage.setItem(key, JSON.stringify(v
 
 const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, currentPage = "detail",
   appSettings = {}, onSidebarOrderSaved }) => {
-  const { isTradeManager, isAdmin } = useAuth();
+  const { isTradeManager, isAdmin, canEditShipments, activeRoles, allOffices } = useAuth();
+  // Office-Side Permissions Epic (TKT-Z0LB0W), Phase 3 (TKT-5W24J7) — a small lock icon next to a
+  // section this account can't edit on THIS shipment, matching the approved mockup's Read-only
+  // state. Read access is never restricted by office side (only Accounting hides at the API
+  // level, which needs no icon here — its rows simply show whatever the server already sent);
+  // this only marks WRITE. Not applied to Customs Filing (its two filing types gate
+  // independently — a single lock icon on one shared row would misstate that) or Parties (only
+  // 2 of ~13 roles there have a side at all) — those are left to explain themselves once opened.
+  const authForSide = { canEditShipments, isAdmin, activeRoles, allOffices };
+  const sideLocked = side => !canEditShipmentSide(authForSide, shipment, side);
 
   // Admin-only sidebar reorder mode — see DEFAULT_SIDEBAR_ORDER/reconcileSidebarOrder above.
   // draftOrder is only ever used while actively reordering; the live tree below always
@@ -301,7 +311,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
   const sections = [
     { id: "shp-overview", icon: "◎", label: "Overview" },
     ...SHIPMENT_SECTIONS.filter(s => s.id !== "shp-schedules" && s.id !== "shp-shipping-instructions")
-      .map(s => s.id === "shp-cargo" ? { ...s, badge: ctrCount || null } : s),
+      .map(s => s.id === "shp-cargo" ? { ...s, badge: ctrCount || null, locked: sideLocked("export") } : s),
   ];
   const schedulesSection = SHIPMENT_SECTIONS.find(s => s.id === "shp-schedules");
   const siSection = SHIPMENT_SECTIONS.find(s => s.id === "shp-shipping-instructions");
@@ -312,15 +322,15 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
   // Instructions/Customs Filing are always-visible children; Pickup/Delivery only appear
   // once actually ordered (mirrors Export/Import Services' own "only show if ordered" rule).
   const bookingRoutingChildren = [
-    { id: schedulesSection.id, icon: schedulesSection.icon, label: schedulesSection.label },
+    { id: schedulesSection.id, icon: schedulesSection.icon, label: schedulesSection.label, locked: sideLocked("export") },
     { id: "shp-carrier-booking", icon: IconBaseStation, label: "Carrier Booking",
-      badge: bookingBadge?.text, badgeColor: bookingBadge?.color },
+      badge: bookingBadge?.text, badgeColor: bookingBadge?.color, locked: sideLocked("export") },
     { id: siSection.id, icon: siSection.icon, label: siSection.label,
-      badge: siBadge?.text, badgeColor: siBadge?.color },
+      badge: siBadge?.text, badgeColor: siBadge?.color, locked: sideLocked("export") },
     { id: "shp-customs-filing", icon: IconFileCertificate, label: "Customs Filing",
       badge: filingBadge?.text, badgeColor: filingBadge?.color },
     ...(importTypes.includes("Delivery")
-      ? [{ id: servicePageKey("Import", "Delivery"), icon: IconMapPin, label: "Delivery Service" }] : []),
+      ? [{ id: servicePageKey("Import", "Delivery"), icon: IconMapPin, label: "Delivery Service", locked: sideLocked("import") }] : []),
   ];
   const BOOKING_ROUTING_ROUTES = [
     "shipment-schedules", "shipment-carrier-booking-details", "shipment-carrier-booking-review",
@@ -589,7 +599,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
             TestCasesPage.jsx's NavRow/NavFolderNode. GroupRow wraps it with a fold chevron
             for the four parent+children blocks. */}
         {!reorderMode && (() => {
-          const NavRow = ({ id, icon, label, badge, badgeColor = HZ.cyan, depth = 0, selected, promoted, onClick }) => (
+          const NavRow = ({ id, icon, label, badge, badgeColor = HZ.cyan, depth = 0, selected, promoted, locked, onClick }) => (
             <div key={id} onClick={onClick}
               style={{
                 display: "flex", alignItems: "center", justifyContent: railCollapsed ? "center" : "space-between",
@@ -625,6 +635,10 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
                 </span>
                 {!railCollapsed && <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>}
                 {!railCollapsed && promoted && <span style={{ fontSize: 9, color: HZ.textFaint }}>↗</span>}
+                {!railCollapsed && locked && (
+                  <IconLock size={10} style={{ color: HZ.textFaint, opacity: 0.8, flexShrink: 0 }}
+                    title="Read-only — not your office's side of this shipment" />
+                )}
               </span>
               {!railCollapsed && badge != null && (
                 <span style={{ fontFamily: HZ_MONO, fontSize: 10, background: `${badgeColor}22`,
@@ -657,14 +671,14 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
             </div>
           );
 
-          const renderSection = ({ id, icon, label, badge }) => {
+          const renderSection = ({ id, icon, label, badge, locked }) => {
             const promotedRoute = PROMOTED_ROUTES[id];
             const isPromotedNode = !!promotedRoute;
             const selected = isPromotedNode
               ? currentPage === promotedRoute
               : currentPage === "detail" && id === "shp-overview"; // best-effort default highlight
             return <NavRow key={id} id={id} icon={icon} label={label} badge={badge} depth={0}
-              selected={selected} promoted={isPromotedNode} onClick={() => handleSection(id)} />;
+              selected={selected} promoted={isPromotedNode} locked={locked} onClick={() => handleSection(id)} />;
           };
 
           // Export/Import Services parent + dynamic children (Epic TKT-TBS7QD) — visible
@@ -685,6 +699,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
                   <NavRow key={servicePageKey(side, type)} id={servicePageKey(side, type)}
                     icon={SERVICE_TYPE_ICON[type] || "•"} label={type} depth={1}
                     selected={currentPage === servicePageKey(side, type)} promoted
+                    locked={sideLocked(side.toLowerCase())}
                     onClick={() => handleSection(servicePageKey(side, type))} />
                 ))}
               </div>
@@ -716,9 +731,9 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
                   <GroupRow id="shp-booking-routing" icon={IconRoute} label="Booking & Routing"
                     hasActive={hasActive} isOpen={open} onToggle={() => toggleGroup("shp-booking-routing")}
                     onClick={() => handleSection("shp-booking-routing")} />
-                  {!railCollapsed && open && bookingRoutingChildren.map(({ id, icon, label, badge, badgeColor }) => (
+                  {!railCollapsed && open && bookingRoutingChildren.map(({ id, icon, label, badge, badgeColor, locked }) => (
                     <NavRow key={id} id={id} icon={icon} label={label} depth={1} badge={badge} badgeColor={badgeColor}
-                      selected={currentPage === PROMOTED_ROUTES[id]} promoted
+                      selected={currentPage === PROMOTED_ROUTES[id]} promoted locked={locked}
                       onClick={() => handleSection(id)} />
                   ))}
                 </div>

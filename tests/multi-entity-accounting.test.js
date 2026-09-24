@@ -151,7 +151,8 @@ async function addLine(shipmentId, token, type, amount, chargeCode = "OFR") {
       name: "Test Entity Scoped User", email: scopedEmail,
       password: "TestFixture!2026Zq", roles: ["occ_bk"], allOffices: false,
     }, admin);
-    assert("scoped user created", scopedUser.body.ok === true, JSON.stringify(scopedUser.body));
+    // POST /api/users now returns the created user + 201, not the old {ok:true}/200 (2026-09-23 QA finding).
+    assert("scoped user created", scopedUser.status === 201 && !!scopedUser.body.id, JSON.stringify(scopedUser.body));
     const usersList = await request("GET", "/api/users", null, admin);
     scopedUserId = usersList.body.find(u => u.email === scopedEmail)?.id;
     assert("scoped user found in list", !!scopedUserId);

@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { T } from "../../tokens";
 import { useAuth } from "../../AuthContext";
 import { api } from "../../api";
 import { toast } from "../../toast";
@@ -10,6 +9,7 @@ import EdiMessageList, { EDI_STATUS_COLOR } from "../../components/shared/EdiMes
 import CarrierBookingsTable from "../../components/shared/CarrierBookingsTable";
 import GenerateDocumentModal from "../../components/shared/GenerateDocumentModal";
 import { IconCheck, IconClose, IconAnchor, IconFile } from "../../components/primitives/Icon";
+import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
 
 // Sent vs. Received comparison — same ordered field list the booking-request payload itself
 // is built from (routes/edi.js), so every field the operator actually sent has a row here,
@@ -42,37 +42,40 @@ function buildComparisonRows(outboundMessage, inboundMessage) {
   });
 }
 
-// Row-by-row Sent/Received comparison table, styled on the Equipment-table grid pattern
-// (ShipmentCarrierBookingDetailsPage.jsx) — mono uppercase header row + repeated grid data
-// rows sharing the same column template.
+// Row-by-row Sent/Received comparison table — now a real <table> on Trade Horizon tokens
+// (Cargo/Accounting's own New Style treatment; approved mockup
+// https://claude.ai/artifact/25ygL745mmMfvYWBXZWoAE), same column set as before.
 const BookingComparisonTable = ({ outboundMessage, inboundMessage }) => {
   const rows = buildComparisonRows(outboundMessage, inboundMessage);
   if (rows.length === 0) return null;
-  const tmpl = "160px 1fr 1fr";
   return (
     <div style={{ marginBottom: 24 }}>
-      <h3 style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 12 }}>
+      <h3 style={{ fontFamily: HZ_DISPLAY, fontSize: 14, fontWeight: 700, color: HZ.text, marginBottom: 12 }}>
         Sent vs. Received
       </h3>
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: tmpl, padding: "8px 16px",
-          borderBottom: `1px solid ${T.border}`, background: T.bg }}>
-          {["Field", "Sent", "Received"].map(h => (
-            <div key={h} style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: T.textMuted,
-              textTransform: "uppercase", letterSpacing: ".06em" }}>{h}</div>
-          ))}
-        </div>
-        {rows.map(r => (
-          <div key={r.key} style={{ display: "grid", gridTemplateColumns: tmpl, padding: "9px 16px",
-            borderBottom: `1px solid ${T.border}22`, alignItems: "center",
-            borderLeft: r.differs ? `3px solid ${T.warning}` : "3px solid transparent",
-            background: r.differs ? T.warning + "0c" : "transparent" }}>
-            <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{r.label}</div>
-            <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{fmtCompareVal(r.sentVal)}</div>
-            <div style={{ fontFamily: T.mono, fontSize: 12, color: r.differs ? T.warning : T.text,
-              fontWeight: r.differs ? 700 : 400 }}>{fmtCompareVal(r.receivedVal)}</div>
-          </div>
-        ))}
+      <div style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ background: HZ.bg, borderBottom: `1px solid ${HZ.border}` }}>
+              {["Field", "Sent", "Received"].map(h => (
+                <th key={h} style={{ textAlign: "left", padding: "8px 16px", fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700,
+                  color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.key} style={{ borderBottom: `1px solid ${HZ.border}`,
+                boxShadow: r.differs ? `inset 3px 0 0 ${HZ.warn}` : "none",
+                background: r.differs ? HZ.warnBg : "transparent" }}>
+                <td style={{ padding: "9px 16px", fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted }}>{r.label}</td>
+                <td style={{ padding: "9px 16px", fontFamily: HZ_MONO, fontSize: 12, color: HZ.text }}>{fmtCompareVal(r.sentVal)}</td>
+                <td style={{ padding: "9px 16px", fontFamily: HZ_MONO, fontSize: 12, color: r.differs ? HZ.warn : HZ.text,
+                  fontWeight: r.differs ? 700 : 400 }}>{fmtCompareVal(r.receivedVal)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -85,6 +88,12 @@ const BookingComparisonTable = ({ outboundMessage, inboundMessage }) => {
 // separate operator action (see the migration comment on carrier_bookings in server.js
 // for why: it's what lets "simulate confirmed, then click Confirm" be two real,
 // independently-testable steps instead of the same thing twice).
+//
+// Trade Horizon "New Style" pass — styling only; the live WebSocket subscription below
+// (booking_status_changed / new_edi_message) is untouched. EdiMessageList/
+// EDI_STATUS_COLOR/GenerateDocumentModal/Modal/Btn stay on their own styling — all
+// genuinely shared with non-shipment-detail pages or already theme-neutral, same
+// reasoning applied throughout this pass.
 
 const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
   const { canEditShipments: canEdit } = useAuth();
@@ -196,9 +205,11 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
     } finally { setBusy(false); }
   };
 
+  useHorizonFonts();
+
   if (loading) return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.textMuted,
-      fontFamily: T.body, fontSize: 13, padding: "60px 0", justifyContent: "center" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, color: HZ.textMuted,
+      fontFamily: HZ_BODY, fontSize: 13, padding: "60px 0", justifyContent: "center" }}>
       <Spinner size="sm" /> Loading booking review…
     </div>
   );
@@ -213,7 +224,7 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
               which is now the single place that shows them. Heading font size matched to that
               table's own "Bookings on this Shipment" heading rather than standing out as a
               bigger, differently-weighted title above it. */}
-          <h2 style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, margin: 0,
+          <h2 style={{ fontFamily: HZ_DISPLAY, fontSize: 14, fontWeight: 700, color: HZ.text, margin: 0,
             display: "flex", alignItems: "center", gap: 8 }}>
             <IconAnchor size={14} />Carrier Booking — Review
           </h2>
@@ -243,29 +254,29 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
       )}
 
       {/* Carrier Response card */}
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+      <div style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10,
         padding: "16px 20px", marginBottom: 24 }}>
-        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+        <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600,
           textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Carrier Response</div>
         {!booking?.lastResponseStatus ? (
-          <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, fontStyle: "italic" }}>
             No response received yet.
           </div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-              color: EDI_STATUS_COLOR[booking.lastResponseStatus] || T.text,
+            <span style={{ fontFamily: HZ_MONO, fontSize: 12, fontWeight: 700,
+              color: EDI_STATUS_COLOR[booking.lastResponseStatus] || HZ.text,
               textTransform: "uppercase" }}>
               {booking.lastResponseStatus}{booking.isMock ? " · demo" : ""}
             </span>
             {booking.bookingRef && (
-              <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>Ref: {booking.bookingRef}</span>
+              <span style={{ fontFamily: HZ_MONO, fontSize: 12, color: HZ.text }}>Ref: {booking.bookingRef}</span>
             )}
             {latestInbound?.parsedPayload && (() => {
               try {
                 const parsed = JSON.parse(latestInbound.rawPayload || "{}");
                 return parsed.reason ? (
-                  <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted }}>— {parsed.reason}</span>
+                  <span style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted }}>— {parsed.reason}</span>
                 ) : null;
               } catch { return null; }
             })()}
@@ -275,7 +286,7 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
 
       <BookingComparisonTable outboundMessage={outboundMessage} inboundMessage={latestInbound} />
 
-      <h3 style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 12 }}>
+      <h3 style={{ fontFamily: HZ_DISPLAY, fontSize: 14, fontWeight: 700, color: HZ.text, marginBottom: 12 }}>
         Message Thread
       </h3>
       <EdiMessageList messages={messages} emptyText="No EDI messages for this shipment yet." />
@@ -284,26 +295,26 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
         <Modal title="Confirm Booking" onClose={() => !busy && setConfirmModal(null)} width={420}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div>
-              <label style={{ display: "block", fontFamily: T.body, fontSize: 11, fontWeight: 600,
-                color: T.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 }}>
+              <label style={{ display: "block", fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600,
+                color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 }}>
                 Booking Reference
               </label>
               <input value={confirmModal.bookingRef}
                 onChange={e => setConfirmModal(m => ({ ...m, bookingRef: e.target.value }))}
-                style={{ background: T.bg, border: `1px solid ${T.border}`, color: T.text,
+                style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, color: HZ.text,
                   borderRadius: 6, padding: "8px 12px", width: "100%", boxSizing: "border-box",
-                  fontFamily: T.mono, fontSize: 13 }} />
+                  fontFamily: HZ_MONO, fontSize: 13 }} />
             </div>
             <div>
-              <label style={{ display: "block", fontFamily: T.body, fontSize: 11, fontWeight: 600,
-                color: T.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 }}>
+              <label style={{ display: "block", fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600,
+                color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 }}>
                 Note (optional)
               </label>
               <input value={confirmModal.note}
                 onChange={e => setConfirmModal(m => ({ ...m, note: e.target.value }))}
-                style={{ background: T.bg, border: `1px solid ${T.border}`, color: T.text,
+                style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, color: HZ.text,
                   borderRadius: 6, padding: "8px 12px", width: "100%", boxSizing: "border-box",
-                  fontFamily: T.body, fontSize: 13 }} />
+                  fontFamily: HZ_BODY, fontSize: 13 }} />
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <Btn variant="secondary" onClick={() => setConfirmModal(null)} disabled={busy}>Cancel</Btn>
@@ -318,21 +329,21 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
       {cancelModal && (
         <Modal title="Cancel Booking" onClose={() => !busy && setCancelModal(null)} width={420}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <p style={{ fontFamily: T.body, fontSize: 13, color: T.text, margin: 0, lineHeight: 1.5 }}>
+            <p style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text, margin: 0, lineHeight: 1.5 }}>
               {willNotifyCarrier
                 ? "This marks the booking as cancelled and sends a cancellation message to the carrier."
                 : "This marks the booking as cancelled."}
             </p>
             <div>
-              <label style={{ display: "block", fontFamily: T.body, fontSize: 11, fontWeight: 600,
-                color: T.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 }}>
+              <label style={{ display: "block", fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600,
+                color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 }}>
                 Reason (optional)
               </label>
               <input value={cancelModal.reason}
                 onChange={e => setCancelModal(m => ({ ...m, reason: e.target.value }))}
-                style={{ background: T.bg, border: `1px solid ${T.border}`, color: T.text,
+                style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, color: HZ.text,
                   borderRadius: 6, padding: "8px 12px", width: "100%", boxSizing: "border-box",
-                  fontFamily: T.body, fontSize: 13 }} />
+                  fontFamily: HZ_BODY, fontSize: 13 }} />
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <Btn variant="secondary" onClick={() => setCancelModal(null)} disabled={busy}>Back</Btn>
@@ -348,7 +359,7 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
         <Modal title="Link B/L Document" onClose={() => !busy && setLinkModal(false)} width={420}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {blDocs.length === 0 ? (
-              <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: 0 }}>
+              <p style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, margin: 0 }}>
                 No Bill of Lading (BL01) document has been generated for this shipment yet.
               </p>
             ) : (
@@ -356,12 +367,12 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
                 {blDocs.map(d => (
                   <button key={d.id} onClick={() => doLinkBl(d.id)} disabled={busy}
                     style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
-                      background: d.id === booking?.blDocumentId ? T.accent + "14" : T.bg,
-                      border: `1px solid ${d.id === booking?.blDocumentId ? T.accent + "66" : T.border}`,
+                      background: d.id === booking?.blDocumentId ? HZ.cyanBg : HZ.bg,
+                      border: `1px solid ${d.id === booking?.blDocumentId ? HZ.cyan + "66" : HZ.border}`,
                       borderRadius: 7, padding: "8px 12px", cursor: busy ? "default" : "pointer",
-                      fontFamily: T.body, fontSize: 12.5, color: T.text, textAlign: "left" }}>
+                      fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, textAlign: "left" }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.filename}</span>
-                    {d.id === booking?.blDocumentId && <IconCheck size={13} color={T.accent} />}
+                    {d.id === booking?.blDocumentId && <IconCheck size={13} color={HZ.cyan} />}
                   </button>
                 ))}
               </div>

@@ -1,7 +1,7 @@
-import { T } from "../../tokens";
 import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
 import { IconWarning, IconCheck } from "../primitives/Icon";
+import { HZ, HZ_MONO, HZ_BODY } from "../../pages/shipments/shipmentDetailTheme";
 
 // ─── Customs Filing — prerequisite gate ────────────────────────────────────────
 // Blocks the Customs Filing page entirely until the shipment has a Customs Broker
@@ -31,38 +31,38 @@ const CustomsFilingGateModal = ({ missingBroker, missingCargo, missingParties, o
 
   return (
     <Modal title="Customs Filing Unavailable" onClose={() => {}} width={440} hideClose>
-      <div style={{ padding: "10px 14px", borderRadius: 8, background: `${T.warning}18`,
-        border: `1px solid ${T.warning}44`, display: "flex", gap: 10, alignItems: "flex-start",
+      <div style={{ padding: "10px 14px", borderRadius: 8, background: HZ.warnBg,
+        border: `1px solid ${HZ.warn}44`, display: "flex", gap: 10, alignItems: "flex-start",
         marginBottom: 14 }}>
-        <span style={{ color: T.warning, flexShrink: 0, marginTop: 1 }}><IconWarning size={15} /></span>
-        <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, lineHeight: 1.5 }}>
+        <span style={{ color: HZ.warn, flexShrink: 0, marginTop: 1 }}><IconWarning size={15} /></span>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, lineHeight: 1.5 }}>
           All of the following are required before a customs filing can be created for this
           shipment. This page stays locked until whichever is still missing below is set.
         </div>
       </div>
 
-      <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
+      <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8,
         overflow: "hidden", marginBottom: 18 }}>
         {CHECK_ITEMS.map((item, i) => {
           const isMissing = missing[item.key];
-          const col = isMissing ? T.danger : T.success;
+          const col = isMissing ? HZ.crit : HZ.good;
           return (
             <div key={item.key} style={{ display: "flex", alignItems: "flex-start", gap: 10,
-              padding: "10px 14px", borderBottom: i < CHECK_ITEMS.length - 1 ? `1px solid ${T.border}` : "none" }}>
+              padding: "10px 14px", borderBottom: i < CHECK_ITEMS.length - 1 ? `1px solid ${HZ.border}` : "none" }}>
               <span style={{ color: col, flexShrink: 0, marginTop: 2, display: "inline-flex" }}>
                 {isMissing ? <span style={{ fontSize: 12, fontWeight: 700 }}>✗</span> : <IconCheck size={13} />}
               </span>
               <div style={{ flex: 1 }}>
-                <div style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, color: T.text }}>
+                <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, fontWeight: 600, color: HZ.text }}>
                   {item.label}
                 </div>
-                <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 1 }}>
+                <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginTop: 1 }}>
                   {item.detail}
                 </div>
               </div>
-              <span style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, letterSpacing: ".06em",
-                textTransform: "uppercase", color: col, background: `${col}18`,
-                border: `1px solid ${col}44`, borderRadius: 4, padding: "2px 7px",
+              <span style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: ".06em",
+                textTransform: "uppercase", color: col, background: col + "22",
+                borderRadius: 4, padding: "2px 7px",
                 flexShrink: 0, marginTop: 1 }}>
                 {isMissing ? "Missing" : "Set"}
               </span>

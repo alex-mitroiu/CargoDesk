@@ -81,7 +81,8 @@ async function setSource(token, value) {
     const scratchEmail = `kanban-toggle-test-${stamp}@test.local`;
     const createUser = await request("POST", "/api/users",
       { email: scratchEmail, name: "Kanban Toggle Test Assignee", roles: ["viewer"], password: "TestFixture!2026Zq" }, token);
-    assert("scratch user created", createUser.status === 200, JSON.stringify(createUser.body));
+    // POST /api/users now returns the created user + 201, not the old {ok:true}/200 (2026-09-23 QA finding).
+    assert("scratch user created", createUser.status === 201 && !!createUser.body.id, JSON.stringify(createUser.body));
     const usersList = await request("GET", "/api/users", null, token);
     const scratchUser = usersList.body.find(u => u.email === scratchEmail);
     scratchUserId = scratchUser?.id;

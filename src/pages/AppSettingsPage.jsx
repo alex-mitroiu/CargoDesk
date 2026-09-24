@@ -2159,7 +2159,13 @@ export default function AppSettingsPage() {
               </div>
               <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.6 }}>
                 Show margin percentages, gross profit and cost breakdown on shipments, the shipment list,
-                and the Dashboard Margin tab. Disable to hide all financial figures from non-finance users.
+                and the Dashboard Margin tab, for accounts that already have finance access (admin,
+                trade_manager, or an individual account with Finance access — see below). This is a
+                temporary company-wide kill switch, not an access control: disabling it hides these
+                figures for everyone, including finance-enabled accounts, and it never grants access to
+                anyone who doesn't already have it. It also has no effect on the Reports API itself —
+                who can reach Reports at all is decided by role/Finance access alone, independently of
+                this toggle (2026-09-23 QA finding: the description here previously implied otherwise).
               </div>
               <div style={{ marginTop: 8, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
                 Setting key: <span style={{ color: T.accent }}>finance_view_enabled</span>
@@ -2177,8 +2183,9 @@ export default function AppSettingsPage() {
             />
           </div>
           <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, padding: "0 4px", lineHeight: 1.6 }}>
-            💡 TKT-6H68IQ — A future improvement will add user-role-based gating so individual accounts
-            can have finance access independently of this global toggle.
+            💡 TKT-6H68IQ (released, v0.26.0) — per-account Finance access (canViewFinance) already exists
+            independently of this toggle; this switch is a company-wide on/off layered on top of it, not a
+            substitute for it.
           </div>
 
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,

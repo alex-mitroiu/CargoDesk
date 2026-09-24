@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
-import { T } from "../../tokens";
 import { api } from "../../api";
 import Spinner from "../../components/primitives/Spinner";
 import Pagination from "../../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import { EVENT_CONFIG, getEventSummary, fmtDateTime } from "./ShipmentDetailPage";
 import { AnyIcon, IconArrowDown, IconArrowUp } from "../../components/primitives/Icon";
+import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "./shipmentDetailTheme";
 
 // ─── Shipment History Page ─────────────────────────────────────────────────
 // Promoted out of the Overview page's CompactHistory/HistoryModal (client-side
@@ -14,6 +14,12 @@ import { AnyIcon, IconArrowDown, IconArrowUp } from "../../components/primitives
 // page in the app uses — types/date-range/search filter server-side too, so
 // `total` (and the Pagination control) always reflect what's actually being
 // paged through.
+//
+// Trade Horizon "New Style" pass (same treatment as Cargo/Accounting — approved
+// mockup https://claude.ai/artifact/25ygL745mmMfvYWBXZWoAE): a stat strip above a
+// real <table>, replacing the flex-row fake table. EVENT_CONFIG's own colors
+// (ShipmentDetailPage.jsx, this page's only real consumer) were migrated to HZ
+// alongside this.
 
 const TYPE_GROUPS = {
   Shipment:     ["SHIPMENT_CREATED", "STATUS_CHANGED", "CONTRACT_DROPPED", "SPACE_SKIPPED", "SPACE_OVERAGE"],
@@ -28,6 +34,7 @@ const TYPE_GROUPS = {
   Documents:    ["DOCUMENT_GENERATED", "DOCUMENT_GENERATION_ATTEMPTED", "DOCUMENT_GENERATION_FAILED"],
 };
 const GROUP_NAMES = Object.keys(TYPE_GROUPS);
+const DATE_RANGE_LABEL = { all: "All time", today: "Today", "7d": "7 days" };
 
 const ShipmentHistoryPage = ({ shipment }) => {
   const [activeGroups, setActiveGroups] = useState(() => new Set(GROUP_NAMES));
@@ -94,33 +101,53 @@ const ShipmentHistoryPage = ({ shipment }) => {
     URL.revokeObjectURL(url);
   };
 
-  const th  = { fontFamily: T.body, fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em" };
-  const inp = { fontFamily: T.body, fontSize: 12, color: T.text, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 7, padding: "5px 10px", outline: "none" };
+  const inp = { fontFamily: HZ_BODY, fontSize: 12, color: HZ.text, background: HZ.bg,
+    border: `1px solid ${HZ.border}`, borderRadius: 7, padding: "5px 10px", outline: "none" };
+  const pageCount = Math.max(1, Math.ceil(total / limit));
+
+  useHorizonFonts();
 
   return (
     <div id="shphist-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
+      {/* Stat strip — same New Style treatment as Cargo/Accounting (approved mockup:
+          https://claude.ai/artifact/25ygL745mmMfvYWBXZWoAE). */}
+      <div id="shphist-stat-strip" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+        {[
+          ["Events", loading ? "—" : `${total}`],
+          ["Page", `${Math.floor(offset / limit) + 1} / ${pageCount}`],
+          ["Types Shown", `${activeGroups.size}/${GROUP_NAMES.length}`],
+          ["Date Range", DATE_RANGE_LABEL[dateRange]],
+        ].map(([label, value]) => (
+          <div key={label} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
+            borderRadius: 8, padding: "10px 12px" }}>
+            <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+            <div style={{ fontFamily: HZ_MONO, fontSize: 16, fontWeight: 700, color: HZ.text, marginTop: 2 }}>{value}</div>
+          </div>
+        ))}
+      </div>
+
       {/* Toolbar */}
       <div id="shphist-toolbar" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
         {GROUP_NAMES.map(g => {
           const on = activeGroups.has(g);
           return (
             <button key={g} id={`shphist-group-${g.toLowerCase().replace(/\s+/g, "-")}`} type="button" onClick={() => toggleGroup(g)}
-              style={{ fontFamily: T.body, fontSize: 11, padding: "3px 10px", borderRadius: 20,
-                border: `1px solid ${on ? T.accent + "66" : T.border}`,
-                background: on ? T.accentBg : "transparent",
-                color: on ? T.accent : T.textMuted, cursor: "pointer" }}>
+              style={{ fontFamily: HZ_BODY, fontSize: 11, padding: "3px 10px", borderRadius: 20,
+                border: `1px solid ${on ? HZ.cyan + "66" : HZ.border}`,
+                background: on ? HZ.cyanBg : "transparent",
+                color: on ? HZ.cyan : HZ.textMuted, cursor: "pointer" }}>
               {g}
             </button>
           );
         })}
-        <div style={{ width: 1, height: 18, background: T.border, flexShrink: 0 }} />
-        <div id="shphist-date-range" style={{ display: "flex", borderRadius: 7, overflow: "hidden", border: `1px solid ${T.border}` }}>
+        <div style={{ width: 1, height: 18, background: HZ.border, flexShrink: 0 }} />
+        <div id="shphist-date-range" style={{ display: "flex", borderRadius: 7, overflow: "hidden", border: `1px solid ${HZ.border}` }}>
           {[["all", "All time"], ["today", "Today"], ["7d", "7 days"]].map(([r, label], idx) => (
             <button key={r} type="button" onClick={() => setDateRange(r)}
-              style={{ fontFamily: T.body, fontSize: 11, padding: "4px 10px",
-                background: dateRange === r ? T.accent : "transparent",
-                color: dateRange === r ? T.btnPrimaryText : T.textMuted,
-                border: "none", borderRight: idx < 2 ? `1px solid ${T.border}` : "none", cursor: "pointer" }}>
+              style={{ fontFamily: HZ_BODY, fontSize: 11, padding: "4px 10px",
+                background: dateRange === r ? HZ.cyan : "transparent",
+                color: dateRange === r ? "#06111f" : HZ.textMuted,
+                border: "none", borderRight: idx < 2 ? `1px solid ${HZ.border}` : "none", cursor: "pointer" }}>
               {label}
             </button>
           ))}
@@ -130,64 +157,71 @@ const ShipmentHistoryPage = ({ shipment }) => {
         <div style={{ flex: 1 }} />
         <button id="shphist-export-btn" type="button" onClick={exportCSV} disabled={results.length === 0}
           style={{ ...inp, cursor: results.length === 0 ? "default" : "pointer",
-            color: results.length === 0 ? T.border : T.textMuted, padding: "5px 12px",
+            color: results.length === 0 ? HZ.textFaint : HZ.textMuted, padding: "5px 12px",
             display: "inline-flex", alignItems: "center", gap: 5 }}>
           <IconArrowDown size={12} /> Export page as CSV
         </button>
       </div>
 
-      <div id="shphist-count" style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 10 }}>
-        {loading ? "Loading…" : `${total} event${total !== 1 ? "s" : ""}`}
-      </div>
-
       {/* Table */}
-      <div id="shphist-table" style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface }}>
-        <div style={{ display: "flex", alignItems: "center", padding: "7px 14px",
-          borderBottom: `1px solid ${T.border}`, background: T.bg, gap: 10 }}>
-          <div style={{ ...th, width: 160, flexShrink: 0 }}>Event Type</div>
-          <div style={{ ...th, flex: 1 }}>Summary</div>
-          <div style={{ ...th, width: 160, flexShrink: 0, cursor: "pointer", userSelect: "none",
-            display: "flex", alignItems: "center", gap: 4 }}
-            onClick={() => setSortDir(d => d === "desc" ? "asc" : "desc")}>
-            Date / Time {sortDir === "desc" ? <IconArrowDown size={11} /> : <IconArrowUp size={11} />}
-          </div>
-          <div style={{ ...th, width: 110, flexShrink: 0 }}>User</div>
-        </div>
-
+      <div id="shphist-table" style={{ background: HZ.surface, backdropFilter: "blur(20px)",
+        border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden" }}>
         {loading ? (
           <div style={{ padding: 40, display: "flex", justifyContent: "center" }}><Spinner /></div>
         ) : results.length === 0 ? (
-          <div id="shphist-empty" style={{ padding: 32, textAlign: "center", fontFamily: T.body,
-            fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+          <div id="shphist-empty" style={{ padding: 32, textAlign: "center", fontFamily: HZ_BODY,
+            fontSize: 13, color: HZ.textMuted, fontStyle: "italic" }}>
             No events match the current filters.
           </div>
-        ) : results.map(ev => {
-          const cfg = EVENT_CONFIG[ev.eventType] ?? { icon: "·", label: ev.eventType, color: () => T.textMuted };
-          const color = cfg.color();
-          return (
-            <div key={ev.id} id={`shphist-event-${ev.id}`}
-              style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px",
-                borderBottom: `1px solid ${T.border}22` }}
-              onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-              <div style={{ width: 160, flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 13, display: "inline-flex", alignItems: "center" }}><AnyIcon icon={cfg.icon} size={13} /></span>
-                <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color }}>{cfg.label}</span>
-              </div>
-              <div style={{ flex: 1, fontFamily: T.mono, fontSize: 11, color: T.textMuted,
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {getEventSummary(ev)}
-              </div>
-              <div style={{ width: 160, flexShrink: 0, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                {fmtDateTime(ev.occurredAt)}
-              </div>
-              <div style={{ width: 110, flexShrink: 0, fontFamily: T.body, fontSize: 11.5, color: T.textMuted,
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ev.actor || ""}>
-                {ev.actor && ev.actor !== "system" ? ev.actor : "System"}
-              </div>
-            </div>
-          );
-        })}
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ background: HZ.bg, borderBottom: `1px solid ${HZ.border}` }}>
+                <th style={{ textAlign: "left", padding: "9px 14px", width: 170, fontFamily: HZ_BODY, fontSize: 10,
+                  fontWeight: 700, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em" }}>Event Type</th>
+                <th style={{ textAlign: "left", padding: "9px 14px", fontFamily: HZ_BODY, fontSize: 10,
+                  fontWeight: 700, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em" }}>Summary</th>
+                <th onClick={() => setSortDir(d => d === "desc" ? "asc" : "desc")}
+                  style={{ textAlign: "left", padding: "9px 14px", width: 170, cursor: "pointer", userSelect: "none",
+                    fontFamily: HZ_BODY, fontSize: 10, fontWeight: 700, color: HZ.textMuted,
+                    textTransform: "uppercase", letterSpacing: ".06em" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    Date / Time {sortDir === "desc" ? <IconArrowDown size={11} /> : <IconArrowUp size={11} />}
+                  </span>
+                </th>
+                <th style={{ textAlign: "left", padding: "9px 14px", width: 120, fontFamily: HZ_BODY, fontSize: 10,
+                  fontWeight: 700, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em" }}>User</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.map(ev => {
+                const cfg = EVENT_CONFIG[ev.eventType] ?? { icon: "·", label: ev.eventType, color: () => HZ.textMuted };
+                const color = cfg.color();
+                return (
+                  <tr key={ev.id} id={`shphist-event-${ev.id}`} style={{ borderBottom: `1px solid ${HZ.border}` }}>
+                    <td style={{ padding: "9px 14px" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 13, display: "inline-flex", alignItems: "center", color }}><AnyIcon icon={cfg.icon} size={13} /></span>
+                        <span style={{ fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600, color }}>{cfg.label}</span>
+                      </span>
+                    </td>
+                    <td style={{ padding: "9px 14px", fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted,
+                      maxWidth: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {getEventSummary(ev)}
+                    </td>
+                    <td style={{ padding: "9px 14px", fontFamily: HZ_MONO, fontSize: 11, color: HZ.textFaint }}>
+                      {fmtDateTime(ev.occurredAt)}
+                    </td>
+                    <td title={ev.actor || ""} style={{ padding: "9px 14px", fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {ev.actor && ev.actor !== "system" ? ev.actor : "System"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <div id="shphist-pagination" style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>

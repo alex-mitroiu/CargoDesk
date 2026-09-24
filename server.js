@@ -1920,6 +1920,46 @@ async function seedDefaultMilestoneTemplate() {
   } catch (e) { console.warn('  ⚠ Could not seed milestone template:', e.message); }
 }
 
+// Office-Side Permissions Epic (TKT-Z0LB0W), Phase 1 (TKT-AYX4N0) — seeds a sensible default
+// Export/Import classification for the real, currently-known charge_code vocabulary: every
+// distinct label SERVICE_CODE_MAP (below) can resolve to. ON CONFLICT (charge_code) DO NOTHING
+// makes this safe to re-run on every boot without ever clobbering a reclassification an admin
+// has since made via PUT /api/charge-code-sides/:chargeCode — same "seed once, never overwrite a
+// human's later edit" discipline this file's other default-seeding functions already use.
+//
+// Several of these are genuinely debatable without real operational input (Customs/Inland/
+// Detention/Demurrage lack an Origin/Destination-qualified name the way THC already has) —
+// classified here with the more common real-world case, explicitly flagged so a wrong default
+// is a one-line PUT away, not a design flaw to relitigate before Phase 2 can even start.
+async function seedChargeCodeSides() {
+  try {
+    const now = new Date().toISOString();
+    const defaults = [
+      // Freight and its own surcharges — booked and paid by the export/forwarding side.
+      ['Ocean Freight', 'Export'], ['Bunker Adjustment Factor', 'Export'],
+      ['Currency Adjustment Factor', 'Export'], ['Emergency Bunker Surcharge', 'Export'],
+      ['Peak Season Surcharge', 'Export'], ['Carrier Uplift Charge', 'Export'],
+      ['War Risk Surcharge', 'Export'], ['Suez Canal Surcharge', 'Export'],
+      // Explicitly Origin/Destination-qualified already — unambiguous.
+      ['Origin THC', 'Export'], ['Destination THC', 'Import'],
+      // Export-side filings/fees.
+      ['B/L Fee', 'Export'], ['Documentation Fee', 'Export'],
+      ['Advance Manifest Surcharge', 'Export'], ['IMO/DG Surcharge', 'Export'],
+      ['ISPS Security Surcharge', 'Export'],
+      // Import-side filings/fees.
+      ['Entry Summary Declaration', 'Import'],
+      // Debatable without an Origin/Destination qualifier — defaulted to the more common
+      // destination-side real-world case (see comment above).
+      ['Customs', 'Import'], ['Inland', 'Import'], ['Detention', 'Import'], ['Demurrage', 'Import'],
+    ];
+    for (const [chargeCode, side] of defaults) {
+      await query(
+        "INSERT INTO charge_code_sides (charge_code, side, created_at) VALUES ($1,$2,$3) ON CONFLICT (charge_code) DO NOTHING",
+        [chargeCode, side, now]);
+    }
+  } catch (e) { console.warn('  ⚠ Could not seed charge code sides:', e.message); }
+}
+
 // Deterministic ids for the same reason as seedDefaultMilestoneTemplate() above — a
 // COUNT(*)-guarded random uid() let a merged-in historical "Main Board" produce a second,
 // duplicate default project (and a duplicate set of 7 columns) the instant it existed alongside
@@ -1954,7 +1994,8 @@ schemaReadyPromise = schemaReadyPromise
   .then(() => backfillPortCountryCodes())
   .then(() => backfillPortTimezones())
   .then(() => seedDefaultMilestoneTemplate())
-  .then(() => seedDefaultProject());
+  .then(() => seedDefaultProject())
+  .then(() => seedChargeCodeSides());
 
 // backfillTicketProjects and backfillTestItems (both historical one-time migrations of
 // pre-existing legacy ticket rows into the newer project/test_items shape) are dropped — nothing
@@ -2355,19 +2396,37 @@ async function applyShipmentAccessFilter(shipments, user, req) {
   if (['admin', 'operator'].includes(effectiveRole)) return shipments;
 
   const access = await resolveOfficeAccess(user, req);
-  if (!access.unrestricted && access.activeOfficeId) {
-    if (access.denied) return [];
+  // activeOfficeId null means the client sent no X-Office-Id header at all — never picked one, a
+  // stale/cleared header, or (the UI's own "Global Access" choice is gated to allOffices users
+  // only, so a restricted account can't reach it deliberately) a client bug. This used to fall
+  // through with NO office filtering applied at all whenever that happened — "no header" silently
+  // meant "unrestricted," so a user who WAS assigned to a real office, but simply hadn't picked it
+  // as active, saw every shipment company-wide instead of just their own office's (2026-09-23
+  // finding). Fixed by restricting to the union of every office the account is actually assigned
+  // to (resolveEffectiveOfficeIds may return more than one) whenever it has any.
+  //
+  // Deliberately NOT extended to a user with ZERO offices assigned: that's not a misconfiguration
+  // to fail closed on, it's the real, already-relied-on shape of a user scoped ONLY by scope_items
+  // (trade_lane/pol/country, the block below) and never by office at all — confirmed by
+  // tests/ai-agent-tool-scope.test.js's own trade_manager fixture, assigned no office on purpose.
+  // For that user the office dimension imposes no restriction (same as before this fix); the
+  // scope_items block immediately below is what actually scopes them.
+  if (!access.unrestricted && (access.activeOfficeId || access.officeIds.size > 0)) {
+    const officeIds = access.activeOfficeId ? new Set([access.activeOfficeId]) : access.officeIds;
+    if (access.activeOfficeId && access.denied) return [];
+    const idList = [...officeIds];
+    const ph = idList.map((_, i) => `$${i + 1}`).join(",");
     // Additional (backup) offices — a shipment a disaster-recovery office was added to via
     // shipment_side_offices should be visible to that office's staff too, not just the
     // shipment's original EMO/IMO/Controlling.
     const sideOfficeShipmentIds = new Set(
-      (await query("SELECT shipment_id FROM shipment_side_offices WHERE office_id=$1", [access.activeOfficeId]))
+      (await query(`SELECT shipment_id FROM shipment_side_offices WHERE office_id IN (${ph})`, idList))
         .map(r => r.shipment_id)
     );
     shipments = shipments.filter(s =>
-      s.emoOfficeId === access.activeOfficeId ||
-      s.imoOfficeId === access.activeOfficeId ||
-      s.controllingOfficeId === access.activeOfficeId ||
+      officeIds.has(s.emoOfficeId) ||
+      officeIds.has(s.imoOfficeId) ||
+      officeIds.has(s.controllingOfficeId) ||
       sideOfficeShipmentIds.has(s.id)
     );
   }
@@ -2396,6 +2455,109 @@ async function applyShipmentAccessFilter(shipments, user, req) {
     typeGroups.length > 0 && typeGroups.every(group => group.some(item => matchesScopeItem(s, item)))
   );
 }
+
+// Office-Side Permissions Epic (TKT-Z0LB0W), Phase 1 (TKT-AYX4N0) — the office-SIDE counterpart
+// to resolveOfficeAccess/applyShipmentAccessFilter above. Those decide WHICH shipments a user can
+// see at all; this decides, for one shipment the caller can already see, which side of its own
+// EMO/IMO pair they're acting from — 'export' | 'import' | 'unrestricted'. 'unrestricted' means
+// the office-side rule imposes no restriction on this call at all: admin/operator, allOffices,
+// offices_allow_all, a user with no office context on THIS shipment (either no office assigned,
+// or their office is neither this record's own emoOfficeId nor imoOfficeId), or the edge case
+// where the same office holds both roles on one shipment. Deliberately NOT the same question
+// canEditOfficeSide (above, 2226) answers — that helper is a company-wide department fact ("is my
+// active office's department SE/SI, so I may reassign ANY visible shipment's Export/Import
+// office to it") used for disaster-recovery reassignment; this one is per-record and relative
+// ("is my office literally the one already recorded as THIS shipment's own export or import
+// side"), which is the "per-shipment, relative" scope basis the design review settled on — the
+// same person can be export-side on one job and import-side on another.
+//
+// Reuses resolveOfficeAccess's already-validated resolution (TKT-9YBHNT) rather than reading
+// req.headers['x-office-id'] directly — canEditOfficeSide's own sibling callerEntityScope had a
+// real, live-confirmed authorization bypass (2026-09-03 audit, see the comment above
+// resolveActiveOffice) from trusting that header at face value; access.denied here means the
+// header named an office the caller isn't actually assigned to, so it's never trusted — same
+// "fall back to the caller's own real offices" behavior as no header being sent at all.
+// Split in two for Phase 3 (TKT-5W24J7) — the frontend renders myOfficeSide on every row of
+// GET /api/shipments (its actual data source for a shipment's detail sub-pages, per App.jsx's
+// own load-everything-once-into-state model), not just one shipment at a time the way every
+// Phase 2 call site used this. Re-resolving office access from scratch per row would be a real
+// N+1 (a settings read + office-membership query per shipment in the list) — resolveOfficeSideAccess
+// does that resolution exactly ONCE per request; sideFromAccess is the cheap, synchronous,
+// per-row EMO/IMO comparison. officeSideOf (below) composes both, unchanged for every existing
+// single-shipment caller.
+async function resolveOfficeSideAccess(user, req) {
+  if (!user) return { unrestricted: true };
+  const effectiveRole = deriveEffectiveRole(user, req);
+  if (['admin', 'operator'].includes(effectiveRole)) return { unrestricted: true };
+  if (user.allOffices) return { unrestricted: true };
+  if ((await getSettings()).offices_allow_all === "1") return { unrestricted: true };
+
+  const access = await resolveOfficeAccess(user, req);
+  const officeIds = (access.activeOfficeId && !access.denied) ? new Set([access.activeOfficeId]) : access.officeIds;
+  return officeIds.size === 0 ? { unrestricted: true } : { unrestricted: false, officeIds };
+}
+
+function sideFromAccess(access, shipment) {
+  if (!shipment || access.unrestricted) return 'unrestricted';
+  const isExport = access.officeIds.has(shipment.emoOfficeId);
+  const isImport = access.officeIds.has(shipment.imoOfficeId);
+  if (isExport && !isImport) return 'export';
+  if (isImport && !isExport) return 'import';
+  return 'unrestricted'; // neither office is involved, or one office holds both roles on this shipment
+}
+
+async function officeSideOf(user, shipment, req) {
+  if (!user || !shipment) return 'unrestricted';
+  return sideFromAccess(await resolveOfficeSideAccess(user, req), shipment);
+}
+
+// Office-Side Permissions Epic (TKT-Z0LB0W), Phase 1 (TKT-AYX4N0) — looks up a charge_code's own
+// Export/Import classification (charge_code_sides, lib/schema.js — see that table's own comment
+// for why it's keyed by the charge_code STRING rather than any one FK). Returns null for a
+// charge_code with no row yet, which Phase 2's own policy treats as "shared" (visible to both
+// sides), never an accidental hide.
+async function chargeCodeSide(chargeCode) {
+  if (!chargeCode) return null;
+  const [row] = await query("SELECT side FROM charge_code_sides WHERE charge_code=$1", [chargeCode]);
+  return row ? row.side : null;
+}
+
+// Office-Side Permissions Epic (TKT-Z0LB0W), Phase 2 (TKT-NXXVFN) — the write-side guard every
+// gated route below calls right after its own shipment lookup (this codebase's established
+// pattern: shipmentWrite/postGate are plain role checks, the handler itself does the
+// shipment-specific validation — this slots into that same spot rather than adding a second,
+// duplicate shipment query via a wrapping middleware). Pass the RAW shipment row exactly as
+// queried (mapShipment is applied here, once) and the side this specific action requires
+// ('export' | 'import'). Sends the 403 itself and returns true when blocked, so call sites read
+// `if (await blockIfWrongSide(req, res, shipment, 'export')) return;`.
+async function blockIfWrongSide(req, res, shipmentRow, requiredSide) {
+  const side = await officeSideOf(req.user, mapShipment(shipmentRow), req);
+  if (side !== 'unrestricted' && side !== requiredSide) {
+    err(res, `This is an ${requiredSide}-side action on this shipment — your office is on the ${side} side`, 403);
+    return true;
+  }
+  return false;
+}
+
+// Office-Side Permissions Epic (TKT-Z0LB0W), Phase 2 (TKT-NXXVFN) — which of ADDITIONAL_PARTY_ROLES
+// (above) are actually one side's job, for the shared POST/PUT/DELETE /api/shipments/:id/parties
+// routes. Everything NOT listed here (Forwarder, Also Notify Party, Bank, Insurance Provider,
+// Agent, NVOCC, Co-Loading NVOCC) has no side of its own and stays open to whoever could already
+// write it — gating the whole shared endpoint by one blanket side would have wrongly blocked an
+// import-side user from setting their own Customs Broker (Import) or Trucker (On-carriage).
+//
+// Deliberately does NOT include Line Agent (Export)/(Import) — routes/shipments.js already gates
+// that pair via its own LINE_AGENT_SIDE + canEditOfficeSide, a different, pre-existing mechanism
+// (a company-wide department fact — "is my active office's department SE/SI" — built for the
+// disaster-recovery scenario where a DIFFERENT office than the one already assigned steps in,
+// deliberately not restricted to whichever office already sits on THIS shipment). Layering this
+// epic's per-shipment-relative officeSideOf on top would fight that already-shipped, intentional
+// design rather than extend it. Customs Broker/Trucker are new to this epic and have no such
+// history, so they use officeSideOf directly, matching every other section here.
+const PARTY_ROLE_SIDE = {
+  "Customs Broker (Export)": "export", "Customs Broker (Import)": "import",
+  "Trucker (Pre-carriage)": "export", "Trucker (On-carriage)": "import",
+};
 
 // Quotes/Opportunities analog of applyShipmentAccessFilter — same office-access contract
 // (resolveOfficeAccess) applied to a single officeId column instead of the EMO/IMO/Controlling
@@ -2780,11 +2942,11 @@ async function resolveAssigneeNames(rows) {
 // its original check-then-insert (a narrow, low-probability race under concurrent sweeps,
 // unchanged) rather than retrofitting the same constraint onto the monolith's own long-lived
 // tickets table — the remote path closes the race outright instead of porting it.
-const ensureOpsTicket = async (sourceType, sourceId, { shipmentId, title, description, priority = 'Medium' }) => {
+const ensureOpsTicket = async (sourceType, sourceId, { shipmentId, title, description, priority = 'Medium', assigneeId = null }) => {
   if (((await getSettings()).kanban_source || 'local') === 'remote') {
     try {
       const r = await callKanbanService('POST', '/internal/tickets/ensure',
-        { sourceType, sourceId, shipmentId: shipmentId || null, title, description, priority });
+        { sourceType, sourceId, shipmentId: shipmentId || null, title, description, priority, assigneeId: assigneeId || null });
       return r.created ? r.id : null;
     } catch (e) {
       console.error('ensureOpsTicket (remote) failed:', e.message);
@@ -2797,10 +2959,13 @@ const ensureOpsTicket = async (sourceType, sourceId, { shipmentId, title, descri
   const now = new Date().toISOString();
   const [maxRow] = await query("SELECT MAX(position) AS m FROM tickets WHERE status='Ready'");
   const pos = (maxRow?.m ?? -1) + 1;
+  // assigneeId (added for the Office-Side Permissions Epic's vessel_arrived_import_handoff
+  // trigger below) — every earlier ops-automation ticket left this null/unassigned; optional and
+  // additive, so those three callers are unaffected.
   await query(`INSERT INTO tickets
-    (id, title, description, priority, status, position, created_at, shipment_id, type, source_type, source_id)
-    VALUES ($1,$2,$3,$4,'Ready',$5,$6,$7,'Task',$8,$9)`,
-    [id, title, description, priority, pos, now, shipmentId || null, sourceType, sourceId]);
+    (id, title, description, priority, status, position, created_at, shipment_id, type, source_type, source_id, assignee_id)
+    VALUES ($1,$2,$3,$4,'Ready',$5,$6,$7,'Task',$8,$9,$10)`,
+    [id, title, description, priority, pos, now, shipmentId || null, sourceType, sourceId, assigneeId || null]);
   return id;
 };
 
@@ -2852,6 +3017,34 @@ const runOpsAutomationSweep = async () => {
       shipmentId: sc.shipment_id, priority: 'Critical',
       title: `Compliance HIT requires review — ${sc.shipment_id}`,
       description: `Sanctions screening on ${sc.shipment_id} returned a HIT with no override on record. Auto-created by the ops automation sweep.`,
+    });
+  }
+
+  // Office-Side Permissions Epic (TKT-Z0LB0W), Phase 4 (TKT-S0VLK4) — the one confirmed trigger
+  // from the design review: vessel_arrived is the seam between the export-owned first 5
+  // milestones and the import-owned last 4 (server.js's own seedDefaultMilestoneTemplate), so
+  // its completion is the real-world moment responsibility hands off to the shipment's own
+  // Import Office. Not time-windowed (same as overdueMilestones/complianceHits above) — every
+  // sweep re-scans every currently-completed vessel_arrived milestone; ensureOpsTicket's own
+  // dedup on (sourceType, sourceId=m.id, stable/non-regenerating) is what stops it from ever
+  // firing twice for the same milestone. "Notify + a real Kanban ticket," confirmed direction —
+  // not a new notification channel, not silent. Assigned to the IMO office's own manager_user_id
+  // when set, the same "office -> manager -> user" resolution routes/offices.js's own invoice-
+  // collections escalation already uses (server.js) — left unassigned, not skipped, when the
+  // office has none (a real handoff still happened; nobody named to route it to yet).
+  const vesselArrivedHandoffs = await query(`
+    SELECT m.id, m.shipment_id, s.imo_office_id, o.name AS imo_name, o.manager_user_id AS imo_manager_id
+    FROM shipment_milestones m
+    JOIN shipments s ON s.id = m.shipment_id
+    LEFT JOIN offices o ON o.id = s.imo_office_id
+    WHERE m.milestone_key='vessel_arrived' AND m.completed_at != '' AND s.status NOT IN ('Completed', 'Cancelled')
+  `);
+  for (const h of vesselArrivedHandoffs) {
+    const officeLabel = h.imo_name || 'the Import Office';
+    await ensureOpsTicket('vessel_arrived_import_handoff', h.id, {
+      shipmentId: h.shipment_id, priority: 'Medium', assigneeId: h.imo_manager_id || null,
+      title: `Vessel arrived — import handoff (${h.shipment_id})`,
+      description: `Vessel Arrived completed on ${h.shipment_id} — hands off to ${officeLabel} for customs clearance, cargo release, and delivery. Auto-created by the ops automation sweep.`,
     });
   }
 };
@@ -3648,6 +3841,8 @@ const ctx = {
   auth, requireRole,
   portLanesMap, portCountryMap, rebuildPortLanesMap, longestLane,
   applyShipmentAccessFilter, applyOfficeScopedAccessFilter, resolveOfficeAccess, resolveEffectiveOfficeIds,
+  officeSideOf, chargeCodeSide, blockIfWrongSide, PARTY_ROLE_SIDE,
+  resolveOfficeSideAccess, sideFromAccess,
   fxCache, getFxRates, toUsd, roundCents, costLineEffectiveUsd, COST_LINE_EFFECTIVE_USD_SQL,
   sanctionsMap, loadSanctionsIndex, syncOfacSdn, scheduleNextOfacSync,
   syncConsolidatedScreeningList, scheduleNextCslSync,

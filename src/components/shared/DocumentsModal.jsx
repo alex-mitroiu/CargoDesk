@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { T } from "../../tokens";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { Modal } from "../primitives/Modal";
@@ -11,23 +10,32 @@ import SendDocumentEmailModal from "./SendDocumentEmailModal";
 import SendDocumentEdiModal from "./SendDocumentEdiModal";
 import SendDocumentWebhookModal from "./SendDocumentWebhookModal";
 import { DOC_TYPES, docTypeLabel, FILE_ICON, fmtBytes, fmtDate } from "../../utils/documentBuilders";
+import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
 
 // ─── Documents Modal ──────────────────────────────────────────────────────────
 // TrackedDocPreviewModal (in-app preview) now lives in
 // src/components/shared/TrackedDocPreviewModal.jsx — shared with the Accounting
 // Invoice Entry page, which can't import it back from here.
+//
+// Trade Horizon "New Style" pass — `standalone` is always true in practice (App.jsx's
+// only real render call); the readiness overview's doc-type rows became a real <table>
+// (a genuine repeating list, same treatment as Cargo/Accounting/History), while the
+// uploaded/generated document list stays as cards — same shape Invoice Entry's own
+// "Invoices" list already uses for the same kind of document-card content.
+// GenerateDocumentModal/SendDocumentEmailModal/SendDocumentEdiModal/
+// SendDocumentWebhookModal/EntityHistoryModal stay untouched — all genuinely shared
+// with non-shipment-detail pages (MDM Document Templates, etc.), same reasoning as
+// leaving Btn/Modal alone.
 
-const DOC_STATUS_STYLE = {
-  draft:     { label: "Draft",     bg: "", color: T.textMuted, border: T.border },
-  confirmed: { label: "Confirmed", bg: "", color: T.success,   border: T.success + "66" },
-};
-
-const DOC_READINESS_COLOR = {
-  confirmed: "#34d399",
-  draft:     "#94a3b8",
-  outdated:  "#fbbf24",
-  missing:   "#f87171",
-};
+// A function, not a plain object — HZ is a live-mutated object (App.jsx's theme toggle calls
+// applyHzTheme in place, no reload), so a plain object built from HZ.* at module load would
+// freeze whichever theme was active at import and never follow a later toggle.
+const docReadinessColor = status => ({
+  confirmed: HZ.good,
+  draft:     HZ.textMuted,
+  outdated:  HZ.warn,
+  missing:   HZ.crit,
+}[status]);
 const DOC_READINESS_LABEL = {
   confirmed: "✓ Confirmed",
   draft:     "Draft",
@@ -142,125 +150,127 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
   const statusBadge = doc => {
     if (doc.isStale) return (
       <span title="Shipment data changed after this document was generated — consider regenerating"
-        style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, borderRadius: 4, padding: "1px 6px",
-          background: T.warning + "22", color: T.warning, border: `1px solid ${T.warning + "55"}` }}>
+        style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, borderRadius: 4, padding: "1px 6px",
+          background: HZ.warnBg, color: HZ.warn }}>
         ⚠ Outdated
       </span>
     );
-    const s = DOC_STATUS_STYLE[doc.status] || DOC_STATUS_STYLE.draft;
+    const confirmed = doc.status === "confirmed";
     return (
-      <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, borderRadius: 4, padding: "1px 6px",
-        background: doc.status === "confirmed" ? T.success + "18" : T.surface,
-        color: s.color, border: `1px solid ${s.border}` }}>
-        {doc.status === "confirmed" ? "✓ " : ""}{s.label}
+      <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, borderRadius: 4, padding: "1px 6px",
+        background: confirmed ? HZ.goodBg : HZ.surface2,
+        color: confirmed ? HZ.good : HZ.textMuted }}>
+        {confirmed ? "✓ Confirmed" : "Draft"}
       </span>
     );
   };
+
+  const dashedBtn = { padding: "4px 10px", background: "none", cursor: "pointer",
+    border: `1px solid ${HZ.border}`, borderRadius: 6, fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted };
+
+  useHorizonFonts();
 
   const body = (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
         {/* Toolbar */}
         <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <Btn variant="secondary" onClick={() => { setGenDefaultCode(null); setGenInvOpen(true); }}>⚡ Generate Document</Btn>
+          <button type="button" onClick={() => { setGenDefaultCode(null); setGenInvOpen(true); }}
+            style={{ padding: "7px 12px", background: "none", cursor: "pointer",
+              border: `1px dashed ${HZ.cyan}55`, borderRadius: 6, fontFamily: HZ_BODY, fontSize: 12, color: HZ.cyan }}>
+            ⚡ Generate Document
+          </button>
         </div>
 
-        {/* Document readiness overview */}
-        <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
-          {/* Coverage bar */}
-          <div style={{ display: "flex", alignItems: "center", gap: 20,
-            padding: "14px 16px", borderBottom: `1px solid ${T.border}` }}>
-            <div style={{ display: "flex", gap: 20, flexShrink: 0 }}>
-              {[[confirmedCount, "Confirmed", DOC_READINESS_COLOR.confirmed],
-                [draftCount,     "Draft / Outdated", DOC_READINESS_COLOR.outdated],
-                [missingCount,   "Missing",   DOC_READINESS_COLOR.missing]].map(([n, lbl, color]) => (
-                <div key={lbl}>
-                  <div style={{ fontFamily: T.mono, fontSize: 20, fontWeight: 800,
-                    fontVariantNumeric: "tabular-nums", lineHeight: 1, color }}>{n}</div>
-                  <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 700,
-                    letterSpacing: ".08em", textTransform: "uppercase", color: T.textMuted }}>{lbl}</div>
-                </div>
-              ))}
+        {/* Document readiness overview — stat strip + a real table (Cargo/Accounting/History's
+            own New Style treatment; approved mockup https://claude.ai/artifact/25ygL745mmMfvYWBXZWoAE) */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+          {[["Confirmed", confirmedCount, docReadinessColor("confirmed")],
+            ["Draft / Outdated", draftCount, docReadinessColor("outdated")],
+            ["Missing", missingCount, docReadinessColor("missing")]].map(([label, n, color]) => (
+            <div key={label} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
+              borderRadius: 8, padding: "10px 12px" }}>
+              <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+              <div style={{ fontFamily: HZ_MONO, fontSize: 16, fontWeight: 700, color, marginTop: 2 }}>{n}</div>
             </div>
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 5 }}>
-              <div style={{ height: 6, borderRadius: 3, background: T.border, overflow: "hidden", display: "flex" }}>
-                <div style={{ width: `${confirmedCount / total * 100}%`, background: DOC_READINESS_COLOR.confirmed }} />
-                <div style={{ width: `${draftCount     / total * 100}%`, background: DOC_READINESS_COLOR.outdated  }} />
-                <div style={{ width: `${missingCount   / total * 100}%`, background: DOC_READINESS_COLOR.missing   }} />
-              </div>
-              <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, textAlign: "right" }}>
-                {confirmedCount} / {total} confirmed
-              </div>
-            </div>
-          </div>
+          ))}
+        </div>
+        <div style={{ height: 6, borderRadius: 3, background: HZ.surface2, overflow: "hidden", display: "flex", marginTop: -6 }}>
+          <div style={{ width: `${confirmedCount / total * 100}%`, background: docReadinessColor("confirmed") }} />
+          <div style={{ width: `${draftCount     / total * 100}%`, background: docReadinessColor("outdated")  }} />
+          <div style={{ width: `${missingCount   / total * 100}%`, background: docReadinessColor("missing")   }} />
+        </div>
 
-          {/* Doc type rows */}
-          {DOC_TYPES.map((t, idx) => {
-            const doc  = latestByCode[t.code];
-            const stat = typeStatus(t.code);
-            const col  = DOC_READINESS_COLOR[stat];
-            const handleRowClick = () => {
-              if (doc) { setPreviewDoc(doc); }
-              else     { setGenDefaultCode(t.code); setGenInvOpen(true); }
-            };
-            return (
-              <div key={t.code}
-                onClick={handleRowClick}
-                style={{ display: "flex", alignItems: "center", gap: 10,
-                  padding: "8px 16px",
-                  borderBottom: idx < DOC_TYPES.length - 1 ? `1px solid ${T.border}22` : "none",
-                  cursor: "pointer", transition: "background .1s" }}
-                onMouseEnter={e => e.currentTarget.style.background = T.surface}
-                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
-                  color: T.accent, background: T.accent + "18",
-                  border: `1px solid ${T.accent}33`, borderRadius: 4,
-                  padding: "1px 6px", flexShrink: 0, minWidth: 38, textAlign: "center" }}>
-                  {t.code}
-                </span>
-                <span style={{ fontFamily: T.body, fontSize: 12, color: T.text, flex: 1 }}>
-                  {t.label}
-                </span>
-                {doc && (
-                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, flexShrink: 0 }}>
-                    {fmtDate(doc.createdAt)}
-                  </span>
-                )}
-                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
-                  color: col, background: col + "18", border: `1px solid ${col}44`,
-                  borderRadius: 4, padding: "1px 7px", flexShrink: 0, minWidth: 78, textAlign: "center" }}>
-                  {DOC_READINESS_LABEL[stat]}
-                </span>
-                {!doc && canEdit && (
-                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.accent,
-                    background: T.accent + "15", border: `1px solid ${T.accent}44`,
-                    borderRadius: 4, padding: "1px 8px", flexShrink: 0 }}>
-                    ⚡ Generate
-                  </span>
-                )}
-              </div>
-            );
-          })}
+        <div style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`,
+          boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ background: HZ.bg, borderBottom: `1px solid ${HZ.border}` }}>
+                {["Code", "Document", "Generated", "Status", ""].map(h => (
+                  <th key={h} style={{ textAlign: "left", padding: "9px 14px", fontFamily: HZ_BODY, fontSize: 10,
+                    fontWeight: 700, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {DOC_TYPES.map((t, idx) => {
+                const doc  = latestByCode[t.code];
+                const stat = typeStatus(t.code);
+                const col  = docReadinessColor(stat);
+                const handleRowClick = () => {
+                  if (doc) { setPreviewDoc(doc); }
+                  else     { setGenDefaultCode(t.code); setGenInvOpen(true); }
+                };
+                return (
+                  <tr key={t.code} onClick={handleRowClick}
+                    style={{ cursor: "pointer", borderBottom: idx < DOC_TYPES.length - 1 ? `1px solid ${HZ.border}` : "none" }}>
+                    <td style={{ padding: "8px 14px" }}>
+                      <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, color: HZ.cyan,
+                        background: HZ.cyanBg, borderRadius: 4, padding: "1px 6px" }}>{t.code}</span>
+                    </td>
+                    <td style={{ padding: "8px 14px", fontFamily: HZ_BODY, fontSize: 12, color: HZ.text }}>{t.label}</td>
+                    <td style={{ padding: "8px 14px", fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted }}>
+                      {doc ? fmtDate(doc.createdAt) : "—"}
+                    </td>
+                    <td style={{ padding: "8px 14px" }}>
+                      <span style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase",
+                        color: col, background: col + "22", borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap" }}>
+                        {DOC_READINESS_LABEL[stat]}
+                      </span>
+                    </td>
+                    <td style={{ padding: "8px 14px" }}>
+                      {!doc && canEdit && (
+                        <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.cyan,
+                          background: HZ.cyanBg, borderRadius: 4, padding: "1px 8px", whiteSpace: "nowrap" }}>
+                          ⚡ Generate
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
 
         {/* Upload area — editors only */}
         {canEdit && (
-          <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "14px 16px" }}>
-            <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: T.textMuted,
+          <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8, padding: "14px 16px" }}>
+            <div style={{ fontFamily: HZ_BODY, fontSize: 11, fontWeight: 700, color: HZ.textMuted,
               textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 10 }}>
               Upload External Document
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
               <div style={{ flex: 1, minWidth: 180 }}>
-                <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>File</div>
+                <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginBottom: 4 }}>File</div>
                 <input ref={fileRef} type="file" onChange={e => setFile(e.target.files[0] || null)}
-                  style={{ fontFamily: T.body, fontSize: 13, color: T.text, width: "100%" }} />
+                  style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text, width: "100%" }} />
               </div>
               <div>
-                <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Document Type</div>
+                <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginBottom: 4 }}>Document Type</div>
                 <select value={docType} onChange={e => setDocType(e.target.value)}
-                  style={{ fontFamily: T.body, fontSize: 13, background: T.surface, color: T.text,
-                    border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 10px", cursor: "pointer" }}>
+                  style={{ fontFamily: HZ_BODY, fontSize: 13, background: HZ.surface, color: HZ.text,
+                    border: `1px solid ${HZ.border}`, borderRadius: 6, padding: "6px 10px", cursor: "pointer" }}>
                   {DOC_TYPES.map(t => <option key={t.code} value={t.code}>{t.code} · {t.label}</option>)}
                 </select>
               </div>
@@ -273,15 +283,15 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
 
         {/* Document list */}
         {loading ? (
-          <div style={{ padding: "32px 0", textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+          <div style={{ padding: "32px 0", textAlign: "center", fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>
             Loading…
           </div>
         ) : docs.length === 0 ? (
           <div style={{ padding: "40px 0", textAlign: "center" }}>
-            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, marginBottom: 8 }}>
+            <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, marginBottom: 8 }}>
               No documents yet.
             </div>
-            <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+            <div style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted }}>
               Use <strong>⚡ Generate Document</strong> to create a Bill of Lading, Invoice, Packing List and more.
             </div>
           </div>
@@ -289,84 +299,70 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {docs.map(doc => (
               <div key={doc.id} style={{ display: "flex", alignItems: "flex-start", gap: 12,
-                padding: "12px 14px", background: T.bg,
-                border: `1px solid ${doc.isStale ? T.warning + "55" : T.border}`,
-                borderRadius: 8, transition: "border-color .15s" }}>
+                padding: "12px 14px", background: HZ.bg,
+                border: `1px solid ${doc.isStale ? HZ.warn + "55" : HZ.border}`,
+                borderRadius: 8 }}>
                 <span style={{ fontSize: 20, flexShrink: 0, marginTop: 2 }}>{FILE_ICON(doc.mimeType)}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text,
+                  <div style={{ fontFamily: HZ_BODY, fontSize: 13, fontWeight: 600, color: HZ.text,
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 4 }}>
                     {doc.filename}
                   </div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                    <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
-                      background: T.accent + "22", color: T.accent, borderRadius: 4, padding: "1px 6px" }}>
+                    <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700,
+                      background: HZ.cyanBg, color: HZ.cyan, borderRadius: 4, padding: "1px 6px" }}>
                       {doc.docType}
                     </span>
-                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                    <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted }}>
                       {docTypeLabel(doc.docType)}
                     </span>
                     {statusBadge(doc)}
-                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                    <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted }}>
                       {fmtBytes(doc.sizeBytes)} · {fmtDate(doc.createdAt)}
                       {doc.uploadedBy && ` · ${doc.uploadedBy}`}
                     </span>
                     {doc.status === "confirmed" && doc.confirmedBy && (
-                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.success }}>
+                      <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.good }}>
                         confirmed by {doc.confirmedBy}
                       </span>
                     )}
                     {doc.docType === "BL01" && doc.blSurrenderedAt && (
-                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.success }}>
+                      <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.good }}>
                         surrendered {fmtDate(doc.blSurrenderedAt)}{doc.blSurrenderedBy && ` by ${doc.blSurrenderedBy}`}
                       </span>
                     )}
                     {doc.docType === "BL01" && doc.blReleasedAt && (
-                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.success }}>
+                      <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.good }}>
                         released {fmtDate(doc.blReleasedAt)}{doc.blReleasedBy && ` by ${doc.blReleasedBy}`}
                       </span>
                     )}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 5, flexShrink: 0, alignItems: "center", marginTop: 1 }}>
-                  <Btn size="sm" variant="secondary" onClick={() => setPreviewDoc(doc)}>
-                    👁 Preview
-                  </Btn>
-                  <Btn size="sm" variant="secondary"
+                <div style={{ display: "flex", gap: 5, flexShrink: 0, alignItems: "center", marginTop: 1, flexWrap: "wrap", maxWidth: 340, justifyContent: "flex-end" }}>
+                  <button type="button" onClick={() => setPreviewDoc(doc)} style={dashedBtn}>👁 Preview</button>
+                  <button type="button" style={dashedBtn}
                     onClick={() => api.documents.download(shipment.id, doc.id, doc.filename).catch(() => toast.error("Download failed"))}>
                     ↓
-                  </Btn>
-                  <Btn size="sm" variant="secondary" onClick={() => setSendDoc(doc)}>
-                    ✉ Send
-                  </Btn>
-                  <Btn size="sm" variant="secondary" onClick={() => setEdiDoc(doc)}>
-                    📡 EDI
-                  </Btn>
-                  <Btn size="sm" variant="secondary" onClick={() => setWebhookDoc(doc)}>
-                    🔗 Webhook
-                  </Btn>
-                  <Btn size="sm" variant="secondary" onClick={() => setHistoryDoc(doc)}>
-                    🕐
-                  </Btn>
+                  </button>
+                  <button type="button" onClick={() => setSendDoc(doc)} style={dashedBtn}>✉ Send</button>
+                  <button type="button" onClick={() => setEdiDoc(doc)} style={dashedBtn}>📡 EDI</button>
+                  <button type="button" onClick={() => setWebhookDoc(doc)} style={dashedBtn}>🔗 Webhook</button>
+                  <button type="button" onClick={() => setHistoryDoc(doc)} style={dashedBtn}>🕐</button>
                   {canEdit && doc.status !== "confirmed" && (
-                    <Btn size="sm" variant="secondary" onClick={() => handleConfirm(doc.id)}
-                      style={{ color: T.success, borderColor: T.success + "66" }}>
+                    <button type="button" onClick={() => handleConfirm(doc.id)}
+                      style={{ ...dashedBtn, color: HZ.good, borderColor: HZ.good + "66" }}>
                       ✓ Confirm
-                    </Btn>
+                    </button>
                   )}
                   {canEdit && doc.docType === "BL01" && doc.status === "confirmed" && !doc.blSurrenderedAt
                     && ["Telex Release", "Surrendered", "Seaway Bill"].includes(shipment.blReleaseType) && (
-                    <Btn size="sm" variant="secondary" onClick={() => handleBlSurrender(doc.id)}>
-                      Mark Surrendered
-                    </Btn>
+                    <button type="button" onClick={() => handleBlSurrender(doc.id)} style={dashedBtn}>Mark Surrendered</button>
                   )}
                   {canEdit && doc.docType === "BL01" && doc.status === "confirmed" && !doc.blReleasedAt && (
-                    <Btn size="sm" variant="secondary" onClick={() => handleBlRelease(doc.id)}>
-                      Mark Released
-                    </Btn>
+                    <button type="button" onClick={() => handleBlRelease(doc.id)} style={dashedBtn}>Mark Released</button>
                   )}
                   {canEdit && (
-                    <Btn size="sm" variant="danger" onClick={() => handleDelete(doc.id)}>✕</Btn>
+                    <button type="button" onClick={() => handleDelete(doc.id)} style={{ ...dashedBtn, color: HZ.crit, borderColor: HZ.crit + "55" }}>✕</button>
                   )}
                 </div>
               </div>

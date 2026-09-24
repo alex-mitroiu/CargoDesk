@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { T } from "../../tokens";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { useAuth } from "../../AuthContext";
@@ -7,6 +6,7 @@ import Btn from "../../components/primitives/Btn";
 import Spinner from "../../components/primitives/Spinner";
 import EdiMessageList from "../../components/shared/EdiMessageList";
 import { IconFileCertificate, IconRefresh } from "../../components/primitives/Icon";
+import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
 
 // ─── Customs Filing — Review ─────────────────────────────────────────────────────
 // Same two-card layout as Details. Read/respond side: filing reference/confirmation
@@ -19,13 +19,19 @@ import { IconFileCertificate, IconRefresh } from "../../components/primitives/Ic
 // this epic is permanently simulated-only, so there's no external actor that can push a
 // response independent of a user action; a human clicking Simulate in Test Tools naturally
 // lands back here via normal navigation. Fetch-on-mount + manual refresh is sufficient.
+//
+// Trade Horizon "New Style" pass — styling only. STATUS_COLOR keeps the original's own
+// store-the-key-not-the-value indirection (HZ[key], resolved at render time) — already the
+// correct pattern for a live-mutated theme object (App.jsx's toggle calls applyHzTheme in
+// place, no reload); a plain object storing resolved HZ.* values at module load would freeze
+// whichever theme was active at import.
 
 const FILING_TYPES = [
   { type: "AES_EEI", label: "AES/EEI (Export)" },
   { type: "ISF_AMS", label: "ISF/AMS (Import)" },
 ];
 
-const STATUS_COLOR = { Draft: "", Filed: "accent", Accepted: "success", Rejected: "danger" };
+const STATUS_COLOR = { Draft: "", Filed: "cyan", Accepted: "good", Rejected: "crit" };
 
 const ShipmentCustomsFilingReviewPage = ({ shipment }) => {
   const { canEditShipments: canEdit } = useAuth();
@@ -50,10 +56,12 @@ const ShipmentCustomsFilingReviewPage = ({ shipment }) => {
     setBusy(null);
   };
 
+  useHorizonFonts();
+
   if (filings === null) {
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.textMuted,
-        fontFamily: T.body, fontSize: 13, padding: "30px 0", justifyContent: "center" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, color: HZ.textMuted,
+        fontFamily: HZ_BODY, fontSize: 13, padding: "30px 0", justifyContent: "center" }}>
         <Spinner size="sm" /> Loading customs filings…
       </div>
     );
@@ -68,42 +76,42 @@ const ShipmentCustomsFilingReviewPage = ({ shipment }) => {
 
         return (
           <div key={type} id={`shpfilingreview-${type}-card`}
-            style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 18 }}>
+            style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, padding: 18 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-              <h3 style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, margin: 0,
+              <h3 style={{ fontFamily: HZ_DISPLAY, fontSize: 14, fontWeight: 700, color: HZ.text, margin: 0,
                 display: "flex", alignItems: "center", gap: 6 }}>
                 <IconFileCertificate size={14} /> {label}
               </h3>
               {filing && (
-                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
-                  color: statusColorKey ? T[statusColorKey] : T.textMuted, textTransform: "uppercase" }}>
+                <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700,
+                  color: statusColorKey ? HZ[statusColorKey] : HZ.textMuted, textTransform: "uppercase" }}>
                   {filing.status}
                 </span>
               )}
             </div>
 
             {!filing ? (
-              <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, fontStyle: "italic" }}>
+              <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, fontStyle: "italic" }}>
                 No filing created yet — start it on the Details tab.
               </div>
             ) : (
               <>
-                <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
+                <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8,
                   padding: "12px 14px", marginBottom: 14, display: "flex", flexDirection: "column", gap: 8 }}>
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Filing Reference</span>
-                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.text }}>{filing.filingReference || "—"}</span>
+                    <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted }}>Filing Reference</span>
+                    <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.text }}>{filing.filingReference || "—"}</span>
                   </div>
                   {filing.status === "Accepted" && (
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Confirmation Number</span>
-                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.success }}>{filing.confirmationNumber}</span>
+                      <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted }}>Confirmation Number</span>
+                      <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.good }}>{filing.confirmationNumber}</span>
                     </div>
                   )}
                   {filing.status === "Rejected" && (
                     <div>
-                      <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 3 }}>Rejection Reason</div>
-                      <div style={{ fontFamily: T.body, fontSize: 12, color: T.danger }}>{filing.rejectionReason}</div>
+                      <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginBottom: 3 }}>Rejection Reason</div>
+                      <div style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.crit }}>{filing.rejectionReason}</div>
                     </div>
                   )}
                 </div>
@@ -116,7 +124,7 @@ const ShipmentCustomsFilingReviewPage = ({ shipment }) => {
                 )}
 
                 <div>
-                  <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                  <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600,
                     textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Message Thread</div>
                   <EdiMessageList messages={thread} emptyText="No messages yet." />
                 </div>

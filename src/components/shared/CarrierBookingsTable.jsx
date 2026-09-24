@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { T } from "../../tokens";
 import { api } from "../../api";
 import Spinner from "../primitives/Spinner";
 import { IconFolder } from "../primitives/Icon";
+import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY } from "../../pages/shipments/shipmentDetailTheme";
 
 // ─── Carrier Bookings Table ────────────────────────────────────────────────────
 // Shared by ShipmentCarrierBookingDetailsPage.jsx and ShipmentCarrierBookingReviewPage.jsx —
@@ -22,10 +22,13 @@ import { IconFolder } from "../primitives/Icon";
 // own Send/Confirm/Cancel actions are never duplicated here; they live in the surrounding
 // Details/Review content this table sits above.
 
-const STATUS_COLOR = {
-  Created: "#6b7280", Pending: "#3b82f6", Confirmed: "#22c55e",
-  Rejected: "#ef4444", Cancelled: "#6b7280",
-};
+// A function, not a plain object — HZ is a live-mutated object (App.jsx's theme toggle calls
+// applyHzTheme in place, no reload), so a plain object built from HZ.* at module load would
+// freeze whichever theme was active at import and never follow a later toggle.
+const statusColor = status => ({
+  Created: HZ.textMuted, Pending: HZ.info, Confirmed: HZ.good,
+  Rejected: HZ.crit, Cancelled: HZ.textMuted,
+}[status]);
 
 const CarrierBookingsTable = ({ shipment }) => {
   const [rows,      setRows]      = useState(null); // null = loading
@@ -75,48 +78,48 @@ const CarrierBookingsTable = ({ shipment }) => {
 
   return (
     <div id="carrier-bookings-table" style={{ maxWidth: 1100, margin: "0 auto 24px" }}>
-      <h3 style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 12 }}>
+      <h3 style={{ fontFamily: HZ_DISPLAY, fontSize: 14, fontWeight: 700, color: HZ.text, marginBottom: 12 }}>
         Bookings on this Shipment
       </h3>
 
       {rows.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "30px 0", color: T.textMuted }}>
+        <div style={{ textAlign: "center", padding: "30px 0", color: HZ.textMuted }}>
           <div style={{ marginBottom: 8 }}><IconFolder size={28} /></div>
-          <div style={{ fontFamily: T.body, fontSize: 13 }}>No booking yet.</div>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 13 }}>No booking yet.</div>
         </div>
       ) : (
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden" }}>
           <div style={{ display: "grid", gridTemplateColumns: "150px 90px 100px 120px 1fr",
-            gap: 10, padding: "8px 16px", borderBottom: `1px solid ${T.border}`,
-            fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase" }}>
+            gap: 10, padding: "8px 16px", borderBottom: `1px solid ${HZ.border}`,
+            fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, color: HZ.textMuted, textTransform: "uppercase" }}>
             <span>Booking ID</span><span>Carrier</span><span>Status</span><span>Date</span><span>Reason</span>
           </div>
           {rows.map(b => {
-            const color = STATUS_COLOR[b.status] || T.textMuted;
+            const color = statusColor(b.status) || HZ.textMuted;
             const isOpen = expanded === b.id;
             const dateVal = b.isCurrent
               ? (b.cancelledAt || b.respondedAt || b.requestedAt || b.createdAt || "")
               : (b.archivedAt || "");
             return (
-              <div key={b.id} style={{ borderBottom: `1px solid ${T.border}22`,
-                background: b.isCurrent ? `${T.accent}0c` : "transparent" }}>
+              <div key={b.id} style={{ borderBottom: `1px solid ${HZ.border}`,
+                background: b.isCurrent ? HZ.cyanBg : "transparent" }}>
                 <button onClick={() => setExpanded(isOpen ? null : b.id)}
                   style={{ display: "grid", gridTemplateColumns: "150px 90px 100px 120px 1fr",
                     gap: 10, width: "100%", background: "none", border: "none", cursor: "pointer",
-                    padding: "10px 16px", textAlign: "left", fontFamily: T.body, fontSize: 12.5, color: T.text }}>
+                    padding: "10px 16px", textAlign: "left", fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontFamily: T.mono, fontWeight: 700, color: T.accent }}>{b.id}</span>
+                    <span style={{ fontFamily: HZ_MONO, fontWeight: 700, color: HZ.cyan }}>{b.id}</span>
                     {b.isCurrent && (
-                      <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: T.accent,
-                        border: `1px solid ${T.accent}55`, borderRadius: 4, padding: "1px 5px", textTransform: "uppercase" }}>
+                      <span style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, color: HZ.cyan,
+                        border: `1px solid ${HZ.cyan}55`, borderRadius: 4, padding: "1px 5px", textTransform: "uppercase" }}>
                         Current
                       </span>
                     )}
                   </span>
-                  <span style={{ fontFamily: T.mono }}>{b.carrierCode || "—"}</span>
-                  <span style={{ fontFamily: T.mono, fontWeight: 700, color, textTransform: "uppercase" }}>{b.status}</span>
+                  <span style={{ fontFamily: HZ_MONO }}>{b.carrierCode || "—"}</span>
+                  <span style={{ fontFamily: HZ_MONO, fontWeight: 700, color, textTransform: "uppercase" }}>{b.status}</span>
                   <span>{dateVal ? dateVal.slice(0, 10) : "—"}</span>
-                  <span style={{ color: T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <span style={{ color: HZ.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {b.archivedReason || "—"}
                   </span>
                 </button>
@@ -134,22 +137,22 @@ const CarrierBookingsTable = ({ shipment }) => {
                         ["Correlation ID", b.correlationId || "—"],
                         ["Linked B/L", linkedDoc
                           ? <a href="#" onClick={e => { e.preventDefault(); api.documents.download(shipment.id, linkedDoc.id, linkedDoc.filename); }}
-                              style={{ color: T.accent, textDecoration: "none" }}>{linkedDoc.filename}</a>
+                              style={{ color: HZ.cyan, textDecoration: "none" }}>{linkedDoc.filename}</a>
                           : (b.blDocumentId ? "Linked document" : "Not linked")],
                       ].map(([label, value]) => (
                         <div key={label}>
-                          <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
+                          <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, fontWeight: 600,
                             textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 3 }}>{label}</div>
-                          <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text }}>{value}</div>
+                          <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text }}>{value}</div>
                         </div>
                       ))}
                     </div>
                     {b.isCurrent ? (
-                      <div style={{ marginTop: 10, fontFamily: T.body, fontSize: 11.5, color: T.textMuted, fontStyle: "italic" }}>
+                      <div style={{ marginTop: 10, fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted, fontStyle: "italic" }}>
                         This is the current booking — use the actions below to manage it.
                       </div>
                     ) : (
-                      <div style={{ marginTop: 10, fontFamily: T.body, fontSize: 11.5, color: T.textMuted, fontStyle: "italic" }}>
+                      <div style={{ marginTop: 10, fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted, fontStyle: "italic" }}>
                         Superseded {b.archivedAt ? `on ${b.archivedAt.slice(0, 10)}` : ""} — read-only record, nothing here can be edited.
                       </div>
                     )}

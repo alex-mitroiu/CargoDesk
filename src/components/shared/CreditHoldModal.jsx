@@ -1,7 +1,7 @@
-import { T } from "../../tokens";
 import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
 import { IconWarning } from "../primitives/Icon";
+import { HZ, HZ_BODY } from "../../pages/shipments/shipmentDetailTheme";
 
 // Credit hold — hard block, no way to proceed from here (Organization Model Enhancement
 // Epic 2, extended by Credit Control Depth / TKT-Q00WHF to fire at carrier-booking send time
@@ -15,10 +15,10 @@ import { IconWarning } from "../primitives/Icon";
 const CreditHoldModal = ({ holds, action = "generating a new invoice", onClose }) => (
   <Modal title="Blocked — Credit Hold" onClose={onClose} width={460}>
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ padding: "10px 14px", borderRadius: 8, background: `${T.danger}18`,
-        border: `1px solid ${T.danger}44`, display: "flex", gap: 10, alignItems: "flex-start" }}>
-        <span style={{ color: T.danger, flexShrink: 0, marginTop: 1 }}><IconWarning size={15} /></span>
-        <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, lineHeight: 1.5 }}>
+      <div style={{ padding: "10px 14px", borderRadius: 8, background: HZ.critBg,
+        border: `1px solid ${HZ.crit}44`, display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <span style={{ color: HZ.crit, flexShrink: 0, marginTop: 1 }}><IconWarning size={15} /></span>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, lineHeight: 1.5 }}>
           {holds.length === 1
             ? <>The {holds[0].role.toLowerCase()} on this shipment, <strong>{holds[0].companyName}</strong>, is on credit hold.</>
             : <>{holds.length} parties on this shipment are on credit hold.</>}
@@ -27,12 +27,12 @@ const CreditHoldModal = ({ holds, action = "generating a new invoice", onClose }
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {holds.map((h, i) => (
-          <div key={i} style={{ padding: "8px 12px", borderRadius: 6, background: T.bg, border: `1px solid ${T.border}` }}>
-            <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.text }}>
-              {h.companyName} <span style={{ fontWeight: 400, color: T.textMuted }}>— {h.role}</span>
+          <div key={i} style={{ padding: "8px 12px", borderRadius: 6, background: HZ.bg, border: `1px solid ${HZ.border}` }}>
+            <div style={{ fontFamily: HZ_BODY, fontSize: 12, fontWeight: 700, color: HZ.text }}>
+              {h.companyName} <span style={{ fontWeight: 400, color: HZ.textMuted }}>— {h.role}</span>
             </div>
             {h.reason && (
-              <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, marginTop: 2 }}>{h.reason}</div>
+              <div style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted, marginTop: 2 }}>{h.reason}</div>
             )}
           </div>
         ))}

@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { T } from "../../tokens";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { useAuth } from "../../AuthContext";
@@ -9,6 +8,8 @@ import Spinner from "../../components/primitives/Spinner";
 import EdiMessageList from "../../components/shared/EdiMessageList";
 import { IconFileCertificate, IconWarning } from "../../components/primitives/Icon";
 import { servicePageKey } from "../../shipmentServicePages";
+import { canEditShipmentSide } from "../../utils/officeSide";
+import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
 
 // ─── Customs Filing — Details ───────────────────────────────────────────────────
 // Two side-by-side cards (Export AES/EEI | Import ISF/AMS), not a type-switcher —
@@ -18,6 +19,12 @@ import { servicePageKey } from "../../shipmentServicePages";
 // filing type. Submit lives here (not on Review) since unlike carrier booking
 // there's no equipment/contract composition step to review first — just "submit
 // this Draft."
+//
+// Trade Horizon "New Style" pass — styling only. STATUS_COLOR keeps the original's
+// own store-the-key-not-the-value indirection (HZ[key], resolved at render time) —
+// already the correct pattern for a live-mutated theme object (App.jsx's toggle calls
+// applyHzTheme in place, no reload); a plain object storing resolved HZ.* values at
+// module load would freeze whichever theme was active at import.
 
 // pickupRelevant: only AES/EEI (export) has any real relationship to the Pickup service
 // (Export-side only, SERVICE_TYPE_SIDES.Pickup) — ISF/AMS is the import-side filing, which
@@ -27,7 +34,7 @@ const FILING_TYPES = [
   { type: "ISF_AMS", label: "ISF/AMS (Import)", brokerRole: "Customs Broker (Import)", pickupRelevant: false },
 ];
 
-const STATUS_COLOR = { Draft: "", Filed: "accent", Accepted: "success", Rejected: "danger" };
+const STATUS_COLOR = { Draft: "", Filed: "cyan", Accepted: "good", Rejected: "crit" };
 
 // Pre-departure filing deadline (TKT-6A7J45, story 10) — real AES/ISF rules carry hard
 // deadlines relative to vessel loading, not to whenever someone happens to click Submit.
@@ -43,7 +50,8 @@ const deadlineInfo = etd => {
 };
 
 const ShipmentCustomsFilingDetailsPage = ({ shipment, parties, packages, hasExportBroker, hasImportBroker, navigate }) => {
-  const { canEditShipments: canEdit } = useAuth();
+  const { canEditShipments: canEditRole, isAdmin, activeRoles, allOffices } = useAuth();
+  const auth = { canEditShipments: canEditRole, isAdmin, activeRoles, allOffices };
   const [filings,  setFilings]  = useState(null); // null = loading
   const [messages, setMessages] = useState([]);
   const [services, setServices] = useState([]);
@@ -84,10 +92,12 @@ const ShipmentCustomsFilingDetailsPage = ({ shipment, parties, packages, hasExpo
     setBusy(null);
   };
 
+  useHorizonFonts();
+
   if (filings === null) {
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.textMuted,
-        fontFamily: T.body, fontSize: 13, padding: "30px 0", justifyContent: "center" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, color: HZ.textMuted,
+        fontFamily: HZ_BODY, fontSize: 13, padding: "30px 0", justifyContent: "center" }}>
         <Spinner size="sm" /> Loading customs filings…
       </div>
     );
@@ -99,6 +109,10 @@ const ShipmentCustomsFilingDetailsPage = ({ shipment, parties, packages, hasExpo
         const filing = filings.find(f => f.filingType === type) || null;
         const broker = parties.find(p => p.role === brokerRole) || null;
         const hasThisBroker = type === "AES_EEI" ? hasExportBroker : hasImportBroker;
+        // Each filing type gates independently on its own side (Office-Side Permissions Epic,
+        // TKT-Z0LB0W — Option A from the design review: one page, but AES/EEI and ISF/AMS are
+        // never gated as a single blanket unit).
+        const canEdit = canEditShipmentSide(auth, shipment, type === "AES_EEI" ? "export" : "import");
         const thread = filing ? messages.filter(m => m.correlationId === filing.id && m.direction === "out") : [];
         const statusColorKey = filing ? STATUS_COLOR[filing.status] : "";
         // Pickup hasn't been ordered yet, or is still just Requested (not Confirmed/Completed) —
@@ -108,24 +122,24 @@ const ShipmentCustomsFilingDetailsPage = ({ shipment, parties, packages, hasExpo
 
         return (
           <div key={type} id={`shpfiling-${type}-card`}
-            style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 18 }}>
+            style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, padding: 18 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-              <h3 style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, margin: 0,
+              <h3 style={{ fontFamily: HZ_DISPLAY, fontSize: 14, fontWeight: 700, color: HZ.text, margin: 0,
                 display: "flex", alignItems: "center", gap: 6 }}>
                 <IconFileCertificate size={14} /> {label}
               </h3>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {filing?.isStale && (
                   <span title={`Shipment data has changed since this filing was submitted (${filing.staleFields.join(", ")})`}
-                    style={{ display: "inline-flex", alignItems: "center", gap: 4, fontFamily: T.mono, fontSize: 9.5,
-                      fontWeight: 700, color: T.warning, background: `${T.warning}18`, border: `1px solid ${T.warning}44`,
+                    style={{ display: "inline-flex", alignItems: "center", gap: 4, fontFamily: HZ_MONO, fontSize: 9.5,
+                      fontWeight: 700, color: HZ.warn, background: HZ.warnBg,
                       borderRadius: 4, padding: "2px 6px", textTransform: "uppercase" }}>
                     <IconWarning size={10} /> May be stale
                   </span>
                 )}
                 {filing && (
-                  <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
-                    color: statusColorKey ? T[statusColorKey] : T.textMuted, textTransform: "uppercase" }}>
+                  <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700,
+                    color: statusColorKey ? HZ[statusColorKey] : HZ.textMuted, textTransform: "uppercase" }}>
                     {filing.status}
                   </span>
                 )}
@@ -134,16 +148,16 @@ const ShipmentCustomsFilingDetailsPage = ({ shipment, parties, packages, hasExpo
 
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
               <div>
-                <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600,
                   textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Broker</div>
-                <div style={{ fontFamily: T.body, fontSize: 13, color: broker ? T.text : T.border }}>
+                <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: broker ? HZ.text : HZ.textFaint }}>
                   {broker?.customerName || "Not yet assigned"}
                 </div>
               </div>
               <div>
-                <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600,
                   textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Cargo</div>
-                <div style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>
+                <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text }}>
                   {priced.length} priced line{priced.length !== 1 ? "s" : ""} · {fmtCurr(cargoTotalUsd, "USD")}
                 </div>
                 {/* Export-control classification coverage (2026-09 gap analysis finding #3) —
@@ -151,7 +165,7 @@ const ShipmentCustomsFilingDetailsPage = ({ shipment, parties, packages, hasExpo
                     license concept. A soft awareness line, never a hard block — most goods are
                     legitimately EAR99/no-license, so an unclassified line isn't necessarily wrong. */}
                 {type === "AES_EEI" && priced.length > 0 && (
-                  <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 3 }}>
+                  <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginTop: 3 }}>
                     {priced.filter(p => p.licenseType).length} of {priced.length} export-classified (ECCN/license)
                   </div>
                 )}
@@ -161,10 +175,10 @@ const ShipmentCustomsFilingDetailsPage = ({ shipment, parties, packages, hasExpo
                   ISF/AMS (import) card. */}
               {pickupRelevant && (
                 <div>
-                  <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                  <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600,
                     textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Pickup</div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <span style={{ fontFamily: T.body, fontSize: 13, color: pickup ? T.text : T.border }}>
+                    <span style={{ fontFamily: HZ_BODY, fontSize: 13, color: pickup ? HZ.text : HZ.textFaint }}>
                       {pickup
                         ? `${pickup.status}${pickup.confirmedDate ? ` for ${new Date(pickup.confirmedDate).toLocaleDateString()}` : ""}`
                         : "Not yet ordered"}
@@ -172,7 +186,7 @@ const ShipmentCustomsFilingDetailsPage = ({ shipment, parties, packages, hasExpo
                     {pickup && navigate && (
                       <button onClick={() => navigate(servicePageKey("Export", "Pickup"), shipment.id)}
                         style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
-                          fontFamily: T.body, fontSize: 12, color: T.accent, textDecoration: "underline" }}>
+                          fontFamily: HZ_BODY, fontSize: 12, color: HZ.cyan, textDecoration: "underline" }}>
                         View Pickup Service →
                       </button>
                     )}
@@ -180,8 +194,8 @@ const ShipmentCustomsFilingDetailsPage = ({ shipment, parties, packages, hasExpo
                 </div>
               )}
               {deadline && (
-                <div style={{ fontFamily: T.body, fontSize: 11.5,
-                  color: deadline.overdue ? T.danger : deadline.urgent ? T.warning : T.textMuted }}>
+                <div style={{ fontFamily: HZ_BODY, fontSize: 11.5,
+                  color: deadline.overdue ? HZ.crit : deadline.urgent ? HZ.warn : HZ.textMuted }}>
                   {deadline.overdue ? "⚠ " : ""}{deadline.text}
                 </div>
               )}
@@ -195,7 +209,7 @@ const ShipmentCustomsFilingDetailsPage = ({ shipment, parties, packages, hasExpo
                     {busy === type ? "Creating…" : "Create Filing"}
                   </Btn>
                   {!hasThisBroker && (
-                    <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 6, fontStyle: "italic" }}>
+                    <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginTop: 6, fontStyle: "italic" }}>
                       Assign a {label.includes("Export") ? "Customs Broker (Export)" : "Customs Broker (Import)"} to enable this.
                     </div>
                   )}
@@ -205,9 +219,9 @@ const ShipmentCustomsFilingDetailsPage = ({ shipment, parties, packages, hasExpo
               <>
                 {filing.status === "Draft" && pickupNotReady && (
                   <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "8px 10px",
-                    marginBottom: 10, borderRadius: 6, background: `${T.warning}14`, border: `1px solid ${T.warning}33` }}>
-                    <span style={{ color: T.warning, flexShrink: 0, marginTop: 1 }}><IconWarning size={12} /></span>
-                    <span style={{ fontFamily: T.body, fontSize: 11.5, color: T.text, lineHeight: 1.5 }}>
+                    marginBottom: 10, borderRadius: 6, background: HZ.warnBg, border: `1px solid ${HZ.warn}33` }}>
+                    <span style={{ color: HZ.warn, flexShrink: 0, marginTop: 1 }}><IconWarning size={12} /></span>
+                    <span style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.text, lineHeight: 1.5 }}>
                       {pickup ? "Pickup is still Requested, not Confirmed yet." : "No Pickup service has been ordered yet."} Real
                       filing timing is tied to when cargo actually moves — you can still submit, but double-check the export
                       date first.
@@ -220,12 +234,12 @@ const ShipmentCustomsFilingDetailsPage = ({ shipment, parties, packages, hasExpo
                   </Btn>
                 )}
                 {filing.status !== "Draft" && filing.filingReference && (
-                  <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginBottom: 10 }}>
+                  <div style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted, marginBottom: 10 }}>
                     Ref: {filing.filingReference}
                   </div>
                 )}
                 <div style={{ marginTop: 14 }}>
-                  <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                  <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600,
                     textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Sent</div>
                   <EdiMessageList messages={thread} emptyText="Not submitted yet." />
                 </div>

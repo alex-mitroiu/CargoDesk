@@ -14,11 +14,18 @@
 module.exports = function customsFilingRoutes(app, ctx) {
   const { query, uid, ok, err, auth, requireRole, applyShipmentAccessFilter,
           mapCustomsFiling, mapEdiMessage, mapShipment,
-          logEntityEvent, isUniqueViolation, CUSTOMS_FILING_TYPES, autoCompleteMilestone } = ctx;
+          logEntityEvent, isUniqueViolation, CUSTOMS_FILING_TYPES, autoCompleteMilestone,
+          officeSideOf, blockIfWrongSide } = ctx;
 
   const write = requireRole(["operator", "admin", "occ_bk"]); // same set as routes/edi.js
 
   const FILING_TYPE_LABEL = { AES_EEI: "AES/EEI (Export)", ISF_AMS: "ISF/AMS (Import)" };
+  // Office-Side Permissions Epic (TKT-Z0LB0W), Phase 2 (TKT-NXXVFN) — Option A from the design
+  // review: one page, but each filing type gates independently by its own side, not the whole
+  // page at once. A shipment can hold both an AES/EEI and an ISF/AMS filing at the same time
+  // (this file's own header comment), so an export-side user submitting their AES/EEI filing
+  // must never be blocked by — or able to touch — the same shipment's ISF/AMS filing.
+  const FILING_TYPE_SIDE = { AES_EEI: "export", ISF_AMS: "import" };
   const REF_PREFIX = { AES_EEI: "AES", ISF_AMS: "ISF" };
   // Matches ShipmentCustomsFilingDetailsPage.jsx's own per-card "Create Filing" precondition
   // exactly (hasThisBroker) — previously only enforced client-side, so a direct API call could
@@ -106,6 +113,7 @@ module.exports = function customsFilingRoutes(app, ctx) {
     const { filingType } = req.body || {};
     if (!CUSTOMS_FILING_TYPES.includes(filingType))
       return err(res, `filingType must be one of ${CUSTOMS_FILING_TYPES.join(", ")}`);
+    if (await blockIfWrongSide(req, res, shipment, FILING_TYPE_SIDE[filingType])) return;
     const brokerRole = FILING_TYPE_BROKER_ROLE[filingType];
     const hasBroker = !!(await query("SELECT id FROM shipment_parties WHERE shipment_id=$1 AND role=$2", [shipment.id, brokerRole]))[0];
     if (!hasBroker) return err(res, `Assign a ${brokerRole} to this shipment before creating a ${FILING_TYPE_LABEL[filingType]} filing`);
@@ -138,6 +146,7 @@ module.exports = function customsFilingRoutes(app, ctx) {
     if (!filing) return err(res, "Filing not found", 404);
     if (filing.status !== "Draft") return err(res, `Filing is already ${filing.status.toLowerCase()}`, 409);
     const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (await blockIfWrongSide(req, res, shipment, FILING_TYPE_SIDE[filing.filing_type])) return;
     const now = new Date().toISOString();
     const filingRef = `${REF_PREFIX[filing.filing_type]}${uid()}`;
     // Snapshot conveyance + cargo data at the moment of Submit (TKT-6A7J45, stories 3-4) —
@@ -168,6 +177,7 @@ module.exports = function customsFilingRoutes(app, ctx) {
     if (outcome !== "accepted" && outcome !== "rejected") return err(res, 'outcome must be "accepted" or "rejected"');
     if (filing.status !== "Filed") return err(res, "This filing has no pending submission to respond to", 409);
     const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (await blockIfWrongSide(req, res, shipment, FILING_TYPE_SIDE[filing.filing_type])) return;
     const now = new Date().toISOString();
     if (outcome === "accepted") {
       const confNum = confirmationNumber?.trim() || `CBP${uid()}`;
@@ -200,6 +210,8 @@ module.exports = function customsFilingRoutes(app, ctx) {
   app.patch("/api/shipments/:id/customs-filings/:filingId/reset", write, async (req, res) => {
     const [filing] = await query("SELECT * FROM customs_filings WHERE id=$1 AND shipment_id=$2", [req.params.filingId, req.params.id]);
     if (!filing) return err(res, "Filing not found", 404);
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (await blockIfWrongSide(req, res, shipment, FILING_TYPE_SIDE[filing.filing_type])) return;
     if (filing.status !== "Rejected") return err(res, "Only a Rejected filing can be reset to Draft", 409);
     const now = new Date().toISOString();
     await query(`UPDATE customs_filings SET status='Draft', filing_reference='', rejection_reason='',

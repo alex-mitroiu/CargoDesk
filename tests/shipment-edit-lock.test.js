@@ -73,7 +73,8 @@ async function login(email, password) {
     const emailB = `edit-lock-test-${rand}@example.com`;
     const createB = await request("POST", "/api/users",
       { email: emailB, name: "Edit Lock Test User B", roles: ["operator"], password: "EditLockFixture!2026Zq" }, tokenA);
-    assert("user B created", createB.status === 200, JSON.stringify(createB.body));
+    // POST /api/users now returns the created user + 201, not the old {ok:true}/200 (2026-09-23 QA finding).
+    assert("user B created", createB.status === 201, JSON.stringify(createB.body));
     const usersList = await request("GET", "/api/users", null, tokenA);
     userBId = usersList.body.find(u => u.email === emailB)?.id;
     assert("user B findable", !!userBId);

@@ -3,7 +3,7 @@
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
 [![CI](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.91.6-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.91.7-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-custom-lightgrey)
 
@@ -549,6 +549,7 @@ Recent releases below; full version history (back to v0.1.0) lives in [CHANGELOG
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.91.7 | Landfall | Bundled release — closes out the Office-Side Permissions Epic (TKT-Z0LB0W, all 6 phases Released: per-shipment relative office-side scoping, fixed-side write gates, a vessel-arrived import-office-handoff Kanban trigger, and a 50-assertion regression suite) and completes the Trade Horizon restyle across every remaining Shipment Details page — Cargo and History get a stat strip and a real table, Involved Offices and Export/Import Services flatten to one card per side with a Your Side/Read-only badge, Invoice Entry/Cost Entry/GP Overview round out Accounting, and Shipping Instructions, Documents, Carrier Booking and Customs Filing move onto the same tokens in their existing layout; fixes a real bug where several new colour lookups didn't follow the app's live light/dark toggle, and a separate pre-existing bug where the Carrier Booking/Customs Filing Details↔Review tab strip could go stale when navigated to while the page was already mounted. |
 | 0.91.6 | Concourse | Bundled release — the shared Shipments-style table system (column-header checklists, search, sort, paging) now runs on every list page: Quotes, Opportunities, Contracts, Customers, Freight Audit (both tabs), Credit Overrides, Schedule Search and Space Configurations; Space Configurations splits Trade Lane into Origin Trade and Destination Trade; Quotes, Opportunities, Reports, Freight Audit and Credit Overrides move into a new Financials sidebar group with a hub page of live counts; the shared Modal closes on Escape; and the shipment header's Loop route modal, which could not be closed, is fixed along with every other overlay that header opens. |
 | 0.91.5 | Chartroom | Bundled release — Master Data gains a real Eastbound/Westbound loop-rotation editor (Loop Codes, one tabbed edit modal, a port allowed in both directions, AL1 now the real Hapag-Lloyd rotation) and a new HS Codes registry with a live, never-stored EU classification lookup, and the free-text HS Code inputs on cargo forms become a registry-backed picker; the Trade Horizon design (Dashboard, Shipment Details) now has a full light theme that follows the app toggle; dropdowns that opened far from their input inside glass cards (Equipment Type, HS Code) are now portaled; Quotes is rebuilt on a new shared Shipments-style table system (column-header checklists, search, sort, server-side paging) as the pilot for the other list pages; the Shipment Details sidebar gains a collapsible icon rail, group folding and a milestone vitals card; the CRD/ETD contract guard, contract-match dedup and space-configuration search get real fixes; and CI is green again after being red since v0.91.3 — every backend test and Cypress spec now provisions its own offices and the backend login cap is raised to 1000. |
 | 0.91.4 | Ratify | Fix wave — Contract Picker no longer lets a re-opened "Change Contract" silently reselect the already-assigned contract, and a card click now stages behind an explicit Confirm/Cancel step; fixed an app-wide modal background-scroll leak; fixed a real data bug where a stale Cargo Ready Date/ETD mismatch could permanently block a shipment from ever having a contract set again. |
@@ -564,7 +565,6 @@ Recent releases below; full version history (back to v0.1.0) lives in [CHANGELOG
 | 0.87.0 | Consortium | Closed 4 Kanban tickets found already shipped on re-audit; added NVOCC co-loading/cross-tariff reference, the last gap in that epic. |
 | 0.86.0 | Slate | Added an admin "Reset Demo Data" panel — wipes business data back to a clean slate on demand while preserving MDM/config data, with a preview and a typed confirmation gate. |
 | 0.85.0 | Approach | Bundled release: a CRM pre-sales pipeline (Opportunities), a Confirmed/Pending/Rejected TEU consumption split (replacing one lumped total), and multi-tab-aware idle-timeout auto-logout. |
-| 0.84.0 | Capstone | Extracted the Customer/Organization Service (5th and final planned microservice cut), completing the Organization Model roadmap begun at v0.56.0. |
 
 ---
 

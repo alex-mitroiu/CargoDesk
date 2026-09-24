@@ -256,17 +256,21 @@ app.post("/internal/tickets", async (req, res) => {
 // monolith's own check-then-insert (a narrow race under concurrent sweeps) with a real
 // ON CONFLICT DO NOTHING against the UNIQUE(source_type, source_id) constraint.
 app.post("/internal/tickets/ensure", async (req, res) => {
-  const { sourceType, sourceId, shipmentId = null, title, description = '', priority = 'Medium' } = req.body || {};
+  const { sourceType, sourceId, shipmentId = null, title, description = '', priority = 'Medium', assigneeId = null } = req.body || {};
   if (!sourceType || !sourceId) return err(res, "sourceType and sourceId required");
   if (!title) return err(res, "title required");
   const id  = `TKT-${uid()}`;
   const [posRow] = await query("SELECT MAX(position) AS m FROM tickets WHERE status='Ready'");
   const pos = (posRow?.m ?? -1) + 1;
+  // assigneeId (Office-Side Permissions Epic's vessel_arrived_import_handoff trigger, server.js)
+  // — this service owns no `users` table (see this file's own header comment), so it's stored as
+  // a bare opaque monolith user id, same as every other assignee_id here; resolveAssigneeNames()
+  // on the monolith side resolves it back to a real name for display.
   const result = await query(`INSERT INTO tickets
-    (id, title, description, priority, status, position, created_at, shipment_id, type, source_type, source_id)
-    VALUES ($1,$2,$3,$4,'Ready',$5,$6,$7,'Task',$8,$9)
+    (id, title, description, priority, status, position, created_at, shipment_id, type, source_type, source_id, assignee_id)
+    VALUES ($1,$2,$3,$4,'Ready',$5,$6,$7,'Task',$8,$9,$10)
     ON CONFLICT (source_type, source_id) DO NOTHING RETURNING id`,
-    [id, title, description, priority, pos, new Date().toISOString(), shipmentId || null, sourceType, sourceId]);
+    [id, title, description, priority, pos, new Date().toISOString(), shipmentId || null, sourceType, sourceId, assigneeId || null]);
   const created = result.length > 0;
   ok(res, { created, id: created ? id : null });
 });

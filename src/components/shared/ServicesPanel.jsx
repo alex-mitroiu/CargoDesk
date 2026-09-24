@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { T, todayIso } from "../../tokens";
+import { todayIso } from "../../tokens";
 import { useAuth } from "../../AuthContext";
 import { api } from "../../api";
 import { toast } from "../../toast";
@@ -13,6 +13,8 @@ import { serviceTypesForSide } from "../../shipmentServicePages";
 import { emitServicesChanged } from "../../servicesBus";
 import { findRoutingLeg } from "../../utils/carrierBooking";
 import { IconClose, IconPencil } from "../primitives/Icon";
+import { canEditShipmentSide } from "../../utils/officeSide";
+import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
 
 // ─── Dedicated Services panel (TKT-9DGDNP) ─────────────────────────────────
 // Ancillary services (VGM, Pickup, Fumigation, Storage, Customs, ...) ordered
@@ -20,7 +22,12 @@ import { IconClose, IconPencil } from "../primitives/Icon";
 // Requested → Confirmed → Completed (or Cancelled) lifecycle. Deliberately
 // independent of shipment_legs — a leg tracks physical routing, a service
 // tracks who's ordering an ancillary activity and its status. Embedded
-// directly on the Overview page as a dashboard (not a promoted sub-page).
+// directly on the Overview page as a dashboard (not a promoted sub-page) —
+// its only real consumer, so on Trade Horizon (HZ) tokens now too, same
+// Export=cyan/Import=violet column convention as Parties & Offices'
+// Involved Offices cards (approved mockup:
+// https://claude.ai/artifact/25ygL745mmMfvYWBXZWoAE established the pattern,
+// this is its extension to the rest of the shipment detail experience).
 //
 // SERVICE_TYPES now lives in shipmentServicePages.js — shared with the dedicated
 // per-service nav/routing pattern (Epic TKT-TBS7QD), which needs the same catalog.
@@ -29,15 +36,17 @@ import { IconClose, IconPencil } from "../primitives/Icon";
 // independently; existing rows saved with the old combined label are free text
 // and simply keep displaying it — no data migration needed.
 
-const STATUS_COLOR = { Requested: T.warning, Confirmed: T.info, Completed: T.success, Cancelled: T.textMuted };
+// A function, not a plain object — HZ is a live-mutated object (App.jsx's theme toggle calls
+// applyHzTheme in place, no reload), so a plain object built from HZ.* at module load would
+// freeze whichever theme was active at import and never follow a later toggle.
+const statusColor = status => ({ Requested: HZ.warn, Confirmed: HZ.info, Completed: HZ.good, Cancelled: HZ.textMuted }[status]);
 const NEXT_STATUS   = { Requested: "Confirmed", Confirmed: "Completed" };
 const NEXT_LABEL     = { Requested: "Confirm", Confirmed: "Complete" };
 
 const StatusPill = ({ status }) => (
-  <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.03em",
+  <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: "0.03em",
     padding: "2px 8px", borderRadius: 4, textTransform: "uppercase",
-    background: STATUS_COLOR[status] + "22", color: STATUS_COLOR[status],
-    border: `1px solid ${STATUS_COLOR[status]}55` }}>
+    background: statusColor(status) + "22", color: statusColor(status) }}>
     {status}
   </span>
 );
@@ -122,36 +131,35 @@ const ServiceForm = ({ side, offices, shipment, init = null, onSave, onCancel })
 
 const ServiceRow = ({ service, canEdit, onAdvance, onCancelService, onDelete, onEdit }) => {
   const nextStatus = NEXT_STATUS[service.status];
+  const iconBtn = { width: 22, height: 22, borderRadius: 6, border: `1px solid ${HZ.border}`,
+    background: HZ.surface2, color: HZ.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
+    cursor: "pointer", flexShrink: 0 };
   return (
-    <div id={`svcpanel-row-${service.id}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
-      background: T.bg, border: `1px solid ${T.border}`, borderRadius: 7 }}>
+    <div id={`svcpanel-row-${service.id}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
+      background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8 }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, color: T.text }}>
+          <span style={{ fontFamily: HZ_BODY, fontSize: 12.5, fontWeight: 600, color: HZ.text }}>
             {service.serviceType}
           </span>
           <StatusPill status={service.status} />
         </div>
-        <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 2 }}>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginTop: 2 }}>
           {service.vendorName || "No vendor set"}
           {service.officeCode ? ` · ${service.officeCode}` : ""}
           {service.requestedDate ? ` · Req. ${service.requestedDate}` : ""}
         </div>
       </div>
       {canEdit && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
           <button id={`svcpanel-row-${service.id}-edit-btn`} type="button" onClick={() => onEdit(service)}
-            title="Edit vendor / office / notes"
-            style={{ background: "none", border: "none", color: T.textMuted,
-              cursor: "pointer", padding: "3px 4px", display: "inline-flex", alignItems: "center" }}
-            onMouseEnter={e => e.currentTarget.style.color = T.accent}
-            onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-            <IconPencil size={12} />
+            title="Edit vendor / office / notes" style={iconBtn}>
+            <IconPencil size={11} />
           </button>
           {nextStatus && (
             <button id={`svcpanel-row-${service.id}-advance-btn`} type="button" onClick={() => onAdvance(service, nextStatus)}
-              style={{ background: "none", border: `1px solid ${T.accent}66`, color: T.accent,
-                borderRadius: 5, padding: "3px 9px", fontFamily: T.body, fontSize: 11,
+              style={{ background: "none", border: `1px solid ${HZ.cyan}66`, color: HZ.cyan,
+                borderRadius: 5, padding: "3px 9px", fontFamily: HZ_BODY, fontSize: 11,
                 fontWeight: 600, cursor: "pointer" }}>
               {NEXT_LABEL[service.status]}
             </button>
@@ -159,18 +167,14 @@ const ServiceRow = ({ service, canEdit, onAdvance, onCancelService, onDelete, on
           {(service.status === "Requested" || service.status === "Confirmed") && (
             <button id={`svcpanel-row-${service.id}-cancel-btn`} type="button" onClick={() => onCancelService(service)}
               title="Cancel service"
-              style={{ background: "none", border: "none", color: T.textMuted,
-                cursor: "pointer", fontFamily: T.body, fontSize: 11, padding: "3px 4px" }}>
+              style={{ background: "none", border: "none", color: HZ.textMuted,
+                cursor: "pointer", fontFamily: HZ_BODY, fontSize: 11, padding: "3px 4px" }}>
               Cancel
             </button>
           )}
           <button id={`svcpanel-row-${service.id}-delete-btn`} type="button" onClick={() => onDelete(service)}
-            title="Delete service"
-            style={{ background: "none", border: "none", color: T.textMuted,
-              cursor: "pointer", fontSize: 13, padding: "3px 4px", lineHeight: 1 }}
-            onMouseEnter={e => e.currentTarget.style.color = T.danger}
-            onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-            <IconClose size={12} />
+            title="Delete service" style={{ ...iconBtn, color: HZ.crit }}>
+            <IconClose size={11} />
           </button>
         </div>
       )}
@@ -178,42 +182,51 @@ const ServiceRow = ({ service, canEdit, onAdvance, onCancelService, onDelete, on
   );
 };
 
-const ServiceColumn = ({ side, services, loading, canEdit, onRequest, onAdvance, onCancelService, onDelete, onEdit }) => (
-  <div id={`svcpanel-${side.toLowerCase()}-column`} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-      padding: "12px 14px", borderBottom: `1px solid ${T.border}` }}>
-      <span style={{ fontFamily: T.head, fontSize: 14, fontWeight: 800, color: T.text }}>
-        {side} Services
-      </span>
-      {canEdit && (
-        <button id={`svcpanel-${side.toLowerCase()}-request-btn`} type="button" onClick={onRequest}
-          style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
-            padding: "5px 11px", cursor: "pointer", fontFamily: T.body, fontSize: 11.5, color: T.text }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.text; }}>
-          + Request Service
-        </button>
-      )}
+const ServiceColumn = ({ side, services, loading, canEdit, onRequest, onAdvance, onCancelService, onDelete, onEdit }) => {
+  const accent = side === "Export" ? HZ.cyan : HZ.violet;
+  return (
+    <div id={`svcpanel-${side.toLowerCase()}-column`} style={{ background: HZ.surface, backdropFilter: "blur(20px)",
+      border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 16px",
+        borderBottom: `1px solid ${HZ.border}`, background: accent + "14" }}>
+        <span style={{ width: 8, height: 8, borderRadius: "50%", background: accent, flexShrink: 0 }} />
+        <span style={{ fontFamily: HZ_DISPLAY, fontSize: 13, fontWeight: 800, textTransform: "uppercase",
+          letterSpacing: ".06em", color: HZ.text, flex: 1 }}>
+          {side} Services
+        </span>
+        {canEdit && (
+          <button id={`svcpanel-${side.toLowerCase()}-request-btn`} type="button" onClick={onRequest}
+            style={{ background: "none", border: `1px dashed ${accent}55`, borderRadius: 6,
+              padding: "5px 11px", cursor: "pointer", fontFamily: HZ_BODY, fontSize: 11.5, color: accent }}>
+            ＋ Request Service
+          </button>
+        )}
+      </div>
+      <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+        {loading ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: "14px 2px" }}>
+            <Spinner size="sm" />
+          </div>
+        ) : services.length === 0 ? (
+          <div id={`svcpanel-${side.toLowerCase()}-empty`} style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, fontStyle: "italic", padding: "6px 2px" }}>
+            No {side.toLowerCase()} services ordered yet.
+          </div>
+        ) : services.map(s => (
+          <ServiceRow key={s.id} service={s} canEdit={canEdit}
+            onAdvance={onAdvance} onCancelService={onCancelService} onDelete={onDelete} onEdit={onEdit} />
+        ))}
+      </div>
     </div>
-    <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-      {loading ? (
-        <div style={{ display: "flex", justifyContent: "center", padding: "14px 2px" }}>
-          <Spinner size="sm" />
-        </div>
-      ) : services.length === 0 ? (
-        <div id={`svcpanel-${side.toLowerCase()}-empty`} style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", padding: "6px 2px" }}>
-          No {side.toLowerCase()} services ordered yet.
-        </div>
-      ) : services.map(s => (
-        <ServiceRow key={s.id} service={s} canEdit={canEdit}
-          onAdvance={onAdvance} onCancelService={onCancelService} onDelete={onDelete} onEdit={onEdit} />
-      ))}
-    </div>
-  </div>
-);
+  );
+};
 
 const ServicesPanel = ({ shipment }) => {
-  const { canEditShipments: canEdit } = useAuth();
+  const { canEditShipments: canEditRole, isAdmin, activeRoles, allOffices } = useAuth();
+  // Each column is gated by ITS OWN side (Office-Side Permissions Epic, TKT-Z0LB0W) — Export
+  // Services and Import Services are each editable only by the office that owns that side.
+  const auth = { canEditShipments: canEditRole, isAdmin, activeRoles, allOffices };
+  const canEditExport = canEditShipmentSide(auth, shipment, "export");
+  const canEditImport = canEditShipmentSide(auth, shipment, "import");
   // null = not yet loaded (distinct from [] = loaded and genuinely empty) — without this
   // distinction the fetch's first second or two renders "No services ordered yet" even
   // when services do exist, since an empty initial array is indistinguishable from a
@@ -282,14 +295,16 @@ const ServicesPanel = ({ shipment }) => {
     } catch (e) { toast.error(e.message || "Failed to delete service"); }
   };
 
+  useHorizonFonts();
+
   return (
     <div id="svcpanel">
       <div id="svcpanel-columns" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <ServiceColumn side="Export" services={exportServices} loading={loading} canEdit={canEdit}
+        <ServiceColumn side="Export" services={exportServices} loading={loading} canEdit={canEditExport}
           onRequest={() => setRequestSide("Export")}
           onAdvance={handleAdvance} onCancelService={handleCancelService}
           onDelete={setConfirmDelete} onEdit={setEditingService} />
-        <ServiceColumn side="Import" services={importServices} loading={loading} canEdit={canEdit}
+        <ServiceColumn side="Import" services={importServices} loading={loading} canEdit={canEditImport}
           onRequest={() => setRequestSide("Import")}
           onAdvance={handleAdvance} onCancelService={handleCancelService}
           onDelete={setConfirmDelete} onEdit={setEditingService} />

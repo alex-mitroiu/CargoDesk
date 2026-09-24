@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { T } from "../../tokens";
 import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
@@ -7,6 +6,7 @@ import { CostLineForm, CostLineHistoryModal, CostLineRow, CostLineActualizeModal
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { IconClipboard, IconArrowDown, IconArrowUp, IconRefresh } from "../../components/primitives/Icon";
+import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
 
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -145,75 +145,108 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
     loadSnapshots();
   };
 
-  const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
-    textTransform: "uppercase", letterSpacing: ".07em" };
-
   const ACTION_COPY = {
     reset: { title: "Reset to Contract", confirm: "Reset", body: `Regenerate BUY lines from the rate snapshot already committed to this shipment${latestSnapshot ? ` (${latestSnapshot.reason}, ${new Date(latestSnapshot.generatedAt).toLocaleDateString()})` : ""}. This does NOT pull new rates — manually added lines are untouched.` },
   };
 
+  // Cargo-style stat strip — real totals, same treatment as the Cargo tab's New Style
+  // (approved mockup: https://claude.ai/artifact/25ygL745mmMfvYWBXZWoAE).
+  const fromContractCount = buyLines.filter(l => l.source === "contract").length;
+  const accruedCount = buyLines.filter(l => (l.status || "accrued") === "accrued").length;
+  const postedCount  = buyLines.filter(l => l.status === "posted").length;
+
+  const dashedBtn = (accent, disabled) => ({
+    padding: "7px 12px", background: "none", cursor: disabled ? "not-allowed" : "pointer",
+    border: `1px dashed ${accent ? HZ.violet + "55" : HZ.border}`, borderRadius: 6,
+    fontFamily: HZ_BODY, fontSize: 12, color: accent ? HZ.violet : HZ.textMuted,
+    opacity: disabled ? 0.5 : 1, display: "inline-flex", alignItems: "center", gap: 5,
+  });
+
+  useHorizonFonts();
+
   return (
     <div id="shpacct-costs-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
+      <div id="shpacct-costs-stat-strip" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 16 }}>
+        {[
+          ["Lines", `${buyLines.length}`],
+          ["Total Buy", fmtUsd(totalBuy)],
+          ["From Contract", `${fromContractCount}`],
+          ["Accrued", `${accruedCount}`],
+          ["Posted", `${postedCount}`],
+        ].map(([label, value]) => (
+          <div key={label} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
+            borderRadius: 8, padding: "10px 12px" }}>
+            <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+            <div style={{ fontFamily: HZ_MONO, fontSize: 16, fontWeight: 700, color: HZ.text, marginTop: 2 }}>{value}</div>
+          </div>
+        ))}
+      </div>
+
       {isCentral && latestSnapshot && (
-        <div style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted, marginBottom: 14 }}>
+        <div style={{ fontFamily: HZ_MONO, fontSize: 12, color: HZ.textMuted, marginBottom: 14 }}>
           Rates confirmed {new Date(latestSnapshot.generatedAt).toLocaleDateString()} ({latestSnapshot.reason})
         </div>
       )}
 
-      <div id="shpacct-costs-toolbar" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
-            {buyLines.length} line{buyLines.length !== 1 ? "s" : ""}
-          </span>
-          <span id="shpacct-costs-total-buy" style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
-            Total Buy: {fmtUsd(totalBuy)}
-          </span>
-        </div>
-        {canEdit && (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Btn id="shpacct-costs-history-btn" size="sm" variant="secondary" onClick={() => setHistOpen(true)}><IconClipboard size={12} />History</Btn>
-            {isCentral && !hasContractLines && (
-              <Btn id="shpacct-costs-import-btn" size="sm" variant="secondary" onClick={() => setReconcileMode("import")}><IconArrowDown size={12} />Import from Contract</Btn>
-            )}
-            {isCentral && hasContractLines && (
-              <>
-                <Btn id="shpacct-costs-reset-btn" size="sm" variant="secondary" onClick={() => openAction("reset")}><IconRefresh size={12} />Reset to Contract</Btn>
-                <Btn id="shpacct-costs-update-btn" size="sm" variant="secondary" onClick={() => setReconcileMode("update")}><IconArrowUp size={12} />Update Carrier Costs</Btn>
-              </>
-            )}
-            <Btn id="shpacct-costs-add-btn" size="sm" onClick={() => setLineModal("add")}>＋ Add Line</Btn>
-          </div>
-        )}
-      </div>
-
       {loading ? (
-        <div style={{ padding: 40, textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Loading…</div>
-      ) : buyLines.length === 0 ? (
-        <div id="shpacct-costs-empty" style={{ padding: 48, textAlign: "center", fontFamily: T.body,
-          fontSize: 13, color: T.textMuted, fontStyle: "italic",
-          background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10 }}>
+        <div style={{ padding: 40, textAlign: "center", fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>Loading…</div>
+      ) : buyLines.length === 0 && !canEdit ? (
+        <div id="shpacct-costs-empty" style={{ padding: 48, textAlign: "center", fontFamily: HZ_BODY,
+          fontSize: 13, color: HZ.textMuted, fontStyle: "italic",
+          background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10 }}>
           No cost lines yet.
         </div>
       ) : (
-        <div id="shpacct-costs-table" style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface }}>
-          <div style={{ display: "flex", alignItems: "center", padding: "7px 16px",
-            borderBottom: `1px solid ${T.border}`, background: T.bg }}>
-            <div style={{ ...th, width: 60 }}>Type</div>
-            <div style={{ ...th, flex: 1 }}>Charge</div>
-            <div style={{ ...th, width: 100, paddingLeft: 4 }}>Container</div>
-            <div style={{ ...th, width: 160, paddingLeft: 4 }}>Source</div>
-            <div style={{ ...th, width: 80 }}>Currency</div>
-            <div style={{ ...th, width: 100, textAlign: "right" }}>Exch. Rate</div>
-            <div style={{ ...th, width: 110, textAlign: "right" }}>Amount (USD)</div>
-            <div style={{ ...th, width: 100, paddingLeft: 8 }}>Status</div>
-            <div style={{ width: 36 }} />
-          </div>
-          {buyLines.map(l => (
-            <CostLineRow key={l.id} line={l} containers={ctrs} showActions
-              onEdit={() => setLineModal(l)} onDelete={() => setConfirm(l.id)}
-              onActualize={() => setActualizeLine(l)} onPost={() => setConfirmPost(l)}
-              onAdjust={() => setAdjustLine(l)} />
-          ))}
+        <div id="shpacct-costs-table" style={{ background: HZ.surface, backdropFilter: "blur(20px)",
+          border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden" }}>
+          {buyLines.length === 0 ? (
+            <div style={{ padding: "18px 16px", fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, fontStyle: "italic" }}>
+              No cost lines yet — add one below.
+            </div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: HZ.bg, borderBottom: `1px solid ${HZ.border}` }}>
+                  {["Type", "Charge", "Container", "Source", "Currency", "Exch. Rate", "Amount (USD)", "Status", ""].map((h, i) => (
+                    <th key={h || i} style={{ textAlign: [5, 6].includes(i) ? "right" : "left", padding: "9px 14px",
+                      fontFamily: HZ_BODY, fontSize: 10, fontWeight: 700, color: HZ.textMuted,
+                      textTransform: "uppercase", letterSpacing: ".06em" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {buyLines.map(l => (
+                  <CostLineRow key={l.id} line={l} containers={ctrs} showActions
+                    onEdit={() => setLineModal(l)} onDelete={() => setConfirm(l.id)}
+                    onActualize={() => setActualizeLine(l)} onPost={() => setConfirmPost(l)}
+                    onAdjust={() => setAdjustLine(l)} />
+                ))}
+              </tbody>
+            </table>
+          )}
+          {canEdit && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "10px 14px", borderTop: `1px solid ${HZ.border}` }}>
+              <button id="shpacct-costs-history-btn" type="button" onClick={() => setHistOpen(true)} style={dashedBtn(false)}>
+                <IconClipboard size={12} />History
+              </button>
+              {isCentral && !hasContractLines && (
+                <button id="shpacct-costs-import-btn" type="button" onClick={() => setReconcileMode("import")} style={dashedBtn(false)}>
+                  <IconArrowDown size={12} />Import from Contract
+                </button>
+              )}
+              {isCentral && hasContractLines && (
+                <>
+                  <button id="shpacct-costs-reset-btn" type="button" onClick={() => openAction("reset")} style={dashedBtn(false)}>
+                    <IconRefresh size={12} />Reset to Contract
+                  </button>
+                  <button id="shpacct-costs-update-btn" type="button" onClick={() => setReconcileMode("update")} style={dashedBtn(false)}>
+                    <IconArrowUp size={12} />Update Carrier Costs
+                  </button>
+                </>
+              )}
+              <button id="shpacct-costs-add-btn" type="button" onClick={() => setLineModal("add")} style={dashedBtn(true)}>＋ Add Line</button>
+            </div>
+          )}
         </div>
       )}
 
@@ -229,7 +262,7 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
       {actionModal && (
         <Modal title={ACTION_COPY[actionModal].title} onClose={() => setActionModal(null)} width={440}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
+            <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, lineHeight: 1.5 }}>
               {ACTION_COPY[actionModal].body}
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>

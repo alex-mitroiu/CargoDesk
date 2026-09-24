@@ -10,7 +10,7 @@
 module.exports = function shippingInstructionsRoutes(app, ctx) {
   const { query, uid, ok, err, auth, requireRole, applyShipmentAccessFilter, mapShipment,
           mapShippingInstructions, mapEdiMessage,
-          logEntityEvent, autoCompleteMilestone } = ctx;
+          logEntityEvent, autoCompleteMilestone, officeSideOf, blockIfWrongSide } = ctx;
 
   const write = requireRole(["operator", "admin", "occ_bk"]); // same set as routes/edi.js / customs-filing.js
 
@@ -34,8 +34,9 @@ module.exports = function shippingInstructionsRoutes(app, ctx) {
   // (reset first, same "no editing what's already in flight" rule customs filings enforce
   // implicitly by having no edit route at all once Filed).
   app.put("/api/shipments/:id/shipping-instructions", write, async (req, res) => {
-    const [shipment] = await query("SELECT id FROM shipments WHERE id=$1", [req.params.id]);
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
     const { siCutoff = "", specialInstructions = "" } = req.body || {};
     const [existing] = await query("SELECT * FROM shipping_instructions WHERE shipment_id=$1", [req.params.id]);
     const now = new Date().toISOString();
@@ -54,6 +55,7 @@ module.exports = function shippingInstructionsRoutes(app, ctx) {
   app.post("/api/shipments/:id/shipping-instructions/submit", write, async (req, res) => {
     const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
     const [si] = await query("SELECT * FROM shipping_instructions WHERE shipment_id=$1", [req.params.id]);
     if (!si) return err(res, "Save the Shipping Instructions details before submitting", 404);
     if (si.status !== "Draft") return err(res, `Already ${si.status.toLowerCase()}`, 409);
@@ -86,6 +88,8 @@ module.exports = function shippingInstructionsRoutes(app, ctx) {
   app.post("/api/shipments/:id/shipping-instructions/simulate-response", write, async (req, res) => {
     const [si] = await query("SELECT * FROM shipping_instructions WHERE shipment_id=$1", [req.params.id]);
     if (!si) return err(res, "Shipping Instructions not found", 404);
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
     const { outcome, reason } = req.body || {};
     if (outcome !== "confirmed" && outcome !== "rejected") return err(res, 'outcome must be "confirmed" or "rejected"');
     if (si.status !== "Submitted") return err(res, "This Shipping Instructions record has no pending submission to respond to", 409);
@@ -112,6 +116,8 @@ module.exports = function shippingInstructionsRoutes(app, ctx) {
   app.patch("/api/shipments/:id/shipping-instructions/reset", write, async (req, res) => {
     const [si] = await query("SELECT * FROM shipping_instructions WHERE shipment_id=$1", [req.params.id]);
     if (!si) return err(res, "Shipping Instructions not found", 404);
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
     if (si.status !== "Rejected") return err(res, "Only a Rejected Shipping Instructions record can be reset to Draft", 409);
     const now = new Date().toISOString();
     await query(`UPDATE shipping_instructions SET status='Draft', si_reference='', rejection_reason='', updated_at=$1 WHERE id=$2`, [now, si.id]);

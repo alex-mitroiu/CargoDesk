@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-import { T } from "../../tokens";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import Btn from "../primitives/Btn";
 import { Modal } from "../primitives/Modal";
+import { HZ, HZ_MONO, HZ_BODY } from "../../pages/shipments/shipmentDetailTheme";
 
 const fmtDate = s => s ? new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
@@ -13,7 +13,8 @@ const fmtDate = s => s ? new Date(s).toLocaleDateString(undefined, { day: "2-dig
 // GET /api/documents/:id/download as a blob and renders it in an iframe — no
 // forced download, no separate metadata endpoint needed. Extracted from App.jsx
 // so both App.jsx's DocumentsModal and the Accounting Invoice Entry page can use
-// it without a circular import.
+// it without a circular import. Both are now Trade Horizon (HZ) pages, and this
+// has no other consumer, so it moved to HZ tokens alongside them.
 //
 // NOT the same component as the same-named DocumentPreviewModal in
 // ShipmentDetailPage.jsx, which belongs to the separate untracked jsPDF document
@@ -44,21 +45,21 @@ const TrackedDocPreviewModal = ({ shipmentId, doc, onClose, onConfirm, onSend })
       {/* Status bar */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
         marginBottom: 12, padding: "8px 12px",
-        background: isConfirmed ? T.success + "14" : doc.isStale ? T.warning + "14" : T.bg,
-        border: `1px solid ${isConfirmed ? T.success + "44" : doc.isStale ? T.warning + "44" : T.border}`,
+        background: isConfirmed ? HZ.goodBg : doc.isStale ? HZ.warnBg : HZ.bg,
+        border: `1px solid ${isConfirmed ? HZ.good + "44" : doc.isStale ? HZ.warn + "44" : HZ.border}`,
         borderRadius: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
-            color: isConfirmed ? T.success : doc.isStale ? T.warning : T.textMuted }}>
+          <span style={{ fontFamily: HZ_MONO, fontSize: 11, fontWeight: 700,
+            color: isConfirmed ? HZ.good : doc.isStale ? HZ.warn : HZ.textMuted }}>
             {isConfirmed ? "✓ Confirmed" : doc.isStale ? "⚠ Outdated" : "Draft"}
           </span>
           {isConfirmed && doc.confirmedBy && (
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+            <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted }}>
               by {doc.confirmedBy} · {fmtDate(doc.confirmedAt)}
             </span>
           )}
           {doc.isStale && (
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+            <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted }}>
               Shipment data changed after this document was generated
             </span>
           )}
@@ -83,7 +84,7 @@ const TrackedDocPreviewModal = ({ shipmentId, doc, onClose, onConfirm, onSend })
         ? <iframe src={src} title={doc.filename}
             style={{ width: "100%", height: "68vh", border: "none", borderRadius: 6, background: "#fff" }} />
         : <div style={{ height: "68vh", display: "flex", alignItems: "center", justifyContent: "center",
-            fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Loading preview…</div>}
+            fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>Loading preview…</div>}
     </Modal>
   );
 };

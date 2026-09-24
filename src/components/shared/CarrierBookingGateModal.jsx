@@ -1,7 +1,7 @@
-import { T } from "../../tokens";
 import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
 import { IconWarning } from "../primitives/Icon";
+import { HZ, HZ_BODY } from "../../pages/shipments/shipmentDetailTheme";
 
 // ─── Carrier Booking — prerequisite gate ──────────────────────────────────────
 // Blocks the Carrier Booking page entirely until the shipment has both a contract and a
@@ -20,11 +20,11 @@ const CarrierBookingGateModal = ({ missingContract, missingSchedule, onGoToSched
 
   return (
     <Modal title="Carrier Booking Unavailable" onClose={() => {}} width={440} hideClose>
-      <div style={{ padding: "10px 14px", borderRadius: 8, background: `${T.warning}18`,
-        border: `1px solid ${T.warning}44`, display: "flex", gap: 10, alignItems: "flex-start",
+      <div style={{ padding: "10px 14px", borderRadius: 8, background: HZ.warnBg,
+        border: `1px solid ${HZ.warn}44`, display: "flex", gap: 10, alignItems: "flex-start",
         marginBottom: 18 }}>
-        <span style={{ color: T.warning, flexShrink: 0, marginTop: 1 }}><IconWarning size={15} /></span>
-        <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, lineHeight: 1.5 }}>
+        <span style={{ color: HZ.warn, flexShrink: 0, marginTop: 1 }}><IconWarning size={15} /></span>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, lineHeight: 1.5 }}>
           {message} A carrier booking needs both before it can be sent, so this page stays
           locked until Contracts &amp; Schedules has {both ? "them" : "it"} set.
         </div>

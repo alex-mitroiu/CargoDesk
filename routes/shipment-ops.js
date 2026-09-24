@@ -12,7 +12,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           buildMailOptions, sendViaOffice,
           createRateLimiter, getSettings, callContractService, callMdmService, getCustomerRow,
           computeArExposure, toUsd, roundCents, OVERRIDE_GRACE_MS,
-          userOwnsLaneForShipment, mapInvoiceStatusOverride, docAmountUsd, canEditOfficeSide } = ctx;
+          userOwnsLaneForShipment, mapInvoiceStatusOverride, docAmountUsd, canEditOfficeSide,
+          officeSideOf, blockIfWrongSide, chargeCodeSide, mapShipment } = ctx;
 
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
 
@@ -239,6 +240,23 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, rows.map(mapRateSnapshot));
   });
 
+  // Office-Side Permissions Epic (TKT-Z0LB0W), Phase 2 (TKT-NXXVFN) — Invoice Entry, Cost Entry,
+  // and GP Overview (src/pages/shipments/ShipmentAccounting{Invoices,Costs,Gp}Page.jsx) all read
+  // this ONE endpoint (api.costLines.list) and split/aggregate client-side by `type` — filtering
+  // here is the single point that covers all three Accounting pages, unlike every other gated
+  // section in this epic, which is a write gate. This one hides at the API: an export-side caller
+  // never receives an import-owned line at all, not just a disabled row. A charge_code with no
+  // charge_code_sides row yet is "shared" — visible to both sides, never accidentally hidden just
+  // because nobody has classified it.
+  const filterCostLinesBySide = async (req, shipmentId, rows) => {
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
+    if (!shipmentRow) return rows;
+    const mySide = await officeSideOf(req.user, mapShipment(shipmentRow), req);
+    if (mySide === 'unrestricted') return rows;
+    const sides = await Promise.all(rows.map(r => chargeCodeSide(r.charge_code)));
+    return rows.filter((r, i) => sides[i] === null || sides[i].toLowerCase() === mySide);
+  };
+
   app.get("/api/shipments/:id/cost-lines", costLineRead, async (req, res) => {
     const { limit, offset } = req.query;
     // Pagination is opt-in (TKT-UAJGR3) — every existing consumer (CostLineRow lists, GP Overview,
@@ -246,12 +264,15 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     // so the default response stays today's exact bare array.
     if (limit === undefined && offset === undefined) {
       const rows = await query("SELECT * FROM shipment_cost_lines WHERE shipment_id=$1 ORDER BY type, created_at ASC", [req.params.id]);
-      return ok(res, rows.map(mapCostLine));
+      return ok(res, (await filterCostLinesBySide(req, req.params.id, rows)).map(mapCostLine));
     }
+    // Filtered before paging (same "scope-filter BEFORE anything else" discipline
+    // routes/carrier-invoices.js's own loadVisibleInvoices already uses) so total/limit/offset
+    // describe the VISIBLE set, not the whole table.
+    const allRows = await query("SELECT * FROM shipment_cost_lines WHERE shipment_id=$1 ORDER BY type, created_at ASC", [req.params.id]);
+    const visible = await filterCostLinesBySide(req, req.params.id, allRows);
     const lim = Math.min(parseInt(limit) || 50, 500), off = parseInt(offset) || 0;
-    const [{ n: total }] = await query("SELECT COUNT(*) AS n FROM shipment_cost_lines WHERE shipment_id=$1", [req.params.id]);
-    const rows = await query("SELECT * FROM shipment_cost_lines WHERE shipment_id=$1 ORDER BY type, created_at ASC LIMIT $2 OFFSET $3", [req.params.id, lim, off]);
-    ok(res, { results: rows.map(mapCostLine), total: Number(total), limit: lim, offset: off });
+    ok(res, { results: visible.slice(off, off + lim).map(mapCostLine), total: visible.length, limit: lim, offset: off });
   });
 
   app.post("/api/shipments/:id/cost-lines", shipmentWrite, async (req, res) => {
@@ -482,6 +503,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
             requestedDate = '', notes = '' } = req.body;
     if (!side || !serviceType) return err(res, "side, serviceType required");
     if (!['Export', 'Import'].includes(side)) return err(res, "side must be Export or Import");
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (!shipmentRow) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipmentRow, side.toLowerCase())) return;
     const id  = `SVC-${uid()}`;
     const now = new Date().toISOString();
     const createdBy = req.user?.name || req.user?.email || "";
@@ -504,6 +528,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   app.patch("/api/shipments/:shipmentId/services/:id", shipmentWrite, async (req, res) => {
     const [existing] = await query("SELECT * FROM shipment_services WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    if (await blockIfWrongSide(req, res, shipmentRow, existing.side.toLowerCase())) return;
 
     if (req.body.status && !SERVICE_STATUSES.includes(req.body.status))
       return err(res, `status must be one of ${SERVICE_STATUSES.join(", ")}`);
@@ -564,6 +590,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   app.delete("/api/shipments/:shipmentId/services/:id", shipmentWrite, async (req, res) => {
     const [existing] = await query("SELECT * FROM shipment_services WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    if (await blockIfWrongSide(req, res, shipmentRow, existing.side.toLowerCase())) return;
     await query("DELETE FROM shipment_services WHERE id=$1", [req.params.id]);
     await logEntityEvent('service', req.params.id, 'DELETED', null, null, null,
       JSON.stringify({ shipmentId: existing.shipment_id, side: existing.side, serviceType: existing.service_type }));
@@ -610,6 +638,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!service) return err(res, "Service not found", 404);
     const [container] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.containerId, req.params.shipmentId]);
     if (!container) return err(res, "Container not found", 404);
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    if (await blockIfWrongSide(req, res, shipmentRow, service.side.toLowerCase())) return;
 
     // Sequence is a display/print ordering for the physical loading/unloading/pickup/delivery
     // plan — "0th" or negative has no real-world meaning there, so 1 is the floor regardless
@@ -719,6 +749,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!service) return err(res, "Service not found", 404);
     const [container] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.containerId, req.params.shipmentId]);
     if (!container) return err(res, "Container not found", 404);
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    if (await blockIfWrongSide(req, res, shipmentRow, service.side.toLowerCase())) return;
 
     const { gateInAt = '', gateOutAt = '', driverName = '', driverIdNumber = '', instructions = '' } = req.body || {};
     const record = await ensureHaulageRecord(req.params.serviceId, req.params.containerId);
@@ -746,6 +778,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!service) return err(res, "Service not found", 404);
     const [container] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.containerId, req.params.shipmentId]);
     if (!container) return err(res, "Container not found", 404);
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    if (await blockIfWrongSide(req, res, shipmentRow, service.side.toLowerCase())) return;
 
     const { amount, currency = 'USD', exchangeRate = 1 } = req.body || {};
     const record = await ensureHaulageRecord(req.params.serviceId, req.params.containerId);
@@ -816,6 +850,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!service) return err(res, "Service not found", 404);
     const [container] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.containerId, req.params.shipmentId]);
     if (!container) return err(res, "Container not found", 404);
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    if (await blockIfWrongSide(req, res, shipmentRow, service.side.toLowerCase())) return;
 
     const { locType = 'Door', location = '', latitude = null, longitude = null, notes = '', sequenceOrder } = req.body || {};
     const isGps = locType === GPS_LOC_TYPE;
@@ -854,12 +890,15 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // the waypoint's own id ("HWP-...") never matches its SHP- prefix check.
   app.put("/api/shipments/:shipmentId/haulage-waypoints/:id", shipmentWrite, async (req, res) => {
     const [existing] = await query(`
-      SELECT w.* FROM shipment_haulage_waypoints w
+      SELECT w.*, ss.side AS service_side FROM shipment_haulage_waypoints w
       JOIN shipment_haulage_records hr ON hr.id = w.haulage_record_id
       JOIN containers c ON c.id = hr.container_id
+      JOIN shipment_services ss ON ss.id = hr.service_id
       WHERE w.id=$1 AND c.shipment_id=$2
     `, [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    if (await blockIfWrongSide(req, res, shipmentRow, existing.service_side.toLowerCase())) return;
     const { locType = 'Door', location = '', latitude = null, longitude = null, notes = '', sequenceOrder = 1 } = req.body || {};
     const isGps = locType === GPS_LOC_TYPE;
     if (isGps) {
@@ -881,12 +920,15 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // Same scope-bypass fix as the PUT above.
   app.delete("/api/shipments/:shipmentId/haulage-waypoints/:id", shipmentWrite, async (req, res) => {
     const [existing] = await query(`
-      SELECT w.* FROM shipment_haulage_waypoints w
+      SELECT w.*, ss.side AS service_side FROM shipment_haulage_waypoints w
       JOIN shipment_haulage_records hr ON hr.id = w.haulage_record_id
       JOIN containers c ON c.id = hr.container_id
+      JOIN shipment_services ss ON ss.id = hr.service_id
       WHERE w.id=$1 AND c.shipment_id=$2
     `, [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    if (await blockIfWrongSide(req, res, shipmentRow, existing.service_side.toLowerCase())) return;
     await query("DELETE FROM shipment_haulage_waypoints WHERE id=$1", [req.params.id]);
     await logEntityEvent('haulage_waypoint', req.params.id, 'DELETED', null, null, null, null);
     ok(res, { deleted: req.params.id });
@@ -1628,8 +1670,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   });
 
   app.post("/api/shipments/:id/schedules", shipmentWrite, async (req, res) => {
-    if (!(await query("SELECT id FROM shipments WHERE id=$1", [req.params.id]))[0])
-      return err(res, "Shipment not found", 404);
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (!shipmentRow) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipmentRow, 'export')) return;
     const { carrier = "", vesselName = "", vesselImo = "", voyageNumber = "", service = "",
             pol = "", pod = "", etd = "", eta = "", transitDays = 0, isMock = false,
             templateId = null, legs = null } = req.body;
@@ -1677,6 +1720,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   app.put("/api/shipments/:id/schedules/:scheduleId", shipmentWrite, async (req, res) => {
     const [existing] = await query("SELECT * FROM shipment_schedules WHERE id=$1 AND shipment_id=$2", [req.params.scheduleId, req.params.id]);
     if (!existing) return err(res, "Not found", 404);
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (await blockIfWrongSide(req, res, shipmentRow, 'export')) return;
     const { vesselName = existing.vessel_name, voyageNumber = existing.voyage_number,
             etd = existing.etd, eta = existing.eta, carrier = existing.carrier } = req.body;
     const actor = req.user?.name || req.user?.email || "";
@@ -1742,6 +1787,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   app.delete("/api/shipments/:id/schedules/:scheduleId", shipmentWrite, async (req, res) => {
     const [existing] = await query("SELECT * FROM shipment_schedules WHERE id=$1 AND shipment_id=$2", [req.params.scheduleId, req.params.id]);
     if (!existing) return err(res, "Not found", 404);
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (await blockIfWrongSide(req, res, shipmentRow, 'export')) return;
     await query("DELETE FROM shipment_schedules WHERE id=$1", [req.params.scheduleId]);
     await logEntityEvent('schedule', req.params.scheduleId, 'REMOVED', null, null, null,
       JSON.stringify({ shipmentId: req.params.id, carrier: existing.carrier, vesselName: existing.vessel_name,

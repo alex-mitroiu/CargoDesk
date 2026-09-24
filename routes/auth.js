@@ -650,7 +650,12 @@ module.exports = function authRoutes(app, ctx) {
       }
 
       await logAdminEvent(req.user, sendInvite ? 'USER_INVITED' : 'USER_CREATED', 'user', id, { email: email.toLowerCase().trim(), roles });
-      ok(res, { ok: true });
+      // Returns the created user + 201, matching every other create endpoint's convention
+      // (quotes, opportunities, customers, tickets, etc.) — this used to be the one exception,
+      // answering {ok:true}/200 with no id, so a caller had no way to learn what it just created
+      // short of a follow-up GET /api/users + an email match (2026-09-23 QA finding).
+      const [fresh] = await query("SELECT * FROM users WHERE id=$1", [id]);
+      ok(res, mapUser(fresh), 201);
     } catch (e) {
       err(res, isUniqueViolation(e) ? "Email already exists" : e.message);
     }

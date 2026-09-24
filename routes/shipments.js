@@ -5,6 +5,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
   const { query, transaction, ok, err, uid, auth, requireRole, isUniqueViolation, isForeignKeyViolation,
           mapShipment, mapShipmentLeg, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation, mapEdiMessage,
           mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice, canEditOfficeSide,
+          officeSideOf, blockIfWrongSide, PARTY_ROLE_SIDE, resolveOfficeSideAccess, sideFromAccess,
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates,
           broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, recomputeSpaceBadgesForAllocation, TEU_EXPR, screenShipmentById, resolveCarrierAgent, resolveCarrierAgentCandidates,
           checkLineAgentCapabilityGaps,
@@ -285,7 +286,15 @@ module.exports = function shipmentsRoutes(app, ctx) {
     `);
     const seaPorts = await resolveSeaPorts(rows.map(r => r.id));
     const mapped = rows.map(r => ({ ...mapShipment(r), ...(seaPorts[r.id] || { seaPol: r.pol, seaPod: r.pod, seaPolName: r.pol_name || '', seaPodName: r.pod_name || '' }) }));
-    return applyShipmentAccessFilter(mapped, user, req);
+    const visible = await applyShipmentAccessFilter(mapped, user, req);
+    // Office-Side Permissions Epic (TKT-Z0LB0W), Phase 3 (TKT-5W24J7) — App.jsx's own
+    // load-everything-once-into-state model means THIS list is the actual data source every
+    // shipment detail sub-page's `shipment` prop comes from (not a fresh per-page GET), so
+    // myOfficeSide has to live here, not just on the single-shipment route below. Resolved ONCE
+    // per request (resolveOfficeSideAccess), not once per row — sideFromAccess itself is a cheap
+    // synchronous comparison.
+    const access = await resolveOfficeSideAccess(user, req);
+    return visible.map(s => ({ ...s, myOfficeSide: sideFromAccess(access, s) }));
   };
 
   // Same rounding the frontend applies (ShipmentsPage.jsx's Margin column) — kept in one place so
@@ -303,9 +312,14 @@ module.exports = function shipmentsRoutes(app, ctx) {
   // caller ("Active".split(',') is just ["Active"]) — replaces what used to be five independent
   // single-value `===` filters (status, carrier) plus adds the same treatment to every other
   // filterable column at once.
+  //
+  // Express turns a REPEATED query key (?status=A&status=B) into an array, not a string — this
+  // endpoint's own wire format is comma-joined (?status=A,B), but a caller sending the other
+  // shared-table convention by mistake used to crash the whole request with a 500 (param.split is
+  // not a function) rather than just not matching. Accept both shapes (2026-09-23 QA finding).
   const multiFilter = (arr, param, getter) => {
     if (!param) return arr;
-    const values = param.split(',');
+    const values = Array.isArray(param) ? param : param.split(',');
     return arr.filter(s => values.includes(String(getter(s))));
   };
 
@@ -432,6 +446,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!row) return err(res, "Not found", 404);
     const s = mapShipment(row);
     if (!(await applyShipmentAccessFilter([s], req.user, req)).length) return err(res, "Not found", 404);
+    s.myOfficeSide = await officeSideOf(req.user, s, req);
     ok(res, s);
   });
 
@@ -997,7 +1012,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
             setTemperatureC = null } = req.body;
     if (!shipmentId || !size || !type) return err(res, "shipmentId, size, type required");
     if (!CONTAINER_SIZES.includes(size)) return err(res, `size must be one of: ${CONTAINER_SIZES.join(", ")}`);
-    if (!(await query("SELECT 1 FROM shipments WHERE id=$1", [shipmentId]))[0]) return err(res, "Shipment not found", 404);
+    const [shipmentRowForGate] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
+    if (!shipmentRowForGate) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipmentRowForGate, 'export')) return;
     if (grossWeightKg !== null && grossWeightKg !== undefined && Number(grossWeightKg) < 0) return err(res, "grossWeightKg cannot be negative");
     if (volumeCbm !== null && volumeCbm !== undefined && Number(volumeCbm) < 0) return err(res, "volumeCbm cannot be negative");
     if (!DIRECT_VGM_STATUSES.includes(vgmStatus)) return err(res, "vgmStatus must be Pending or Submitted — Accepted/Rejected only happen via the VGM Simulator");
@@ -1038,6 +1055,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const cnU    = containerNumber.toUpperCase();
     const [oldCtr] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!oldCtr) return err(res, "Not found", 404);
+    const [shipmentRowForGate] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    if (await blockIfWrongSide(req, res, shipmentRowForGate, 'export')) return;
     if (!size || !type) return err(res, "size, type required");
     if (!CONTAINER_SIZES.includes(size)) return err(res, `size must be one of: ${CONTAINER_SIZES.join(", ")}`);
     if (grossWeightKg !== null && grossWeightKg !== undefined && Number(grossWeightKg) < 0) return err(res, "grossWeightKg cannot be negative");
@@ -1118,6 +1137,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
   app.post("/api/shipments/:shipmentId/containers/:id/vgm/simulate-response", shipmentWrite, async (req, res) => {
     const [ctr] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!ctr) return err(res, "Not found", 404);
+    const [shipmentRowForGate] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    if (await blockIfWrongSide(req, res, shipmentRowForGate, 'export')) return;
     const { outcome, reason } = req.body || {};
     if (outcome !== "accepted" && outcome !== "rejected") return err(res, 'outcome must be "accepted" or "rejected"');
     if (ctr.vgm_status !== "Submitted") return err(res, "This container's VGM has no pending submission to respond to", 409);
@@ -1163,6 +1184,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
   app.delete("/api/shipments/:shipmentId/containers/:id", shipmentWrite, async (req, res) => {
     const [ctr] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!ctr) return err(res, "Not found", 404);
+    const [shipmentRowForGate] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    if (await blockIfWrongSide(req, res, shipmentRowForGate, 'export')) return;
     await query("DELETE FROM containers WHERE id=$1", [req.params.id]);
     await logEvent(ctr.shipment_id, 'CONTAINER_REMOVED', null, ctr.container_number, null,
       JSON.stringify({ size: ctr.size, type: ctr.type }), req.user?.name || req.user?.email || "");
@@ -1348,8 +1371,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
   app.post("/api/shipments/:id/containers/import/commit", shipmentWrite, async (req, res) => {
     const { rows } = req.body || {};
     if (!Array.isArray(rows) || rows.length === 0) return err(res, "rows array is required");
-    const [shipment] = await query("SELECT id FROM shipments WHERE id=$1", [req.params.id]);
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
 
     const typeDefsByCode = new Map(
       (await query("SELECT * FROM container_type_definitions WHERE is_active=TRUE")).map(t => [t.code.toUpperCase(), t])
@@ -1519,6 +1543,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!LICENSE_TYPES.includes(licenseType)) return err(res, `licenseType must be one of: ${LICENSE_TYPES.filter(Boolean).join(", ")}`);
     const [ctr] = await query("SELECT id FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!ctr) return err(res, "Container not found", 404);
+    const [shipmentRowForGate] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    if (await blockIfWrongSide(req, res, shipmentRowForGate, 'export')) return;
     if (parentId) {
       const [parent] = await query("SELECT id FROM container_packages WHERE id=$1 AND container_id=$2", [parentId, req.params.id]);
       if (!parent) return err(res, "Parent package not found on this container", 404);
@@ -1641,8 +1667,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!customerId || !customerName) return err(res, "customerId and customerName required");
     if (LINE_AGENT_SIDE[role] && !(await canEditOfficeSide(req, LINE_AGENT_SIDE[role])))
       return err(res, `Only ${LINE_AGENT_SIDE[role].toLowerCase()}-side users can assign the ${role}`, 403);
-    const [sh] = await query("SELECT id FROM shipments WHERE id=$1", [req.params.id]);
+    const [sh] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!sh) return err(res, "Shipment not found", 404);
+    if (PARTY_ROLE_SIDE[role] && (await blockIfWrongSide(req, res, sh, PARTY_ROLE_SIDE[role]))) return;
     const id = `PTY-${uid()}`;
     const now = new Date().toISOString();
     try {
@@ -1669,6 +1696,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const side = LINE_AGENT_SIDE[existing.role];
     if (side && !(await canEditOfficeSide(req, side)))
       return err(res, `Only ${side.toLowerCase()}-side users can reassign the ${existing.role}`, 403);
+    if (PARTY_ROLE_SIDE[existing.role]) {
+      const [sh] = await query("SELECT * FROM shipments WHERE id=$1", [existing.shipment_id]);
+      if (await blockIfWrongSide(req, res, sh, PARTY_ROLE_SIDE[existing.role])) return;
+    }
     const { customerId, customerName } = req.body || {};
     if (!customerId || !customerName) return err(res, "customerId and customerName required");
     await query("UPDATE shipment_parties SET customer_id=$1, customer_name=$2 WHERE id=$3", [customerId, customerName, req.params.id]);
@@ -1683,6 +1714,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const side = LINE_AGENT_SIDE[existing.role];
     if (side && !(await canEditOfficeSide(req, side)))
       return err(res, `Only ${side.toLowerCase()}-side users can remove the ${existing.role}`, 403);
+    if (PARTY_ROLE_SIDE[existing.role]) {
+      const [sh] = await query("SELECT * FROM shipments WHERE id=$1", [existing.shipment_id]);
+      if (await blockIfWrongSide(req, res, sh, PARTY_ROLE_SIDE[existing.role])) return;
+    }
     await query("DELETE FROM shipment_parties WHERE id=$1", [req.params.id]);
     await logEvent(existing.shipment_id, 'PARTY_REMOVED', existing.role, existing.customer_name, null, '', req.user?.name || req.user?.email || "");
     await maybeRescreen(existing.shipment_id);
@@ -1856,6 +1891,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
   });
 
   app.post("/api/shipments/:id/legs", shipmentWrite, async (req, res) => {
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (!shipmentRow) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipmentRow, 'export')) return;
     const { legType='SEA', movementType='SEA', movementBy='',
             mot: rawMot, pol='', pod='', polName='', podName='', etd=null, eta=null, carrierCode='',
             polLocType='Terminal', podLocType='Terminal',
@@ -1893,6 +1931,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
   });
 
   app.put("/api/shipments/:id/legs/:legId", shipmentWrite, async (req, res) => {
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (!shipmentRow) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipmentRow, 'export')) return;
     const { legType='SEA', movementType='SEA', movementBy='',
             mot: rawMot, pol='', pod='', polName='', podName='', etd=null, eta=null, carrierCode='',
             polLocType='Terminal', podLocType='Terminal',
@@ -1932,6 +1973,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
   });
 
   app.delete("/api/shipments/:id/legs/:legId", shipmentWrite, async (req, res) => {
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (!shipmentRow) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipmentRow, 'export')) return;
     const deleted = await query("DELETE FROM shipment_legs WHERE id=$1 AND shipment_id=$2 RETURNING id", [req.params.legId, req.params.id]);
     if (deleted.length === 0) return err(res, "Not found", 404);
     await syncShipmentFromLegs(req.params.id, req.user?.name || req.user?.email || "");

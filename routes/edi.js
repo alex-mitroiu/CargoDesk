@@ -4,7 +4,8 @@ module.exports = function ediRoutes(app, ctx) {
   const { query, ok, err, uid, auth, requireRole, shipmentSubs,
           mapEdiMessage, mapCarrierBooking, mapShipment, applyShipmentAccessFilter,
           autoCompleteMilestone, logEntityEvent, isEdiBookable, supersedeIfCarrierChanged,
-          getCustomerRow, checkLineAgentCapabilityGaps, getCarrierAdapter, getSettings } = ctx;
+          getCustomerRow, checkLineAgentCapabilityGaps, getCarrierAdapter, getSettings,
+          officeSideOf, blockIfWrongSide } = ctx;
 
   // occ_bk has canEditShipments:true on the frontend and already sees an enabled Send
   // button — this used to exclude occ_bk (a pre-existing 403-on-click gap), fixed here.
@@ -195,6 +196,7 @@ module.exports = function ediRoutes(app, ctx) {
   app.post("/api/shipments/:id/edi-messages/booking-request", write, async (req, res) => {
     const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
     if (!(await isEdiBookable(shipment.carrier_code, shipment.emo_office_id)))
       return err(res, `Booking requests are not supported for carrier ${shipment.carrier_code} at this shipment's office`, 400);
 
@@ -403,6 +405,7 @@ module.exports = function ediRoutes(app, ctx) {
   app.post("/api/shipments/:id/edi-messages/simulate-response", write, async (req, res) => {
     const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
     const { outcome, bookingRef, reason, vessel, voyage, etd, vesselImo } = req.body || {};
     if (!["confirmed", "rejected", "confirmed_with_changes"].includes(outcome))
       return err(res, 'outcome must be "confirmed", "rejected", or "confirmed_with_changes"');
@@ -424,6 +427,7 @@ module.exports = function ediRoutes(app, ctx) {
   app.patch("/api/shipments/:id/carrier-booking/confirm", write, async (req, res) => {
     const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
     const { bookingRef, note } = req.body || {};
 
     let [existing] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
@@ -533,6 +537,7 @@ module.exports = function ediRoutes(app, ctx) {
   app.patch("/api/shipments/:id/carrier-booking/cancel", write, async (req, res) => {
     const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
     const { reason } = req.body || {};
 
     const [existing] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
@@ -550,6 +555,7 @@ module.exports = function ediRoutes(app, ctx) {
   app.patch("/api/shipments/:id/carrier-booking/link-bl-document", write, async (req, res) => {
     const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
     const { documentId = null } = req.body || {};
 
     const [booking] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);

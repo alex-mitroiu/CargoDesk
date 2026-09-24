@@ -18,7 +18,6 @@ import useResolvedPortName from "../../hooks/useResolvedPortName";
 import { dgPolicyConflict } from "../../utils/dgPolicy";
 import { onLegsScheduleChanged } from "../../legsScheduleBus";
 import Btn from "../../components/primitives/Btn";
-import ActionMenu from "../../components/primitives/ActionMenu";
 import Spinner from "../../components/primitives/Spinner";
 import Badge from "../../components/primitives/Badge";
 import {Inp, Sel, BtnToggle} from "../../components/primitives/Form";
@@ -616,36 +615,40 @@ const StatusTimeline = ({ log, currentStatus, open, onToggle }) => (
 
 // ─── Shipment History Timeline ────────────────────────────────────────────────
 
+// Colors are HZ (Trade Horizon) — the only real consumer is ShipmentHistoryPage.jsx (Accounting
+// Tabs Restyle sibling pass, approved mockup https://claude.ai/artifact/25ygL745mmMfvYWBXZWoAE
+// established the pattern, now extended app-wide across the shipment detail experience).
+// EntityHistoryModal.jsx has its own, separate, same-named EVENT_CONFIG — not this one.
 export const EVENT_CONFIG = {
-  SHIPMENT_CREATED:  { icon: IconShip,    label: "Shipment created",       color: () => T.success  },
-  STATUS_CHANGED:    { icon: IconRefresh, label: "Status changed",          color: () => T.accent   },
-  FIELD_UPDATED:     { icon: IconPencil,  label: "Field updated",           color: () => T.info     },
-  CONTAINER_ADDED:   { icon: "➕",  label: "Container added",         color: () => T.success  },
-  CONTAINER_REMOVED: { icon: "➖",  label: "Container removed",       color: () => T.danger   },
-  CONTAINER_UPDATED: { icon: IconPackage, label: "Container updated",       color: () => T.warning  },
-  COMPLIANCE_HIT:    { icon: IconWarning, label: "Compliance hit detected", color: () => T.danger   },
-  COST_LINE_ADDED:   { icon: "＋",  label: "Cost line added",          color: () => T.success  },
-  COST_LINE_UPDATED: { icon: IconPencil,  label: "Cost line updated",        color: () => T.info     },
-  COST_LINE_REMOVED: { icon: IconClose,   label: "Cost line removed",        color: () => T.danger   },
-  PARTY_ASSIGNED:      { icon: "＋",  label: "Party assigned",       color: () => T.success  },
-  PARTY_REASSIGNED:    { icon: IconPencil, label: "Party reassigned",     color: () => T.info     },
-  PARTY_REMOVED:       { icon: IconClose,  label: "Party removed",        color: () => T.danger   },
-  SIDE_OFFICE_ADDED:   { icon: "＋",  label: "Office added",         color: () => T.success  },
-  SIDE_OFFICE_REMOVED: { icon: IconClose,  label: "Office removed",       color: () => T.danger   },
-  OFFICE_REASSIGNED:   { icon: IconPencil, label: "Office reassigned",    color: () => T.info     },
-  LINE_AGENT_AUTO_ASSIGNED: { icon: "＋", label: "Line Agent auto-assigned", color: () => T.success },
-  CONTRACT_DROPPED:    { icon: IconWarning, label: "Contract dropped",    color: () => T.danger   },
-  SPACE_SKIPPED:       { icon: IconWarning, label: "Space match skipped", color: () => T.warning  },
-  SPACE_OVERAGE:       { icon: IconWarning, label: "Space overage",       color: () => T.warning  },
-  SCHEDULE_ASSIGNED:   { icon: IconAnchor,  label: "Schedule assigned",   color: () => T.success  },
-  SCHEDULE_UPDATED:    { icon: IconAnchor,  label: "Schedule updated",    color: () => T.info     },
-  SCHEDULE_REMOVED:    { icon: IconAnchor,  label: "Schedule removed",    color: () => T.danger   },
-  SERVICE_ORDERED:     { icon: "＋",  label: "Service ordered",      color: () => T.success  },
-  SERVICE_UPDATED:     { icon: IconPencil,  label: "Service updated",      color: () => T.info     },
-  SERVICE_REMOVED:     { icon: IconClose,   label: "Service removed",      color: () => T.danger   },
-  DOCUMENT_GENERATED:            { icon: IconFile, label: "Document generated",          color: () => T.success },
-  DOCUMENT_GENERATION_ATTEMPTED: { icon: IconFile, label: "Document generation attempted", color: () => T.info },
-  DOCUMENT_GENERATION_FAILED:    { icon: IconFile, label: "Document generation failed",   color: () => T.danger },
+  SHIPMENT_CREATED:  { icon: IconShip,    label: "Shipment created",       color: () => HZ.good  },
+  STATUS_CHANGED:    { icon: IconRefresh, label: "Status changed",          color: () => HZ.cyan   },
+  FIELD_UPDATED:     { icon: IconPencil,  label: "Field updated",           color: () => HZ.info     },
+  CONTAINER_ADDED:   { icon: "➕",  label: "Container added",         color: () => HZ.good  },
+  CONTAINER_REMOVED: { icon: "➖",  label: "Container removed",       color: () => HZ.crit   },
+  CONTAINER_UPDATED: { icon: IconPackage, label: "Container updated",       color: () => HZ.warn  },
+  COMPLIANCE_HIT:    { icon: IconWarning, label: "Compliance hit detected", color: () => HZ.crit   },
+  COST_LINE_ADDED:   { icon: "＋",  label: "Cost line added",          color: () => HZ.good  },
+  COST_LINE_UPDATED: { icon: IconPencil,  label: "Cost line updated",        color: () => HZ.info     },
+  COST_LINE_REMOVED: { icon: IconClose,   label: "Cost line removed",        color: () => HZ.crit   },
+  PARTY_ASSIGNED:      { icon: "＋",  label: "Party assigned",       color: () => HZ.good  },
+  PARTY_REASSIGNED:    { icon: IconPencil, label: "Party reassigned",     color: () => HZ.info     },
+  PARTY_REMOVED:       { icon: IconClose,  label: "Party removed",        color: () => HZ.crit   },
+  SIDE_OFFICE_ADDED:   { icon: "＋",  label: "Office added",         color: () => HZ.good  },
+  SIDE_OFFICE_REMOVED: { icon: IconClose,  label: "Office removed",       color: () => HZ.crit   },
+  OFFICE_REASSIGNED:   { icon: IconPencil, label: "Office reassigned",    color: () => HZ.info     },
+  LINE_AGENT_AUTO_ASSIGNED: { icon: "＋", label: "Line Agent auto-assigned", color: () => HZ.good },
+  CONTRACT_DROPPED:    { icon: IconWarning, label: "Contract dropped",    color: () => HZ.crit   },
+  SPACE_SKIPPED:       { icon: IconWarning, label: "Space match skipped", color: () => HZ.warn  },
+  SPACE_OVERAGE:       { icon: IconWarning, label: "Space overage",       color: () => HZ.warn  },
+  SCHEDULE_ASSIGNED:   { icon: IconAnchor,  label: "Schedule assigned",   color: () => HZ.good  },
+  SCHEDULE_UPDATED:    { icon: IconAnchor,  label: "Schedule updated",    color: () => HZ.info     },
+  SCHEDULE_REMOVED:    { icon: IconAnchor,  label: "Schedule removed",    color: () => HZ.crit   },
+  SERVICE_ORDERED:     { icon: "＋",  label: "Service ordered",      color: () => HZ.good  },
+  SERVICE_UPDATED:     { icon: IconPencil,  label: "Service updated",      color: () => HZ.info     },
+  SERVICE_REMOVED:     { icon: IconClose,   label: "Service removed",      color: () => HZ.crit   },
+  DOCUMENT_GENERATED:            { icon: IconFile, label: "Document generated",          color: () => HZ.good },
+  DOCUMENT_GENERATION_ATTEMPTED: { icon: IconFile, label: "Document generation attempted", color: () => HZ.info },
+  DOCUMENT_GENERATION_FAILED:    { icon: IconFile, label: "Document generation failed",   color: () => HZ.crit },
 };
 
 export const FIELD_LABELS = {
@@ -1698,57 +1701,90 @@ const ServiceBranch = ({ service, offices, shipmentOfficeIds, canEdit, onUpdated
 // `onRemove` (only ever passed for an additional/side-tagged office, never the home field or a
 // cross-assigned office like Controlling) renders a × next to the header, no confirmation step —
 // same immediate-remove precedent AdditionalPartiesPanel already uses.
+// Manager/Line Agent mini-grid label — same small-caps convention as PartiesOfficesCard's
+// own label, reused here for the "New Style" redesign (approved mockup:
+// https://claude.ai/artifact/KmxNCy2HYyu192jg2NBBGE) so an office card surfaces who's actually
+// running it without leaving this tab. `manager`/`lineAgent` are undefined when not
+// applicable to this card (no grid rendered at all), null when applicable but unset (renders
+// an italic empty state), or a value when set.
+const officeMiniLabel = { fontFamily: HZ_BODY, fontSize: 9.5, color: HZ.textMuted, fontWeight: 700,
+  textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 3 };
+
 const OfficeGroupCard = ({ icon, field, officeName, officeCode, pills, services, offices,
-  shipmentOfficeIds, canEditOffice, canEditService, onReassigned, shipment, onUpdatedService, emptyLabel, onRemove }) => (
-  <div style={{ marginBottom: 14 }}>
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <div style={{ width: 32, height: 32, borderRadius: 9, background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
-        display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 }}>
-        {icon}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {field ? (
-          <InlineOfficeEdit field={field} shipment={shipment} offices={offices} canEdit={canEditOffice}
-            onReassigned={onReassigned} pills={pills}
-            textStyle={{ fontFamily: HZ_BODY, fontSize: 13.5, fontWeight: 700, color: HZ.text }} />
-        ) : (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontFamily: HZ_BODY, fontSize: 13.5, fontWeight: 700, color: HZ.text,
-                display: "flex", alignItems: "center", gap: 7 }}>
-                {officeName}{pills}
+  shipmentOfficeIds, canEditOffice, canEditService, onReassigned, shipment, onUpdatedService, emptyLabel, onRemove,
+  manager, lineAgent }) => {
+  const showMiniGrid = manager !== undefined || lineAgent !== undefined;
+  return (
+    <div style={{ marginBottom: 12, background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
+      borderRadius: 10, padding: "14px 16px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 9, background: HZ.surface2, border: `1px solid ${HZ.border}`,
+          display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 }}>
+          {icon}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {field ? (
+            <InlineOfficeEdit field={field} shipment={shipment} offices={offices} canEdit={canEditOffice}
+              onReassigned={onReassigned} pills={pills}
+              textStyle={{ fontFamily: HZ_BODY, fontSize: 13.5, fontWeight: 700, color: HZ.text }} />
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontFamily: HZ_BODY, fontSize: 13.5, fontWeight: 700, color: HZ.text,
+                  display: "flex", alignItems: "center", gap: 7 }}>
+                  {officeName}{pills}
+                </div>
+                <div style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted, marginTop: 1 }}>{officeCode}</div>
               </div>
-              <div style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted, marginTop: 1 }}>{officeCode}</div>
+              {onRemove && canEditOffice && (
+                <button onClick={onRemove} title="Remove this office"
+                  data-testid={`shipment-parties-remove-office-btn-${officeCode}`}
+                  style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
+                    background: HZ.surface2, color: HZ.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
+                    cursor: "pointer", fontSize: 14, lineHeight: 1 }}>
+                  ×
+                </button>
+              )}
             </div>
-            {onRemove && canEditOffice && (
-              <button onClick={onRemove} title="Remove this office"
-                data-testid={`shipment-parties-remove-office-btn-${officeCode}`}
-                style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
-                  background: HZ.bg, color: HZ.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
-                  cursor: "pointer", fontSize: 14, lineHeight: 1 }}>
-                ×
-              </button>
-            )}
-          </div>
-        )}
+          )}
+        </div>
       </div>
+      {showMiniGrid && (
+        <div style={{ display: "grid", gridTemplateColumns: lineAgent !== undefined ? "1fr 1fr" : "1fr", gap: 12,
+          marginTop: 12, paddingTop: 12, borderTop: `1px solid ${HZ.border}` }}>
+          {manager !== undefined && (
+            <div data-testid="shipment-parties-office-manager">
+              <div style={officeMiniLabel}>Manager</div>
+              <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: manager ? HZ.text : HZ.textFaint,
+                fontStyle: manager ? "normal" : "italic" }}>{manager || "Not set"}</div>
+            </div>
+          )}
+          {lineAgent !== undefined && (
+            <div data-testid="shipment-parties-office-line-agent">
+              <div style={officeMiniLabel}>Line Agent</div>
+              <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: lineAgent ? HZ.text : HZ.textFaint,
+                fontStyle: lineAgent ? "normal" : "italic" }}>{lineAgent ? lineAgent.customerName : "Not assigned"}</div>
+            </div>
+          )}
+        </div>
+      )}
+      {services.length > 0 ? (
+        <div style={{ marginLeft: 16, paddingLeft: 20, borderLeft: `2px solid ${HZ.border}`, marginTop: 12,
+          display: "flex", flexDirection: "column", gap: 8 }}>
+          {services.map(s => (
+            <ServiceBranch key={s.id} service={s} offices={offices} shipmentOfficeIds={shipmentOfficeIds}
+              canEdit={canEditService} onUpdated={onUpdatedService} />
+          ))}
+        </div>
+      ) : emptyLabel ? (
+        <div style={{ marginLeft: 16, paddingLeft: 20, borderLeft: `2px dashed ${HZ.border}`, marginTop: 12,
+          fontSize: 11.5, color: HZ.textMuted, fontStyle: "italic", paddingBottom: 2 }}>
+          {emptyLabel}
+        </div>
+      ) : null}
     </div>
-    {services.length > 0 ? (
-      <div style={{ marginLeft: 16, paddingLeft: 20, borderLeft: `2px solid ${HZ.border}`, marginTop: 8,
-        display: "flex", flexDirection: "column", gap: 8 }}>
-        {services.map(s => (
-          <ServiceBranch key={s.id} service={s} offices={offices} shipmentOfficeIds={shipmentOfficeIds}
-            canEdit={canEditService} onUpdated={onUpdatedService} />
-        ))}
-      </div>
-    ) : emptyLabel ? (
-      <div style={{ marginLeft: 16, paddingLeft: 20, borderLeft: `2px dashed ${HZ.border}`, marginTop: 8,
-        fontSize: 11.5, color: HZ.textMuted, fontStyle: "italic", paddingBottom: 2 }}>
-        {emptyLabel}
-      </div>
-    ) : null}
-  </div>
-);
+  );
+};
 
 // The "+ Add Office" affordance for one column — dashed button reveals a department-filtered
 // select (SE offices for Export, SI for Import), mirroring AdditionalPartiesPanel's own
@@ -1801,9 +1837,10 @@ const AddSideOfficeControl = ({ side, dept, offices, excludeIds, onAdd }) => {
 // service with no office set at all falls into a final "No Office Assigned" group rather than
 // silently vanishing.
 const OfficeColumn = ({ side, shipment, offices, services, shipmentOfficeIds, sideOfficeEntries,
-  canEditOffice, canEditService, onReassigned, onUpdatedService, onAddOffice, onRemoveOffice }) => {
+  canEditOffice, canEditService, isMySide, lineAgent, onReassigned, onUpdatedService, onAddOffice, onRemoveOffice }) => {
   const homeField = side === "Export" ? OFFICE_FIELDS[0] : OFFICE_FIELDS[1];
   const homeOfficeId = shipment[homeField.key];
+  const homeOffice = offices.find(o => o.id === homeOfficeId) || null;
   const accent = side === "Export" ? HZ.cyan : HZ.violet;
   const dept = SIDE_DEPT[side];
 
@@ -1835,12 +1872,19 @@ const OfficeColumn = ({ side, shipment, offices, services, shipmentOfficeIds, si
         <span style={{ width: 8, height: 8, borderRadius: "50%", background: accent, flexShrink: 0 }} />
         <span style={{ fontFamily: HZ_DISPLAY, fontSize: 13, fontWeight: 800, textTransform: "uppercase",
           letterSpacing: ".06em", color: HZ.text }}>{side}</span>
-        {!canEditOffice && (
+        {isMySide && canEditOffice ? (
+          <span data-testid={`shipment-parties-your-side-badge-${side.toLowerCase()}`}
+            style={{ marginLeft: "auto", fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, letterSpacing: ".05em",
+              textTransform: "uppercase", color: accent, background: accent + "22", border: `1px solid ${accent}55`,
+              borderRadius: 5, padding: "2px 7px" }}>
+            Your Side
+          </span>
+        ) : !canEditOffice ? (
           <span style={{ marginLeft: "auto", fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted,
             display: "flex", alignItems: "center", gap: 4 }}>
             <IconLock size={10} /> Read only
           </span>
-        )}
+        ) : null}
       </div>
       <div style={{ padding: "14px 18px 18px" }}>
         <OfficeGroupCard
@@ -1850,7 +1894,9 @@ const OfficeColumn = ({ side, shipment, offices, services, shipmentOfficeIds, si
           offices={offices} shipmentOfficeIds={shipmentOfficeIds}
           canEditOffice={canEditOffice} canEditService={canEditService}
           onReassigned={onReassigned} onUpdatedService={onUpdatedService} shipment={shipment}
-          emptyLabel={homeOfficeId ? "No services assigned to this office yet" : null} />
+          emptyLabel={homeOfficeId ? "No services assigned to this office yet" : null}
+          manager={homeOfficeId ? (homeOffice?.managerName || null) : undefined}
+          lineAgent={homeOfficeId ? lineAgent : undefined} />
         {sideOfficeEntries.map(so => (
           <OfficeGroupCard key={so.id}
             icon="🏢" field={null}
@@ -1982,6 +2028,15 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched }) =
   const exportSideOffices = (sideOfficesList || []).filter(so => so.side === "Export");
   const importSideOffices = (sideOfficesList || []).filter(so => so.side === "Import");
 
+  // Line Agents (Export/Import) — surfaced directly on each side's home office card (New
+  // Style redesign, approved mockup: https://claude.ai/artifact/KmxNCy2HYyu192jg2NBBGE) so a
+  // filled-in relationship is visible without leaving this tab. Same two roles
+  // ShipmentSchedulesPage.jsx's own Line Agent fields already assign/reassign — this only reads.
+  const [parties, setParties] = useState(null);
+  useEffect(() => { api.shipmentParties.list(shipment.id).then(setParties).catch(() => setParties([])); }, [shipment.id]);
+  const exportLineAgent = (parties || []).find(p => p.role === "Line Agent (Export)") || null;
+  const importLineAgent = (parties || []).find(p => p.role === "Line Agent (Import)") || null;
+
   const shipmentOfficeIds = new Set([
     shipment.emoOfficeId, shipment.imoOfficeId, shipment.controllingOfficeId,
     ...(sideOfficesList || []).map(so => so.officeId),
@@ -2006,6 +2061,11 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched }) =
   const canEditExport = canEditSideDept("SE");
   const canEditImport = canEditSideDept("SI");
   const canEditControlling = canEditExport || canEditImport;
+  // "Your Side" badge — deliberately distinct from canEditExport/Import (which also covers the
+  // admin/operator/allOffices bypass): only true when this user's own office literally sits on
+  // that side, so an admin viewing either column isn't told it's uniquely "theirs."
+  const isMySideExport = activeOffice?.department === "SE";
+  const isMySideImport = activeOffice?.department === "SI";
 
   const handleReassigned = updated => { onShipmentPatched?.(updated); toast.success("Office reassigned"); };
 
@@ -2032,7 +2092,7 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched }) =
 
   useHorizonFonts();
 
-  if (offices === null || sideOfficesList === null) {
+  if (offices === null || sideOfficesList === null || parties === null) {
     return (
       <div id="shpparties-panel" style={{ display: "flex", alignItems: "center", gap: 8,
         color: HZ.textMuted, fontFamily: HZ_BODY, fontSize: 13, padding: "30px 0", justifyContent: "center" }}>
@@ -2084,12 +2144,14 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched }) =
           <OfficeColumn side="Export" shipment={shipment} offices={offices} services={exportServices}
             shipmentOfficeIds={shipmentOfficeIds} sideOfficeEntries={exportSideOffices}
             canEditOffice={canEditExport} canEditService={canEditExport}
+            isMySide={isMySideExport} lineAgent={exportLineAgent}
             onReassigned={handleReassigned} onUpdatedService={updateServiceInList}
             onAddOffice={officeId => handleAddSideOffice("Export", officeId)}
             onRemoveOffice={handleRemoveSideOffice} />
           <OfficeColumn side="Import" shipment={shipment} offices={offices} services={importServices}
             shipmentOfficeIds={shipmentOfficeIds} sideOfficeEntries={importSideOffices}
             canEditOffice={canEditImport} canEditService={canEditImport}
+            isMySide={isMySideImport} lineAgent={importLineAgent}
             onReassigned={handleReassigned} onUpdatedService={updateServiceInList}
             onAddOffice={officeId => handleAddSideOffice("Import", officeId)}
             onRemoveOffice={handleRemoveSideOffice} />
@@ -2537,10 +2599,10 @@ export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockTyp
   const vatUsd  = type === "SELL" ? Math.round(amtUsd * vatNum / 100 * 100) / 100 : 0;
   const valid   = amtNum > 0 && chargeCode;
 
-  const lbl = { fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
+  const lbl = { fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600, color: HZ.textMuted,
     textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 };
-  const inp = { fontFamily: T.body, fontSize: 14, color: T.text, background: T.bg,
-    border: `1px solid ${T.border}`, borderRadius: 8, padding: "7px 12px",
+  const inp = { fontFamily: HZ_BODY, fontSize: 14, color: HZ.text, background: HZ.bg,
+    border: `1px solid ${HZ.border}`, borderRadius: 8, padding: "7px 12px",
     outline: "none", width: "100%", boxSizing: "border-box" };
 
   return (
@@ -2581,7 +2643,7 @@ export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockTyp
         </div>
       </div>
       {currency !== "USD" && (
-        <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+        <div style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted }}>
           ≈ {fmtUsd(amtUsd)} USD at rate {rateNum}
         </div>
       )}
@@ -2593,7 +2655,7 @@ export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockTyp
               onChange={e => setVatRate(e.target.value)} placeholder="0" style={inp} />
           </div>
           {vatNum > 0 && (
-            <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, paddingBottom: 9 }}>
+            <div style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted, paddingBottom: 9 }}>
               VAT: {fmtUsd(vatUsd)} — Total incl. VAT: {fmtUsd(amtUsd + vatUsd)}
             </div>
           )}
@@ -2601,7 +2663,7 @@ export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockTyp
       )}
       {containers.length > 0 && (
         <div>
-          <div style={lbl}>Container <span style={{ fontWeight: 400, color: T.textMuted, textTransform: "none", letterSpacing: 0 }}>(optional — leave blank for shipment-level)</span></div>
+          <div style={lbl}>Container <span style={{ fontWeight: 400, color: HZ.textMuted, textTransform: "none", letterSpacing: 0 }}>(optional — leave blank for shipment-level)</span></div>
           <select value={containerId} onChange={e => setContainerId(e.target.value)} style={inp}>
             <option value="">— All containers / shipment-level —</option>
             {containers.map(c => {
@@ -2668,10 +2730,10 @@ export const CostLineHistoryModal = ({ shipmentId, onClose }) => {
   const visible = events.filter(e => filter.has(e.event_type));
 
   const evtColor = t => ({
-    CREATED: T.success, IMPORTED: T.info, UPDATED: T.warning, DELETED: T.danger,
-    GENERATED: T.info, CONFIRMED: T.success, AUTO_REMOVED: T.warning,
-    ACTUALIZED: T.info, POSTED: T.textMuted, ADJUSTED: T.warning,
-  }[t] || T.textMuted);
+    CREATED: HZ.good, IMPORTED: HZ.info, UPDATED: HZ.warn, DELETED: HZ.crit,
+    GENERATED: HZ.info, CONFIRMED: HZ.good, AUTO_REMOVED: HZ.warn,
+    ACTUALIZED: HZ.info, POSTED: HZ.textMuted, ADJUSTED: HZ.warn,
+  }[t] || HZ.textMuted);
 
   // Cost/invoice lines show their charge code; generated invoice documents (a different
   // entity_type sharing this same history feed) show their doc type + scope instead.
@@ -2707,7 +2769,7 @@ export const CostLineHistoryModal = ({ shipmentId, onClose }) => {
     a.click();
   };
 
-  const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+  const th = { fontFamily: HZ_BODY, fontSize: 10, fontWeight: 600, color: HZ.textMuted,
     textTransform: "uppercase", letterSpacing: ".07em" };
 
   const TYPE_LABELS = {
@@ -2724,21 +2786,21 @@ export const CostLineHistoryModal = ({ shipmentId, onClose }) => {
         {/* Toolbar */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Show:</span>
+            <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted }}>Show:</span>
             {ALL_TYPES.map(t => (
               <button key={t} type="button"
                 onClick={() => toggleFilter(t)}
-                style={{ fontFamily: T.body, fontSize: 11, borderRadius: 7, padding: "3px 10px", cursor: "pointer",
-                  border: `1px solid ${filter.has(t) ? evtColor(t) : T.border}`,
-                  background: filter.has(t) ? `${evtColor(t)}18` : "none",
-                  color: filter.has(t) ? evtColor(t) : T.textMuted }}>
+                style={{ fontFamily: HZ_BODY, fontSize: 11, borderRadius: 7, padding: "3px 10px", cursor: "pointer",
+                  border: `1px solid ${filter.has(t) ? evtColor(t) : HZ.border}`,
+                  background: filter.has(t) ? `${evtColor(t)}22` : "none",
+                  color: filter.has(t) ? evtColor(t) : HZ.textMuted }}>
                 {TYPE_LABELS[t]}
               </button>
             ))}
           </div>
           <button type="button" onClick={exportCsv}
-            style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, background: "none",
-              border: `1px solid ${T.border}`, borderRadius: 7, padding: "4px 12px", cursor: "pointer",
+            style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, background: "none",
+              border: `1px solid ${HZ.border}`, borderRadius: 7, padding: "4px 12px", cursor: "pointer",
               display: "inline-flex", alignItems: "center", gap: 4 }}>
             <IconArrowDown size={11} />CSV
           </button>
@@ -2746,15 +2808,15 @@ export const CostLineHistoryModal = ({ shipmentId, onClose }) => {
 
         {/* Table */}
         {loading ? (
-          <div style={{ padding: 24, textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Loading…</div>
+          <div style={{ padding: 24, textAlign: "center", fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>Loading…</div>
         ) : visible.length === 0 ? (
-          <div style={{ padding: 24, textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+          <div style={{ padding: 24, textAlign: "center", fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, fontStyle: "italic" }}>
             No events recorded yet.
           </div>
         ) : (
-          <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
+          <div style={{ border: `1px solid ${HZ.border}`, borderRadius: 8, overflow: "hidden" }}>
             <div style={{ display: "flex", alignItems: "center", padding: "6px 16px",
-              background: T.bg, borderBottom: `1px solid ${T.border}33` }}>
+              background: HZ.bg, borderBottom: `1px solid ${HZ.border}` }}>
               <div style={{ ...th, width: 150, flexShrink: 0 }}>Time</div>
               <div style={{ ...th, width: 100, flexShrink: 0 }}>Event</div>
               <div style={{ ...th, flex: 1 }}>Item</div>
@@ -2770,35 +2832,34 @@ export const CostLineHistoryModal = ({ shipmentId, onClose }) => {
                 return (
                   <div key={ev.id}
                     style={{ display: "flex", alignItems: "center", padding: "9px 16px",
-                      borderBottom: `1px solid ${T.border}22` }}
-                    onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                      borderBottom: `1px solid ${HZ.border}` }}
+                    onMouseEnter={e => e.currentTarget.style.background = HZ.surface2}
                     onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    <div style={{ width: 150, flexShrink: 0, fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                    <div style={{ width: 150, flexShrink: 0, fontFamily: HZ_MONO, fontSize: 10, color: HZ.textMuted }}>
                       {new Date(ev.created_at).toLocaleString("en-GB", { day: "2-digit", month: "short",
                         year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                     </div>
                     <div style={{ width: 100, flexShrink: 0 }}>
-                      <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600,
+                      <span style={{ fontFamily: HZ_BODY, fontSize: 10, fontWeight: 600,
                         color: evtColor(ev.event_type),
-                        background: `${evtColor(ev.event_type)}18`,
-                        border: `1px solid ${evtColor(ev.event_type)}44`,
+                        background: `${evtColor(ev.event_type)}22`,
                         borderRadius: 6, padding: "2px 7px" }}>
                         {TYPE_LABELS[ev.event_type] || ev.event_type}
                       </span>
                     </div>
-                    <div style={{ flex: 1, fontFamily: T.body, fontSize: 12, color: T.text,
+                    <div style={{ flex: 1, fontFamily: HZ_BODY, fontSize: 12, color: HZ.text,
                       overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{charge}</div>
-                    <div style={{ width: 110, flexShrink: 0, fontFamily: T.body, fontSize: 11,
-                      color: isUpdate ? T.text : T.textMuted }}>
+                    <div style={{ width: 110, flexShrink: 0, fontFamily: HZ_BODY, fontSize: 11,
+                      color: isUpdate ? HZ.text : HZ.textMuted }}>
                       {fieldLabel || (isUpdate ? "—" : "")}
                     </div>
-                    <div style={{ width: 130, flexShrink: 0, fontFamily: T.mono, fontSize: 11,
-                      color: T.danger, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <div style={{ width: 130, flexShrink: 0, fontFamily: HZ_MONO, fontSize: 11,
+                      color: HZ.crit, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {isUpdate ? fmtVal(ev.field, ev.old_value) : ""}
                     </div>
                     <div title={ev.event_type === "AUTO_REMOVED" ? "No charge lines remained for this invoice's scope, so it was removed automatically" : undefined}
-                      style={{ width: 130, flexShrink: 0, fontFamily: T.mono, fontSize: 11,
-                      color: isUpdate ? T.success : T.textMuted,
+                      style={{ width: 130, flexShrink: 0, fontFamily: HZ_MONO, fontSize: 11,
+                      color: isUpdate ? HZ.good : HZ.textMuted,
                       overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {isUpdate ? fmtVal(ev.field, ev.new_value) : (
                         ev.event_type === "CREATED"      ? "Manual entry" :
@@ -2820,7 +2881,7 @@ export const CostLineHistoryModal = ({ shipmentId, onClose }) => {
         )}
 
         {!loading && visible.length > 0 && (
-          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, textAlign: "right" }}>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, textAlign: "right" }}>
             {visible.length} event{visible.length !== 1 ? "s" : ""}
           </div>
         )}
@@ -2829,15 +2890,24 @@ export const CostLineHistoryModal = ({ shipmentId, onClose }) => {
   );
 };
 
-// Single cost-line row — shared by the Overview preview card and the dedicated
-// Cost Entry / Invoice Entry pages' full tables.
-// TKT-83O41G status badge — accrued (default, no badge needed) is the unmarked
-// state; actualized/posted get a small pill so a glance at the list shows what's
-// still an estimate vs what's been reconciled against a real invoice or pushed to GL.
-const COST_LINE_STATUS_STYLE = {
-  actualized: { label: "Actualized", color: T.info },
-  posted:     { label: "Posted",     color: T.textMuted },
-};
+// Single cost-line row — shared by the Cost Entry / Invoice Entry pages' full tables (their
+// only two real consumers; `showActions` is always true in practice today, kept as a prop for
+// shape-compatibility). Now a real <tr>/<td> row on Trade Horizon (HZ) tokens (Accounting Tabs
+// Restyle, approved mockup https://claude.ai/artifact/25ygL745mmMfvYWBXZWoAE) — Badge/ActionMenu
+// (both hardcoded to the base app's T tokens and shared with ~30 other pages app-wide) are
+// swapped for inline HZ-styled pills and individual icon buttons rather than touched, so this
+// restyle stays scoped to Accounting and can't leak into anything else using those primitives.
+// TKT-83O41G status pill — accrued (default, no pill needed) is the unmarked state;
+// actualized/posted get a small pill so a glance at the list shows what's still an estimate vs
+// what's been reconciled against a real invoice or pushed to GL.
+// Functions, not plain objects — HZ is a live-mutated object (App.jsx's theme toggle calls
+// applyHzTheme in place, no reload), so a plain object built from HZ.* at module load would
+// freeze whichever theme was active at import and never follow a later toggle.
+const costLineStatusStyle = status => ({
+  actualized: { label: "Actualized", color: HZ.info },
+  posted:     { label: "Posted",     color: HZ.textMuted },
+}[status]);
+const costLineTypeColor = type => ({ SELL: HZ.cyan, BUY: HZ.violet }[type]);
 
 export const CostLineRow = ({ line: l, containers = [], showActions = false, onEdit, onDelete, onActualize, onPost, onAdjust }) => {
   const ctr = l.containerId ? containers.find(c => c.id === l.containerId) : null;
@@ -2845,111 +2915,118 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
   // Mirror direction is derived from the line's own type, not stored separately: a
   // SELL line tagged 'mirror' was created BY mirroring a BUY line (Cost Entry), and
   // vice versa — that's the only way a mirrored line comes into existence.
-  const src = l.source === "contract" && l.modifiedAt ? { label: "Contract (Modified)", color: T.warning }
-    : l.source === "contract" ? { label: "Contract", color: T.info }
-    : l.source === "mirror" ? { label: l.type === "SELL" ? "Mirrored ← Cost Entry" : "Mirrored ← Invoice Entry", color: T.accent }
-    : l.source === "automated" ? { label: "Automated", color: T.success }
-    : l.source === "reversal" ? { label: "Reversal", color: T.danger }
-    : l.source === "adjustment" ? { label: "Adjustment", color: T.warning }
-    : l.source === "merchant_haulage" ? { label: "Merchant's Haulage", color: T.accent }
-    : { label: "Manual", color: T.textMuted };
+  const src = l.source === "contract" && l.modifiedAt ? { label: "Contract (Modified)", color: HZ.warn }
+    : l.source === "contract" ? { label: "Contract", color: HZ.info }
+    : l.source === "mirror" ? { label: l.type === "SELL" ? "Mirrored ← Cost Entry" : "Mirrored ← Invoice Entry", color: HZ.violet }
+    : l.source === "automated" ? { label: "Automated", color: HZ.good }
+    : l.source === "reversal" ? { label: "Reversal", color: HZ.crit }
+    : l.source === "adjustment" ? { label: "Adjustment", color: HZ.warn }
+    : l.source === "merchant_haulage" ? { label: "Merchant's Haulage", color: HZ.amber }
+    : { label: "Manual", color: HZ.textMuted };
+  const statusStyle = l.status && l.status !== "accrued" ? costLineStatusStyle(l.status) : null;
+  const iconBtnStyle = { width: 22, height: 22, borderRadius: 6, border: `1px solid ${HZ.border}`,
+    background: HZ.surface2, color: HZ.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
+    cursor: "pointer", flexShrink: 0, fontFamily: HZ_MONO, fontSize: 11, padding: 0 };
+
   return (
-    <div key={l.id} id={`costline-${l.id}-row`}
-      style={{ display: "flex", alignItems: "center", padding: showActions ? "9px 16px" : "8px 18px",
-        borderBottom: `1px solid ${T.border}22` }}
-      onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+    <tr id={`costline-${l.id}-row`} style={{ borderBottom: `1px solid ${HZ.border}` }}>
       {/* Type */}
-      <div style={{ width: showActions ? 60 : 46, flexShrink: 0 }}>
-        <Badge variant={l.type === "BUY" ? "warning" : "success"}>{l.type}</Badge>
-      </div>
+      <td style={{ padding: showActions ? "9px 14px" : "8px 14px" }}>
+        <span style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: ".03em",
+          color: costLineTypeColor(l.type), background: costLineTypeColor(l.type) + "22",
+          borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap" }}>{l.type}</span>
+      </td>
       {/* Charge */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6 }}>
-        <div style={{ fontFamily: T.body, fontSize: 12, color: T.text,
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.chargeCode}</div>
-        {l.type === "SELL" && l.vatRate > 0 && (
-          <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: T.info,
-            background: `${T.info}18`, border: `1px solid ${T.info}44`,
-            borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
-            VAT {l.vatRate}%
-          </span>
-        )}
-        {l.paymentIndicator === "Collect" && (
-          <span title="Carrier Payment Indicator: Collect — paid at destination"
-            style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: T.warning,
-            background: `${T.warning}18`, border: `1px solid ${T.warning}44`,
-            borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
-            COLLECT
-          </span>
-        )}
-      </div>
+      <td style={{ padding: "9px 14px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+          <span style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.chargeCode}</span>
+          {l.type === "SELL" && l.vatRate > 0 && (
+            <span style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, color: HZ.info,
+              background: HZ.infoBg, border: `1px solid ${HZ.info}44`,
+              borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
+              VAT {l.vatRate}%
+            </span>
+          )}
+          {l.paymentIndicator === "Collect" && (
+            <span title="Carrier Payment Indicator: Collect — paid at destination"
+              style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, color: HZ.warn,
+              background: HZ.warnBg, border: `1px solid ${HZ.warn}44`,
+              borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
+              COLLECT
+            </span>
+          )}
+        </div>
+      </td>
       {/* Container */}
-      <div style={{ width: showActions ? 100 : 80, flexShrink: 0, paddingLeft: 4,
-        fontFamily: T.mono, fontSize: showActions ? 11 : 10,
-        color: ctrLabel ? T.accent : T.border,
-        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <td style={{ padding: "9px 14px", fontFamily: HZ_MONO, fontSize: showActions ? 11 : 10,
+        color: ctrLabel ? HZ.textMuted : HZ.textFaint, whiteSpace: "nowrap" }}>
         {ctrLabel || "—"}
-      </div>
+      </td>
       {/* Source (modal only) */}
       {showActions && (
-        <div style={{ width: 160, flexShrink: 0, paddingLeft: 4 }}>
-          <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600,
-            color: src.color, background: `${src.color}18`,
-            border: `1px solid ${src.color}44`,
-            borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap" }}>
+        <td style={{ padding: "9px 14px" }}>
+          <span style={{ fontFamily: HZ_BODY, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".03em",
+            color: src.color, background: src.color + "22",
+            borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap" }}>
             {src.label}
           </span>
-        </div>
+        </td>
       )}
       {/* Currency */}
-      <div style={{ width: showActions ? 80 : 60, flexShrink: 0,
-        fontFamily: T.mono, fontSize: 11, color: T.text }}>{l.currency}</div>
+      <td style={{ padding: "9px 14px", fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted }}>{l.currency}</td>
       {/* Exch. Rate */}
       {showActions && (
-        <div style={{ width: 100, flexShrink: 0,
-          fontFamily: T.mono, fontSize: 11, color: T.textMuted, textAlign: "right" }}>
+        <td style={{ padding: "9px 14px", fontFamily: HZ_MONO, fontSize: 11, color: HZ.textFaint, textAlign: "right" }}>
           {l.exchangeRate === 1 ? "1.0000" : l.exchangeRate.toFixed(4)}
-        </div>
+        </td>
       )}
       {/* Amount */}
-      <div style={{ width: showActions ? 110 : 80, flexShrink: 0,
-        fontFamily: T.mono, fontSize: 12, textAlign: "right", fontWeight: 600,
-        color: (l.amount === 0 && l.source === 'contract' && l.type === 'BUY') ? T.warning : T.text }}>
+      <td style={{ padding: "9px 14px", fontFamily: HZ_MONO, fontSize: 12.5, textAlign: "right", fontWeight: 700,
+        color: (l.amount === 0 && l.source === 'contract' && l.type === 'BUY') ? HZ.warn : HZ.text }}>
         {l.amount === 0 && l.source === 'contract' && l.type === 'BUY'
           ? <span title="No matching rate for this container type — set manually"
               style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><IconWarning size={11} />0.00</span>
           : l.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
         }
-      </div>
+      </td>
       {/* Status (TKT-83O41G) */}
       {showActions && (
-        <div style={{ width: 100, flexShrink: 0, paddingLeft: 8 }}>
-          {l.status && l.status !== 'accrued' && (
+        <td style={{ padding: "9px 14px" }}>
+          {statusStyle && (
             <span title={l.varianceUsd != null ? `Variance: ${l.varianceUsd > 0 ? "+" : ""}$${l.varianceUsd.toFixed(2)}` : undefined}
-              style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700,
-                color: COST_LINE_STATUS_STYLE[l.status].color, background: `${COST_LINE_STATUS_STYLE[l.status].color}18`,
-                border: `1px solid ${COST_LINE_STATUS_STYLE[l.status].color}44`,
+              style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+                color: statusStyle.color, background: statusStyle.color + "22",
                 borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap" }}>
-              {COST_LINE_STATUS_STYLE[l.status].label}
+              {statusStyle.label}
             </span>
           )}
-        </div>
+        </td>
       )}
-      {/* Actions */}
+      {/* Actions — individual icon buttons rather than ActionMenu's dropdown, since ActionMenu
+          is hardcoded to the base app's T tokens and shared app-wide (see file header comment) */}
       {showActions && (
-        <div style={{ width: 36, flexShrink: 0 }}>
-          <ActionMenu items={[
-            ...(l.status !== 'posted' ? [
-              { icon: IconPencil, label: "Edit", onClick: onEdit },
-              { icon: IconClose, label: "Delete", variant: "danger", onClick: onDelete },
-            ] : []),
-            ...(l.status === 'accrued' && onActualize ? [{ icon: "◐", label: "Actualize", onClick: onActualize }] : []),
-            ...(l.status !== 'posted' && onPost ? [{ icon: IconLock, label: "Post", onClick: onPost }] : []),
-            ...(l.status === 'posted' && l.type === 'BUY' && onAdjust ? [{ icon: "±", label: "Adjust", onClick: onAdjust }] : []),
-          ]} />
-        </div>
+        <td style={{ padding: "9px 14px" }}>
+          <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+            {l.status !== 'posted' && (
+              <button type="button" title="Edit" aria-label="Edit" onClick={onEdit} style={iconBtnStyle}><IconPencil size={11} /></button>
+            )}
+            {l.status === 'accrued' && onActualize && (
+              <button type="button" title="Actualize" aria-label="Actualize" onClick={onActualize} style={iconBtnStyle}>◐</button>
+            )}
+            {l.status !== 'posted' && onPost && (
+              <button type="button" title="Post" aria-label="Post" onClick={onPost} style={iconBtnStyle}><IconLock size={11} /></button>
+            )}
+            {l.status === 'posted' && l.type === 'BUY' && onAdjust && (
+              <button type="button" title="Adjust" aria-label="Adjust" onClick={onAdjust} style={iconBtnStyle}>±</button>
+            )}
+            {l.status !== 'posted' && (
+              <button type="button" title="Delete" aria-label="Delete" onClick={onDelete} style={{ ...iconBtnStyle, color: HZ.crit }}><IconClose size={11} /></button>
+            )}
+          </div>
+        </td>
       )}
-    </div>
+    </tr>
   );
 };
 
@@ -2964,8 +3041,8 @@ export const CostLineActualizeModal = ({ line, onSave, onClose }) => {
   return (
     <Modal title={`Actualize — ${line.chargeCode}`} onClose={onClose} width={420}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
-          Accrued (estimated) amount: <strong style={{ color: T.text, fontFamily: T.mono }}>{line.currency} {line.amount.toFixed(2)}</strong>.
+        <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, lineHeight: 1.5 }}>
+          Accrued (estimated) amount: <strong style={{ color: HZ.text, fontFamily: HZ_MONO }}>{line.currency} {line.amount.toFixed(2)}</strong>.
           Enter the real invoiced amount — the accrued estimate is kept as-is so the variance stays visible.
         </div>
         <Inp label={`Actual Amount (${line.currency})`} value={amount} onChange={setAmount} mono required />
@@ -2994,10 +3071,10 @@ export const CostLineAdjustModal = ({ line, onSave, onClose }) => {
   return (
     <Modal title={`Adjust — ${line.chargeCode}`} onClose={onClose} width={440}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
-          Current posted amount: <strong style={{ color: T.text, fontFamily: T.mono }}>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, lineHeight: 1.5 }}>
+          Current posted amount: <strong style={{ color: HZ.text, fontFamily: HZ_MONO }}>
             {line.currency} {(line.actualAmount != null ? line.actualAmount : line.amount).toFixed(2)}
-          </strong>. Enter the <strong style={{ color: T.text }}>difference</strong> to apply — not the new
+          </strong>. Enter the <strong style={{ color: HZ.text }}>difference</strong> to apply — not the new
           total — as a positive number to add a charge or a negative number to credit one back.
           This posts a new adjusting line linked to the original; the original itself is never edited.
         </div>
@@ -3031,6 +3108,10 @@ const RECONCILE_STATUS = {
   new:     { label: "New on contract",       variant: "info" },
   removed: { label: "Removed from contract", variant: "danger" },
 };
+// HZ-token equivalent of the variants above — ReconcileCarrierCostsModal renders its own pill
+// (Badge is hardcoded to the base app's T tokens and shared app-wide) now that it's on Trade
+// Horizon tokens alongside the rest of Cost Entry (Accounting Tabs Restyle).
+const RECONCILE_HZ_COLOR = { match: HZ.good, changed: HZ.info, manual: HZ.cyan, new: HZ.info, removed: HZ.crit };
 
 export const ReconcileCarrierCostsModal = ({ shipmentId, mode, containerCount = 1, onClose, onApplied }) => {
   const [loading, setLoading] = useState(true);
@@ -3061,13 +3142,13 @@ export const ReconcileCarrierCostsModal = ({ shipmentId, mode, containerCount = 
     } catch (e) { toast.error(e.message); }
   });
 
-  const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+  const th = { fontFamily: HZ_BODY, fontSize: 10, fontWeight: 600, color: HZ.textMuted,
     textTransform: "uppercase", letterSpacing: ".07em" };
 
   return (
     <Modal title="Reconcile Carrier Costs" onClose={onClose} width={640}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, lineHeight: 1.5 }}>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, lineHeight: 1.5 }}>
           {mode === "update"
             ? "Comparing your current cost lines against the contract's CURRENT live rates."
             : "Comparing your current cost lines against this shipment's own already-issued rate snapshot."}
@@ -3076,31 +3157,33 @@ export const ReconcileCarrierCostsModal = ({ shipmentId, mode, containerCount = 
         {loading ? (
           <div style={{ padding: 24, textAlign: "center" }}><Spinner /></div>
         ) : loadError ? (
-          <div style={{ fontFamily: T.body, fontSize: 13, color: T.danger }}>{loadError}</div>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.crit }}>{loadError}</div>
         ) : rows.length === 0 ? (
-          <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, fontStyle: "italic" }}>
             Nothing to compare — the contract has no rates.
           </div>
         ) : (
-          <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", maxHeight: 320, overflowY: "auto" }}>
-            <div style={{ display: "flex", padding: "7px 12px", background: T.bg, borderBottom: `1px solid ${T.border}`, position: "sticky", top: 0 }}>
+          <div style={{ border: `1px solid ${HZ.border}`, borderRadius: 8, overflow: "hidden", maxHeight: 320, overflowY: "auto" }}>
+            <div style={{ display: "flex", padding: "7px 12px", background: HZ.bg, borderBottom: `1px solid ${HZ.border}`, position: "sticky", top: 0 }}>
               <div style={{ ...th, flex: 1 }}>Charge Code</div>
               <div style={{ ...th, width: 100, textAlign: "right" }}>Current</div>
               <div style={{ ...th, width: 100, textAlign: "right" }}>Contract</div>
               <div style={{ ...th, width: 150, paddingLeft: 8 }}>Status</div>
             </div>
             {rows.map(r => (
-              <div key={r.chargeCode} style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderBottom: `1px solid ${T.border}22` }}>
-                <div style={{ flex: 1, fontFamily: T.body, fontSize: 12.5, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.chargeCode}</div>
-                <div style={{ width: 100, textAlign: "right", fontFamily: T.mono, fontSize: 12,
-                  color: r.status === "manual" ? T.accent : T.text, fontWeight: r.status === "manual" ? 700 : 400 }}>
-                  {r.currentAmount != null ? `${r.currentAmount.toFixed(2)} ${r.currentCurrency}` : <span style={{ color: T.textMuted }}>—</span>}
+              <div key={r.chargeCode} style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderBottom: `1px solid ${HZ.border}` }}>
+                <div style={{ flex: 1, fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.chargeCode}</div>
+                <div style={{ width: 100, textAlign: "right", fontFamily: HZ_MONO, fontSize: 12,
+                  color: r.status === "manual" ? HZ.cyan : HZ.text, fontWeight: r.status === "manual" ? 700 : 400 }}>
+                  {r.currentAmount != null ? `${r.currentAmount.toFixed(2)} ${r.currentCurrency}` : <span style={{ color: HZ.textMuted }}>—</span>}
                 </div>
-                <div style={{ width: 100, textAlign: "right", fontFamily: T.mono, fontSize: 12, color: T.text }}>
-                  {r.contractAmount != null ? `${r.contractAmount.toFixed(2)} ${r.contractCurrency}` : <span style={{ color: T.textMuted }}>—</span>}
+                <div style={{ width: 100, textAlign: "right", fontFamily: HZ_MONO, fontSize: 12, color: HZ.text }}>
+                  {r.contractAmount != null ? `${r.contractAmount.toFixed(2)} ${r.contractCurrency}` : <span style={{ color: HZ.textMuted }}>—</span>}
                 </div>
                 <div style={{ width: 150, paddingLeft: 8 }}>
-                  <Badge variant={RECONCILE_STATUS[r.status].variant}>{RECONCILE_STATUS[r.status].label}</Badge>
+                  <span style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase",
+                    color: RECONCILE_HZ_COLOR[r.status], background: RECONCILE_HZ_COLOR[r.status] + "22",
+                    borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap" }}>{RECONCILE_STATUS[r.status].label}</span>
                 </div>
               </div>
             ))}
@@ -3109,14 +3192,14 @@ export const ReconcileCarrierCostsModal = ({ shipmentId, mode, containerCount = 
 
         {containerCount > 1 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".06em" }}>
+            <div style={{ fontFamily: HZ_BODY, fontSize: 11, fontWeight: 700, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em" }}>
               Per-container rate lines — {containerCount} containers
             </div>
             {[{ v: false, label: `Aggregate (1 line × ${containerCount})` },
               { v: true,  label: `Split per container (${containerCount} lines per rate)` }].map(opt => (
               <label key={String(opt.v)} style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
                 <input type="radio" checked={splitPerContainer === opt.v} onChange={() => setSplitPerContainer(opt.v)} />
-                <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.text }}>{opt.label}</span>
+                <span style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text }}>{opt.label}</span>
               </label>
             ))}
           </div>
@@ -3124,16 +3207,16 @@ export const ReconcileCarrierCostsModal = ({ shipmentId, mode, containerCount = 
 
         {!loading && !loadError && rows.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 12px",
-            background: T.info + "12", border: `1px solid ${T.info}44`, borderRadius: 6,
-            fontFamily: T.body, fontSize: 11.5, color: T.text, lineHeight: 1.5 }}>
-            <div><strong style={{ color: T.danger }}>Overwrite All</strong> — regenerates every line above except "New on contract" from scratch, using the contract's current numbers. This includes <strong>Manual override</strong> lines — a human correction is discarded in favor of the contract's value.</div>
-            <div><strong style={{ color: T.text }}>Ignore &amp; Add Missing Only</strong> — touches nothing that already exists, whatever its status. Only "New on contract" charges are created; a stale "Contract rate changed" line is left exactly as it is.</div>
-            <div><strong style={{ color: T.textMuted }}>Discard</strong> — closes this without creating or changing anything, including no new rate snapshot.</div>
+            background: HZ.infoBg, border: `1px solid ${HZ.info}44`, borderRadius: 6,
+            fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.text, lineHeight: 1.5 }}>
+            <div><strong style={{ color: HZ.crit }}>Overwrite All</strong> — regenerates every line above except "New on contract" from scratch, using the contract's current numbers. This includes <strong>Manual override</strong> lines — a human correction is discarded in favor of the contract's value.</div>
+            <div><strong style={{ color: HZ.text }}>Ignore &amp; Add Missing Only</strong> — touches nothing that already exists, whatever its status. Only "New on contract" charges are created; a stale "Contract rate changed" line is left exactly as it is.</div>
+            <div><strong style={{ color: HZ.textMuted }}>Discard</strong> — closes this without creating or changing anything, including no new rate snapshot.</div>
           </div>
         )}
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>{loading ? "" : summary}</span>
+          <span style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted }}>{loading ? "" : summary}</span>
           <div style={{ display: "flex", gap: 8 }}>
             <Btn variant="secondary" onClick={onClose} disabled={isSaving}>Discard</Btn>
             <Btn variant="secondary" onClick={() => apply("ignore")} disabled={isSaving || loading}>Ignore &amp; Add Missing Only</Btn>

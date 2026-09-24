@@ -85,7 +85,8 @@ async function setSource(token, value) {
     const scratchEmail = `customer-toggle-test-${stamp}@test.local`;
     const createUser = await request("POST", "/api/users",
       { email: scratchEmail, name: "Customer Toggle Test Viewer", roles: ["viewer"], password: "TestFixture!2026Zq" }, token);
-    assert("scratch viewer created", createUser.status === 200, JSON.stringify(createUser.body));
+    // POST /api/users now returns the created user + 201, not the old {ok:true}/200 (2026-09-23 QA finding).
+    assert("scratch viewer created", createUser.status === 201, JSON.stringify(createUser.body));
     const usersList = await request("GET", "/api/users", null, token);
     scratchUserId = usersList.body.find(u => u.email === scratchEmail)?.id;
     const viewerToken = await login(scratchEmail, "TestFixture!2026Zq");

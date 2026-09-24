@@ -6,7 +6,7 @@ Full-stack freight management app. React 18 + Vite frontend, Express + dual-back
 `lib/db.js`) backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.91.6 "Concourse"**
+- Version: **v0.91.7 "Landfall"**
 - First-time setup: `npm run setup` (`scripts/setup.js`) — boots the server once to create its
   schema, shuts it down cleanly, then seeds MDM reference data, in the correct order. NOT
   zero-script — a genuinely fresh `pgdata/` has no ports/carriers/vessels/commodities until this
@@ -637,6 +637,8 @@ are fully validated.
 - **Shared table system (v0.91.5)**: a Shipments-style list is `useTableQuery` (state + fetching) + `DataTable`/`TableToolbar` (rendering) on the client and `lib/tableQuery.js` on the server (`applyColumnFilters → applySearch → applySort → paginate`, plus a `/filter-options` route registered BEFORE `/:id`). Conventions that fail silently if broken: filter params are repeated keys, never comma-joined; a present-but-empty param means show nothing; checklist options come from the whole access-filtered set, not the current page. Also keep `filterKeys` a module-level array. Adopters: Quotes (the pilot), Contracts, Opportunities, Customers and Freight Audit (two tables) — all server-driven — plus Credit Overrides, the first CLIENT-SIDE one (a small, bounded, unpaginated list whose server computation is expensive and authorization-bearing: fetch it once, filter it with `src/utils/localTableQuery.js`; pick this tier only when the whole set is small by nature, and note that it makes no further requests while filtering); Schedule Search is the second client-side adopter, and a deliberately LIGHT one (it keeps its grouped layout, inline panel and BEST badge; `DataTable` cannot express grouping, expansion or per-row emphasis, and forcing it would have been the largest, riskiest option — the user chose the light one). `TableToolbar` omits its search box when given no `onSearch`, for a page whose own form is the search. Space Configurations is the only queued page (**agree the column set with the user BEFORE starting** — they asked to decide which columns are reworked; see ARCHITECTURE.md §8.23 for the impact assessment) (Credit Overrides is small but its rows come from an expensive per-request computation with a remote-customer branch — extract that into a function first). After swapping a page's list, **exercise row click, create and delete in a browser**: the modals below the list still call the old `load`/`doLoad`, which is now a runtime `ReferenceError` the build cannot catch (found on Opportunities — the page rendered fine and only threw on the first row click); a scope-aware no-undef pass over the file (Babel parse + `scope.hasBinding`) also catches it. **A column whose cell is a `Badge` must declare `align: "center"`** (as Shipments does for Contract and Status): `Badge` sets `alignSelf: "center"`, which overrides `DataTable`'s left alignment, so a badge in a left-aligned column floats to the middle of its cell while its header stays left. If the list endpoint you are migrating already has other callers whose params mean something different (Contracts' `carrier` was a partial match and an empty `status=` meant "no filter"), add a `/table` sibling endpoint rather than changing it — Quotes could change in place only because nothing else depended on its params. Set explicit column widths whose sum (plus the actions column and 40px padding) fits the ~1150px available at a 1500px viewport: `useResizableColumns` builds a fixed-pixel grid, so an over-wide table is silently clipped, not wrapped.
 - **Trade Horizon is dual-theme (v0.91.5)**: `HZ_DARK`/`HZ_LIGHT` in `shipmentDetailTheme.js` (Shipment Details) and `DashboardPage.jsx` (Dashboard), each a mutable `HZ` object swapped in place by `applyHzTheme(dark)` / `applyDashboardHzTheme(dark)` — the same mutable-object pattern as `T`/`applyTheme`, all three driven from `App.jsx`'s `isDark`/`toggleTheme`. Style through `HZ.*` tokens only (incl. `goodPillText`/`infoPillText`/`violetPillText`/`chipText` for text on tinted pills, `cardBlur`, and `cardShadow`, which light glass cards need on their `boxShadow`; floating tooltips/popovers use `popoverShadow` instead, since `cardShadow` is `"none"` in dark); never hardcode a dark literal — including a `rgba(0,0,0,…)` shadow, which reads as a smudge on a light page. `HZ_LEGACY_THEME` uses getters so it stays live after a theme swap. Command Center already followed the app theme via `isDark` → classic `T`.
 - **Every test that creates a shipment provisions its own offices (v0.91.5)**: a CI database starts with no offices, and `emoOfficeId`/`imoOfficeId` are required, so call `ensureOffices()` (`tests/helpers/offices.mjs`, `cypress/support/offices.js`) instead of looking one up. CI's backend job sets `LOGIN_RATE_MAX: '1000'` — the 73-file suite exhausts the old 200 cap around file 60; the Cypress job stays at 200.
+- **Office-side write gating (Epic TKT-Z0LB0W, v0.91.7)**: every shipment carries a computed `myOfficeSide` field (`"export"`/`"import"`/`"unrestricted"`, from `officeSideOf` in server.js, relative to the requesting user's own office) — the one thing every write route on a fixed-side page (Schedules, Cargo, Carrier Booking, Shipping Instructions) checks via `blockIfWrongSide` before accepting an edit. `src/utils/officeSide.js`'s `canEditShipmentSide(auth, shipment, side)` is the single client-side mirror every consuming page imports — never reimplement this check locally, that's exactly the "two engines computing the same permission and drifting apart" bug class this codebase has hit before. Container Events, and Cost Lines' own writes, are deliberately NOT side-gated (shared/unrestricted by design); Export/Import Services and Customs Filing gate by the record's own side instead of the page as a whole. `tests/office-side-permissions.test.js` is the regression suite covering all of it.
+- **A colour/style lookup built from `HZ`/`T` must be a function, never a plain object (v0.91.7)**: both are mutable objects swapped in place by the theme toggle (`applyHzTheme`/`applyTheme`, no reload) — `const STATUS_COLOR = { Requested: HZ.warn, ... }` at module scope reads `HZ.warn` exactly once, at import time, and silently keeps that value forever regardless of later theme switches. Write it as `const statusColor = status => ({ Requested: HZ.warn, ... }[status])` instead, so each call re-reads the live object. Found and fixed in `ServicesPanel.jsx`, `DocumentsModal.jsx`, `CarrierBookingsTable.jsx` and `ShipmentDetailPage.jsx`'s `CostLineRow` helpers; the Customs Filing Details/Review pages' own `STATUS_COLOR` already used the safe form (storing the token *name*, e.g. `"cyan"`, and resolving `HZ[name]` at render time) — match that shape when in doubt.
 - **PortCombobox dropdown**: always `position: fixed` with `getBoundingClientRect()` to escape modal `overflow:auto` — `CarrierCombobox` and `DatePicker` (as of v0.40.1) follow the same pattern; any *new* dropdown/popover primitive should too, rather than `position: absolute`, which breaks the moment it lands inside any scrolling/clipped container
 - **Paginated responses**: `api.ports.search(...)` returns `{ results: [], total, limit, offset }` — always use `.results`
 - **Page-size dropdown (v0.78.0)**: `<PageSizeSelect value={limit} onChange={setLimit} />` (primitives) rendered next to `<Pagination>` on every table that scales with real usage — 50/75/100, one shared `cargodesk_page_size` localStorage key (not per-table). `GET /api/shipments`/`/linked-ports`/`/carrier-agents` all use the same opt-in shape: omit `limit`/`offset` entirely and get today's bare-array response (every existing zero-arg caller, e.g. App.jsx's own shared full-array load, is unaffected); pass them and get `{results,total,limit,offset}` with `status`/`carrier`/`search`/`sort` also opt-in on `/shipments`. Small/bounded tables (a shipment's own cost lines, containers, milestones; org headcount) deliberately stay unpaginated or get lighter client-side slicing — see ARCHITECTURE.md §8.18 for the full scope split.
@@ -678,6 +680,54 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.91.7 "Landfall")
+Bundled release — closes out the Office-Side Permissions Epic and completes the Trade Horizon
+restyle across every remaining Shipment Details page. Not run: an additional shipment-domain gap
+audit (direct decision — two full QA passes this session already covered the surface touched).
+- **Office-Side Permissions Epic (TKT-Z0LB0W), Phases 0-5, all Released** — per-shipment relative
+  office-side scoping (`officeSideOf`/`resolveOfficeSideAccess`/`sideFromAccess`, server.js)
+  computes a `myOfficeSide` field on every shipment; fixed-side write gates on Schedules, Cargo,
+  Carrier Booking and Shipping Instructions; Container Events stay deliberately ungated (shared,
+  not side-owned); Export/Import Services gate by the service's own side, not a fixed section;
+  Parties gates role-based (Customs Broker/Trucker are side-bound, Forwarder isn't); Customs
+  Filing splits its gate per filing type; Cost Lines get a line-level read filter by a new
+  `charge_code_sides` table while writes stay ungated; a new `vessel_arrived` milestone trigger
+  opens an ops-automation Kanban ticket addressed to the import office's manager.
+  `src/utils/officeSide.js`'s `canEditShipmentSide` is the one client-side mirror every consuming
+  page now shares. `tests/office-side-permissions.test.js`: 50 assertions, permanent regression
+  suite.
+- **Trade Horizon "New Style" restyle, the rest of Shipment Details** — a stat strip above a real
+  `<table>` on Cargo (replacing the old sidebar tree), History and Accounting's Invoice/Cost
+  Entry; Involved Offices flattens to one card per side with Manager/Line Agent inline plus a
+  Your Side/Read-only badge wired to `myOfficeSide`; Export/Import Services gets the same
+  Export=cyan/Import=violet card treatment (also finishes Overview, whose only real content this
+  is); GP Overview gets a new header/stat-strip only — `GpBreakdownPanel` is shared with
+  ReportsPage.jsx, so forking it was declined, the same call already made once for this exact
+  tradeoff. Shipping Instructions, Documents, Carrier Booking (Details+Review) and Customs Filing
+  (Details+Review) are forms/workflows, not lists, so they get a straight token migration in
+  their existing layout instead; Documents' own doc-type readiness list did get a real table,
+  since that part IS a genuine list. `SailingPickerModal` is deliberately left on the base theme
+  — shared with the New Shipment form, which stays out of scope; migrating it would only move the
+  seam, not remove it.
+- **Fixed: theme-toggle-stale colour lookups** — see the new pattern bullet above. Found in 4
+  files, all fixed the same way.
+- **Fixed: Carrier Booking / Customs Filing Details↔Review tab could go stale (pre-existing, not
+  part of the restyle)** — `ShipmentCarrierBookingPage.jsx`/`ShipmentCustomsFilingPage.jsx` each
+  seed their tab via `useState(initialTab)`, which only runs once; App.jsx renders the same
+  component instance for both the `-details` and `-review` page keys (no `key` prop, so no
+  remount), just with a different `initialTab`. Navigating the hash between them while already
+  mounted — the notification bell and Test Tools' "Open Review Page" both do this — left the tab
+  strip and content stuck on whichever tab was active at first mount. Fixed with
+  `useEffect(() => setActiveTab(initialTab), [initialTab])` in both files.
+- **Verification** — two full QA passes, both via a real running browser and a freshly created,
+  fully realistic shipment (kept, not deleted, per this project's own verification-artifact
+  convention): one end-to-end pass driving all ~18 Shipment Details pages with real interactions
+  on the highest-risk change (the dropdown-to-icon-button conversion on Invoice/Cost Entry rows,
+  confirmed to target the correct row, not just the first one); one focused pass stress-testing
+  the tab-sync fix from every real trigger path (direct hash change both directions on both page
+  pairs, real sidebar-click navigation, in-page tab-button clicks as a regression check). Both
+  passed clean.
 
 ## Recent changes (v0.91.6 "Concourse")
 Bundled release — the shared table system reaches every list page, Space Configurations gets an Origin/Destination

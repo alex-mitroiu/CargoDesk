@@ -14,6 +14,7 @@ import { IconWarning, IconPackage, IconAnchor } from "../../components/primitive
 import useContractMismatch from "../../hooks/useContractMismatch";
 import ConsumptionBar from "../../components/shared/ConsumptionBar";
 import { deriveLoopCode } from "../../utils/scheduleLoop";
+import { canEditShipmentSide } from "../../utils/officeSide";
 import { emitLegsScheduleChanged } from "../../legsScheduleBus";
 import useSaving from "../../hooks/useSaving";
 import { setNavigationGuard, clearNavigationGuard } from "../../navigationGuard";
@@ -229,6 +230,10 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, on
   const canEditSideDept = dept => canEdit && (roleBypass || allOffices || activeOffice?.department === dept);
   const canEditExportLineAgent = canEditSideDept("SE");
   const canEditImportLineAgent = canEditSideDept("SI");
+  // Contracts & Schedules is export-edit per the Office-Side Permissions Epic (TKT-Z0LB0W) —
+  // per-shipment-relative (shipment.myOfficeSide), NOT the department-wide check just above
+  // (that one's scope is narrower: only who may reassign the Line Agent fields specifically).
+  const canEditExportSide = canEditShipmentSide({ canEditShipments: canEdit, isAdmin, activeRoles, allOffices }, shipment, "export");
 
   const handleAssignLineAgent = async (role, existingId, customerId, customerName) => {
     try {
@@ -607,7 +612,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, on
     );
   }
 
-  const addSailingBtn = canEdit && (
+  const addSailingBtn = canEditExportSide && (
     <button type="button"
       disabled={!canSearch}
       onClick={() => { if (canSearch) { setChainedFromContract(false); setPickerOpen(true); } }}
@@ -653,7 +658,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, on
       <div id="shpsched-legs-section" data-testid="shipment-schedules-legs-section">
         <div style={sectionLabel}>Route Legs</div>
         <LegsTable key={`legs-${legsVersion}`} shipmentId={null} draftLegs={draftLegs} onDraftLegsChange={handleDraftLegsChange}
-          canEdit={canEdit} showContractCols={false}
+          canEdit={canEditExportSide} showContractCols={false}
           extraAction={addSailingBtn}
           loopCode={deriveLoopCode(draftSailing || scheduleList[0])}
           hideDraftBanner theme={HZ_LEGACY_THEME} />
@@ -709,7 +714,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, on
                   border: `1px solid ${HZ.warn}44`, borderRadius: 4, padding: "2px 8px", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}><IconWarning size={10} /> Expired</span>
               )}
             </div>
-            {canEdit && (
+            {canEditExportSide && (
               <Btn id="shpsched-contract-btn" data-testid="shipment-schedules-contract-btn" size="sm" variant="secondary" disabled={isDirty}
                 title={isDirty ? "Save or discard your route changes first" : undefined}
                 onClick={() => setContractModalOpen(true)}>
@@ -932,7 +937,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, on
           }} />
       )}
 
-      {pendingMatches && canEdit && (
+      {pendingMatches && canEditExportSide && (
         <PendingRevalidationModal
           matches={pendingMatches}
           contractRef={shipment.contractRef}

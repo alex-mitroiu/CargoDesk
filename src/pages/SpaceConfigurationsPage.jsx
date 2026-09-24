@@ -943,16 +943,18 @@ const SpaceConfigurationsPage = ({
           ...s, teu: containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0),
         })).filter(s => s.teu > 0);
 
-        // Same bucket rule as loadTeuBuckets (routes/allocations.js) — bookingStatus is already
-        // on every shipment (mapShipment's own LEFT JOIN carrier_bookings), so this needs no
-        // new fetch. Only Confirmed actively deducts; Cancelled is excluded from the total.
-        const bucketOf = s => s.bookingStatus === "Confirmed" ? "confirmed"
-          : s.bookingStatus === "Rejected" ? "rejected"
-          : s.bookingStatus === "Cancelled" ? "excluded"
-          : "pending";
-        const confirmedTEU = linked.filter(s => bucketOf(s) === "confirmed").reduce((acc, s) => acc + s.teu, 0);
-        const pendingTEU   = linked.filter(s => bucketOf(s) === "pending").reduce((acc, s) => acc + s.teu, 0);
-        const rejectedTEU  = linked.filter(s => bucketOf(s) === "rejected").reduce((acc, s) => acc + s.teu, 0);
+        // Header figures come straight from the allocation row itself — the same authoritative,
+        // unscoped loadTeuBuckets() aggregate the table already reads (routes/allocations.js) —
+        // rather than being re-summed from `linked` above. `linked` is built by filtering the
+        // App-level `shipments` state, which DOES pass through applyShipmentAccessFilter for any
+        // office/trade-lane-scoped role (trade_manager, sales, occ_bk, viewer — all of whom can
+        // open this page); re-summing it here used to silently show a lower Confirmed TEU (and
+        // %) than the table row a few pixels away for exactly those roles (2026-09-23 QA finding).
+        // The shipment list below is still the possibly-scoped `linked` rows — that's correct,
+        // it's just "which shipments can I see," not "what does the bar mean."
+        const confirmedTEU = a.confirmedTEU;
+        const pendingTEU   = a.pendingTEU;
+        const rejectedTEU  = a.rejectedTEU;
         const totalTEU    = confirmedTEU + pendingTEU + rejectedTEU;
         const allocated   = a.allocatedTEU;
         const pct         = allocated > 0 ? Math.round((confirmedTEU / allocated) * 100) : 0;

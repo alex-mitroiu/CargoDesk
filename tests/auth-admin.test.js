@@ -123,7 +123,11 @@ async function login(email = "claudeagent@localhost", password = "TestFixture!20
     const rand = Math.random().toString(36).slice(2, 8);
     const email = `auth-test-${rand}@example.com`;
     const create = await request("POST", "/api/users", { email, name: "Auth Test User", roles: ["viewer"], password: "AuthTestFixture!2026Zq" }, token);
-    assert("user created", create.status === 200, JSON.stringify(create.body));
+    // 201 + the created user itself, matching every other create endpoint's convention — this
+    // used to be the one exception, answering {ok:true}/200 with no id (2026-09-23 QA finding).
+    assert("user created (201 + created user, not the old {ok:true}/200)",
+      create.status === 201 && create.body.id?.startsWith("USR-") && create.body.email === email,
+      JSON.stringify(create.body));
 
     const createDup = await request("POST", "/api/users", { email, name: "Dup", roles: ["viewer"], password: "AuthTestFixture!2026Zq" }, token);
     assert("duplicate email rejected", createDup.status >= 400 && /already exists/i.test(createDup.body.error || ""));

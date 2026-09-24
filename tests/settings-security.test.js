@@ -76,7 +76,8 @@ const ADMIN_ONLY_KEYS = ["mdm_source", "contract_source", "screening_source", "k
     const origOrder = before.body.shipment_sidebar_order;
     const createOp = await request("POST", "/api/users",
       { email: opEmail, name: "Settings Security Test Operator", roles: ["operator"], password: "SettingsSecFixture!2026Zq" }, admin);
-    assert("scratch operator created", createOp.status === 200, JSON.stringify(createOp.body));
+    // POST /api/users now returns the created user + 201, not the old {ok:true}/200 (2026-09-23 QA finding).
+    assert("scratch operator created", createOp.status === 201, JSON.stringify(createOp.body));
     const usersList = await request("GET", "/api/users", null, admin);
     opUserId = usersList.body.find(u => u.email === opEmail)?.id;
     assert("scratch operator findable", !!opUserId);
