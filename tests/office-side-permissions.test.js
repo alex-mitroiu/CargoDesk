@@ -183,7 +183,7 @@ async function login(email, password) {
     const forwarderByImport = await request("POST", `/api/shipments/${shipmentId}/parties`, { role: "Forwarder", customerId: broker.body.id, customerName: broker.body.companyName }, importToken, H_B);
     assert("import user can assign the un-sided 'Forwarder' role (201) — not blanket-gated", forwarderByImport.status === 201, JSON.stringify(forwarderByImport.body));
 
-    console.log("\nCost Lines — line-level READ filtering by charge_code side; WRITE deliberately not gated");
+    console.log("\nCost Lines — line-level READ filtering by charge_code side; WRITE gated the same way");
     const clExport = await request("POST", `/api/shipments/${shipmentId}/cost-lines`, { type: "BUY", chargeCode: "Ocean Freight", amount: 4200 }, admin);
     const clImport = await request("POST", `/api/shipments/${shipmentId}/cost-lines`, { type: "BUY", chargeCode: "Destination THC", amount: 410 }, admin);
     const clShared = await request("POST", `/api/shipments/${shipmentId}/cost-lines`, { type: "BUY", chargeCode: `OSP Unclassified ${rand}`, amount: 99 }, admin);
@@ -199,8 +199,16 @@ async function login(email, password) {
     assert("import user does NOT see the Export-owned line", !codesAsImport.includes("Ocean Freight"));
     const linesAsAdmin = await request("GET", `/api/shipments/${shipmentId}/cost-lines`, null, admin);
     assert("admin (unrestricted) sees all 3 lines", linesAsAdmin.body.length >= 3);
+    // 2026-09-25 audit finding: write routes on this resource had zero side check at all despite
+    // the GET route above filtering by the exact same rule — a wrong-side user could write, or
+    // even discover-then-delete, a line their own list view correctly hides them from. Fixed by
+    // blockIfWrongSideForChargeCode (routes/shipment-ops.js) on every write route.
     const clWriteByImport = await request("POST", `/api/shipments/${shipmentId}/cost-lines`, { type: "BUY", chargeCode: "Ocean Freight", amount: 100 }, importToken, H_B);
-    assert("import user can still WRITE an Export-owned cost line (201) — write is not side-gated by design", clWriteByImport.status === 201, JSON.stringify(clWriteByImport.body));
+    assert("import user blocked from writing an Export-owned cost line (403)", clWriteByImport.status === 403, JSON.stringify(clWriteByImport.body));
+    const clWriteByExport = await request("POST", `/api/shipments/${shipmentId}/cost-lines`, { type: "BUY", chargeCode: "Destination THC", amount: 100 }, exportToken, H_A);
+    assert("export user blocked from writing an Import-owned cost line (403)", clWriteByExport.status === 403, JSON.stringify(clWriteByExport.body));
+    const clWriteShared = await request("POST", `/api/shipments/${shipmentId}/cost-lines`, { type: "BUY", chargeCode: `OSP Unclassified ${rand}`, amount: 55 }, importToken, H_B);
+    assert("either side can still write an unclassified/shared charge code (201)", clWriteShared.status === 201, JSON.stringify(clWriteShared.body));
 
     console.log("\nvessel_arrived trigger — fires once, addressed to the IMO office's manager");
     await request("POST", `/api/shipments/${shipmentId}/milestones/init`, null, admin);

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { useAuth } from "../../AuthContext";
+import { canEditShipmentSide } from "../../utils/officeSide";
 import Btn from "../../components/primitives/Btn";
 import Spinner from "../../components/primitives/Spinner";
 import EdiMessageList from "../../components/shared/EdiMessageList";
@@ -34,7 +35,7 @@ const FILING_TYPES = [
 const STATUS_COLOR = { Draft: "", Filed: "cyan", Accepted: "good", Rejected: "crit" };
 
 const ShipmentCustomsFilingReviewPage = ({ shipment }) => {
-  const { canEditShipments: canEdit } = useAuth();
+  const auth = useAuth();
   const [filings,  setFilings]  = useState(null); // null = loading
   const [messages, setMessages] = useState([]);
   const [busy,     setBusy]     = useState(null);
@@ -73,6 +74,8 @@ const ShipmentCustomsFilingReviewPage = ({ shipment }) => {
         const filing = filings.find(f => f.filingType === type) || null;
         const thread = filing ? messages.filter(m => m.correlationId === filing.id) : [];
         const statusColorKey = filing ? STATUS_COLOR[filing.status] : "";
+        // Same independent per-type gating as the Details tab (Office-Side Permissions Epic).
+        const canEdit = canEditShipmentSide(auth, shipment, type === "AES_EEI" ? "export" : "import");
 
         return (
           <div key={type} id={`shpfilingreview-${type}-card`}

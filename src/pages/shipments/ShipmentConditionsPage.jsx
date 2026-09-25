@@ -1,4 +1,12 @@
-import { INCOTERMS_2020, contractVariant } from "../../tokens";
+import { useState } from "react";
+import { INCOTERMS_2020, BL_RELEASE_TYPES, contractVariant } from "../../tokens";
+import { useAuth } from "../../AuthContext";
+import useSaving from "../../hooks/useSaving";
+import Btn from "../../components/primitives/Btn";
+import { Inp, Sel, Field } from "../../components/primitives/Form";
+import { Modal } from "../../components/primitives/Modal";
+import { IconPencil } from "../../components/primitives/Icon";
+import { CommodityCombobox } from "../../components/shared/CommodityCombobox";
 import Badge from "../../components/primitives/Badge";
 import { CommodityDisplay } from "./ShipmentDetailPage";
 import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "./shipmentDetailTheme";
@@ -7,6 +15,87 @@ import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "./shipmentDetailTheme";
 // Promoted out of the Overview page's "Contract & References" card + its
 // "Show all details" modal — same content, now a dedicated page instead of a
 // card-behind-a-modal, matching every other promoted sub-page this session.
+//
+// Edit form (direct request, 2026-09-25): every field below the fold — Incoterm, Commodity,
+// Declared Value, Place of Receipt/Delivery, B/L Number, B/L Release Type — reuses the exact
+// same widget the New Shipment form (ShipmentFormPage.jsx) uses for it, wired to the same
+// generic PUT /api/shipments/:id the Parties edit modal already calls (routes/shipments.js
+// already accepts every one of these fields as a true partial update — no backend change
+// needed). Master B/L fields are deliberately left out — not part of the request, and they're
+// governed by the House B/L lifecycle's own Surrender/Release actions, not a plain field edit.
+
+const DECLARED_VALUE_CURRENCIES = ["USD","EUR","GBP","CNY","JPY","AUD","CAD","CHF","SGD","HKD"];
+
+const ConditionsEditForm = ({ shipment, onSave, onCancel }) => {
+  const [f, setF] = useState({
+    incoterm:              shipment.incoterm              || "",
+    commodityCode:         shipment.commodityCode         || "",
+    declaredValue:         shipment.declaredValue != null ? String(shipment.declaredValue) : "",
+    declaredValueCurrency: shipment.declaredValueCurrency || "USD",
+    placeOfReceipt:        shipment.placeOfReceipt        || "",
+    placeOfDelivery:       shipment.placeOfDelivery       || "",
+    blNumber:              shipment.blNumber              || "",
+    blReleaseType:         shipment.blReleaseType         || "",
+  });
+  const [isSaving, withSaving] = useSaving();
+
+  const setDeclaredValue = v => {
+    // Same strip-the-minus-outright sanitization as the New Shipment form's own Declared Value
+    // field, for the identical reason: rejecting a negative outright leaves a stray "-"/"00"
+    // artifact behind while typing "-500" character by character.
+    const cleaned = v.replace(/-/g, "");
+    if (cleaned !== "" && Number(cleaned) < 0) return;
+    setF(p => ({ ...p, declaredValue: cleaned }));
+  };
+
+  // Full-record PUT (same as PartiesEditForm) — every other field rides along unchanged.
+  const handleSave = () => withSaving(() => onSave({
+    ...shipment, ...f,
+    declaredValue: (f.declaredValue !== "" && Number(f.declaredValue) >= 0) ? Number(f.declaredValue) : null,
+  }));
+
+  return (
+    <div data-testid="shipment-conditions-edit-form" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div data-testid="shipment-conditions-form-incoterm-field">
+          <Sel label="Incoterm" value={f.incoterm} onChange={v => setF(p => ({ ...p, incoterm: v }))}
+            options={[{ value: "", label: "—" }, ...INCOTERMS_2020.map(t => ({ value: t.code, label: `${t.code} – ${t.name}` }))]} />
+        </div>
+        <div data-testid="shipment-conditions-form-commodity-field">
+          <Field label="Commodity">
+            <CommodityCombobox value={f.commodityCode} onChange={v => setF(p => ({ ...p, commodityCode: v }))} />
+          </Field>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Inp label="Place of Receipt" value={f.placeOfReceipt} onChange={v => setF(p => ({ ...p, placeOfReceipt: v }))}
+          placeholder="e.g. Shipper's warehouse, Chicago IL" />
+        <Inp label="Place of Delivery" value={f.placeOfDelivery} onChange={v => setF(p => ({ ...p, placeOfDelivery: v }))}
+          placeholder="e.g. Consignee's dock, Antwerp" />
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Inp label="Declared Value" value={f.declaredValue} onChange={setDeclaredValue}
+          placeholder="0.00" type="number" min="0" step="0.01" hint="Customs / insured value of the goods" />
+        <Sel label="Currency" value={f.declaredValueCurrency} onChange={v => setF(p => ({ ...p, declaredValueCurrency: v }))}
+          options={DECLARED_VALUE_CURRENCIES.map(c => ({ value: c, label: c }))} />
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Inp label="B/L Number" value={f.blNumber} onChange={v => setF(p => ({ ...p, blNumber: v }))}
+          placeholder="MAEU123456789" mono />
+        <Sel label="B/L Release Type" value={f.blReleaseType} onChange={v => setF(p => ({ ...p, blReleaseType: v }))}
+          options={[{ value: "", label: "—" }, ...BL_RELEASE_TYPES.map(t => ({ value: t, label: t }))]} />
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+        <Btn variant="secondary" onClick={onCancel} disabled={isSaving}>Cancel</Btn>
+        <Btn onClick={handleSave} disabled={isSaving}>{isSaving ? "Saving…" : "Save"}</Btn>
+      </div>
+    </div>
+  );
+};
 
 const Row = ({ id, label, node }) => (
   <div id={id} data-testid={id ? `shipment-conditions-${id.replace(/^shpcond-/, "")}` : undefined}
@@ -20,10 +109,23 @@ const Row = ({ id, label, node }) => (
   </div>
 );
 
-const ShipmentConditionsPage = ({ shipment }) => {
+const ShipmentConditionsPage = ({ shipment, onUpdate }) => {
   useHorizonFonts();
+  const { canEditShipments: canEdit } = useAuth();
+  const [editing, setEditing] = useState(false);
   return (
   <div id="shpcond-page" data-testid="shipment-conditions-page" style={{ maxWidth: 640 }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+      <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 700,
+        textTransform: "uppercase", letterSpacing: ".08em" }}>
+        Conditions
+      </div>
+      {canEdit && onUpdate && (
+        <Btn id="shpcond-edit-btn" data-testid="shipment-conditions-edit-btn" size="sm" variant="secondary" onClick={() => setEditing(true)}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><IconPencil size={12} />Edit</span>
+        </Btn>
+      )}
+    </div>
     <div style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden" }}>
       <Row id="shpcond-contract-type" label="Contract Type" node={
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -49,6 +151,16 @@ const ShipmentConditionsPage = ({ shipment }) => {
       <Row id="shpcond-booking-ref" label="Booking Ref" node={
         <span style={{ fontFamily: HZ_MONO, fontSize: 13, color: shipment.bookingRef ? HZ.text : HZ.textFaint }}>
           {shipment.bookingRef || "—"}
+        </span>
+      } />
+      <Row id="shpcond-place-of-receipt" label="Place of Receipt" node={
+        <span style={{ fontFamily: HZ_BODY, fontSize: 13, color: shipment.placeOfReceipt ? HZ.text : HZ.textFaint }}>
+          {shipment.placeOfReceipt || "—"}
+        </span>
+      } />
+      <Row id="shpcond-place-of-delivery" label="Place of Delivery" node={
+        <span style={{ fontFamily: HZ_BODY, fontSize: 13, color: shipment.placeOfDelivery ? HZ.text : HZ.textFaint }}>
+          {shipment.placeOfDelivery || "—"}
         </span>
       } />
       <Row id="shpcond-bl-number" label="B/L Number" node={
@@ -112,6 +224,20 @@ const ShipmentConditionsPage = ({ shipment }) => {
         </div>
       )}
     </div>
+
+    {editing && (
+      <Modal title="Edit Conditions" onClose={() => setEditing(false)} width={560} data-testid="shipment-conditions-edit-modal">
+        <ConditionsEditForm
+          shipment={shipment}
+          onCancel={() => setEditing(false)}
+          onSave={async form => {
+            try {
+              await onUpdate(shipment.id, form);
+              setEditing(false);
+            } catch { /* error already toasted by caller */ }
+          }} />
+      </Modal>
+    )}
   </div>
   );
 };

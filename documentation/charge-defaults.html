@@ -1,0 +1,831 @@
+<title>Charge Defaults</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f4f6fb;
+    --surface: rgba(255,255,255,0.72);
+    --surface2: rgba(255,255,255,0.85);
+    --surfaceSolid: #ffffff;
+    --border: rgba(15,20,40,0.12);
+    --borderStrong: rgba(15,20,40,0.22);
+    --text: #10142a;
+    --textMuted: #5b6178;
+    --textFaint: #7c8299;
+    --cyan: #006970; --cyan2: #006795;
+    --amber: #796100; --amber2: #8c5000;
+    --violet: #8d45b3; --violet2: #9d2962;
+    --good: #087736; --warn: #af4e05; --crit: #ad0e3a; --info: #034da8;
+    --goodBg: rgba(8,119,54,0.10); --warnBg: rgba(175,78,5,0.10);
+    --critBg: rgba(173,14,58,0.10); --infoBg: rgba(3,77,168,0.10);
+    --cyanBg: rgba(0,105,112,0.10); --violetBg: rgba(141,69,179,0.10);
+    --gradCyan: linear-gradient(135deg, #006970, #006795);
+    --gradViolet: linear-gradient(135deg, #8d45b3, #9d2962);
+    --cardBlur: blur(20px) saturate(1.3);
+    --cardShadow: 0 1px 2px rgba(16,20,40,.05), 0 14px 32px -16px rgba(16,20,40,.20);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #080b15;
+      --surface: rgba(255,255,255,0.045);
+      --surface2: rgba(255,255,255,0.075);
+      --surfaceSolid: #0c1120;
+      --border: rgba(255,255,255,0.10);
+      --borderStrong: rgba(255,255,255,0.18);
+      --text: #f3f5fc;
+      --textMuted: #8c93b5;
+      --textFaint: #565d80;
+      --cyan: #38d4e8; --cyan2: #3987e5;
+      --amber: #fbc531; --amber2: #d9772a;
+      --violet: #9085e9; --violet2: #d5519f;
+      --good: #22c55e; --warn: #fab219; --crit: #f0526b; --info: #3987e5;
+      --goodBg: rgba(34,197,94,0.13); --warnBg: rgba(250,178,25,0.13);
+      --critBg: rgba(240,82,107,0.13); --infoBg: rgba(57,135,229,0.14);
+      --cyanBg: rgba(56,212,232,0.12); --violetBg: rgba(144,133,233,0.14);
+      --gradCyan: linear-gradient(135deg, #38d4e8, #3987e5);
+      --gradViolet: linear-gradient(135deg, #9085e9, #d5519f);
+      --cardBlur: blur(20px);
+      --cardShadow: none;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #080b15;
+    --surface: rgba(255,255,255,0.045);
+    --surface2: rgba(255,255,255,0.075);
+    --surfaceSolid: #0c1120;
+    --border: rgba(255,255,255,0.10);
+    --borderStrong: rgba(255,255,255,0.18);
+    --text: #f3f5fc;
+    --textMuted: #8c93b5;
+    --textFaint: #565d80;
+    --cyan: #38d4e8; --cyan2: #3987e5;
+    --amber: #fbc531; --amber2: #d9772a;
+    --violet: #9085e9; --violet2: #d5519f;
+    --good: #22c55e; --warn: #fab219; --crit: #f0526b; --info: #3987e5;
+    --goodBg: rgba(34,197,94,0.13); --warnBg: rgba(250,178,25,0.13);
+    --critBg: rgba(240,82,107,0.13); --infoBg: rgba(57,135,229,0.14);
+    --cyanBg: rgba(56,212,232,0.12); --violetBg: rgba(144,133,233,0.14);
+    --gradCyan: linear-gradient(135deg, #38d4e8, #3987e5);
+    --gradViolet: linear-gradient(135deg, #9085e9, #d5519f);
+    --cardBlur: blur(20px);
+    --cardShadow: none;
+  }
+
+  * { box-sizing: border-box; }
+  @media (prefers-reduced-motion: reduce) { *{ animation-duration:.01ms!important; transition-duration:.01ms!important; } }
+
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 14.5px; line-height: 1.55; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding-inline: 20px; padding-block: 0 90px; }
+  h1, h2, h3, h4 { font-family: "Sora", ui-sans-serif, sans-serif; text-wrap: balance; margin: 0; }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  a { color: var(--cyan); }
+  :focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+  /* ── Masthead ─────────────────────────────────────────── */
+  .masthead { padding-block: 40px 22px; }
+  .kicker { display:flex; align-items:center; gap:8px; font-size:11px; font-weight:700; color: var(--cyan);
+    text-transform:uppercase; letter-spacing:.13em; margin-bottom:14px; }
+  .kicker .dot { width:6px; height:6px; border-radius:50%; background: var(--gradCyan); }
+  h1.title { font-size: clamp(28px, 5.5vw, 40px); font-weight: 800; margin-bottom: 8px; }
+  .sub { color: var(--textMuted); font-size: 14.5px; max-width: 62ch; margin-bottom: 24px; }
+
+  .tabs { display:flex; gap:6px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .tab-btn {
+    font-family: "Sora", sans-serif; font-weight: 700; font-size: 13px; color: var(--textMuted);
+    background: none; border: none; padding: 10px 16px; cursor: pointer; border-radius: 8px 8px 0 0;
+    position: relative; top: 1px;
+  }
+  .tab-btn[aria-selected="true"] { color: var(--text); border-bottom: 2px solid var(--cyan); }
+  .tab-btn:hover { color: var(--text); }
+  .tab-panel { padding-top: 28px; }
+  .tab-panel[hidden] { display: none; }
+
+  /* ── Stat strip ───────────────────────────────────────── */
+  .stat-strip { display:grid; grid-template-columns: repeat(4,1fr); gap:10px; margin-bottom: 20px; }
+  @media (max-width: 700px) { .stat-strip { grid-template-columns: repeat(2,1fr); } }
+  .stat-tile { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .stat-label { font-size:10px; color: var(--textMuted); text-transform:uppercase; letter-spacing:.05em; }
+  .stat-value { font-family:"IBM Plex Mono",monospace; font-size:17px; font-weight:700; margin-top:2px; }
+
+  .card { background: var(--surface); backdrop-filter: var(--cardBlur); border: 1px solid var(--border);
+    box-shadow: var(--cardShadow); border-radius: 12px; }
+
+  /* ── Buttons ──────────────────────────────────────────── */
+  .btn { font-family:"Plus Jakarta Sans",sans-serif; font-weight:700; font-size:12.5px; border-radius:7px;
+    padding: 8px 14px; cursor:pointer; display:inline-flex; align-items:center; gap:6px; border:1px solid transparent; }
+  .btn-primary { background: var(--gradCyan); color: #06111f; }
+  .btn-ghost { background: none; border: 1px solid var(--borderStrong); color: var(--text); }
+  .btn-dashed { background:none; border:1px dashed var(--border); color: var(--textMuted); font-size:12px; padding:6px 11px; }
+  .btn-dashed:hover { border-color: var(--cyan); color: var(--cyan); }
+  .btn-danger-ghost { background:none; border:none; color: var(--textFaint); cursor:pointer; font-size:15px; padding:2px 6px; }
+  .btn-danger-ghost:hover { color: var(--crit); }
+
+  .page-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; flex-wrap:wrap; }
+  .page-head h2 { font-size:20px; font-weight:800; }
+
+  /* ── Table ────────────────────────────────────────────── */
+  table.dt { width:100%; border-collapse:collapse; }
+  .dt thead tr { background: var(--bg); border-bottom: 1px solid var(--border); }
+  .dt th { text-align:left; padding:9px 14px; font-size:10px; font-weight:700; color: var(--textMuted);
+    text-transform:uppercase; letter-spacing:.06em; white-space:nowrap; }
+  .dt td { padding:12px 14px; font-size:13px; border-bottom:1px solid var(--border); vertical-align:middle; }
+  .dt tbody tr:last-child td { border-bottom:none; }
+  .dt tbody tr:hover td { background: var(--surface2); }
+  .table-wrap { overflow-x:auto; border-radius:12px; }
+
+  .pill { display:inline-flex; align-items:center; gap:5px; font-size:10.5px; font-weight:700;
+    padding:3px 9px; border-radius:20px; white-space:nowrap; }
+  .pill-good { background: var(--goodBg); color: var(--good); }
+  .pill-cyan { background: var(--cyanBg); color: var(--cyan); }
+  .pill-violet { background: var(--violetBg); color: var(--violet); }
+  .pill-amber { background: var(--warnBg); color: var(--warn); }
+  .pill-neutral { background: var(--surface2); color: var(--textMuted); }
+
+  .lane { font-family:"IBM Plex Mono",monospace; font-size:12.5px; }
+  .lane .arrow { color: var(--textFaint); margin:0 5px; }
+
+  /* ── Form controls ────────────────────────────────────── */
+  .field { display:flex; flex-direction:column; gap:5px; }
+  .field label { font-size:10.5px; font-weight:700; color: var(--textMuted); text-transform:uppercase; letter-spacing:.05em; }
+  .field .hint { font-size:11px; color: var(--textFaint); font-weight:400; text-transform:none; letter-spacing:0; margin-top:1px; }
+  .ctl { background: var(--bg); border: 1px solid var(--border); border-radius:7px; padding:8px 11px;
+    font-family:"Plus Jakarta Sans",sans-serif; font-size:13px; color: var(--text); width:100%; }
+  .ctl:disabled { opacity:.45; cursor:not-allowed; }
+  .ctl.mono-ctl { font-family:"IBM Plex Mono",monospace; }
+  .grid-4 { display:grid; grid-template-columns: repeat(4,1fr); gap:14px; }
+  .grid-2 { display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
+  @media (max-width:760px){ .grid-4{grid-template-columns:1fr 1fr;} .grid-2{grid-template-columns:1fr;} }
+
+  /* ── Location — two dedicated columns, three fields each ─ */
+  .loc-grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+  @media (max-width:620px){ .loc-grid{ grid-template-columns:1fr; } }
+  .loc-col { display:flex; flex-direction:column; gap:12px; padding:14px 16px;
+    border:1px solid var(--border); border-radius:10px; background: var(--surface2); }
+  .loc-col-head { font-family:"Sora",sans-serif; font-weight:700; font-size:13px; }
+
+  .segmented { display:inline-flex; border:1px solid var(--border); border-radius:7px; overflow:hidden; }
+  .segmented button { font-family:"Plus Jakarta Sans",sans-serif; font-size:12.5px; font-weight:600; color: var(--textMuted);
+    background: var(--bg); border:none; padding:7px 13px; cursor:pointer; }
+  .segmented button.active { background: var(--gradCyan); color:#06111f; font-weight:700; }
+  .segmented button + button { border-left:1px solid var(--border); }
+
+  .specificity-note { display:flex; align-items:center; gap:9px; background: var(--cyanBg); border:1px solid var(--border);
+    border-radius:8px; padding:10px 14px; font-size:12.5px; color: var(--text); margin-top:16px; }
+  .specificity-note .dot4 { display:flex; gap:3px; flex-shrink:0; }
+  .specificity-note .dot4 span { width:7px; height:7px; border-radius:2px; background: var(--cyan); }
+
+  .section-label { font-size:11px; font-weight:700; color: var(--textMuted); text-transform:uppercase; letter-spacing:.08em; margin: 26px 0 12px; }
+  .section-label:first-child { margin-top: 4px; }
+
+  .callout { background: var(--violetBg); border:1px solid var(--border); border-left:3px solid var(--violet);
+    border-radius:8px; padding:14px 16px; font-size:13px; color: var(--textMuted); margin-top:16px; }
+  .callout strong { color: var(--text); }
+
+  .ctx-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px 16px; margin-bottom:18px;
+    background: var(--surface2); border:1px solid var(--border); border-radius:10px; font-size:12.5px; color: var(--textMuted); }
+  .ctx-bar strong { color: var(--text); font-family:"IBM Plex Mono",monospace; }
+  .ctx-bar .sep { color: var(--textFaint); }
+
+  .notes-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 8px; }
+  @media (max-width:760px){ .notes-grid{ grid-template-columns:1fr; } }
+  .note-card { padding: 16px 18px; }
+  .note-card h4 { font-size:13.5px; font-weight:700; margin-bottom:6px; }
+  .note-card p { margin:0; font-size:12.5px; color: var(--textMuted); }
+
+  footer.pf { max-width:1080px; margin:0 auto; padding:28px 20px 40px; border-top:1px solid var(--border);
+    font-size:11px; color: var(--textFaint); display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+
+  /* ── Toggle switch ────────────────────────────────────── */
+  .toggle-row { display:flex; align-items:center; gap:10px; }
+  .toggle { position:relative; width:38px; height:22px; flex-shrink:0; }
+  .toggle input { position:absolute; opacity:0; width:100%; height:100%; margin:0; cursor:pointer; }
+  .toggle .track { position:absolute; inset:0; background: var(--borderStrong); border-radius:20px; transition:background .15s; }
+  .toggle .thumb { position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background: var(--surfaceSolid);
+    box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s; }
+  .toggle input:checked + .track { background: var(--gradCyan); }
+  .toggle input:checked + .track + .thumb { transform: translateX(16px); }
+  .toggle-label { font-size:12.5px; font-weight:600; color: var(--text); }
+  .toggle-label .hint { display:block; font-size:11px; font-weight:400; color: var(--textFaint); margin-top:1px; }
+
+  /* ── Folded line groups ───────────────────────────────── */
+  details.fold { border:1px solid var(--border); border-radius:10px; overflow:hidden; margin-bottom:12px; }
+  details.fold > summary {
+    list-style:none; cursor:pointer; padding:12px 16px; display:flex; align-items:center; justify-content:space-between;
+    background: var(--surface2); font-family:"Sora",sans-serif; font-weight:700; font-size:13px;
+  }
+  details.fold > summary::-webkit-details-marker { display:none; }
+  details.fold > summary .chev { font-family:"IBM Plex Mono",monospace; color: var(--textFaint); transition: transform .15s; }
+  details.fold[open] > summary .chev { transform: rotate(90deg); }
+  details.fold[open] > summary { border-bottom:1px solid var(--border); }
+  details.fold .fold-body { padding: 14px 16px; }
+
+  /* ── Inline error banner ──────────────────────────────── */
+  .err-banner { display:none; align-items:center; gap:9px; background: var(--critBg); border:1px solid var(--crit);
+    border-radius:8px; padding:10px 14px; font-size:12.5px; color: var(--crit); font-weight:600; margin-bottom:16px; }
+  .err-banner.show { display:flex; }
+
+  /* ── Toast ────────────────────────────────────────────── */
+  .toast { position:fixed; bottom:24px; left:50%; transform: translateX(-50%) translateY(20px); opacity:0;
+    background: var(--surfaceSolid); border:1px solid var(--good); color: var(--good); font-weight:700; font-size:13px;
+    padding:11px 20px; border-radius:9px; box-shadow: var(--cardShadow); pointer-events:none; transition: all .2s; z-index:60; }
+  .toast.show { opacity:1; transform: translateX(-50%) translateY(0); }
+
+  /* ── Confirm dialog (custom — the artifact host never shows native confirm()) ── */
+  .dlg-overlay { position:fixed; inset:0; background: rgba(5,8,16,.55); display:none; align-items:center; justify-content:center;
+    z-index:70; padding:20px; }
+  .dlg-overlay.show { display:flex; }
+  .dlg-box { background: var(--surfaceSolid); border:1px solid var(--border); border-radius:14px; padding:24px 26px;
+    max-width:420px; width:100%; box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+  .dlg-box h3 { font-size:16px; font-weight:800; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+  .dlg-box h3 .flag { color: var(--warn); }
+  .dlg-box p { font-size:13px; color: var(--textMuted); margin:0 0 18px; }
+  .dlg-actions { display:flex; justify-content:flex-end; gap:10px; }
+
+  /* ── Technical spec tab ───────────────────────────────── */
+  .spec-block { margin-bottom: 30px; }
+  .spec-block h3 { font-size:15.5px; font-weight:800; margin-bottom:10px; }
+  .spec-block p { color: var(--textMuted); font-size:13px; max-width:70ch; margin-bottom:10px; }
+  pre.code {
+    background: var(--surfaceSolid); border:1px solid var(--border); border-radius:10px;
+    padding:14px 16px; overflow-x:auto; font-family:"IBM Plex Mono",monospace; font-size:12px;
+    line-height:1.6; color: var(--text);
+  }
+  pre.code .kw { color: var(--cyan); } pre.code .cm { color: var(--textFaint); font-style:italic; }
+  pre.code .ty { color: var(--violet); }
+  .spec-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  .spec-table th { text-align:left; padding:8px 12px; font-size:10px; text-transform:uppercase; letter-spacing:.05em;
+    color: var(--textMuted); background: var(--surface2); border-bottom:1px solid var(--border-strong); }
+  .spec-table td { padding:8px 12px; border-bottom:1px solid var(--border); vertical-align:top; }
+  .spec-table tr:last-child td { border-bottom:none; }
+  .rule-list { display:flex; flex-direction:column; gap:8px; padding:0; margin:0; list-style:none; }
+  .rule-list li { display:flex; gap:10px; font-size:13px; color: var(--textMuted); padding:10px 14px;
+    background: var(--surface2); border-radius:8px; }
+  .rule-list .rn { font-family:"IBM Plex Mono",monospace; font-weight:700; color: var(--cyan); flex-shrink:0; }
+  .rule-list strong { color: var(--text); }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div class="kicker"><span class="dot"></span>CargoDesk &middot; Master Data &middot; Design record &mdash; built and verified</div>
+    <h1 class="title">Charge Defaults</h1>
+    <p class="sub">Predefine which charge and cost lines should appear automatically on a shipment's
+      Accounting tabs, scoped by Principal, trade lane, and movement type &mdash; so a recurring
+      customer setup stops being retyped on every shipment.</p>
+    <div class="tabs" role="tablist">
+      <button class="tab-btn" role="tab" aria-selected="true" data-tab="list">01 &middot; Setup list</button>
+      <button class="tab-btn" role="tab" aria-selected="false" data-tab="editor">02 &middot; New setup</button>
+      <button class="tab-btn" role="tab" aria-selected="false" data-tab="shipment">03 &middot; On a shipment</button>
+      <button class="tab-btn" role="tab" aria-selected="false" data-tab="spec">04 &middot; Technical spec</button>
+    </div>
+  </header>
+
+  <!-- ══════════════════════ TAB 1 — LIST ══════════════════════ -->
+  <section class="tab-panel" id="panel-list" role="tabpanel">
+    <div class="stat-strip">
+      <div class="stat-tile"><div class="stat-label">Active setups</div><div class="stat-value">3</div></div>
+      <div class="stat-tile"><div class="stat-label">Principals covered</div><div class="stat-value">1 of 46</div></div>
+      <div class="stat-tile"><div class="stat-label">Lines defined</div><div class="stat-value">8</div></div>
+      <div class="stat-tile"><div class="stat-label">Applied, last 30d</div><div class="stat-value">14</div></div>
+    </div>
+
+    <div class="page-head">
+      <h2>Setups</h2>
+      <button class="btn btn-primary">&#65291; New Setup</button>
+    </div>
+
+    <div class="card table-wrap">
+      <table class="dt">
+        <thead><tr>
+          <th>Principal</th><th>Origin</th><th>Destination</th><th>Movement</th><th>Lines</th><th>Precedence</th><th>Status</th><th></th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><span class="pill pill-neutral">All Principals</span></td>
+            <td colspan="2"><span class="pill pill-neutral">Global &mdash; any origin/destination</span></td>
+            <td><span class="pill pill-neutral">Any</span></td>
+            <td class="mono">2</td>
+            <td><span class="pill pill-neutral">0 of 3</span></td>
+            <td><span class="pill pill-good">Active</span></td>
+            <td><button class="btn-danger-ghost" title="More">&hellip;</button></td>
+          </tr>
+          <tr>
+            <td><span class="pill pill-neutral">All Principals</span></td>
+            <td class="lane" title="Region"><span class="pill pill-amber">Region</span> ASP</td>
+            <td class="lane" title="Location"><span class="pill pill-cyan">Location</span> USMIA</td>
+            <td><span class="pill pill-cyan">FCL</span></td>
+            <td class="mono">3</td>
+            <td><span class="pill pill-neutral">2 of 3</span></td>
+            <td><span class="pill pill-good">Active</span></td>
+            <td><button class="btn-danger-ghost" title="More">&hellip;</button></td>
+          </tr>
+          <tr>
+            <td><strong>ABC Trading Co</strong></td>
+            <td class="lane" title="Location"><span class="pill pill-cyan">Location</span> NLRTM</td>
+            <td class="lane" title="Country"><span class="pill pill-violet">Country</span> US</td>
+            <td><span class="pill pill-cyan">FCL</span></td>
+            <td class="mono">3</td>
+            <td><span class="pill pill-violet">3 of 3</span></td>
+            <td><span class="pill pill-good">Active</span></td>
+            <td><button class="btn-danger-ghost" title="More">&hellip;</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="specificity-note">
+      <span class="dot4"><span></span><span></span><span></span></span>
+      <span><strong>Precedence</strong> is how many of the three scope groups are set &mdash; Principal, Origin+Destination (always set as a pair, or left Global), and Movement Type &mdash; not the order in the list. A shipment ever matches at most one setup, the most specific one.</span>
+    </div>
+  </section>
+
+  <!-- ══════════════════════ TAB 2 — EDITOR ══════════════════════ -->
+  <section class="tab-panel" id="panel-editor" role="tabpanel" hidden>
+    <div class="card" style="padding:26px 28px;">
+      <div class="page-head" style="margin-bottom:6px;">
+        <h2>Edit Setup &mdash; ABC Trading Co / NLRTM&rarr;US / FCL</h2>
+      </div>
+      <p class="sub" style="margin-bottom:0;">This is a live example &mdash; clear the Principal field, flip the Global
+        toggle, or empty both line groups, then press Save to see the real validation each one triggers.</p>
+
+      <div class="err-banner" id="err-banner"><span>&#9888;</span><span id="err-text"></span></div>
+
+      <div class="section-label">Scope</div>
+      <div class="grid-4">
+        <div class="field">
+          <label for="setup-principal">Principal</label>
+          <input class="ctl" id="setup-principal" value="ABC Trading Co" placeholder="Blank = all principals">
+          <span class="hint">Blank = all principals (warns before saving)</span>
+        </div>
+        <div class="field">
+          <label>Movement type</label>
+          <div class="segmented" id="movement-seg">
+            <button class="active" data-val="FCL">FCL</button><button data-val="LCL">LCL</button><button data-val="Any">Any</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <div class="toggle-row" style="margin-top:2px;">
+            <span class="toggle"><input type="checkbox" id="global-toggle"><span class="track"></span><span class="thumb"></span></span>
+            <span class="toggle-label">Global (any origin/destination)<span class="hint">Disables all six location fields below</span></span>
+          </div>
+        </div>
+        <div></div>
+      </div>
+
+      <div class="section-label">Location <span class="hint" style="display:inline; text-transform:none; letter-spacing:0; font-weight:400;">&mdash; fill exactly one field per column; the other two clear themselves</span></div>
+      <div class="loc-grid">
+        <div class="loc-col">
+          <div class="loc-col-head">Origin</div>
+          <div class="field"><label for="origin-region">Region</label><input class="ctl" id="origin-region" placeholder="e.g. Asia Pacific"></div>
+          <div class="field"><label for="origin-country">Country</label><input class="ctl" id="origin-country" placeholder="e.g. Netherlands"></div>
+          <div class="field"><label for="origin-location">Location</label><input class="ctl mono-ctl" id="origin-location" value="NLRTM" placeholder="e.g. NLRTM"><span class="hint">Rotterdam, NL &mdash; same lookup as Ports elsewhere in the app</span></div>
+        </div>
+        <div class="loc-col">
+          <div class="loc-col-head">Destination</div>
+          <div class="field"><label for="dest-region">Region</label><input class="ctl" id="dest-region" placeholder="e.g. North America"></div>
+          <div class="field"><label for="dest-country">Country</label><input class="ctl" id="dest-country" value="US" placeholder="e.g. United States"><span class="hint">United States</span></div>
+          <div class="field"><label for="dest-location">Location</label><input class="ctl mono-ctl" id="dest-location" placeholder="e.g. USNYC"></div>
+        </div>
+      </div>
+
+      <div class="specificity-note" id="specificity-note">
+        <span class="dot4"><span></span><span></span><span></span></span>
+        <span id="specificity-text">3 of 3 scope groups set &mdash; this is as specific as a setup gets, so it will win over any broader setup for a matching shipment.</span>
+      </div>
+
+      <div class="section-label">Lines &mdash; folded by default, kept in two dedicated groups</div>
+
+      <details class="fold" id="charges-details">
+        <summary><span>Charges (Sell) &mdash; <span id="charges-count">2</span> line<span id="charges-plural">s</span></span><span class="chev">&#10095;</span></summary>
+        <div class="fold-body">
+          <div class="table-wrap" style="border:1px solid var(--border); border-radius:10px;">
+            <table class="dt">
+              <thead><tr><th>Charge code</th><th>Description</th><th>Currency</th><th>Amount</th><th></th></tr></thead>
+              <tbody id="charges-body">
+                <tr>
+                  <td><input class="ctl mono-ctl" value="DOC-FEE"></td>
+                  <td><input class="ctl" value="Documentation Fee"></td>
+                  <td><input class="ctl mono-ctl" value="USD" style="width:70px"></td>
+                  <td><input class="ctl mono-ctl" value="75.00" style="width:90px"></td>
+                  <td><button class="btn-danger-ghost line-remove">&times;</button></td>
+                </tr>
+                <tr>
+                  <td><input class="ctl mono-ctl" value="CUSTOMS-CLR"></td>
+                  <td><input class="ctl" value="Customs Clearance Fee"></td>
+                  <td><input class="ctl mono-ctl" value="USD" style="width:70px"></td>
+                  <td><input class="ctl mono-ctl" value="150.00" style="width:90px"></td>
+                  <td><button class="btn-danger-ghost line-remove">&times;</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div style="margin-top:12px;"><button class="btn btn-dashed" id="add-charge-line">&#65291; Add Charge Line</button></div>
+        </div>
+      </details>
+
+      <details class="fold" id="costs-details">
+        <summary><span>Costs (Buy) &mdash; <span id="costs-count">1</span> line</span><span class="chev">&#10095;</span></summary>
+        <div class="fold-body">
+          <div class="table-wrap" style="border:1px solid var(--border); border-radius:10px;">
+            <table class="dt">
+              <thead><tr><th>Charge code</th><th>Description</th><th>Currency</th><th>Amount</th><th></th></tr></thead>
+              <tbody id="costs-body">
+                <tr>
+                  <td><input class="ctl mono-ctl" value="CHASSIS-USE"></td>
+                  <td><input class="ctl" value="Chassis Usage Fee"></td>
+                  <td><input class="ctl mono-ctl" value="USD" style="width:70px"></td>
+                  <td><input class="ctl mono-ctl" value="85.00" style="width:90px"></td>
+                  <td><button class="btn-danger-ghost line-remove">&times;</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div style="margin-top:12px;"><button class="btn btn-dashed" id="add-cost-line">&#65291; Add Cost Line</button></div>
+        </div>
+      </details>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:22px; padding-top:18px; border-top:1px solid var(--border);">
+        <button class="btn btn-ghost">Cancel</button>
+        <button class="btn btn-primary" id="btn-save-setup">Save Setup</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Custom confirm dialog — the artifact host swallows native confirm(), so this is a real page element -->
+  <div class="dlg-overlay" id="no-customer-dlg">
+    <div class="dlg-box">
+      <h3><span class="flag">&#9888;</span> No Principal set</h3>
+      <p>This setup will apply to <strong>every customer</strong> on every shipment matching its location and
+        movement type &mdash; including customers you haven't onboarded yet. It's a broad, standing default that's
+        easy to forget about later. Create it anyway?</p>
+      <div class="dlg-actions">
+        <button class="btn btn-ghost" id="dlg-cancel">Cancel</button>
+        <button class="btn btn-primary" id="dlg-confirm">Yes, apply to all customers</button>
+      </div>
+    </div>
+  </div>
+  <div class="toast" id="save-toast">&#10003; Setup saved</div>
+
+  <!-- ══════════════════════ TAB 3 — ON A SHIPMENT ══════════════════════ -->
+  <section class="tab-panel" id="panel-shipment" role="tabpanel" hidden>
+    <div class="ctx-bar">
+      <strong>SHP-2026-04471</strong><span class="sep">&middot;</span>
+      <span>ABC Trading Co</span><span class="sep">&middot;</span>
+      <span class="lane">NLRTM<span class="arrow">&rarr;</span>USNYC</span><span class="sep">&middot;</span>
+      <span class="pill pill-cyan">FCL</span><span class="sep">&middot;</span>
+      <span>MAEU</span>
+    </div>
+
+    <div class="page-head"><h2>Cost Entry (Buy)</h2></div>
+    <div class="stat-strip">
+      <div class="stat-tile"><div class="stat-label">Lines</div><div class="stat-value">3</div></div>
+      <div class="stat-tile"><div class="stat-label">Total buy</div><div class="stat-value">$1,755.00</div></div>
+      <div class="stat-tile"><div class="stat-label">From contract</div><div class="stat-value">1</div></div>
+      <div class="stat-tile"><div class="stat-label">From default setup</div><div class="stat-value">1</div></div>
+    </div>
+
+    <div class="card table-wrap">
+      <table class="dt">
+        <thead><tr><th>Charge</th><th>Container</th><th>Currency</th><th style="text-align:right">Amount</th><th>Source</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Ocean Freight</strong></td>
+            <td class="mono">MSCU7712450</td>
+            <td class="mono">USD</td>
+            <td class="mono" style="text-align:right">1,450.00</td>
+            <td><span class="pill" style="background:var(--infoBg); color:var(--info);">Contract Rate</span></td>
+            <td><span class="pill pill-good">Accrued</span></td>
+          </tr>
+          <tr>
+            <td><strong>Chassis Usage Fee</strong></td>
+            <td class="mono">MSCU7712450</td>
+            <td class="mono">USD</td>
+            <td class="mono" style="text-align:right">85.00</td>
+            <td><span class="pill pill-violet">Default &middot; ABC/NLRTM&rarr;US/FCL</span></td>
+            <td><span class="pill pill-good">Accrued</span></td>
+          </tr>
+          <tr>
+            <td><strong>THC Destination</strong></td>
+            <td class="mono">MSCU7712450</td>
+            <td class="mono">USD</td>
+            <td class="mono" style="text-align:right">220.00</td>
+            <td><span class="pill pill-neutral">Manual</span></td>
+            <td><span class="pill pill-good">Accrued</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <strong>Why Ocean Freight didn't duplicate:</strong> the matching setup also defines a
+      <span class="mono">CHASSIS-USE</span>&#8203;-adjacent BUY line for freight, but this shipment already has a
+      committed contract rate snapshot covering Ocean Freight &mdash; the contract line always wins, so the
+      setup silently skipped that one code and only filled the gap (Chassis Usage Fee) the contract doesn't cover.
+    </div>
+
+    <div class="notes-grid">
+      <div class="card note-card">
+        <h4>When it runs</h4>
+        <p>Once, the first time either Accounting tab is opened on a shipment &mdash; not a live sync. Deleting a defaulted line afterward doesn't bring it back.</p>
+      </div>
+      <div class="card note-card">
+        <h4>After it's added</h4>
+        <p>A defaulted line is a normal cost line from that point on &mdash; fully editable, deletable, actualizable, postable. The badge is just provenance.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════ TAB 4 — TECHNICAL SPEC ══════════════════════ -->
+  <section class="tab-panel" id="panel-spec" role="tabpanel" hidden>
+
+    <div class="spec-block">
+      <h3>Data model &mdash; two new tables</h3>
+      <p>Setups and their lines are separate tables (1&rarr;N), matching the existing
+        <span class="mono">contracts</span>/<span class="mono">contract_legs</span> shape rather than inventing a new
+        pattern. Location fields are plain text against existing MDM tables, not a new lookup structure &mdash;
+        <span class="mono">countries.region_code</span> already gives every country its region, and
+        <span class="mono">port_locations.country_code</span> already gives every port its country, so Region/Country/
+        Location resolution is a lookup, not new reference data.</p>
+      <pre class="code"><span class="kw">CREATE TABLE</span> charge_default_setups (
+  id                <span class="ty">TEXT PRIMARY KEY</span>,
+  principal_id      <span class="ty">TEXT</span> <span class="kw">DEFAULT</span> '',   <span class="cm">-- blank = all principals</span>
+  principal_name    <span class="ty">TEXT</span> <span class="kw">DEFAULT</span> '',   <span class="cm">-- denormalized for the list page</span>
+  movement_type     <span class="ty">TEXT</span> <span class="kw">DEFAULT</span> '',   <span class="cm">-- 'FCL' | 'LCL' | '' (blank = any)</span>
+  location_global   <span class="ty">BOOLEAN NOT NULL DEFAULT FALSE</span>,
+  origin_region     <span class="ty">TEXT</span> <span class="kw">DEFAULT</span> '',   <span class="cm">-- regions.code</span>
+  origin_country    <span class="ty">TEXT</span> <span class="kw">DEFAULT</span> '',   <span class="cm">-- countries.iso2</span>
+  origin_location   <span class="ty">TEXT</span> <span class="kw">DEFAULT</span> '',   <span class="cm">-- port_locations.unlocode</span>
+  dest_region       <span class="ty">TEXT</span> <span class="kw">DEFAULT</span> '',
+  dest_country      <span class="ty">TEXT</span> <span class="kw">DEFAULT</span> '',
+  dest_location     <span class="ty">TEXT</span> <span class="kw">DEFAULT</span> '',
+  is_active         <span class="ty">BOOLEAN NOT NULL DEFAULT TRUE</span>,
+  created_at        <span class="ty">TEXT NOT NULL</span>,
+  created_by        <span class="ty">TEXT</span> <span class="kw">DEFAULT</span> '',
+  updated_at        <span class="ty">TEXT DEFAULT NULL</span>,
+  updated_by        <span class="ty">TEXT</span> <span class="kw">DEFAULT</span> ''
+)
+
+<span class="kw">CREATE TABLE</span> charge_default_lines (
+  id           <span class="ty">TEXT PRIMARY KEY</span>,
+  setup_id     <span class="ty">TEXT NOT NULL REFERENCES</span> charge_default_setups(id) <span class="kw">ON DELETE CASCADE</span>,
+  type         <span class="ty">TEXT NOT NULL</span>,   <span class="cm">-- 'BUY' | 'SELL'</span>
+  charge_code  <span class="ty">TEXT NOT NULL</span>,
+  description  <span class="ty">TEXT</span> <span class="kw">DEFAULT</span> '',
+  currency     <span class="ty">TEXT NOT NULL DEFAULT</span> 'USD',
+  amount       <span class="ty">REAL NOT NULL DEFAULT</span> 0,
+  sort_order   <span class="ty">INTEGER DEFAULT</span> 0
+)
+
+<span class="cm">-- One row per shipment the instant it's first resolved (whether or not a setup actually
+-- matched) — the "apply once, never re-sync" rule from the mockup lives here, not in code
+-- that has to remember to check it.</span>
+<span class="kw">CREATE TABLE</span> shipment_charge_defaults_applied (
+  shipment_id TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+  setup_id    TEXT REFERENCES charge_default_setups(id) ON DELETE SET NULL, <span class="cm">-- NULL = no setup matched</span>
+  applied_at  TEXT NOT NULL,
+  PRIMARY KEY (shipment_id)
+)</pre>
+    </div>
+
+    <div class="spec-block">
+      <h3>Matching &amp; precedence algorithm</h3>
+      <p>Runs server-side, once per shipment, the first time <span class="mono">GET /api/shipments/:id/cost-lines</span>
+        is called &mdash; the one endpoint both the Costs (Buy) and Invoice/Cost Entry (Sell) pages already fetch from
+        on mount, so no frontend change is needed to trigger it.</p>
+      <pre class="code"><span class="kw">async function</span> applyChargeDefaults(shipmentId) {
+  <span class="kw">const</span> already = <span class="kw">await</span> query(<span class="cm">"SELECT 1 FROM shipment_charge_defaults_applied WHERE shipment_id=$1"</span>, [shipmentId]);
+  <span class="kw">if</span> (already.length) <span class="kw">return</span>; <span class="cm">// already resolved — never re-runs, even if the matching setup changes later</span>
+
+  <span class="kw">const</span> shipment = <span class="kw">await</span> getShipment(shipmentId);
+  <span class="kw">const</span> [originCountry, originRegion] = <span class="kw">await</span> resolveCountryAndRegion(shipment.pol);
+  <span class="kw">const</span> [destCountry,   destRegion]   = <span class="kw">await</span> resolveCountryAndRegion(shipment.pod);
+
+  <span class="kw">const</span> candidates = (<span class="kw">await</span> query(<span class="cm">"SELECT * FROM charge_default_setups WHERE is_active=TRUE"</span>))
+    .filter(s => (!s.principal_id || s.principal_id === shipment.principal_id)
+              && (!s.movement_type || s.movement_type === shipment.movement_type)
+              && (s.location_global || sideMatches(s, <span class="cm">'origin'</span>, shipment.pol, originCountry, originRegion))
+              && (s.location_global || sideMatches(s, <span class="cm">'dest'</span>,   shipment.pod, destCountry,   destRegion)));
+
+  <span class="kw">const</span> specificity = s => (s.principal_id ? 1 : 0) + (!s.location_global ? 1 : 0) + (s.movement_type ? 1 : 0);
+  candidates.sort((a, b) => specificity(b) - specificity(a) || b.updated_at.localeCompare(a.updated_at));
+  <span class="kw">const</span> winner = candidates[0] || <span class="kw">null</span>;
+
+  <span class="kw">if</span> (winner) {
+    <span class="kw">const</span> existingCodes = <span class="kw">new</span> Set((<span class="kw">await</span> query(<span class="cm">"SELECT charge_code FROM shipment_cost_lines WHERE shipment_id=$1"</span>, [shipmentId])).map(r => r.charge_code));
+    <span class="kw">const</span> lines = <span class="kw">await</span> query(<span class="cm">"SELECT * FROM charge_default_lines WHERE setup_id=$1 ORDER BY sort_order"</span>, [winner.id]);
+    <span class="kw">for</span> (<span class="kw">const</span> l <span class="kw">of</span> lines) {
+      <span class="kw">if</span> (existingCodes.has(l.charge_code)) <span class="kw">continue</span>; <span class="cm">// contract or manual line already covers it — never duplicated</span>
+      <span class="kw">await</span> insertCostLine(shipmentId, { ...l, source: <span class="cm">'principal_default'</span>, sourceSetupId: winner.id });
+    }
+  }
+  <span class="kw">await</span> query(<span class="cm">"INSERT INTO shipment_charge_defaults_applied (shipment_id, setup_id, applied_at) VALUES ($1,$2,$3)"</span>,
+    [shipmentId, winner?.id ?? <span class="kw">null</span>, <span class="kw">new</span> Date().toISOString()]);
+}</pre>
+      <p><span class="mono">sideMatches</span> checks location fields most-specific-first: exact
+        <span class="mono">*_location</span> match, else <span class="mono">*_country</span> match, else
+        <span class="mono">*_region</span> match &mdash; exactly one of the three is ever set per side, so this is a
+        single if/else-if chain, not a scoring problem.</p>
+    </div>
+
+    <div class="spec-block">
+      <h3>Validation rules</h3>
+      <ul class="rule-list">
+        <li><span class="rn">01</span><span><strong>At least one line.</strong> Save is rejected if both the Charges and Costs groups are empty &mdash; an empty setup can't be created.</span></li>
+        <li><span class="rn">02</span><span><strong>Exactly one location field per side.</strong> Unless Global is on, Origin needs exactly one of Region/Country/Location filled, and so does Destination &mdash; enforced live in the UI (filling one clears its siblings) and re-checked server-side on save.</span></li>
+        <li><span class="rn">03</span><span><strong>Global disables, not just hides.</strong> When the toggle is on, all six location columns are cleared server-side on save, regardless of what the (disabled) inputs show client-side.</span></li>
+        <li><span class="rn">04</span><span><strong>Blank Principal needs confirmation.</strong> The save endpoint itself doesn't gate this &mdash; it's a client-side confirmation step only, same trust level as any other "are you sure" in the app.</span></li>
+        <li><span class="rn">05</span><span><strong>Charge code must exist.</strong> <span class="mono">charge_code_definitions</span> turned out to be a different thing entirely (an unrelated auto-injected-SELL-line registry) &mdash; the real vocabulary every cost line actually draws from is the fixed 8-code list CostLineForm's own dropdown already uses (Ocean Freight, Origin THC, Destination THC, B/L Fee, Customs, Inland, Haulage, Other). Every setup line is validated against that same list, not a separate one.</span></li>
+      </ul>
+    </div>
+
+    <div class="spec-block">
+      <h3>API surface</h3>
+      <table class="spec-table">
+        <thead><tr><th>Method &amp; path</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">GET /api/charge-default-setups</td><td>List, for the admin page. Includes each line's count for the table's Lines column.</td></tr>
+          <tr><td class="mono">POST /api/charge-default-setups</td><td>Create, with its lines in one payload (setup + lines array). Both scope and lines are validated before any row is written, so a bad request never creates a partial setup &mdash; sequential inserts after that, same no-formal-transaction pattern Contracts already uses for its own contract+legs+rates create.</td></tr>
+          <tr><td class="mono">PUT /api/charge-default-setups/:id</td><td>Update scope and replace its lines wholesale (delete-then-reinsert) &mdash; simpler and safer than diffing individual line edits for a config this small.</td></tr>
+          <tr><td class="mono">PATCH /api/charge-default-setups/:id/active</td><td>Activate/deactivate without touching scope or lines &mdash; the list page's own Activate/Deactivate action.</td></tr>
+          <tr><td class="mono">DELETE /api/charge-default-setups/:id</td><td>Deletes the setup and its lines (cascade). Does <strong>not</strong> touch any cost line already applied to a shipment &mdash; those are real financial records now, independent of the setup that created them.</td></tr>
+          <tr><td class="mono">GET /api/shipments/:id/cost-lines</td><td>Existing route &mdash; gains one line at the top of its handler: <span class="mono">await applyChargeDefaults(req.params.id)</span>, before the existing SELECT.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="spec-block">
+      <h3>Frontend surface</h3>
+      <table class="spec-table">
+        <thead><tr><th>File</th><th>Change</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">src/pages/mdm/MdmChargeDefaultsPage.jsx</td><td>New. The list + editor from tabs 01/02 &mdash; Contracts itself turned out to live in Master Data, not the Financials hub, so this sits there too: MDM's own Finance sub-group, right below Charge Codes.</td></tr>
+          <tr><td class="mono">src/pages/shipments/ShipmentDetailPage.jsx</td><td>CostLineRow's existing source-badge chain gains one more branch: <span class="mono">source==='principal_default'</span> &rarr; a cyan "Default" badge (violet was already taken by the mirror badge).</td></tr>
+          <tr><td class="mono">src/api.js</td><td>New <span class="mono">api.chargeDefaultSetups</span> object (list/get/create/update/setActive/remove) beside the existing <span class="mono">api.contracts</span>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="spec-block">
+      <h3>Permissions</h3>
+      <p>Managing setups is gated the same way Contracts already are &mdash; admin, operator and trade_manager roles
+        (this codebase's real <span class="mono">write</span> role set for MDM configs, one wider than this spec
+        first assumed), via the existing <span class="mono">requireRole</span> middleware / the frontend's own
+        <span class="mono">canManageConfigs</span>. No new role is introduced.</p>
+    </div>
+
+    <div class="spec-block">
+      <h3>Status</h3>
+      <p><strong>Built and verified</strong> &mdash; schema, matching engine, CRUD routes, the MDM admin page, and the
+        CostLineRow badge are all live. 24 backend test assertions cover validation, CRUD, and the matching/
+        precedence/skip-existing-code/apply-once behavior end to end (<span class="mono">tests/charge-default-setups.test.js</span>);
+        a full <span class="mono">vite build</span> and the adjacent cost-line/invoicing regression suites stay green.
+        Not yet committed &mdash; ask before pushing, per standing practice.</p>
+    </div>
+
+  </section>
+</div>
+
+<footer class="pf">
+  <span>CargoDesk &middot; Charge Defaults &mdash; built and verified; not yet committed</span>
+  <span class="mono">Trade Horizon styling</span>
+</footer>
+
+<script>
+(function(){
+  var STORE_KEY = "cd-mockup-tab";
+  var tabs = Array.prototype.slice.call(document.querySelectorAll(".tab-btn"));
+  var panels = { list: document.getElementById("panel-list"), editor: document.getElementById("panel-editor"), shipment: document.getElementById("panel-shipment"), spec: document.getElementById("panel-spec") };
+  function activate(name){
+    tabs.forEach(function(t){ t.setAttribute("aria-selected", String(t.dataset.tab === name)); });
+    Object.keys(panels).forEach(function(k){ panels[k].hidden = (k !== name); });
+    try { localStorage.setItem(STORE_KEY, name); } catch(e){}
+  }
+  tabs.forEach(function(t){ t.addEventListener("click", function(){ activate(t.dataset.tab); }); });
+  var saved = null;
+  try { saved = localStorage.getItem(STORE_KEY); } catch(e){}
+  if (saved && panels[saved]) activate(saved);
+})();
+
+// ── Editor interactivity — everything below simulates real client-side validation;
+// nothing here persists or reaches a server, this is a mockup. ──────────────────
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+
+  // Movement type segmented control
+  var seg = $("movement-seg");
+  if (seg) seg.addEventListener("click", function(e){
+    var btn = e.target.closest("button"); if (!btn) return;
+    Array.prototype.forEach.call(seg.children, function(b){ b.classList.toggle("active", b === btn); });
+  });
+
+  // Each side (Origin/Destination) is Region + Country + Location — exactly one of the three,
+  // enforced live: filling one clears the other two in the same column, so a non-technical user
+  // can never end up in an ambiguous "two levels at once" state to begin with.
+  var ORIGIN_IDS = ["origin-region", "origin-country", "origin-location"];
+  var DEST_IDS = ["dest-region", "dest-country", "dest-location"];
+  var LOC_IDS = ORIGIN_IDS.concat(DEST_IDS);
+  function wireMutualExclusion(ids){
+    ids.forEach(function(id, i){
+      $(id).addEventListener("input", function(){
+        if (this.value.trim() !== "") ids.forEach(function(otherId, j){ if (j !== i) $(otherId).value = ""; });
+      });
+    });
+  }
+  wireMutualExclusion(ORIGIN_IDS);
+  wireMutualExclusion(DEST_IDS);
+  function sideFilled(ids){ return ids.some(function(id){ return $(id).value.trim() !== ""; }); }
+
+  // Global toggle disables all six location fields, and updates the specificity read-out
+  var globalToggle = $("global-toggle");
+  var specText = $("specificity-text");
+  function recomputeSpecificity(){
+    var principalSet = $("setup-principal").value.trim() !== "";
+    var locationSet = !globalToggle.checked;
+    var movementSet = seg.querySelector(".active").dataset.val !== "Any";
+    var score = (principalSet ? 1 : 0) + (locationSet ? 1 : 0) + (movementSet ? 1 : 0);
+    specText.textContent = score + " of 3 scope groups set" + (score === 3
+      ? " — this is as specific as a setup gets, so it will win over any broader setup for a matching shipment."
+      : score === 0
+        ? " — this is a fully global fallback; any more specific setup will be preferred over it."
+        : " — more specific than a fully global setup, but a setup matching more groups would still win over this one.");
+  }
+  function applyGlobalState(){
+    LOC_IDS.forEach(function(id){ $(id).disabled = globalToggle.checked; });
+    recomputeSpecificity();
+  }
+  if (globalToggle) { globalToggle.addEventListener("change", applyGlobalState); }
+  ["setup-principal"].forEach(function(id){ $(id).addEventListener("input", recomputeSpecificity); });
+  if (seg) seg.addEventListener("click", recomputeSpecificity);
+
+  // Add / remove line rows — same row shape in both Charges and Costs groups
+  function addRow(tbody, placeholderCode){
+    var tr = document.createElement("tr");
+    tr.innerHTML =
+      '<td><input class="ctl mono-ctl" placeholder="' + placeholderCode + '"></td>' +
+      '<td><input class="ctl" placeholder="Description"></td>' +
+      '<td><input class="ctl mono-ctl" value="USD" style="width:70px"></td>' +
+      '<td><input class="ctl mono-ctl" placeholder="0.00" style="width:90px"></td>' +
+      '<td><button class="btn-danger-ghost line-remove">&times;</button></td>';
+    tbody.appendChild(tr);
+    updateLineCounts();
+  }
+  function updateLineCounts(){
+    var cCount = $("charges-body").children.length, kCount = $("costs-body").children.length;
+    $("charges-count").textContent = cCount;
+    $("charges-plural").textContent = cCount === 1 ? "" : "s";
+    $("costs-count").textContent = kCount;
+  }
+  $("add-charge-line").addEventListener("click", function(){ addRow($("charges-body"), "e.g. DOC-FEE"); });
+  $("add-cost-line").addEventListener("click", function(){ addRow($("costs-body"), "e.g. CHASSIS-USE"); });
+  document.addEventListener("click", function(e){
+    if (e.target.classList.contains("line-remove")) {
+      e.target.closest("tr").remove();
+      updateLineCounts();
+    }
+  });
+
+  // Save — real validation against the current form state
+  var errBanner = $("err-banner"), errText = $("err-text");
+  function showError(msg){ errText.textContent = msg; errBanner.classList.add("show"); }
+  function clearError(){ errBanner.classList.remove("show"); }
+  function showToast(){
+    var t = $("save-toast"); t.classList.add("show");
+    setTimeout(function(){ t.classList.remove("show"); }, 2600);
+  }
+  var dlg = $("no-customer-dlg");
+  function finishSave(){ clearError(); showToast(); }
+
+  $("btn-save-setup").addEventListener("click", function(){
+    var totalLines = $("charges-body").children.length + $("costs-body").children.length;
+    if (totalLines === 0) {
+      showError("Add at least one charge or cost line before saving.");
+      return;
+    }
+    if (!globalToggle.checked) {
+      var originOk = sideFilled(ORIGIN_IDS), destOk = sideFilled(DEST_IDS);
+      if (!originOk || !destOk) {
+        var who = (!originOk && !destOk) ? "Origin and Destination" : (!originOk ? "Origin" : "Destination");
+        showError("Fill exactly one Region, Country or Location field for " + who + ", or turn Global on.");
+        return;
+      }
+    }
+    clearError();
+    if ($("setup-principal").value.trim() === "") {
+      dlg.classList.add("show");
+      return;
+    }
+    finishSave();
+  });
+  $("dlg-cancel").addEventListener("click", function(){ dlg.classList.remove("show"); });
+  $("dlg-confirm").addEventListener("click", function(){ dlg.classList.remove("show"); finishSave(); });
+
+  recomputeSpecificity();
+})();
+</script>

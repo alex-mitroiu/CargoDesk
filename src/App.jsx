@@ -95,6 +95,7 @@ import MdmUNLocationCodesPage  from "./pages/mdm/MdmUNLocationCodesPage";
 import MdmCommoditiesPage     from "./pages/mdm/MdmCommoditiesPage";
 import MdmHsCodesPage         from "./pages/mdm/MdmHsCodesPage";
 import MdmChargeCodesPage     from "./pages/mdm/MdmChargeCodesPage";
+import MdmChargeDefaultsPage  from "./pages/mdm/MdmChargeDefaultsPage";
 import MdmDutyRatesPage       from "./pages/mdm/MdmDutyRatesPage";
 import MdmPackTypesPage       from "./pages/mdm/MdmPackTypesPage";
 import MdmInvoiceReasonCodesPage from "./pages/mdm/MdmInvoiceReasonCodesPage";
@@ -709,7 +710,7 @@ function App() {
   }, [authLoading, user, page]);
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-carrier-integrations", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-loop-map-explorer", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-carrier-integrations", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-loop-map-explorer", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-charge-defaults", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
@@ -809,6 +810,7 @@ function App() {
     "rate-benchmark":   "Rate Benchmarking",
     "mdm-finance": "Master Data — Finance",
     "mdm-charge-codes": "Master Data — Automated Charge Codes",
+    "mdm-charge-defaults": "Master Data — Charge Defaults",
     "mdm-duty-rates": "Master Data — Duty Rate Chapters",
     "mdm-equipment": "Master Data — Equipment",
     "mdm-pack-types": "Master Data — Pack Types",
@@ -1951,6 +1953,7 @@ function App() {
                   {financeNavOpen && (
                     <>
                       <NavBtn pageKey="mdm-charge-codes" icon={IconTag} label="Charge Codes"    subIndent />
+                      <NavBtn pageKey="mdm-charge-defaults" icon={IconReceipt} label="Charge Defaults" subIndent />
                       <NavBtn pageKey="mdm-duty-rates" icon={IconCoin} label="Duty Rate Chapters" subIndent />
                       <NavBtn pageKey="mdm-invoice-reason-codes" icon={IconTag} label="Invoice Reason Codes" subIndent />
                     </>
@@ -2157,7 +2160,7 @@ function App() {
         )}
 
         {page === "shipment-conditions" && selectedShipment && (
-          <ShipmentConditionsPage shipment={selectedShipment} />
+          <ShipmentConditionsPage shipment={selectedShipment} onUpdate={handleUpdateShipment} />
         )}
 
         {page === "shipment-containers" && selectedShipment && (
@@ -2388,6 +2391,7 @@ function App() {
         {page === "mdm-finance"&&                                     <MdmFinancePage navigate={navigate} />}
         {page === "mdm-locations"&&                                   <MdmLocationsPage navigate={navigate} />}
         {page === "mdm-charge-codes"&&                                <MdmChargeCodesPage />}
+        {page === "mdm-charge-defaults"&&                             <MdmChargeDefaultsPage />}
         {page === "mdm-duty-rates"&&                                  <MdmDutyRatesPage />}
         {page === "mdm-equipment"&&                                   <MdmEquipmentPage navigate={navigate} />}
         {page === "mdm-pack-types"&&                                  <MdmPackTypesPage />}

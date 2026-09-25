@@ -29,7 +29,8 @@ than a rewrite since their whole purpose is documenting a past design proposal, 
 | `reports-manifest.html` | Reports Manifest | https://claude.ai/code/artifact/b0aa599d-4714-409d-93bb-3f81c33c9157 |
 | `master-data-carrier-agents.html` | Master Data — Carrier Agents | https://claude.ai/code/artifact/0f4f31e6-db57-469a-9cfc-da65e505a45f |
 | `cargodesk-field-guide.html` | CargoDesk Field Guide | https://claude.ai/code/artifact/8a28bb81-d017-4194-8ec3-f5d7f3836436 |
-| `fcl-coverage-audit.html` | FCL Coverage Audit — **the latest broad competitive assessment of CargoDesk** (2026-08-14) | https://claude.ai/code/artifact/3f5f709c-ab3c-4790-af27-e0f5def1f060 |
+| `fcl-competitive-dossier.html` | FCL Competitive Dossier — **the latest broad competitive assessment of CargoDesk**, benchmarked against 6 named platforms (2026-09-25) | https://claude.ai/artifact/8pt8jmyZ7B6eYxf7GpHfD1 |
+| `charge-defaults.html` | Charge Defaults — mockup + technical spec for Principal/lane charge &amp; cost line defaults (2026-09-25, built and shipped in v0.91.8 "Bastion") | https://claude.ai/artifact/15DeP2Lcx9qmQbyQAUEwWd |
 | `carrier-booking-details-line-agents.html` | Carrier Booking — Details, with Line Agents | https://claude.ai/code/artifact/f840e979-6a1a-4994-bf0a-5e49df566718 |
 | `customers-mdm-filtered-view-mockup.html` | Customers MDM — Filtered View Mockup | https://claude.ai/code/artifact/5db7b008-c7fb-48b9-abef-9e426e67c034 |
 | `customer-roles-before-after.html` | Customer Roles — Before / After | https://claude.ai/code/artifact/584f5902-0303-40d5-be43-76342e92d8ea |
@@ -37,6 +38,14 @@ than a rewrite since their whole purpose is documenting a past design proposal, 
 | `splitting-mdm-first.html` | Splitting MDM First | https://claude.ai/code/artifact/8b08d7a0-bb32-4ae7-bcaa-198bba0412c1 |
 | `splitting-sanctions-next.html` | Splitting Sanctions Next | https://claude.ai/code/artifact/a96ff2e9-f667-4592-b9dc-f33ff2f5d593 |
 | `splitting-kanban-out.html` | Splitting Kanban Out | https://claude.ai/code/artifact/fa0a1811-9e36-4c20-ad40-e20adbd957cc |
+
+## Removed (2026-09-25)
+
+- **`fcl-coverage-audit.html`** ("FCL Coverage Audit", 2026-08-14, a glossary/terminology
+  cross-check against DocShipper's FCL glossary) — the live artifact at the same URL was
+  overwritten in place with a wholly different report (a 6-platform competitive benchmark, not a
+  glossary check), so this local copy is superseded by `fcl-competitive-dossier.html` rather than
+  drifted from it.
 
 ## Removed (2026-08-25 pass)
 

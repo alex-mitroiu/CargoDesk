@@ -6,7 +6,7 @@ import { CostLineForm, CostLineHistoryModal, CostLineRow, CostLineActualizeModal
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { IconClipboard, IconArrowDown, IconArrowUp, IconRefresh } from "../../components/primitives/Icon";
-import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
+import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts, makeDashedBtn } from "./shipmentDetailTheme";
 
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -155,12 +155,7 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
   const accruedCount = buyLines.filter(l => (l.status || "accrued") === "accrued").length;
   const postedCount  = buyLines.filter(l => l.status === "posted").length;
 
-  const dashedBtn = (accent, disabled) => ({
-    padding: "7px 12px", background: "none", cursor: disabled ? "not-allowed" : "pointer",
-    border: `1px dashed ${accent ? HZ.violet + "55" : HZ.border}`, borderRadius: 6,
-    fontFamily: HZ_BODY, fontSize: 12, color: accent ? HZ.violet : HZ.textMuted,
-    opacity: disabled ? 0.5 : 1, display: "inline-flex", alignItems: "center", gap: 5,
-  });
+  const dashedBtn = makeDashedBtn(HZ.violet);
 
   useHorizonFonts();
 

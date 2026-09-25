@@ -6,7 +6,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           sanctionsMap, screenShipmentById,
           logEvent, logEntityEvent, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
           computeCostLineReconciliation, applyReconciliation,
-          mapRateSnapshot, syncShipmentFromLegs, ensureBookingCreated, autoCompleteMilestone,
+          mapRateSnapshot, syncShipmentFromLegs, ensureBookingCreated, autoCompleteMilestone, applyChargeDefaults,
           UPLOADS_DIR, fs, path,
           renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
           buildMailOptions, sendViaOffice,
@@ -253,11 +253,57 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!shipmentRow) return rows;
     const mySide = await officeSideOf(req.user, mapShipment(shipmentRow), req);
     if (mySide === 'unrestricted') return rows;
-    const sides = await Promise.all(rows.map(r => chargeCodeSide(r.charge_code)));
-    return rows.filter((r, i) => sides[i] === null || sides[i].toLowerCase() === mySide);
+    // One batched lookup for every distinct charge_code on this shipment, not one chargeCodeSide()
+    // query per row (2026-09-25 audit finding) — a shipment can carry dozens of cost lines and
+    // this filter runs on every Accounting-page fetch.
+    const codes = [...new Set(rows.map(r => r.charge_code).filter(Boolean))];
+    const sideByCode = new Map();
+    if (codes.length) {
+      const ph = codes.map((_, i) => `$${i + 1}`).join(",");
+      const sideRows = await query(`SELECT charge_code, side FROM charge_code_sides WHERE charge_code IN (${ph})`, codes);
+      for (const r of sideRows) if (r.side === "Export" || r.side === "Import") sideByCode.set(r.charge_code, r.side);
+    }
+    return rows.filter(r => {
+      const side = sideByCode.get(r.charge_code);
+      return !side || side.toLowerCase() === mySide;
+    });
   };
 
+  // Write-side counterpart to filterCostLinesBySide above — a cost line takes its side from its
+  // OWN charge_code (charge_code_sides), not a fixed shipment-level side, same principle as
+  // PARTY_ROLE_SIDE on the parties routes below. An unclassified/shared code (no
+  // charge_code_sides row) is never gated. Every write route on this resource (POST/PUT/
+  // actualize/post/adjust/DELETE) previously had zero side check at all despite the GET route
+  // above filtering by the exact same rule — a wrong-side user could write, or even discover-then-
+  // delete, a line their own list view correctly hides them from (2026-09-25 audit finding).
+  async function blockIfWrongSideForChargeCode(req, res, shipmentId, chargeCode) {
+    const side = await chargeCodeSide(chargeCode);
+    if (!side) return false;
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
+    if (!shipmentRow) return false; // let the route's own existence check surface the 404
+    return await blockIfWrongSide(req, res, shipmentRow, side.toLowerCase());
+  }
+
+  // Which generated document types have one clear, unambiguous side — same principle as
+  // FILING_TYPE_SIDE (customs-filing.js) and PARTY_ROLE_SIDE (shipments.js). Everything NOT
+  // listed (Commercial Invoice, Packing List, service docs, plain uploads, ...) has no inherent
+  // side and stays open to whoever could already write it (2026-09-25 audit finding — these
+  // document routes had zero side check at all, the one write-gating gap left in the epic).
+  const DOC_TYPE_SIDE = {
+    FR01: 'export', FR02: 'export', // invoices — SELL-side only, by construction (see reverse below)
+    CN01: 'export', // credit/debit note — same billing side as the invoice it corrects
+    BL01: 'export', // House B/L — issued by the export/forwarding office to its own shipper
+  };
+  async function blockIfWrongSideForDocType(req, res, shipmentId, docType) {
+    const side = DOC_TYPE_SIDE[docType];
+    if (!side) return false;
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
+    if (!shipmentRow) return false;
+    return await blockIfWrongSide(req, res, shipmentRow, side);
+  }
+
   app.get("/api/shipments/:id/cost-lines", costLineRead, async (req, res) => {
+    await applyChargeDefaults(req.params.id);
     const { limit, offset } = req.query;
     // Pagination is opt-in (TKT-UAJGR3) — every existing consumer (CostLineRow lists, GP Overview,
     // Freight Audit matching) wants the whole shipment's cost lines at once and omits these params,
@@ -279,6 +325,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, vatRate = 0, notes = '', containerId = '', source: rawSource, paymentIndicator: rawPI } = req.body;
     if (!type || !chargeCode || amount == null) return err(res, "type, chargeCode, amount required");
     if (!['BUY','SELL'].includes(type)) return err(res, "type must be BUY or SELL");
+    if (await blockIfWrongSideForChargeCode(req, res, req.params.id, chargeCode)) return;
     const source = ['contract', 'mirror', 'automated'].includes(rawSource) ? rawSource : 'manual';
     const paymentIndicator = rawPI === 'Collect' ? 'Collect' : 'Prepaid';
     const vat = type === 'SELL' ? Number(vatRate) || 0 : 0;
@@ -298,6 +345,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const [existing] = await query("SELECT * FROM shipment_cost_lines WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
     if (existing.status === 'posted') return err(res, "This line is posted and locked — add a new adjusting line instead of editing it", 409);
+    if (await blockIfWrongSideForChargeCode(req, res, req.params.shipmentId, existing.charge_code)) return;
     const paymentIndicator = rawPI === 'Collect' ? 'Collect' : 'Prepaid';
     const vat = type === 'SELL' ? Number(vatRate) || 0 : 0;
     const now = new Date().toISOString();
@@ -342,6 +390,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const [existing] = await query("SELECT * FROM shipment_cost_lines WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
     if (existing.status === 'posted') return err(res, "This line is posted and locked", 409);
+    if (await blockIfWrongSideForChargeCode(req, res, req.params.shipmentId, existing.charge_code)) return;
     const { actualAmount, actualExchangeRate = existing.exchange_rate } = req.body || {};
     if (actualAmount == null) return err(res, "actualAmount required");
     const now = new Date().toISOString();
@@ -361,6 +410,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const [existing] = await query("SELECT * FROM shipment_cost_lines WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
     if (existing.status === 'posted') return err(res, "Already posted", 409);
+    if (await blockIfWrongSideForChargeCode(req, res, req.params.shipmentId, existing.charge_code)) return;
     const now = new Date().toISOString();
     const actor = req.user?.name || req.user?.email || "";
     await query("UPDATE shipment_cost_lines SET status='posted', posted_at=$1, posted_by=$2 WHERE id=$3",
@@ -378,10 +428,18 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!Array.isArray(ids) || ids.length === 0) return err(res, "ids required");
     const now = new Date().toISOString();
     const actor = req.user?.name || req.user?.email || "";
+    // One shipment lookup + one officeSideOf resolution for the whole batch, not per line — a
+    // batch can't send more than one HTTP response, so a wrong-side line is silently skipped
+    // (continue), matching this loop's own existing "ineligible line -> skip" convention for an
+    // already-posted line, rather than 403ing the entire batch over one line.
+    const [shipmentRowForBatch] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    const myBatchSide = shipmentRowForBatch ? await officeSideOf(req.user, mapShipment(shipmentRowForBatch), req) : 'unrestricted';
     const posted = [];
     for (const id of ids) {
       const [existing] = await query("SELECT * FROM shipment_cost_lines WHERE id=$1 AND shipment_id=$2", [id, req.params.shipmentId]);
       if (!existing || existing.status === 'posted') continue;
+      const lineSide = await chargeCodeSide(existing.charge_code);
+      if (lineSide && myBatchSide !== 'unrestricted' && myBatchSide !== lineSide.toLowerCase()) continue;
       await query("UPDATE shipment_cost_lines SET status='posted', posted_at=$1, posted_by=$2 WHERE id=$3", [now, actor, id]);
       await logEntityEvent('cost_line', id, 'POSTED', 'status', existing.status, 'posted',
         JSON.stringify({ shipmentId: existing.shipment_id, chargeCode: existing.charge_code, type: existing.type }));
@@ -407,6 +465,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!existing) return err(res, "Not found", 404);
     if (existing.type !== 'BUY') return err(res, "Adjust is for BUY-side lines — a confirmed SELL invoice has its own Invoice Reversal action instead", 409);
     if (existing.status !== 'posted') return err(res, "Only a posted line can be adjusted — edit it directly instead", 409);
+    if (await blockIfWrongSideForChargeCode(req, res, req.params.shipmentId, existing.charge_code)) return;
     const { amount, exchangeRate = existing.exchange_rate, note = '' } = req.body || {};
     if (amount == null || Number(amount) === 0) return err(res, "A non-zero adjustment amount is required");
     const now = new Date().toISOString();
@@ -432,6 +491,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const [existing] = await query("SELECT * FROM shipment_cost_lines WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
     if (existing.status === 'posted') return err(res, "This line is posted and locked — use Adjust to post an offsetting entry instead of deleting it", 409);
+    if (await blockIfWrongSideForChargeCode(req, res, req.params.shipmentId, existing.charge_code)) return;
     await query("DELETE FROM shipment_cost_lines WHERE id=$1", [req.params.id]);
     await logEntityEvent('cost_line', req.params.id, 'DELETED', null, null, null,
       JSON.stringify({ shipmentId: existing.shipment_id, type: existing.type, chargeCode: existing.charge_code, amount: existing.amount, currency: existing.currency, source: existing.source || 'manual' }));
@@ -1044,6 +1104,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   app.post("/api/shipments/:id/documents", shipmentWrite, async (req, res) => {
     const { filename, mimeType, docType, data, containerId = '', responsibleParty = '', containerEventId = '' } = req.body;
     if (!filename || !data) return err(res, "filename and data are required");
+    if (await blockIfWrongSideForDocType(req, res, req.params.id, docType)) return;
     try {
       const buf        = Buffer.from(data, "base64");
       const ext        = path.extname(filename) || "";
@@ -1138,6 +1199,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   app.post("/api/shipments/:id/documents/generate", shipmentWrite, documentActionRateLimit, async (req, res) => {
     const { html, filename, docType, containerId = '', responsibleParty = '', sourceCostLineIds = null, relatedDocId = null } = req.body;
     if (!html || !filename) return err(res, "html and filename are required");
+    if (await blockIfWrongSideForDocType(req, res, req.params.id, docType)) return;
     let consumeOverrideId = null;
     if (docType === 'FR01' || docType === 'FR02') {
       const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
@@ -1235,6 +1297,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   app.patch("/api/shipments/:shipmentId/documents/:docId", shipmentWrite, async (req, res) => {
     const [doc] = await query("SELECT * FROM shipment_documents WHERE id = $1 AND shipment_id = $2", [req.params.docId, req.params.shipmentId]);
     if (!doc) return err(res, "Not found", 404);
+    if (await blockIfWrongSideForDocType(req, res, req.params.shipmentId, doc.doc_type)) return;
     const { status, relatedDocId } = req.body;
     if (status !== undefined) {
       if (!["draft", "confirmed", "voided"].includes(status)) return err(res, "status must be draft, confirmed, or voided");
@@ -1291,6 +1354,10 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!doc) return err(res, "Not found", 404);
     if (doc.doc_type !== "BL01") return err(res, "Only a House Bill of Lading can be marked surrendered", 400);
     if (doc.status !== "confirmed") return err(res, "Only an issued (confirmed) House B/L can be marked surrendered", 409);
+    // Surrender happens at ORIGIN (the shipper hands back the originals before/at sailing) —
+    // export side, unlike Release below, which happens at destination.
+    const [shipmentForSurrender] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    if (shipmentForSurrender && (await blockIfWrongSide(req, res, shipmentForSurrender, 'export'))) return;
     if (!doc.bl_surrendered_at) {
       const now = new Date().toISOString();
       const actor = req.user?.name || req.user?.email || "";
@@ -1307,6 +1374,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!doc) return err(res, "Not found", 404);
     if (doc.doc_type !== "BL01") return err(res, "Only a House Bill of Lading can be marked released", 400);
     if (doc.status !== "confirmed") return err(res, "Only an issued (confirmed) House B/L can be marked released", 409);
+    // Release happens at DESTINATION (cargo is released against the surrendered bill) — import side.
+    const [shipmentForRelease] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
+    if (shipmentForRelease && (await blockIfWrongSide(req, res, shipmentForRelease, 'import'))) return;
     if (!doc.bl_released_at) {
       const now = new Date().toISOString();
       const actor = req.user?.name || req.user?.email || "";
@@ -1332,6 +1402,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (doc.doc_type !== "FR01" && doc.doc_type !== "FR02") return err(res, "Only a generated invoice can be reversed", 400);
     if (doc.status !== "confirmed") return err(res, "Only a confirmed invoice can be reversed — a draft can simply be regenerated or deleted", 409);
     if (doc.related_doc_id) return err(res, "This invoice has already been reversed", 409);
+    if (await blockIfWrongSideForDocType(req, res, req.params.shipmentId, doc.doc_type)) return;
 
     const sourceIds = doc.source_cost_line_ids ? JSON.parse(doc.source_cost_line_ids) : null;
     const sourceLines = sourceIds && sourceIds.length
@@ -1397,6 +1468,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!doc) return err(res, "Not found", 404);
     if (doc.doc_type !== "FR01" && doc.doc_type !== "FR02") return err(res, "Only a generated invoice can be marked paid", 400);
     if (doc.status !== "confirmed") return err(res, "Only a confirmed invoice can be marked paid", 409);
+    if (await blockIfWrongSideForDocType(req, res, req.params.shipmentId, doc.doc_type)) return;
 
     const { paidAt, paidAmount, transactionId = "" } = req.body || {};
     if (!paidAt) return err(res, "paidAt is required");

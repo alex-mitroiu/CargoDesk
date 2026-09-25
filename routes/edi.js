@@ -289,6 +289,24 @@ module.exports = function ediRoutes(app, ctx) {
       "SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 ORDER BY generated_at DESC LIMIT 1", [shipment.id]
     );
 
+    // Real contract number + reference as two distinct fields (direct request, 2026-09-25):
+    // some carriers (this app's own comment: "only searches by the contract number") match a
+    // booking request against nothing but the bare contract number; a carrier equipped to use
+    // both (Hapag was named as the example) wants the number AND its own separate reference.
+    // shipment.contract_ref is NOT that reference — it's set to the contract's contractNumber at
+    // assignment time (ShipmentSchedulesPage.jsx), so re-sending it here would just duplicate the
+    // number under a different key. The contract's real, independent reference (confirmed live:
+    // e.g. contract "EC-HLCU-NLAMS-USNYC" carries its own ref "REF00404", never surfaced past the
+    // Contracts MDM record before this) only exists on the contracts row itself.
+    let contractNumber = null, contractRefForCarrier = shipment.contract_ref || null;
+    if (shipment.contract_type === "Central" && shipment.contract_id) {
+      const [linkedContract] = await query("SELECT contract_number, contract_ref FROM contracts WHERE id=$1", [shipment.contract_id]);
+      if (linkedContract) {
+        contractNumber = linkedContract.contract_number || null;
+        contractRefForCarrier = linkedContract.contract_ref || null;
+      }
+    }
+
     // NVOCC support (Epic TKT-Q52B38) — when this shipment is being handled through an NVOCC,
     // THAT party (not the underlying cargo owner) is the real shipper of record on the vessel
     // operator's own booking/Master B/L; shipment.shipper_name is the House B/L shipper, a
@@ -315,7 +333,7 @@ module.exports = function ediRoutes(app, ctx) {
       vessel: shipment.vessel || null, voyage: shipment.voyage || null,
       vesselImo: shipment.vessel_imo || null,
       contractType: shipment.contract_type || null,
-      contractRef: shipment.contract_ref || null,
+      contractNumber, contractRef: contractRefForCarrier,
       rateSnapshotId: rateSnapshot?.id || null,
       cargoReadyDate: shipment.cargo_ready_date || null,
       placeOfReceipt: shipment.place_of_receipt || null,

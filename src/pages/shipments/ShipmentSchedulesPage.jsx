@@ -118,7 +118,8 @@ const LineAgentField = ({ label, role, party, canEdit, onAssign, onRemove }) => 
 };
 
 const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, onRefresh }) => {
-  const { canEditShipments: canEdit, activeOffice, allOffices, isAdmin, activeRoles } = useAuth();
+  const auth = useAuth();
+  const { canEditShipments: canEdit, activeOffice, allOffices, isAdmin, activeRoles } = auth;
   // Change Contract's own carrier-changed cascade (below) is the one remaining multi-step async
   // operation on this page that still hits the server immediately — everything else route-leg/
   // sailing-related is now a local draft mutation with no network call until Save.
@@ -233,7 +234,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, on
   // Contracts & Schedules is export-edit per the Office-Side Permissions Epic (TKT-Z0LB0W) —
   // per-shipment-relative (shipment.myOfficeSide), NOT the department-wide check just above
   // (that one's scope is narrower: only who may reassign the Line Agent fields specifically).
-  const canEditExportSide = canEditShipmentSide({ canEditShipments: canEdit, isAdmin, activeRoles, allOffices }, shipment, "export");
+  const canEditExportSide = canEditShipmentSide(auth, shipment, "export");
 
   const handleAssignLineAgent = async (role, existingId, customerId, customerName) => {
     try {

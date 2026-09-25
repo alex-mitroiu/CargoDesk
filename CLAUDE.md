@@ -6,7 +6,7 @@ Full-stack freight management app. React 18 + Vite frontend, Express + dual-back
 `lib/db.js`) backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.91.7 "Landfall"**
+- Version: **v0.91.8 "Bastion"**
 - First-time setup: `npm run setup` (`scripts/setup.js`) — boots the server once to create its
   schema, shuts it down cleanly, then seeds MDM reference data, in the correct order. NOT
   zero-script — a genuinely fresh `pgdata/` has no ports/carriers/vessels/commodities until this
@@ -105,7 +105,21 @@ routes/
                      validated) + /search (typeahead) + /eu-lookup (live, never-persisted proxy to
                      tariffnumber.com's free V1 cnSuggest endpoint — its terms forbid storing or
                      caching, so the result is only ever passed through) — HS Codes MDM (v0.91.5)
+  charge-default-setups.js /api/charge-default-setups/* (CRUD, trade_manager+ writes) — Charge
+                     Defaults (v0.91.8, Master Data → Finance): a setup scopes by optional
+                     Principal/Movement Type + a Location dimension (Global, or exactly one of
+                     Region/Country/Location per side, validated server-side). validateLines()
+                     enforces the fixed BUY/SELL charge-code vocabulary and a non-negative amount
 lib/
+  charge-defaults.js applyChargeDefaults(shipmentId) — Charge Defaults' matching+apply engine
+                     (v0.91.8), called once from the top of GET /api/shipments/:id/cost-lines.
+                     Idempotent per shipment via an atomic INSERT ... ON CONFLICT DO NOTHING
+                     RETURNING claim on shipment_charge_defaults_applied (not a plain SELECT-then-
+                     INSERT check — closes a real concurrent-request race). Matches most-specific-
+                     of-3-groups wins, ties broken by most-recently-updated; skips any type+
+                     charge_code the shipment already has from any source (contract or manual).
+                     Region resolves from port_locations.zone_code, NOT countries.region_code
+                     (empty on all seeded countries — a real QA-found bug)
   tableQuery.js      Shared server-side table engine (v0.91.5) — applyColumnFilters / filterOptions /
                      applySearch / applySort / paginate over an already access-filtered row set.
                      Filter params arrive as REPEATED keys (`?status=Draft&status=Sent`), never
@@ -568,7 +582,7 @@ The original inline routes remain in server.js as **dead code** (route files reg
 Express uses first-match). They act as a fallback and can be deleted once the extracted routes
 are fully validated.
 
-## Database — 43 tables listed below (77 total as of v0.70.0 — see the About page's Architectural Details tab, or `ARCHITECTURE.md` §6, for the full domain-grouped list)
+## Database — 64 tables listed below (77 total as of v0.70.0 — see the About page's Architectural Details tab, or `ARCHITECTURE.md` §6, for the full domain-grouped list)
 | Table | Purpose |
 |---|---|
 | shipments | Core shipment records |
@@ -590,6 +604,9 @@ are fully validated.
 | shipment_cost_lines | BUY/SELL cost lines per shipment with source tracking and FX. `adjusts_cost_line_id` — nullable, plain TEXT (same no-FK idiom as `shipment_documents.related_doc_id`), set only on a new `source:'adjustment'` posted line created via `POST .../cost-lines/:id/adjust`; the BUY-side equivalent of the SELL-side Invoice Reversal (v0.53.0). The entered amount is always the delta being applied, never a corrected total — the original posted line it points at is never edited |
 | carrier_invoices | Freight Audit & Payment (v0.69.0) — a carrier's own submitted invoice per shipment, header only (carrier, invoice number/date, currency, rolled-up status) |
 | carrier_invoice_lines | Per-invoice charge lines (v0.69.0) — amount vs. an independently-resolved `expected_amount` (from an accrued `shipment_cost_lines` row, a live `contract_rates` row, or a Detention/Demurrage pre-audit computed from `containers`' free-time fields + `container_events`), variance, and pending/matched/variance/approved/disputed status. Approving posts into the existing cost-line accrual/actualized lifecycle |
+| charge_default_setups | Charge Defaults (v0.91.8) — a predefined BUY/SELL charge-line bundle scoped by optional `principal_id`/`movement_type` + a location dimension (`location_global` boolean, or exactly one of origin/dest region/country/location, enforced on save) |
+| charge_default_lines | The setup's own charge/cost lines (type, charge_code from the fixed vocabulary, description, currency, amount, sort_order) — copied into `shipment_cost_lines` (`source='principal_default'`) on first match, never referenced live afterward |
+| shipment_charge_defaults_applied | One row per shipment (`shipment_id` PRIMARY KEY, FK'd, ON DELETE CASCADE) — idempotency marker so a shipment's defaults are computed and applied at most once, even from concurrent requests (claimed atomically via `INSERT ... ON CONFLICT DO NOTHING`, see `lib/charge-defaults.js`) |
 | quotes | Quoting/RFQ pre-booking stage (v0.70.0) — precedes and converts into a real shipment. Lifecycle Draft (editable) -> Sent (locked, needs `valid_until` + 1+ lines) -> Accepted \| Declined \| Expired (hourly `expireStaleQuotes()` sweep, mirrors `expireStaleContracts`) -> Converted (Accepted only). `contract_id`/`contract_ref` optional — set when a matched contract was used as a pricing reference, not a hard link. `office_id` (v0.91.1, User Management redesign) — bare, no FK (matches `shipments.emo_office_id`'s own convention); office-scopes visibility via `applyOfficeScopedAccessFilter`, previously had NONE at all. On conversion resolves to the new shipment's `emo_office_id`/`imo_office_id` per that office's `department`. `quote_lines.quantity` must be a positive finite number (v0.91.1) — `0`/negative used to silently coerce to `1` or flow straight into negative SELL revenue on conversion |
 | quote_lines | The quote's own customer-facing SELL price per line — kept independent of the referenced contract's live rate (a quote commonly already has margin added). On conversion, each becomes a new `shipment_cost_lines` SELL row, `source='quote'`, while the BUY side still comes from `importContractRates()` unchanged if a contract was referenced |
 | opportunities | CRM pre-sales pipeline (v0.85.0) — precedes and converts into a real quote. Lifecycle New (editable) -> Qualified (editable) -> Converted (to Quote, Qualified only) \| Lost (from New or Qualified). No line-item child table — pre-pricing, real line-item detail belongs on the Quote it converts into. Only `title` is required; `customer_id` is optional (the same unresolved-customer pattern `quotes.customer_id` already established). `office_id` (v0.91.1) — same convention/purpose as `quotes.office_id`, carried into the new quote on conversion |
@@ -638,6 +655,8 @@ are fully validated.
 - **Trade Horizon is dual-theme (v0.91.5)**: `HZ_DARK`/`HZ_LIGHT` in `shipmentDetailTheme.js` (Shipment Details) and `DashboardPage.jsx` (Dashboard), each a mutable `HZ` object swapped in place by `applyHzTheme(dark)` / `applyDashboardHzTheme(dark)` — the same mutable-object pattern as `T`/`applyTheme`, all three driven from `App.jsx`'s `isDark`/`toggleTheme`. Style through `HZ.*` tokens only (incl. `goodPillText`/`infoPillText`/`violetPillText`/`chipText` for text on tinted pills, `cardBlur`, and `cardShadow`, which light glass cards need on their `boxShadow`; floating tooltips/popovers use `popoverShadow` instead, since `cardShadow` is `"none"` in dark); never hardcode a dark literal — including a `rgba(0,0,0,…)` shadow, which reads as a smudge on a light page. `HZ_LEGACY_THEME` uses getters so it stays live after a theme swap. Command Center already followed the app theme via `isDark` → classic `T`.
 - **Every test that creates a shipment provisions its own offices (v0.91.5)**: a CI database starts with no offices, and `emoOfficeId`/`imoOfficeId` are required, so call `ensureOffices()` (`tests/helpers/offices.mjs`, `cypress/support/offices.js`) instead of looking one up. CI's backend job sets `LOGIN_RATE_MAX: '1000'` — the 73-file suite exhausts the old 200 cap around file 60; the Cypress job stays at 200.
 - **Office-side write gating (Epic TKT-Z0LB0W, v0.91.7)**: every shipment carries a computed `myOfficeSide` field (`"export"`/`"import"`/`"unrestricted"`, from `officeSideOf` in server.js, relative to the requesting user's own office) — the one thing every write route on a fixed-side page (Schedules, Cargo, Carrier Booking, Shipping Instructions) checks via `blockIfWrongSide` before accepting an edit. `src/utils/officeSide.js`'s `canEditShipmentSide(auth, shipment, side)` is the single client-side mirror every consuming page imports — never reimplement this check locally, that's exactly the "two engines computing the same permission and drifting apart" bug class this codebase has hit before. Container Events, and Cost Lines' own writes, are deliberately NOT side-gated (shared/unrestricted by design); Export/Import Services and Customs Filing gate by the record's own side instead of the page as a whole. `tests/office-side-permissions.test.js` is the regression suite covering all of it.
+- **Charge Defaults (v0.91.8)**: `lib/charge-defaults.js`'s `applyChargeDefaults(shipmentId)`, called once from the top of `GET /api/shipments/:id/cost-lines`. A setup scopes by optional Principal/Movement Type + a Location dimension (Global, or exactly one of Region/Country/Location per side — enforced server-side, and rendered as 3 dedicated fields per side with live mutual-exclusion, never one smart lookup, per direct request: "some people can barely turn on a computer"). Matching picks the most-specific-of-3-groups, ties broken by most-recently-updated; skips any type+charge_code the shipment already has from any source. Region comes from `port_locations.zone_code`, not `countries.region_code` (empty on every seeded country).
+- **Idempotent-per-row side effect: claim atomically, don't check-then-act**: when a function must run its side effect at most once per key (row) even under concurrent callers, don't `SELECT` to check then `INSERT` to mark — two callers can both pass the check before either inserts. Instead `INSERT ... ON CONFLICT (key) DO NOTHING RETURNING key` first; only the caller that gets a row back proceeds, everyone else returns immediately. `applyChargeDefaults` is the precedent (claims `shipment_charge_defaults_applied.shipment_id`, a real primary key, before computing anything) — reuse this shape for the next "run once per X" requirement rather than a fresh SELECT-then-INSERT.
 - **A colour/style lookup built from `HZ`/`T` must be a function, never a plain object (v0.91.7)**: both are mutable objects swapped in place by the theme toggle (`applyHzTheme`/`applyTheme`, no reload) — `const STATUS_COLOR = { Requested: HZ.warn, ... }` at module scope reads `HZ.warn` exactly once, at import time, and silently keeps that value forever regardless of later theme switches. Write it as `const statusColor = status => ({ Requested: HZ.warn, ... }[status])` instead, so each call re-reads the live object. Found and fixed in `ServicesPanel.jsx`, `DocumentsModal.jsx`, `CarrierBookingsTable.jsx` and `ShipmentDetailPage.jsx`'s `CostLineRow` helpers; the Customs Filing Details/Review pages' own `STATUS_COLOR` already used the safe form (storing the token *name*, e.g. `"cyan"`, and resolving `HZ[name]` at render time) — match that shape when in doubt.
 - **PortCombobox dropdown**: always `position: fixed` with `getBoundingClientRect()` to escape modal `overflow:auto` — `CarrierCombobox` and `DatePicker` (as of v0.40.1) follow the same pattern; any *new* dropdown/popover primitive should too, rather than `position: absolute`, which breaks the moment it lands inside any scrolling/clipped container
 - **Paginated responses**: `api.ports.search(...)` returns `{ results: [], total, limit, offset }` — always use `.results`
@@ -680,6 +699,55 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.91.8 "Bastion")
+Bundled release — a new Charge Defaults engine, seven newly-editable Shipment Conditions fields, a
+Carrier Booking contract-number-vs-reference fix reaching the wire, and a 16-finding self-audit of
+the prior two days' commits, all fixed.
+- **Charge Defaults** — see the Key patterns and Database entries above for the mechanism. Admin UI:
+  `src/pages/mdm/MdmChargeDefaultsPage.jsx` (Master Data → Finance). `tests/charge-default-setups.test.js`:
+  33 assertions. A dedicated QA pass (create/edit/remove setups, shipment-level applicability) found
+  and fixed 2 real bugs before ship: Region matching was dead on all real data (`countries.region_code`
+  empty on every seeded country, fixed to read `port_locations.zone_code`); the "already covered" skip
+  check was keyed on charge code alone, so a manual BUY line could wrongly block an unrelated SELL
+  default of the same code (now keyed on type+code together).
+- **Shipment Conditions, 7 fields now editable** — Incoterm, Commodity, Declared Value (+currency),
+  Place of Receipt, Place of Delivery, B/L Number, B/L Release Type all get an Edit button/modal on
+  `ShipmentConditionsPage.jsx`, matching the established edit-modal pattern; zero backend changes
+  needed, the shipment PUT route already accepted these fields.
+- **Carrier Booking contract number vs. reference** — Contract Number tile gets a violet/cyan
+  contract-type pill (matching Contracts & Schedules' own styling); Reference tile now shows the
+  *contract's own* real reference for Central bookings instead of `shipment.contractRef` (a copy of
+  the contract's number made at assignment time, silently duplicating the tile above it). Reaches
+  the wire too: the carrier booking-request payload (`routes/edi.js`) now fetches the linked contract
+  directly and sends its genuinely distinct `contractNumber`/`contractRef`, instead of the same
+  shipment-copied value under both names — some carriers match bookings on the number alone, others
+  need both fields genuinely distinct, per direct account-manager testing.
+- **Self-audit, 16 findings, all fixed** — `/code-review` across the prior release's commits plus this
+  session's own uncommitted diff (8 parallel background review agents + 1 direct pass, cross-verified
+  before any fix began). 2 security: cost-line writes and document/invoice writes (generate/confirm/
+  reverse/mark-paid/BL surrender+release) had zero office-side check despite their own GET/list routes
+  already filtering by the same rule — a wrong-side user could write, or discover-then-delete, a line
+  their own list view correctly hid them from; closed via the same `blockIfWrongSide` primitive every
+  other gated route uses. 7 correctness: the Charge Defaults race condition (see Key patterns); the
+  "Your Side" badge read `activeOffice.department` instead of the server-computed `shipment.myOfficeSide`;
+  Carrier Booking Review/Customs Filing Review never got migrated to `canEditShipmentSide` when their
+  Details siblings did; 2 more theme-frozen colour objects; a NaN amount silently passed Charge
+  Defaults' non-negative validation; `chargeCodeSide()` now normalizes to only ever return
+  `"Export"`/`"Import"`/`null`. 3 efficiency: `resolveOfficeSideAccess` no longer re-derives checks
+  `resolveOfficeAccess` already makes; the cost-line side filter batches its charge-code lookup into
+  one query instead of one per row; Parties & Offices' two independent `shipmentParties.list` fetches
+  collapse into one shared fetch (`ShipmentPartiesPage.jsx`). 2 simplification: `dashedBtn` duplicated
+  across the Costs/Invoices Accounting tabs is now one `makeDashedBtn` (`shipmentDetailTheme.js`); 5
+  pages now pass `useAuth()`'s own result straight through to `canEditShipmentSide` instead of
+  reconstructing it by hand.
+- **Verification** — every touched file `node --check`ed, clean `vite build`; 384 regression
+  assertions green across 8 suites (`charge-default-setups`, `office-side-permissions`,
+  `customs-filing`, `multi-entity-accounting`, `invoice-reversal`, `carrier-booking`,
+  `document-signing`, `house-bl-lifecycle`), including 2 stale pre-existing assertions caught and
+  fixed along the way (one literally asserted the write-gating gap as "by design"). Live browser
+  check via a real Central shipment with a genuinely distinct contract number/reference confirmed
+  the Reference tile fix and that both migrated Review pages render without error.
 
 ## Recent changes (v0.91.7 "Landfall")
 Bundled release — closes out the Office-Side Permissions Epic and completes the Trade Horizon

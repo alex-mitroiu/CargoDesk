@@ -362,6 +362,8 @@ const isForeignKeyViolation = e => e?.code === "23503";
 const validCoord = (v, min, max) => v === null || v === undefined || v === ''
   ? true : Number.isFinite(Number(v)) && Number(v) >= min && Number(v) <= max;
 
+const { applyChargeDefaults } = require("./lib/charge-defaults")({ query, uid });
+
 // ─── Schema ───────────────────────────────────────────────────────────────────
 // Full Postgres DDL lives in lib/schema.js's initSchema() (93 tables, translated from the live
 // SQLite database's own sqlite_master as ground truth — see ARCHITECTURE.md §13). The ~1,600
@@ -2195,6 +2197,7 @@ const {
   mapKbColumn, mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc,
   mapCustomerContact, mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate, mapContractRouting, mapCarrierInvoice, mapCarrierInvoiceLine,
+  mapChargeDefaultSetup, mapChargeDefaultLine,
   mapQuote, mapQuoteLine, mapOpportunity,
   mapInvoiceReasonCode, mapInvoiceStatusOverride,
   mapEadapterConfig,
@@ -2486,13 +2489,12 @@ async function applyShipmentAccessFilter(shipments, user, req) {
 // per-row EMO/IMO comparison. officeSideOf (below) composes both, unchanged for every existing
 // single-shipment caller.
 async function resolveOfficeSideAccess(user, req) {
-  if (!user) return { unrestricted: true };
-  const effectiveRole = deriveEffectiveRole(user, req);
-  if (['admin', 'operator'].includes(effectiveRole)) return { unrestricted: true };
-  if (user.allOffices) return { unrestricted: true };
-  if ((await getSettings()).offices_allow_all === "1") return { unrestricted: true };
-
+  // resolveOfficeAccess already covers the !user / admin-operator / allOffices / offices_allow_all
+  // bypasses (returning { unrestricted: true }) — this used to re-check every one of them itself
+  // first, which just meant deriveEffectiveRole and getSettings() (a real DB read) both ran twice
+  // per call for no behavioral difference (2026-09-25 audit finding).
   const access = await resolveOfficeAccess(user, req);
+  if (access.unrestricted) return { unrestricted: true };
   const officeIds = (access.activeOfficeId && !access.denied) ? new Set([access.activeOfficeId]) : access.officeIds;
   return officeIds.size === 0 ? { unrestricted: true } : { unrestricted: false, officeIds };
 }
@@ -2519,7 +2521,13 @@ async function officeSideOf(user, shipment, req) {
 async function chargeCodeSide(chargeCode) {
   if (!chargeCode) return null;
   const [row] = await query("SELECT side FROM charge_code_sides WHERE charge_code=$1", [chargeCode]);
-  return row ? row.side : null;
+  // The only two values the write path (POST /api/charge-code-sides) ever accepts — normalized
+  // here, once, so a row with any other value (a raw DB edit, a bad seed) is treated the same
+  // as "unclassified" by every caller, instead of some callers' truthy-only checks (`!side`)
+  // silently letting corrupted text through as "not gated" while others hide it as a mismatch
+  // (2026-09-25 audit finding).
+  const side = row?.side;
+  return side === "Export" || side === "Import" ? side : null;
 }
 
 // Office-Side Permissions Epic (TKT-Z0LB0W), Phase 2 (TKT-NXXVFN) — the write-side guard every
@@ -3873,6 +3881,7 @@ const ctx = {
   mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc, mapCustomerContact,
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate, mapContractRouting, mapCarrierInvoice, mapCarrierInvoiceLine,
+  mapChargeDefaultSetup, mapChargeDefaultLine, applyChargeDefaults,
   mapQuote, mapQuoteLine, mapOpportunity,
   mapInvoiceReasonCode, mapInvoiceStatusOverride,
   mapLoopCode, mapLoopCodePort,
@@ -3923,6 +3932,7 @@ require('./routes/customs-filing')(app, ctx);
 require('./routes/shipping-instructions')(app, ctx);
 require('./routes/customers')(app, ctx);
 require('./routes/contracts')(app, ctx);
+require('./routes/charge-default-setups')(app, ctx);
 require('./routes/shipment-ops')(app, ctx);
 require('./routes/carrier-invoices')(app, ctx);
 require('./routes/quotes')(app, ctx);

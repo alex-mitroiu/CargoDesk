@@ -1707,8 +1707,11 @@ const ServiceBranch = ({ service, offices, shipmentOfficeIds, canEdit, onUpdated
 // running it without leaving this tab. `manager`/`lineAgent` are undefined when not
 // applicable to this card (no grid rendered at all), null when applicable but unset (renders
 // an italic empty state), or a value when set.
-const officeMiniLabel = { fontFamily: HZ_BODY, fontSize: 9.5, color: HZ.textMuted, fontWeight: 700,
-  textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 3 };
+// A function, not a plain object — HZ.textMuted is a live-mutated value (App.jsx's theme
+// toggle calls applyHzTheme in place, no reload), so a plain object here would freeze
+// whichever theme was active at module import instead of tracking the current one.
+const officeMiniLabel = () => ({ fontFamily: HZ_BODY, fontSize: 9.5, color: HZ.textMuted, fontWeight: 700,
+  textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 3 });
 
 const OfficeGroupCard = ({ icon, field, officeName, officeCode, pills, services, offices,
   shipmentOfficeIds, canEditOffice, canEditService, onReassigned, shipment, onUpdatedService, emptyLabel, onRemove,
@@ -1754,14 +1757,14 @@ const OfficeGroupCard = ({ icon, field, officeName, officeCode, pills, services,
           marginTop: 12, paddingTop: 12, borderTop: `1px solid ${HZ.border}` }}>
           {manager !== undefined && (
             <div data-testid="shipment-parties-office-manager">
-              <div style={officeMiniLabel}>Manager</div>
+              <div style={officeMiniLabel()}>Manager</div>
               <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: manager ? HZ.text : HZ.textFaint,
                 fontStyle: manager ? "normal" : "italic" }}>{manager || "Not set"}</div>
             </div>
           )}
           {lineAgent !== undefined && (
             <div data-testid="shipment-parties-office-line-agent">
-              <div style={officeMiniLabel}>Line Agent</div>
+              <div style={officeMiniLabel()}>Line Agent</div>
               <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: lineAgent ? HZ.text : HZ.textFaint,
                 fontStyle: lineAgent ? "normal" : "italic" }}>{lineAgent ? lineAgent.customerName : "Not assigned"}</div>
             </div>
@@ -2008,7 +2011,7 @@ const InactiveOfficesSection = ({ offices, isAdmin, onReactivate }) => {
   );
 };
 
-export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched }) => {
+export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched, parties }) => {
   const { canEditShipments: canEdit, activeOffice, allOffices, isAdmin, activeRoles } = useAuth();
   const [editing, setEditing] = useState(false);
   const [services, setServices] = useState(null);
@@ -2032,8 +2035,8 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched }) =
   // Style redesign, approved mockup: https://claude.ai/artifact/KmxNCy2HYyu192jg2NBBGE) so a
   // filled-in relationship is visible without leaving this tab. Same two roles
   // ShipmentSchedulesPage.jsx's own Line Agent fields already assign/reassign — this only reads.
-  const [parties, setParties] = useState(null);
-  useEffect(() => { api.shipmentParties.list(shipment.id).then(setParties).catch(() => setParties([])); }, [shipment.id]);
+  // Fetched once by the parent ShipmentPartiesPage and shared with AdditionalPartiesPanel
+  // (2026-09-25 audit finding) — this panel only ever reads it, never mutates it.
   const exportLineAgent = (parties || []).find(p => p.role === "Line Agent (Export)") || null;
   const importLineAgent = (parties || []).find(p => p.role === "Line Agent (Import)") || null;
 
@@ -2063,9 +2066,12 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched }) =
   const canEditControlling = canEditExport || canEditImport;
   // "Your Side" badge — deliberately distinct from canEditExport/Import (which also covers the
   // admin/operator/allOffices bypass): only true when this user's own office literally sits on
-  // that side, so an admin viewing either column isn't told it's uniquely "theirs."
-  const isMySideExport = activeOffice?.department === "SE";
-  const isMySideImport = activeOffice?.department === "SI";
+  // that side, so an admin viewing either column isn't told it's uniquely "theirs." Reads the
+  // server-computed myOfficeSide (routes/shipments.js) rather than the user's activeOffice
+  // department directly — activeOffice.department only says what KIND of office the user is
+  // currently in, not whether it's actually this shipment's EMO/IMO office.
+  const isMySideExport = shipment.myOfficeSide === "export";
+  const isMySideImport = shipment.myOfficeSide === "import";
 
   const handleReassigned = updated => { onShipmentPatched?.(updated); toast.success("Office reassigned"); };
 
@@ -2919,6 +2925,7 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
     : l.source === "contract" ? { label: "Contract", color: HZ.info }
     : l.source === "mirror" ? { label: l.type === "SELL" ? "Mirrored ← Cost Entry" : "Mirrored ← Invoice Entry", color: HZ.violet }
     : l.source === "automated" ? { label: "Automated", color: HZ.good }
+    : l.source === "principal_default" ? { label: "Default", color: HZ.cyan }
     : l.source === "reversal" ? { label: "Reversal", color: HZ.crit }
     : l.source === "adjustment" ? { label: "Adjustment", color: HZ.warn }
     : l.source === "merchant_haulage" ? { label: "Merchant's Haulage", color: HZ.amber }
@@ -3110,8 +3117,11 @@ const RECONCILE_STATUS = {
 };
 // HZ-token equivalent of the variants above — ReconcileCarrierCostsModal renders its own pill
 // (Badge is hardcoded to the base app's T tokens and shared app-wide) now that it's on Trade
-// Horizon tokens alongside the rest of Cost Entry (Accounting Tabs Restyle).
-const RECONCILE_HZ_COLOR = { match: HZ.good, changed: HZ.info, manual: HZ.cyan, new: HZ.info, removed: HZ.crit };
+// Horizon tokens alongside the rest of Cost Entry (Accounting Tabs Restyle). Stores the HZ.*
+// KEY, not the resolved value — HZ is a live-mutated object (theme toggle calls applyHzTheme
+// in place, no reload), so resolving via HZ[key] at render time is required; a plain object of
+// resolved values here would freeze whichever theme was active at module import.
+const RECONCILE_HZ_COLOR_KEY = { match: "good", changed: "info", manual: "cyan", new: "info", removed: "crit" };
 
 export const ReconcileCarrierCostsModal = ({ shipmentId, mode, containerCount = 1, onClose, onApplied }) => {
   const [loading, setLoading] = useState(true);
@@ -3182,7 +3192,7 @@ export const ReconcileCarrierCostsModal = ({ shipmentId, mode, containerCount = 
                 </div>
                 <div style={{ width: 150, paddingLeft: 8 }}>
                   <span style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase",
-                    color: RECONCILE_HZ_COLOR[r.status], background: RECONCILE_HZ_COLOR[r.status] + "22",
+                    color: HZ[RECONCILE_HZ_COLOR_KEY[r.status]], background: HZ[RECONCILE_HZ_COLOR_KEY[r.status]] + "22",
                     borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap" }}>{RECONCILE_STATUS[r.status].label}</span>
                 </div>
               </div>

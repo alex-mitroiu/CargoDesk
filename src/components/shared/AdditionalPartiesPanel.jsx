@@ -79,9 +79,12 @@ const LineAgentCandidatesModal = ({ candidates, onResolve, onDismiss }) => {
 // idiom (dashed add-affordance revealing an inline form) rather than either of
 // that panel's own two sub-patterns (a fixed-set modal, a bare inline select).
 
-const AdditionalPartiesPanel = ({ shipmentId }) => {
+// `parties` (null while loading) and `onChanged` (re-fetches it) come from the parent
+// ShipmentPartiesPage, shared with the sibling PartiesOfficesPanel — this panel used to run its
+// own independent shipmentParties.list fetch, a real duplicate request every time this tab loaded
+// (2026-09-25 audit finding).
+const AdditionalPartiesPanel = ({ shipmentId, parties, onChanged }) => {
   const { canEditShipments: canEdit } = useAuth();
-  const [parties,      setParties]      = useState(null); // null = loading
   const [adding,       setAdding]       = useState(false);
   const [newRole,      setNewRole]      = useState("");
   const [newCustomer,  setNewCustomer]  = useState({ id: "", name: "" });
@@ -90,9 +93,6 @@ const AdditionalPartiesPanel = ({ shipmentId }) => {
   const [saving,       setSaving]       = useState(false);
   const [lineAgentCandidates, setLineAgentCandidates] = useState(null);
   const [candidatesDismissed, setCandidatesDismissed] = useState(false);
-
-  const load = () => api.shipmentParties.list(shipmentId).then(setParties).catch(() => setParties([]));
-  useEffect(() => { load(); }, [shipmentId]);
 
   // Independent re-detection, same as AdditionalPartiesPanel's own party list above and the
   // header's own badge — no shared state between the two, matching the Pending Revalidation
@@ -114,7 +114,7 @@ const AdditionalPartiesPanel = ({ shipmentId }) => {
         delete next[side];
         return Object.keys(next).length ? next : null;
       });
-      await load();
+      await onChanged();
     } catch (e) { toast.error(e.message); }
   };
 
@@ -130,7 +130,7 @@ const AdditionalPartiesPanel = ({ shipmentId }) => {
     try {
       await api.shipmentParties.create(shipmentId, { role: newRole, customerId: newCustomer.id, customerName: newCustomer.name });
       setAdding(false); setNewRole(""); setNewCustomer({ id: "", name: "" });
-      await load();
+      await onChanged();
     } catch (e) { toast.error(e.message); }
     setSaving(false);
   };
@@ -141,7 +141,7 @@ const AdditionalPartiesPanel = ({ shipmentId }) => {
     try {
       await api.shipmentParties.update(shipmentId, id, { customerId: editCustomer.id, customerName: editCustomer.name });
       setEditingId(null);
-      await load();
+      await onChanged();
     } catch (e) { toast.error(e.message); }
     setSaving(false);
   };
@@ -149,7 +149,7 @@ const AdditionalPartiesPanel = ({ shipmentId }) => {
   const handleRemove = async id => {
     try {
       await api.shipmentParties.remove(shipmentId, id);
-      setParties(list => list.filter(p => p.id !== id));
+      await onChanged();
     } catch (e) { toast.error(e.message); }
   };
 

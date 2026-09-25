@@ -12,7 +12,7 @@ import { toast } from "../../toast";
 import { Textarea, Inp } from "../../components/primitives/Form";
 import DatePicker from "../../components/primitives/DatePicker";
 import { IconCheck, IconWarning, IconClipboard, IconReceipt, IconPackage, IconEye } from "../../components/primitives/Icon";
-import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
+import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts, makeDashedBtn } from "./shipmentDetailTheme";
 
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = s => s ? new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -415,12 +415,7 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
     .reduce((sum, d) => sum + Math.max(0, (docTotalFor(d) || 0) - (d.paidAmount || 0)), 0);
   const confirmedDocsCount = docs.filter(d => d.status === "confirmed").length;
 
-  const dashedBtn = (accent, disabled) => ({
-    padding: "7px 12px", background: "none", cursor: disabled ? "not-allowed" : "pointer",
-    border: `1px dashed ${accent ? HZ.cyan + "55" : HZ.border}`, borderRadius: 6,
-    fontFamily: HZ_BODY, fontSize: 12, color: accent ? HZ.cyan : HZ.textMuted,
-    opacity: disabled ? 0.5 : 1, display: "inline-flex", alignItems: "center", gap: 5,
-  });
+  const dashedBtn = makeDashedBtn(HZ.cyan);
 
   useHorizonFonts();
 

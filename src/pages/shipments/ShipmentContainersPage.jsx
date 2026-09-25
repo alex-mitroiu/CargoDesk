@@ -126,11 +126,11 @@ const LandedCostEstimateModal = ({ shipmentId, onClose }) => {
 };
 
 const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, onEditContainer, onDeleteContainer, onImportContainers }) => {
-  const { canEditShipments: canEditRole, isAdmin, activeRoles, allOffices } = useAuth();
+  const auth = useAuth();
   // Cargo/Containers is export-edit per the Office-Side Permissions Epic (TKT-Z0LB0W) — an
   // import-side user still sees everything here (Read-only per the approved mockup), just can't
   // add/edit/remove a container or its packages.
-  const canEdit = canEditShipmentSide({ canEditShipments: canEditRole, isAdmin, activeRoles, allOffices }, shipment, "export");
+  const canEdit = canEditShipmentSide(auth, shipment, "export");
   const ctrs     = containers.filter(c => c.shipmentId === shipment.id);
   const totalTEU = ctrs.reduce((sum, c) => sum + teuOf(c.size), 0);
   // Cargo "New Style" stat strip (approved mockup: https://claude.ai/artifact/KmxNCy2HYyu192jg2NBBGE) —

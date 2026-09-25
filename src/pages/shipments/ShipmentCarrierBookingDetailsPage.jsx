@@ -38,9 +38,9 @@ const StatTile = ({ label, children }) => (
 );
 
 const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
-  const { canEditShipments: canEditRole, isAdmin, activeRoles, allOffices } = useAuth();
+  const auth = useAuth();
   // Carrier Booking is export-edit per the Office-Side Permissions Epic (TKT-Z0LB0W).
-  const canEdit = canEditShipmentSide({ canEditShipments: canEditRole, isAdmin, activeRoles, allOffices }, shipment, "export");
+  const canEdit = canEditShipmentSide(auth, shipment, "export");
   const [booking,    setBooking]    = useState(null);
   const [messages,   setMessages]   = useState([]);
   const [containers, setContainers] = useState([]);
@@ -291,8 +291,31 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
         gap: 10, marginBottom: 24 }}>
-        <StatTile label="Contract Number">{contract?.contractNumber || "—"}</StatTile>
-        <StatTile label="Reference">{shipment.contractRef || "—"}</StatTile>
+        <StatTile label="Contract Number">
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+            {/* Same violet/cyan pill idiom as the Contracts & Schedules page's own contract
+                summary (matches the approved Trade Horizon mockup: HZ.violet for Central,
+                HZ.cyan for SPOT/Pending/Customer Own) — not the generic cross-app Badge, so this
+                page stays visually consistent with the rest of the Shipment Details HZ theme. */}
+            <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
+              padding: "2px 8px", borderRadius: 4, flexShrink: 0,
+              ...(shipment.contractType === "Central"
+                ? { background: HZ.violetBg, color: HZ.violetPillText, border: `1px solid ${HZ.violet}66` }
+                : { background: HZ.cyanBg, color: HZ.cyan }) }}>
+              {shipment.contractType || "—"}
+            </span>
+          </div>
+          {/* SPOT/Pending/Customer Own have no real linked Contract entity, so contractNumber is
+              always blank for them — contractRef (the only identifying value that actually
+              exists) stands in for it here instead of showing a bare "—". */}
+          {shipment.contractType === "Central" ? (contract?.contractNumber || "—") : (shipment.contractRef || "—")}
+        </StatTile>
+        <StatTile label="Reference">
+          {/* The contract's own real, independently-populated reference — NOT shipment.contractRef,
+              which for Central bookings is just a copy of the contract's contractNumber made at
+              assignment time (ShipmentSchedulesPage.jsx) and would otherwise duplicate the tile above. */}
+          {shipment.contractType === "Central" ? (contract?.contractRef || "—") : "—"}
+        </StatTile>
         <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8, padding: "10px 14px" }}>
           <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, fontWeight: 600,
             textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Client</div>

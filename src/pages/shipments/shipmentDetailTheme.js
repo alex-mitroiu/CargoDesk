@@ -179,3 +179,15 @@ export const carrierBadgeColors = code => {
   const [g1, g2] = hzGradientFor(code);
   return { background: `linear-gradient(145deg, ${g1}, ${g2})`, color: HZ.chipText };
 };
+
+// Shared toolbar-button style factory for the Accounting tabs (Costs/Invoices) — the two pages
+// had pixel-identical copies of this (2026-09-25 audit finding), differing only in which HZ hue
+// marks an "accent" (primary) action: Costs uses violet, Invoices uses cyan. Call once per page
+// with that page's accent color to get back the same (accent, disabled) => style function both
+// already call at each button site, unchanged.
+export const makeDashedBtn = accentColor => (accent, disabled) => ({
+  padding: "7px 12px", background: "none", cursor: disabled ? "not-allowed" : "pointer",
+  border: `1px dashed ${accent ? accentColor + "55" : HZ.border}`, borderRadius: 6,
+  fontFamily: HZ_BODY, fontSize: 12, color: accent ? accentColor : HZ.textMuted,
+  opacity: disabled ? 0.5 : 1, display: "inline-flex", alignItems: "center", gap: 5,
+});

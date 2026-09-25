@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../../AuthContext";
+import { canEditShipmentSide } from "../../utils/officeSide";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import Btn from "../../components/primitives/Btn";
@@ -96,7 +97,8 @@ const BookingComparisonTable = ({ outboundMessage, inboundMessage }) => {
 // reasoning applied throughout this pass.
 
 const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
-  const { canEditShipments: canEdit } = useAuth();
+  const auth = useAuth();
+  const canEdit = canEditShipmentSide(auth, shipment, "export");
   const [booking,  setBooking]  = useState(null);
   const [messages, setMessages] = useState([]);
   const [loading,  setLoading]  = useState(true);

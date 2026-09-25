@@ -1,0 +1,661 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>FCL Competitive Dossier</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #EEF2F0;
+    --surface: #FFFFFF;
+    --surface-2: #E4EBE7;
+    --surface-3: #D8E1DC;
+    --border: #CCD8D2;
+    --border-strong: #B4C4BC;
+    --ink: #142420;
+    --ink-muted: #52645D;
+    --ink-faint: #85958D;
+    --accent: #1E4D6B;
+    --accent-strong: #163A52;
+    --accent-soft: rgba(30, 77, 107, 0.09);
+    --accent-soft-2: rgba(30, 77, 107, 0.16);
+    --good: #2E7D5C;
+    --good-soft: rgba(46, 125, 92, 0.12);
+    --warn: #9C6B14;
+    --warn-soft: rgba(156, 107, 20, 0.13);
+    --bad: #A83A2C;
+    --bad-soft: rgba(168, 58, 44, 0.11);
+    --neutral: #7C8B86;
+    --neutral-soft: rgba(124, 139, 134, 0.14);
+    --shadow: 0 1px 2px rgba(20, 36, 32, 0.05), 0 10px 28px rgba(20, 36, 32, 0.06);
+    --col1-w: 196px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0B1512;
+      --surface: #101E1A;
+      --surface-2: #162922;
+      --surface-3: #1C332B;
+      --border: #24413A;
+      --border-strong: #2E5148;
+      --ink: #E9F0EC;
+      --ink-muted: #93A69E;
+      --ink-faint: #64766F;
+      --accent: #6FA6C9;
+      --accent-strong: #8FBCDB;
+      --accent-soft: rgba(111, 166, 201, 0.14);
+      --accent-soft-2: rgba(111, 166, 201, 0.22);
+      --good: #57B98E;
+      --good-soft: rgba(87, 185, 142, 0.16);
+      --warn: #D6A445;
+      --warn-soft: rgba(214, 164, 69, 0.16);
+      --bad: #DE8272;
+      --bad-soft: rgba(222, 130, 114, 0.16);
+      --neutral: #91A099;
+      --neutral-soft: rgba(145, 160, 153, 0.16);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 14px 32px rgba(0,0,0,0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0B1512;
+    --surface: #101E1A;
+    --surface-2: #162922;
+    --surface-3: #1C332B;
+    --border: #24413A;
+    --border-strong: #2E5148;
+    --ink: #E9F0EC;
+    --ink-muted: #93A69E;
+    --ink-faint: #64766F;
+    --accent: #6FA6C9;
+    --accent-strong: #8FBCDB;
+    --accent-soft: rgba(111, 166, 201, 0.14);
+    --accent-soft-2: rgba(111, 166, 201, 0.22);
+    --good: #57B98E;
+    --good-soft: rgba(87, 185, 142, 0.16);
+    --warn: #D6A445;
+    --warn-soft: rgba(214, 164, 69, 0.16);
+    --bad: #DE8272;
+    --bad-soft: rgba(222, 130, 114, 0.16);
+    --neutral: #91A099;
+    --neutral-soft: rgba(145, 160, 153, 0.16);
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 14px 32px rgba(0,0,0,0.4);
+  }
+
+  * { box-sizing: border-box; }
+  @media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Public Sans", -apple-system, "Segoe UI", sans-serif;
+    font-size: 15.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding-inline: 20px; padding-block: 0 100px; }
+
+  a { color: var(--accent-strong); text-decoration-thickness: 1px; }
+  h1, h2, h3 { font-family: "Fraunces", Georgia, "Times New Roman", serif; text-wrap: balance; }
+  code, .mono { font-family: "IBM Plex Mono", "SF Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ── Masthead ─────────────────────────────────────────────────── */
+  .masthead {
+    border-bottom: 3px solid var(--ink);
+    padding-block: 44px 24px;
+    margin-bottom: 36px;
+  }
+  .kicker {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 11px; font-weight: 700; color: var(--accent-strong);
+    text-transform: uppercase; letter-spacing: 0.14em; margin-bottom: 16px;
+  }
+  .kicker .flag { width: 7px; height: 7px; background: var(--accent); flex-shrink: 0; }
+  h1.title { margin: 0 0 22px; font-size: clamp(32px, 6.4vw, 50px); font-weight: 700; line-height: 1.04; }
+  h1.title em { font-style: normal; color: var(--accent-strong); }
+  .meta {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 14px 26px; padding-top: 18px; border-top: 1px solid var(--border);
+  }
+  .meta dt { font-size: 9.5px; font-weight: 700; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 3px; }
+  .meta dd { margin: 0; font-size: 13px; font-weight: 600; }
+
+  section.block { margin-bottom: 60px; }
+  .head { display: flex; align-items: baseline; gap: 13px; margin-bottom: 20px; }
+  .tag {
+    flex-shrink: 0; font-family: "IBM Plex Mono", monospace; font-size: 10.5px; font-weight: 600;
+    color: var(--ink-muted); border: 1px solid var(--border-strong); border-radius: 4px;
+    padding: 3px 7px; letter-spacing: 0.03em;
+  }
+  h2.h { margin: 0; font-size: 23px; font-weight: 700; letter-spacing: -0.005em; }
+  .intro { color: var(--ink-muted); font-size: 14.5px; max-width: 64ch; margin: 0 0 22px; }
+  p { margin: 0 0 13px; }
+
+  /* ── Verdict / bottom-line ────────────────────────────────────── */
+  .verdict-lede {
+    font-size: 16.5px; color: var(--ink); max-width: 68ch; margin-bottom: 26px;
+  }
+  .verdict-lede strong { color: var(--accent-strong); }
+  .findings { display: flex; flex-direction: column; gap: 14px; }
+  .finding {
+    display: grid; grid-template-columns: 40px 1fr; gap: 16px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px 22px; box-shadow: var(--shadow);
+  }
+  .finding.lead { border-color: var(--accent); border-width: 1.5px; }
+  .fnum {
+    font-family: "Fraunces", serif; font-weight: 700; font-size: 22px; color: var(--accent-strong);
+    line-height: 1;
+  }
+  .fbody h3 { margin: 0 0 6px; font-size: 16px; font-weight: 700; }
+  .fbody p { margin: 0; color: var(--ink-muted); font-size: 14px; }
+  .fbody p:last-child { margin: 0; }
+  .fbody .why { margin-top: 8px; font-size: 12.5px; color: var(--ink-faint); font-style: italic; }
+
+  /* ── Legend ───────────────────────────────────────────────────── */
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 16px; }
+  .legend-item { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-muted); font-weight: 600; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+  /* ── Matrix ───────────────────────────────────────────────────── */
+  .matrix-wrap {
+    overflow-x: auto; border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: var(--shadow);
+  }
+  table.matrix { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 920px; }
+  .matrix th, .matrix td { padding: 10px 13px; font-size: 12.5px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .matrix thead th {
+    background: var(--surface-2); font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--ink-muted); text-align: left; white-space: nowrap;
+    border-bottom: 1px solid var(--border-strong);
+  }
+  .matrix tbody tr:last-child td { border-bottom: none; }
+  .matrix tbody tr:nth-child(even) td { background: var(--surface-2); }
+  .matrix .cap-col, .matrix thead .cap-col {
+    position: sticky; left: 0; width: var(--col1-w); min-width: var(--col1-w);
+    background: var(--surface); font-weight: 700; z-index: 2; border-right: 1px solid var(--border);
+  }
+  .matrix thead .cap-col { background: var(--surface-2); z-index: 3; }
+  .matrix tbody tr:nth-child(even) .cap-col { background: var(--surface-2); }
+  .matrix .cd-col, .matrix thead .cd-col {
+    position: sticky; left: var(--col1-w); background: var(--accent-soft);
+    z-index: 1; border-right: 2px solid var(--accent);
+  }
+  .matrix thead .cd-col { background: var(--accent-soft-2); z-index: 3; color: var(--accent-strong); }
+  .matrix tbody tr:nth-child(even) .cd-col { background: var(--accent-soft-2); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.03em; padding: 3px 9px; border-radius: 20px; white-space: nowrap;
+  }
+  .pill-full { background: var(--good-soft); color: var(--good); }
+  .pill-partial { background: var(--warn-soft); color: var(--warn); }
+  .pill-none { background: var(--bad-soft); color: var(--bad); }
+  .pill-na { background: var(--neutral-soft); color: var(--neutral); }
+  .cell-note { display: block; margin-top: 4px; color: var(--ink-muted); font-size: 11.5px; line-height: 1.4; }
+  .matrix td[title] { cursor: help; }
+
+  /* ── Strength cards ───────────────────────────────────────────── */
+  .strengths { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .strengths { grid-template-columns: 1fr; } }
+  .strength {
+    background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--good);
+    border-radius: 10px; padding: 16px 18px; box-shadow: var(--shadow);
+  }
+  .strength h4 { margin: 0 0 6px; font-size: 14px; font-weight: 700; font-family: "Public Sans", sans-serif; }
+  .strength p { margin: 0; font-size: 13px; color: var(--ink-muted); }
+
+  /* ── Gap groups ───────────────────────────────────────────────── */
+  .gap-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 700px) { .gap-groups { grid-template-columns: 1fr; } }
+  .gap-group { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 22px; box-shadow: var(--shadow); }
+  .gap-group-head { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
+  .gap-group h3 { margin: 0; font-size: 15px; font-weight: 700; font-family: "Public Sans", sans-serif; }
+  .gap-group .sub { font-size: 12.5px; color: var(--ink-muted); margin-bottom: 14px; }
+  .gap-group.buildable { border-top: 3px solid var(--accent); }
+  .gap-group.structural { border-top: 3px solid var(--neutral); }
+  .gap-list { display: flex; flex-direction: column; gap: 12px; }
+  .gap-list li { list-style: none; padding-left: 18px; position: relative; font-size: 13px; color: var(--ink-muted); }
+  .gap-list li::before { content: "\2013"; position: absolute; left: 0; color: var(--ink-faint); }
+  .gap-list li strong { color: var(--ink); display: block; font-size: 13.5px; margin-bottom: 2px; }
+  .dot-icon { width: 16px; height: 16px; flex-shrink: 0; }
+
+  /* ── Evidence (collapsible) ───────────────────────────────────── */
+  .evidence-list { display: flex; flex-direction: column; gap: 8px; }
+  details.ev {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 0; overflow: hidden;
+  }
+  details.ev > summary {
+    cursor: pointer; padding: 14px 18px; font-weight: 700; font-size: 13.5px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    list-style: none;
+  }
+  details.ev > summary::-webkit-details-marker { display: none; }
+  details.ev > summary::after {
+    content: "+"; font-family: "IBM Plex Mono", monospace; color: var(--ink-faint); font-size: 15px; flex-shrink: 0;
+  }
+  details.ev[open] > summary::after { content: "\2212"; }
+  details.ev[open] > summary { border-bottom: 1px solid var(--border); }
+  .ev-body { padding: 4px 18px 18px; font-size: 13px; color: var(--ink-muted); }
+  .ev-body code { font-size: 11.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--ink); }
+  .ev-rating { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* ── Sources ──────────────────────────────────────────────────── */
+  .sources { columns: 2; column-gap: 28px; font-size: 12.5px; }
+  @media (max-width: 620px) { .sources { columns: 1; } }
+  .sources li { margin-bottom: 7px; break-inside: avoid; color: var(--ink-muted); }
+
+  .closer { border-top: 1px solid var(--border); padding-top: 26px; color: var(--ink-muted); font-size: 13.5px; }
+  .closer strong { color: var(--ink); }
+
+  footer.pf {
+    max-width: 980px; margin: 0 auto; padding: 30px 20px 44px;
+    display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    font-size: 11px; color: var(--ink-faint); border-top: 1px solid var(--border);
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="kicker"><span class="flag"></span>CargoDesk &middot; Competitive Intelligence</div>
+    <h1 class="title">FCL Competitive<br><em>Dossier</em></h1>
+    <dl class="meta">
+      <div><dt>Scope</dt><dd>Full Container Load, quote&rarr;invoice</dd></div>
+      <div><dt>Benchmarked against</dt><dd>6 named platforms</dd></div>
+      <div><dt>Method</dt><dd>Live codebase audit + vendor research</dd></div>
+      <div><dt>CargoDesk build</dt><dd>v0.91.7 &ldquo;Landfall&rdquo;</dd></div>
+    </dl>
+  </header>
+
+  <section class="block">
+    <div class="head"><span class="tag">01</span><h2 class="h">Bottom line</h2></div>
+    <p class="verdict-lede">
+      CargoDesk's FCL workflow &mdash; quoting through invoicing &mdash; is more complete than a
+      solo-built platform has any right to be. Every stage a working FCL desk touches daily is a
+      real, stateful, validated workflow, not a stub. The gap that actually matters isn't feature
+      breadth &mdash; it's <strong>who's on the other end of the wire</strong>.
+    </p>
+    <div class="findings">
+      <div class="finding lead">
+        <div class="fnum">1</div>
+        <div class="fbody">
+          <h3>Zero live carriers, despite excellent plumbing</h3>
+          <p>CargoDesk has real, spec-accurate DCSA Booking API integration &mdash; an adapter
+            registry, a signed webhook receiver, a Booking v2.0.5 adapter built against the actual
+            public standard. But no carrier is actually signed up and connected today. Every
+            booking, SI, VGM, and customs-filing exchange in production runs through an internal
+            simulator.</p>
+          <p class="why">This is a business step (sign one carrier), not a rebuild &mdash; the
+            engineering is already sitting there waiting for a sandbox.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <div class="fnum">2</div>
+        <div class="fbody">
+          <h3>Freight Audit and export-compliance depth are real strengths</h3>
+          <p>These are the two areas where CargoDesk's engineering is at or above what mid-market
+            competitor Magaya documents publicly, and conceptually matches CargoWise's own
+            described AI three-way match &mdash; unglamorous, correctness-critical work that
+            experienced ops people specifically look for.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <div class="fnum">3</div>
+        <div class="fbody">
+          <h3>Visibility is real at the vessel level only</h3>
+          <p>A live AIS feed genuinely auto-confirms vessel departure/arrival. But every
+            container-level and terminal event &mdash; gate in/out, discharge &mdash; is still
+            hand-typed. This is exactly the gap project44 and FourKites charge a premium to close,
+            and it's the most visible difference if someone compares a CargoDesk shipment screen to
+            a project44-fed dashboard side by side.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="head"><span class="tag">02</span><h2 class="h">Capability matrix</h2></div>
+    <p class="intro">
+      Fifteen capability areas across the full FCL lifecycle, checked against CargoDesk's live
+      source code (not documentation, not memory) and each vendor's own current product materials.
+      Scroll sideways for the rest of the field &mdash; CargoDesk's own column stays pinned.
+    </p>
+    <div class="legend">
+      <span class="legend-item"><span class="swatch" style="background:var(--good)"></span>Full</span>
+      <span class="legend-item"><span class="swatch" style="background:var(--warn)"></span>Partial</span>
+      <span class="legend-item"><span class="swatch" style="background:var(--bad)"></span>None</span>
+      <span class="legend-item"><span class="swatch" style="background:var(--neutral)"></span>N/A &mdash; not this vendor's product category</span>
+    </div>
+    <div class="matrix-wrap">
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th class="cap-col">Capability</th>
+            <th class="cd-col">CargoDesk</th>
+            <th>CargoWise</th>
+            <th>Magaya</th>
+            <th>Descartes</th>
+            <th>project44</th>
+            <th>Flexport</th>
+            <th>CargoSphere</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="cap-col">Quote &rarr; booking conversion</td>
+            <td class="cd-col"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td title="Customs/compliance-centric, less forwarder-quoting focus"><span class="pill pill-partial">Partial</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td title="Rate/quote tool, not full conversion"><span class="pill pill-partial">Partial</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">Carrier booking workflow + BC01/BR01 docs</td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">Spec-accurate DCSA adapter &mdash; live-carrier status is its own row below</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td title="Via INTTRA, 60+ carriers"><span class="pill pill-full">Full</span></td>
+            <td title="Via GLN"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">Schedules &amp; routing</td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">DCSA schedule search coded, unverified vs. a real sandbox</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td title="Via INTTRA"><span class="pill pill-full">Full</span></td>
+            <td title="Via GLN"><span class="pill pill-full">Full</span></td>
+            <td title="Core product"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">VGM &mdash; SOLAS Method 1/2</td>
+            <td class="cd-col"><span class="pill pill-full">Full</span></td>
+            <td title="Live EDI (VERMAS)"><span class="pill pill-full">Full</span></td>
+            <td title="Document generation"><span class="pill pill-full">Full</span></td>
+            <td title="Claims largest number of ocean carriers"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">Shipping Instructions</td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">Simulated, no live carrier EDI</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td title="Via INTTRA"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">AES/EEI export compliance</td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">ECCN, license type/value, Schedule B, live staleness check</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td title="Less documented"><span class="pill pill-partial">Partial</span></td>
+            <td title="Dedicated compliance product line"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+            <td title="Brokerage arm"><span class="pill pill-partial">Partial</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">ISF/AMS import filing</td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">Present as its own filing type &mdash; easy to miss on a name search</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td title="Ocean AMS module"><span class="pill pill-full">Full</span></td>
+            <td title="Dedicated ISF resource line"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+            <td><span class="pill pill-partial">Partial</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">House B/L lifecycle</td>
+            <td class="cd-col"><span class="pill pill-partial">Partial</span><span class="cell-note">Status tracking full (Issued/Surrendered/Released); no eB/L transfer</span></td>
+            <td title="Incl. live eB/L, DCSA/FIATA/BIMCO-aligned"><span class="pill pill-full">Full</span></td>
+            <td title="Status only, no eB/L found"><span class="pill pill-partial">Partial</span></td>
+            <td><span class="pill pill-partial">Partial</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+            <td title="Status full; eB/L referenced generally"><span class="pill pill-partial">Partial</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">Real-time container/vessel visibility</td>
+            <td class="cd-col"><span class="pill pill-partial">Partial</span><span class="cell-note">Live AIS for vessel departure/arrival; container events are hand-entered</span></td>
+            <td title="Carrier EDI-fed tracking"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-partial">Partial</span></td>
+            <td><span class="pill pill-partial">Partial</span></td>
+            <td title="Best-in-class: 98%+ ocean freight, 700+ ports, AIS+EDI fused"><span class="pill pill-full">Full</span></td>
+            <td title="Own operating visibility"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">Freight Audit &amp; Payment</td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">Accrued-line matching, DET&ne;DEM pre-audit, tolerance, exception queue</span></td>
+            <td title="AI three-way match"><span class="pill pill-full">Full</span></td>
+            <td title="D&D rate/cost tools; audit depth undocumented"><span class="pill pill-partial">Partial</span></td>
+            <td><span class="pill pill-partial">Partial</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+            <td><span class="pill pill-partial">Partial</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">Invoicing (FR01) + credit notes (CN01)</td>
+            <td class="cd-col"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-partial">Partial</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">Multi-entity / branch accounting</td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">FX-aware margin by entity, branch-scoped visibility</span></td>
+            <td title="Enterprise-grade"><span class="pill pill-full">Full</span></td>
+            <td title="SMB-oriented"><span class="pill pill-partial">Partial</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+            <td title="Single entity"><span class="pill pill-na">N/A</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">Denied-party screening</td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">OFAC SDN + Consolidated Screening List</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td title="Dedicated DPS product: OFAC SDN/FSE/SSI/PLC"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+            <td title="Brokerage compliance"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">Live carrier network breadth</td>
+            <td class="cd-col"><span class="pill pill-none">None</span><span class="cell-note">~0 live carriers connected; plumbing supports any DCSA member</span></td>
+            <td title="&ldquo;24 of 25 top forwarders&rdquo; (self-reported)"><span class="pill pill-full">Full</span></td>
+            <td title="60+ via INTTRA"><span class="pill pill-full">Full</span></td>
+            <td title="GLN: 24B messages/yr"><span class="pill pill-full">Full</span></td>
+            <td title="Near-total coverage, but visibility only &mdash; not booking"><span class="pill pill-partial">Partial</span></td>
+            <td title="Real carrier relationships as an operating forwarder"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">Rate benchmarking / market index</td>
+            <td class="cd-col"><span class="pill pill-none">None</span></td>
+            <td title="Internal rate management only"><span class="pill pill-partial">Partial</span></td>
+            <td><span class="pill pill-none">None</span></td>
+            <td><span class="pill pill-none">None</span></td>
+            <td><span class="pill pill-none">None</span></td>
+            <td><span class="pill pill-none">None</span></td>
+            <td title="This is the product"><span class="pill pill-full">Full</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="head"><span class="tag">03</span><h2 class="h">Where CargoDesk leads or matches</h2></div>
+    <p class="intro">Not just a gap list &mdash; six places the evidence supports parity with, or an edge over, named competitors.</p>
+    <div class="strengths">
+      <div class="strength">
+        <h4>Freight Audit matching depth</h4>
+        <p>Independent DET/DEM free-time windows and a safeguard against silently overwriting an already-posted cost line &mdash; conceptually matches CargoWise's own described AI three-way match, and appears to exceed what Magaya documents publicly.</p>
+      </div>
+      <div class="strength">
+        <h4>AES/EEI export-control depth</h4>
+        <p>ECCN, Schedule B, license type/value per cargo line, plus a live staleness check if the shipment changes after filing &mdash; comparable to Descartes' dedicated compliance product line, built as one feature inside a general TMS.</p>
+      </div>
+      <div class="strength">
+        <h4>VGM's full SOLAS cycle</h4>
+        <p>Method 1/Method 2 declaration with a real submit/accept/reject cycle and milestone auto-completion, matching what CargoWise and Magaya describe as standard.</p>
+      </div>
+      <div class="strength">
+        <h4>Quote-to-shipment conversion</h4>
+        <p>One atomic transaction carries over parties, derives containers, creates SELL and BUY cost lines, checks credit hold, screens for denied parties, and recomputes the space badge &mdash; deeper than what Magaya's public materials describe for the same handoff.</p>
+      </div>
+      <div class="strength">
+        <h4>The AIS integration is real, not vaporware</h4>
+        <p>A live third-party feed doing genuine geofence-based departure/arrival detection &mdash; the same underlying technique project44 uses, at a fraction of the coverage. Worth saying plainly so it isn't lumped in with "everything is simulated."</p>
+      </div>
+      <div class="strength">
+        <h4>Multi-entity accounting</h4>
+        <p>FX-aware margin-by-entity reporting with branch scoping is enterprise-grade, and likely ahead of Magaya's more SMB-oriented accounting.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="head"><span class="tag">04</span><h2 class="h">The real gaps, classified</h2></div>
+    <p class="intro">Split the way the last competitive pass split its findings: work that's genuinely engineering, and work that no amount of engineering closes alone.</p>
+    <div class="gap-groups">
+      <div class="gap-group buildable">
+        <div class="gap-group-head"><h3>Buildable</h3></div>
+        <div class="sub">Real engineering effort, bounded and scoped</div>
+        <ul class="gap-list">
+          <li><strong>DCSA Track &amp; Trace event ingestion</strong>The booking half is done; a webhook/polling handler for gate moves and discharge slots into the existing milestone-completion pattern.</li>
+          <li><strong>Validate the DCSA adapter against a real carrier sandbox</strong>Mostly a signup step (Hapag-Lloyd's sandbox is public self-service), with a modest engineering tail to fix real-spec deviations.</li>
+          <li><strong>Freight Audit matching-engine breadth</strong>More charge codes and D&amp;D edge cases &mdash; incremental extension of an engine that already works.</li>
+          <li><strong>Direct AES/EEI government EDI transmission</strong>A defined, documented API (AESDirect/ACE); needs filer credentials from the business, then a bounded build following the DCSA adapter's own pattern.</li>
+        </ul>
+      </div>
+      <div class="gap-group structural">
+        <div class="gap-group-head"><h3>Structural &mdash; not a code gap</h3></div>
+        <div class="sub">Years of partnerships or a data business, not a sprint</div>
+        <ul class="gap-list">
+          <li><strong>CargoWise/Descartes-scale carrier network breadth</strong>20+ years of bilateral EDI certifications with hundreds of carriers. A network-effects moat, not a backlog item.</li>
+          <li><strong>project44/FourKites-style global visibility</strong>98%+ ocean freight, 700+ ports &mdash; needs commercial data deals with terminals and carriers worldwide.</li>
+          <li><strong>CargoSphere/Freightos-style rate benchmarking</strong>The product exists only because it pools real transaction data across thousands of forwarders. A single-tenant platform has no comparable pool.</li>
+          <li><strong>Legally negotiable eB/L</strong>Needs accreditation with a title registry banks and customs trust as authoritative &mdash; a legal/network problem, not a coding one.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="head"><span class="tag">05</span><h2 class="h">Detailed evidence</h2></div>
+    <p class="intro">Full citations behind every matrix row &mdash; collapsed by default, open any that need checking.</p>
+    <div class="evidence-list">
+
+      <details class="ev"><summary>Quote &rarr; booking conversion <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
+        <div class="ev-body"><p><code>routes/quotes.js:1-52</code> &mdash; real Draft&rarr;Sent&rarr;Accepted/Declined/Expired&rarr;Converted lifecycle with an hourly auto-expire sweep. Conversion (<code>:329-484</code>) is atomic: carries shipper/consignee/principal/notify parties, derives containers from quote lines (<code>:391-426</code>), creates SELL cost lines from the agreed price (<code>:380-389</code>) and BUY lines from the matched contract (<code>:378</code>), auto-assigns carrier line agents (<code>:377</code>), recomputes the space/TEU badge (<code>:433</code>), runs denied-party screening (<code>:435</code>), and surfaces a credit-hold warning across all three carried-over parties (<code>:441-446</code>).</p></div>
+      </details>
+
+      <details class="ev"><summary>Carrier booking workflow <span class="ev-rating"><span class="pill pill-full">Full workflow</span><span class="pill pill-none">0 live</span></span></summary>
+        <div class="ev-body"><p><code>routes/edi.js</code> carries <code>carrier_bookings.status</code> through Pending&rarr;Confirmed/Rejected/Cancelled (<code>:140,149,449-459,508-515</code>), generating BR01/BC01 documents (<code>src/utils/documentBuilders.js:11-14,370,460</code>). The DCSA Booking API v2.0.5 adapter (<code>lib/carrier-integrations/dcsa-bkg-v2.js</code>) is built against the real public spec and is carrier-agnostic &mdash; any DCSA member could plug in via one config row (<code>:5-8</code>). A signed webhook receiver exists (<code>routes/carrier-webhooks.js</code>, HMAC-SHA256, master kill switch). The callback-signing scheme is explicitly disclosed as a placeholder pending a real sandbox (<code>dcsa-bkg-v2.js:118-121</code>). A real, live Maersk Booking API integration existed and was <strong>removed</strong> in v0.72.0 when Maersk's developer-tools dependency went obsolete (<code>routes/edi.js:34-36</code>). Today, booking confirmation/rejection in production runs exclusively through the Test Tools Message Simulator (<code>routes/edi.js:32-87</code>).</p></div>
+      </details>
+
+      <details class="ev"><summary>Schedules &amp; routing <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
+        <div class="ev-body"><p><code>routes/system.js</code> has a real internal schedule catalog (<code>catalogSailings</code>, <code>:349-402</code>, with transit days and leg breakdowns) and a mock-data fallback (<code>mockSailings</code>, <code>:301-348</code>). A leg-cascade Cypress spec (<code>cypress/e2e/schedule-leg-cascade.cy.js</code>) confirms multi-leg transshipment is real and tested. <code>dcsa-bkg-v2.js:85-116</code> adds a DCSA schedule search, flagged in its own comment as best-effort pending a real sandbox.</p></div>
+      </details>
+
+      <details class="ev"><summary>VGM &mdash; SOLAS Method 1/2 <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
+        <div class="ev-body"><p>Pending&rarr;Submitted is blocked without a declared Method 1 (Weighing) or Method 2 (Calculated) (<code>routes/shipments.js:1009-1021</code>; UI at <code>src/pages/shipments/VgmServicePage.jsx:45-46,82-83</code>) &rarr;Accepted/Rejected via a dedicated simulator (<code>:1132-1168</code>), with a <code>vgm_declaration</code> EDI message logged on submit (<code>:1111-1122</code>, explicitly simulated) and automatic milestone completion once every container is Submitted (<code>:1123-1126</code>).</p></div>
+      </details>
+
+      <details class="ev"><summary>Shipping Instructions <span class="ev-rating"><span class="pill pill-full">Full, simulated</span></span></summary>
+        <div class="ev-body"><p><code>routes/shipping-instructions.js</code> implements an independent Draft&rarr;Submitted&rarr;Confirmed/Rejected machine (mirrors customs-filing's shape, <code>:1-9</code>), gated on shipper/consignee/container completeness (<code>:62-65</code>), auto-completing the <code>si_submitted</code> milestone (<code>:81</code>), with reset-and-resubmit after rejection (<code>:116-127</code>). Explicitly disclosed as simulated, no live carrier EDI (<code>:8</code>).</p></div>
+      </details>
+
+      <details class="ev"><summary>AES/EEI &amp; ISF/AMS filing <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
+        <div class="ev-body"><p><code>routes/customs-filing.js</code> supports both AES/EEI (export) and ISF/AMS (import) as independent filing types per shipment (<code>UNIQUE(shipment_id, filing_type)</code>, <code>:1-12</code>), each with its own Draft&rarr;Filed&rarr;Accepted/Rejected cycle, required-broker-role gate (<code>:117-119</code>), priced-cargo gate, and USPPI/Ultimate-Consignee validation (<code>:126-130</code>). Export-control fields (Schedule B, ECCN, license type/value) come from <code>container_packages</code> (<code>:39-53</code>) and are snapshotted at filing time. A live staleness check recomputes whether the snapshot still matches the shipment's current carrier/vessel/voyage/cargo (<code>:56-70</code>). ISF/AMS is confirmed present as filing type <code>ISF_AMS</code> &mdash; easy to miss on a bare name search. Simulated only, no live AESDirect/ACE transmission (<code>:11-12</code>).</p></div>
+      </details>
+
+      <details class="ev"><summary>House B/L lifecycle <span class="ev-rating"><span class="pill pill-partial">Partial</span></span></summary>
+        <div class="ev-body"><p>BL01 auto-completes the <code>bl_issued</code> milestone (<code>routes/shipment-ops.js:1263</code>; regression-tested in <code>tests/house-bl-lifecycle.test.js:118-140</code>, including that a manually-completed milestone is never overwritten). Mark Surrendered / Mark Released are idempotent and logged as entity events (<code>tests/house-bl-lifecycle.test.js:142-162</code>). A <code>bl_release_type</code> field distinguishes Original/Telex Release/Surrendered/Seaway Bill (<code>routes/shipments.js:77</code>). No electronic B/L transfer (Bolero/essDOCS/WaveBL-style) exists anywhere in the codebase.</p></div>
+      </details>
+
+      <details class="ev"><summary>Milestones &amp; real-time tracking <span class="ev-rating"><span class="pill pill-partial">Partial</span></span></summary>
+        <div class="ev-body"><p>The FCL template has 9 steps (<code>routes/shipment-ops.js:963-971</code>). <code>vessel_departed</code>/<code>vessel_arrived</code> are genuinely live &mdash; a persistent WebSocket to aisstream.io (<code>lib/ais-listener.js:1-52</code>) confirms them by matching vessel position and navigational status against the leg's POL/POD via haversine proximity (<code>:42-50</code>). <code>cargo_gated_in</code>/<code>cargo_released</code> auto-complete only once every container has a manually-logged Gate In/Out event (<code>routes/shipments.js:1462-1491</code>) &mdash; 100% hand-entered. <code>si_submitted</code>, <code>customs_cleared</code>, <code>booking_confirmed</code> auto-complete from CargoDesk's own internal state changes, fed by simulated upstream events. <code>bl_issued</code> is an internal document-confirm trigger. <code>delivered</code> has no auto-complete path at all &mdash; manual only. Despite its name, the DCSA adapter implements booking and schedule search only &mdash; no Track &amp; Trace event ingestion exists.</p></div>
+      </details>
+
+      <details class="ev"><summary>Freight Audit &amp; Payment <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
+        <div class="ev-body"><p><code>routes/carrier-invoices.js</code> reconciles a carrier's invoice line against an already-accrued cost line where one exists (<code>:128-143</code>) or the live contract rate otherwise (<code>:145-154</code>). Detention and Demurrage are distinct charge types with independent free-time windows and independent <code>container_events</code> anchor pairs (<code>:91-125</code>) &mdash; a previously-fixed bug is noted in the code where both used to share one window (<code>:96-98</code>). A configurable variance-tolerance percentage (<code>:170</code>) drives matched/variance classification; an exception queue surfaces worst-variance-first, capped at 200 rows (<code>:200-226</code>). Approving a line actualizes the matched cost line or creates a new one, and refuses to silently overwrite an already-posted line (<code>:401-417</code>). Full dispute capture and audit-event logging throughout.</p></div>
+      </details>
+
+      <details class="ev"><summary>Invoicing, credit notes &amp; multi-entity accounting <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
+        <div class="ev-body"><p>FR01 invoice and CN01 credit/debit note generation are both real (<code>src/utils/invoiceGenerator.js:413,422,429,443,449</code>), backed by an invoice-reversal test suite and an invoice-collections/billing-performance UI. Multi-entity/branch accounting is real: branch-level currency, FX-aware margin-by-entity resolved from the shipment's EMO/IMO office's branch, and branch-scoped visibility for non-global users (<code>tests/multi-entity-accounting.test.js:1-8</code>, <code>routes/organization.js</code>, <code>src/pages/org/BranchPage.jsx</code>).</p></div>
+      </details>
+
+      <details class="ev"><summary>Multi-carrier integration depth <span class="ev-rating"><span class="pill pill-full">Plumbing</span><span class="pill pill-none">0 live</span></span></summary>
+        <div class="ev-body"><p>The registry pattern, the spec-accurate DCSA adapter, and the signed webhook receiver are real working code (<code>lib/carrier-integrations/registry.js</code>, <code>lib/carrier-integrations/dcsa-bkg-v2.js</code>, <code>routes/carrier-webhooks.js</code>) &mdash; wired end-to-end to <code>carrier_bookings</code>/<code>edi_messages</code> and unit-tested (<code>tests/carrier-integrations.test.js</code>). But no carrier has been signed up and validated against it; the callback signature scheme is explicitly unverified, and the one carrier this was scoped against (Hapag-Lloyd, chosen for its public self-service sandbox) has not been onboarded &mdash; deliberately left to the business side.</p></div>
+      </details>
+
+      <details class="ev"><summary>Denied-party screening <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
+        <div class="ev-body"><p>Two syncable list sources: OFAC SDN and the Consolidated Screening List (<code>routes/sanctions.js</code>, <code>parseOfacCsv</code>, <code>syncOfacSdn</code>/<code>syncConsolidatedScreeningList</code>). Sync/import is admin-only and rate-limited after a fixed privilege-escalation bug (a viewer-role account could previously wipe the dataset, <code>:24-35</code>). A dedicated multi-list regression test exists (<code>tests/multi-list-screening.test.js</code>). Comparable in list coverage to Magaya's dedicated DPS product; CSL is a superset of most of what Magaya lists separately.</p></div>
+      </details>
+
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="head"><span class="tag">06</span><h2 class="h">Sources</h2></div>
+    <p class="intro">Vendor claims below are drawn from each company's own marketing and help-center pages, plus one third-party comparison. Self-reported figures (like CargoWise's "99%+ of world's ocean freight electronically bookable") are marketing claims, not independently audited ones &mdash; treat them accordingly.</p>
+    <ul class="sources">
+      <li><a href="https://www.cargowise.com/solutions/cargowise-forwarding/ocean/">CargoWise &mdash; Ocean Forwarding</a></li>
+      <li><a href="https://www.cargowise.com/solutions/electronic-bills-of-lading/">CargoWise &mdash; Electronic Bills of Lading</a></li>
+      <li><a href="https://www.cargowise.com/solutions/cargowise-carrier/carrier-connectivity/">CargoWise &mdash; Carrier Connectivity</a></li>
+      <li><a href="https://www.cargowise.com/solutions/cargowise-enterprise/accounting/">CargoWise &mdash; Accounting</a></li>
+      <li><a href="https://www.rfp.wiki/supply-chain-logistics-transportation/transportation-logistics/logistics-software/cargowise">CargoWise &mdash; Strengths, Gaps &amp; Best Fit (RFP.wiki)</a></li>
+      <li><a href="https://www.magaya.com/nvocc-software/">Magaya &mdash; NVOCC Software</a></li>
+      <li><a href="https://www.magaya.com/downloads/marketing/brochure/magaya-inttra.html">Magaya &mdash; Ocean Carriers Interface (INTTRA)</a></li>
+      <li><a href="https://www.magaya.com/bill-of-lading/">Magaya &mdash; Bill of Lading</a></li>
+      <li><a href="https://help.magaya.com/s/document-item?language=en_US&amp;bundleId=shipments-manual&amp;topicId=VGM_document_1.html&amp;_LANG=enus">Magaya &mdash; VGM</a></li>
+      <li><a href="https://www.magaya.com/denied-party-screening/">Magaya &mdash; Denied Party Screening</a></li>
+      <li><a href="https://www.magaya.com/demurrage/">Magaya &mdash; Demurrage</a></li>
+      <li><a href="https://descartes.com/documents/solutions-customs-compliance">Descartes &mdash; Customs Compliance</a></li>
+      <li><a href="https://www.descartes.com/resources/knowledge-center/us-importer-security-filing-isf-resource-center?language=en">Descartes &mdash; ISF Resource Center</a></li>
+      <li><a href="https://www.descartes.com/solutions/b2b-connectivity-and-messaging/descartes-global-logistics-network">Descartes &mdash; Global Logistics Network</a></li>
+      <li><a href="https://www.descartes.com/resources/knowledge-center/descartes-ebookings-ocean-shipment-management">Descartes &mdash; eBookings</a></li>
+      <li><a href="https://www.descartes.com/resources/knowledge-center/descartes-verified-gross-mass-descartes-vgm?language=en">Descartes &mdash; Verified Gross Mass</a></li>
+      <li><a href="https://www.project44.com/platform/visibility/ocean/">project44 &mdash; Ocean Visibility</a></li>
+      <li><a href="https://www.project44.com/container-tracking/">project44 &mdash; Container Tracking</a></li>
+      <li><a href="https://www.flexport.com/products/ocean-freight/">Flexport &mdash; Ocean Freight / FCL</a></li>
+      <li><a href="https://www.flexport.com/help/211-bill-of-lading-purpose/">Flexport &mdash; Bill of Lading</a></li>
+      <li><a href="https://cargosphere.com/about-cargosphere/">CargoSphere &mdash; About</a></li>
+      <li><a href="https://www.freightos.com/freight-resources/freightos-enterprise-global-freight-logistics-solutions/">Freightos Enterprise</a></li>
+      <li><a href="https://www.freightos.com/forwarders/rate-quote/ocean/">Freightos &mdash; Rate &amp; Quote Ocean</a></li>
+    </ul>
+  </section>
+
+  <section class="block closer">
+    <p>This is analysis only &mdash; every finding above traces to a specific file and line in the live
+      codebase, or a named, dated vendor source, not to memory or prior write-ups. Where a claim couldn't
+      be verified in code, that's stated plainly rather than assumed either way. Say which of the
+      buildable items to turn into real Kanban tickets, the same way the last competitive pass did, or
+      which one to just start on first.</p>
+  </section>
+
+</div>
+
+<footer class="pf">
+  <span>CargoDesk &middot; FCL Competitive Dossier</span>
+  <span class="mono">Codebase audit + 6-vendor research, current as of v0.91.7</span>
+</footer>
+
+</body></html>

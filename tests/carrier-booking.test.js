@@ -668,7 +668,7 @@ async function testPayloadContractAndRateSnapshot(token) {
   // Central shipment — a real contract + a real rate snapshot generated at creation
   // (server.js: `if (contractType === 'Central' && contractId) importContractRates(id)`).
   const contractCreate = await request("POST", "/api/contracts", {
-    contractNumber: "TEST-SUPERSEDE-CNTR", carrierCode: "MAEU", status: "Active", currency: "USD",
+    contractNumber: "TEST-SUPERSEDE-CNTR", contractRef: "TEST-SUPERSEDE-REF", carrierCode: "MAEU", status: "Active", currency: "USD",
     rates: [{ serviceCode: "OF", description: "Ocean Freight", amount: 1500, currency: "USD", unit: "per_container" }],
   }, token);
   assert("test contract created (201)", contractCreate.status === 201);
@@ -689,7 +689,12 @@ async function testPayloadContractAndRateSnapshot(token) {
     const centralMessages = await request("GET", `/api/shipments/${centralId}/edi-messages`, null, token);
     const centralOutbound = centralMessages.body.find(m => m.direction === "out" && m.messageType === "booking_request");
     const centralPayload = JSON.parse(centralOutbound.rawPayload);
-    assert("Central payload contractRef matches", centralPayload.contractRef === "TEST-SUPERSEDE-CNTR");
+    // routes/edi.js fetches the linked contract directly for a Central booking so the payload
+    // carries the contract's own genuinely distinct contractNumber and contractRef, not
+    // shipment.contractRef (which is just a copy of contractNumber made at assignment time —
+    // 2026-09 "real contract-number-vs-reference handling" fix).
+    assert("Central payload contractNumber matches the contract's own number", centralPayload.contractNumber === "TEST-SUPERSEDE-CNTR");
+    assert("Central payload contractRef matches the contract's own (distinct) reference", centralPayload.contractRef === "TEST-SUPERSEDE-REF");
     assert("Central payload rateSnapshotId is a real id (not null)", !!centralPayload.rateSnapshotId);
   } finally {
     await request("DELETE", `/api/shipments/${centralId}`, null, token);

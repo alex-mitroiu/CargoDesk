@@ -30,12 +30,12 @@ import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDet
 const STATUS_COLOR = { Draft: "", Submitted: "cyan", Confirmed: "good", Rejected: "crit" };
 
 const ShipmentShippingInstructionsPage = ({ shipment, containers = [] }) => {
-  const { canEditShipments: canEditRole, isAdmin, activeRoles, allOffices } = useAuth();
+  const auth = useAuth();
   // Shipping Instructions is export-edit per the Office-Side Permissions Epic (TKT-Z0LB0W) — not
   // in Phase 3's own file list, added anyway: it was gated export-edit in Phase 2 (routes/
   // shipping-instructions.js), so leaving this page unchanged would have left an import user
   // clicking Save and hitting a raw 403 instead of a disabled control.
-  const canEdit = canEditShipmentSide({ canEditShipments: canEditRole, isAdmin, activeRoles, allOffices }, shipment, "export");
+  const canEdit = canEditShipmentSide(auth, shipment, "export");
   const [si,       setSi]       = useState(undefined); // undefined = loading, null = none yet
   const [messages, setMessages] = useState([]);
   const [cutoff,   setCutoff]   = useState("");

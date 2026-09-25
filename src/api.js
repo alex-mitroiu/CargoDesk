@@ -348,6 +348,14 @@ export const api = {
     publish: (id)         => req("POST",   `/contracts/${id}/publish`),
     withdraw: (id)        => req("POST",   `/contracts/${id}/withdraw`),
   },
+  chargeDefaultSetups: {
+    list:   ()         => req("GET",    "/charge-default-setups"),
+    get:    (id)       => req("GET",    `/charge-default-setups/${id}`),
+    create: (data)     => req("POST",   "/charge-default-setups", data),
+    update: (id, data) => req("PUT",    `/charge-default-setups/${id}`, data),
+    setActive: (id, isActive) => req("PATCH", `/charge-default-setups/${id}/active`, { isActive }),
+    remove: (id)       => req("DELETE", `/charge-default-setups/${id}`),
+  },
   entityEvents: {
     list: (type, id) => req("GET", `/entity-events/${type}/${id}`),
   },
