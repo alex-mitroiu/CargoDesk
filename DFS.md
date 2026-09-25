@@ -217,8 +217,12 @@ lane); viewer (read only).
 `shipment_milestones`, `carrier_bookings`, `shipment_messages`, `shipment_events`.
 **Business rules**: a shipment's space badge (Confirmed/Warning/Exceeded) is recomputed on every
 container, booking, or allocation-link change — never a stale, on-demand-only calculation.
-Cancelling a shipment cascades to cancel its carrier booking. See ARCHITECTURE.md §8.6, §8.10,
-§8.12.
+Cancelling a shipment cascades to cancel its carrier booking. Since v0.91.7, write authority on a
+shipment's own sub-pages is **per-shipment relative to the acting user's office**, not a blanket
+role permission: Schedules/Cargo/Carrier Booking/Shipping Instructions are fixed export-side;
+Export/Import Services, Customs Filing and Cost Lines gate by the record's own side; an office on
+neither side of a given shipment, or an admin/operator, is unrestricted either way. See
+ARCHITECTURE.md §8.6, §8.10, §8.12, §8.26.
 
 ### 5.3 Commercial — Contracts & Space Allocation (P3 / P3a)
 **Purpose**: the commercial terms a shipment books against, and the physical capacity a carrier has
@@ -262,12 +266,19 @@ review and override, logged. See ARCHITECTURE.md §8.4.
 Detention & Demurrage pre-audit; a reconciliation modal (Overwrite All / Ignore & Add Missing /
 Discard) when a rate refresh would otherwise silently clobber a manual correction. Both the invoice list
 and the open-exceptions queue are filterable the way the Shipments list is — header checklists, search,
-sort, paging (the shared table system, ARCHITECTURE.md §8.23).
+sort, paging (the shared table system, ARCHITECTURE.md §8.23). Since v0.91.8, a **Charge Defaults**
+setup (Master Data → Finance) can pre-populate a matching shipment's BUY/SELL cost lines once,
+scoped by Principal/Movement Type/Region-Country-Location, so recurring charges never need
+re-entering shipment by shipment.
 **Roles**: operator, admin, trade_manager (with `canViewFinance`).
-**Primary data**: `shipment_cost_lines`, `carrier_invoices`.
+**Primary data**: `shipment_cost_lines`, `carrier_invoices`, `charge_default_setups`,
+`charge_default_lines`.
 **Business rules**: a cost line's `source` (contract/manual/automated) must survive a rate refresh
 correctly, or a dispatcher's manual correction gets silently destroyed by the next "Update Carrier
-Costs" run — a real, previously-shipped bug. See ARCHITECTURE.md §8.3.
+Costs" run — a real, previously-shipped bug. See ARCHITECTURE.md §8.3. A Charge Default only ever
+fills a gap: it never overrides a line the shipment already has from a contract or a manual entry,
+and it applies at most once per shipment, even if a better-matching setup is created afterward. See
+ARCHITECTURE.md §8.27.
 
 ### 5.6 Master Data Management (P6a)
 **Purpose**: the shared reference data every other domain depends on.

@@ -1,10 +1,23 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.91.6 "Concourse" · **Date:** 2026-09-20
+**Version:** 0.91.8 "Bastion" · **Date:** 2026-09-25
 **Audience:** Software architects, senior engineers, technical reviewers
 **See also:** [`DFS.md`](DFS.md) — the Design & Functional Specification (data flow diagrams,
 per-domain functional scope, roles) covers *what* the system does and *how data moves through it*;
 this document covers *how it's built*.
 
+> **2026-09-25 pass (v0.91.8 "Bastion") — incremental, and backfills the skipped v0.91.7 pass.**
+> Two releases had shipped since the last pass with zero architectural documentation: v0.91.7
+> "Landfall"'s entire Office-Side Permissions Epic (TKT-Z0LB0W, 6 phases) had no §8.x section at
+> all, and this release's own Charge Defaults engine is new. Adds **§8.26 (Office-Side Permissions
+> Epic)** and **§8.27 (Charge Defaults)**; extends §4's Trade Horizon subsection to note the
+> restyle (started v0.91.3) reached every remaining Shipment Details page in v0.91.7 and is now
+> complete; updates §6's table count (**102**, up from the 98 the v0.91.5 pass measured — +4:
+> `charge_code_sides`, §8.26; `charge_default_setups`/`charge_default_lines`/
+> `shipment_charge_defaults_applied`, §8.27) and adds two new domain groupings to its diagram;
+> appends one new row to §11's Shipment-Domain Gap & Dead-Code Audit Log for the 16-finding
+> self-audit this release closed (its own first entry since 2026-09-12). Everything else,
+> including v0.91.6's own already-incremental scope, is **not** re-verified.
+>
 > **2026-09-20 pass (v0.91.6 "Concourse") — incremental.** Extends §8.23 (Shared Table System) with its
 > remaining adopters — Space Configurations is the eighth and last of Wave 1 — and adds §8.25 (Financials Navigation
 > Group). Updates §8.20's sidebar note and the M12 debt (the containing-block defect also hit modals: the shipment header's
@@ -59,7 +72,12 @@ this document covers *how it's built*.
 ---
 
 ## Table of Contents
-_(§8.15 extended 2026-08-29 (v0.87.0); §8.21 added 2026-08-29 (v0.86.0); §8.20, and the §8.6/§8.9/§8.12 extensions, added 2026-08-28 (v0.85.0); §8.19 and the version-banner fix added 2026-08-25; §8.12 deepened 2026-08-25; §8.17–8.18 and the §5 routes/ table added 2026-08-24; §8.16 added 2026-08-22; §8.14–8.15 added 2026-08-19; everything else reflects the 2026-08-13 pass)_
+_(§8.26–8.27 and the §4/§6/§11 updates added 2026-09-25 (v0.91.8); §8.25 added 2026-09-20 (v0.91.6);
+§8.23–8.24 added 2026-09-19 (v0.91.5); §8.15 extended 2026-08-29 (v0.87.0); §8.21 added 2026-08-29
+(v0.86.0); §8.20, and the §8.6/§8.9/§8.12 extensions, added 2026-08-28 (v0.85.0); §8.19 and the
+version-banner fix added 2026-08-25; §8.12 deepened 2026-08-25; §8.17–8.18 and the §5 routes/ table
+added 2026-08-24; §8.16 added 2026-08-22; §8.14–8.15 added 2026-08-19; everything else reflects the
+2026-08-13 pass)_
 1. [System Overview](#1-system-overview)
 2. [Tech Stack](#2-tech-stack)
 3. [Process & Deployment Topology](#3-process--deployment-topology)
@@ -324,11 +342,20 @@ Unchanged in shape from the last review — `T.surface`, `T.bg`, `T.text`, `T.ac
 `T.body`, `T.mono`, etc., all JavaScript strings applied via `style={{ ... }}`, mutated in place
 by `applyTheme(isDark)`. No CSS variables.
 
-#### Trade Horizon: a second, page-scoped token set with its own light theme (v0.91.3–v0.91.5)
+#### Trade Horizon: a second, page-scoped token set with its own light theme (v0.91.3–v0.91.7)
 
 The Dashboard, Command Center and the whole Shipment Details experience use a distinct visual
 language, "Trade Horizon" — glass cards over a gradient ground — that deliberately does **not**
 live in `src/tokens.js`; it is page-scoped so the rest of the app's classic look is untouched.
+**The restyle reached every remaining Shipment Details sub-page in v0.91.7** ("Landfall") — Cargo
+and History gained a stat strip above a real `<table>` (replacing Cargo's old sidebar tree),
+Involved Offices flattened its 3-level office-card nesting to one card per side (Manager/Line
+Agent inline, a Your Side/Read-only badge wired to §8.26's `myOfficeSide`), Export/Import Services
+got the same Export=cyan/Import=violet treatment, and Shipping Instructions/Documents/Carrier
+Booking (Details+Review)/Customs Filing (Details+Review) — forms and workflows rather than lists —
+took a straight token migration in their existing layout. `SailingPickerModal` is the one
+deliberate holdout, left on the classic theme since it's shared with the New Shipment form
+(explicitly out of scope); migrating it would move the classic/Trade-Horizon seam, not remove it.
 It has its own token object, `HZ`, defined twice as `HZ_DARK` / `HZ_LIGHT`:
 
 | Surface | Where the tokens live | Swap function |
@@ -479,9 +506,12 @@ and 25 indexes now exist beyond primary keys (§11 — this resolves the old "no
 
 ## 6. Data Model
 
-**78 tables** in the monolith's own `cargodesk.db` (77 as of the 2026-08-25 pass, +1 for
-`opportunities`, §8.20 — up from the 35–54 this doc previously and inconsistently claimed), plus
-the Contract Management service's own 4-table copy
+**102 tables** in the monolith's own `cargodesk.db` (remeasured directly via
+`grep -c "CREATE TABLE IF NOT EXISTS" lib/schema.js`; 98 as of the 2026-09-19 pass (v0.91.5) — up
+from the 77 as of the 2026-08-25 pass, +1 for `opportunities`, §8.20 — which was itself up from the
+35–54 this doc previously and inconsistently claimed. The latest +4: `charge_code_sides` (§8.26,
+v0.91.7) and `charge_default_setups`/`charge_default_lines`/`shipment_charge_defaults_applied`
+(§8.27, v0.91.8)), plus the Contract Management service's own 4-table copy
 (`contracts`/`contract_legs`/`contract_rates`/`contract_routings`) when `contract_source='remote'`
 (§8.1) — never both populated as the live source at once.
 
@@ -581,13 +611,31 @@ loop_codes ──── loop_code_ports         (a carrier's named service loop 
                                           REFERENCES port_locations directly)
 hs_codes                                (curated HS-6 registry; hs_chapter is a *soft* link to
                                           duty_rate_chapters — same 2-digit shape, no FK)
+
+OFFICE-SIDE PERMISSIONS (added v0.91.7 — see §8.26)
+────────────────────────────────────────────────────
+charge_code_sides                       (charge_code → 'Export'|'Import'; backs both the cost-line
+                                          read filter and, since v0.91.8, its write gate — a code
+                                          with no row is "shared," never gated)
+
+CHARGE DEFAULTS (added v0.91.8 — see §8.27)
+─────────────────────────────────────────────
+charge_default_setups ──── charge_default_lines   (a predefined BUY/SELL charge bundle, scoped by
+                                                     optional principal_id/movement_type + a
+                                                     Region/Country/Location/Global dimension per
+                                                     side; copied into shipment_cost_lines,
+                                                     source='principal_default', on first match)
+shipment_charge_defaults_applied        (shipment_id PRIMARY KEY, ON DELETE CASCADE — idempotency
+                                          marker claimed atomically via INSERT ... ON CONFLICT DO
+                                          NOTHING RETURNING, not a SELECT-then-INSERT check)
 ```
 
 ### ID format
 
 Unchanged convention — `uid()` generates 6 upper-hex characters, prefixed by entity type
 (`SHP-`, `CTR-`, `CL-`, `QT-`/`QTL-`, `CINV-`/`CINL-`, `CUS-`, `TKT-`, `EDI-`, `CEV-`, …). New
-prefix this pass: `OPP-` (opportunities, §8.20).
+prefix as of v0.85.0: `OPP-` (opportunities, §8.20). New this pass: `CDS-`/`CDL-` (charge default
+setups/lines, §8.27).
 
 ---
 
@@ -2235,6 +2283,126 @@ Quotes rather than under it (which replaced the nesting described in §8.20), an
 - **Not built:** the alternatives that were mocked and set aside — a hub with no children in the sidebar, and one page with
   five tabs (which would have changed every address).
 
+### 8.26 Office-Side Permissions Epic (TKT-Z0LB0W, added v0.91.7, hardened v0.91.8)
+
+A per-shipment-*relative* authorization model — every write action on a shipment's own sub-pages
+now asks not "can this user edit shipments" but "is this user's own office on the side of *this
+specific shipment* that this specific action belongs to." Six phases, all Released; this section
+was never written for v0.91.7 and is added here retroactively, then extended for v0.91.8's own
+follow-on fixes.
+
+**Core primitives (`server.js`):**
+```
+resolveOfficeSideAccess(user, req)
+  → { unrestricted: true } for !user / admin / operator / allOffices / offices_allow_all
+  → { unrestricted: false, officeIds } otherwise — delegates entirely to resolveOfficeAccess(),
+    which already covers every one of those bypasses; a v0.91.8 fix removed a duplicate
+    re-check of the same 4 conditions this function used to do itself first (2 DB reads —
+    getSettings(), resolveEffectiveOfficeIds() — collapsed to 1 per call)
+
+sideFromAccess(access, shipment)
+  → 'export' | 'import' | 'unrestricted', a pure synchronous comparison of access.officeIds
+    against shipment.emoOfficeId/imoOfficeId (neither, or both, held → 'unrestricted')
+
+officeSideOf(user, shipment, req) = sideFromAccess(await resolveOfficeSideAccess(user, req), shipment)
+  — the per-call convenience wrapper every single-shipment gate below uses
+
+blockIfWrongSide(req, res, shipmentRow, requiredSide)
+  — sends the 403 itself, returns true when blocked: `if (await blockIfWrongSide(...)) return;`
+```
+`GET /api/shipments` (list) resolves `resolveOfficeSideAccess` **once per request**, not once per
+row — `sideFromAccess` alone is cheap enough to run per row — so a `myOfficeSide` field lands on
+every shipment the list returns; `GET /api/shipments/:id` computes the same field via `officeSideOf`
+for the single-shipment case. Since `App.jsx` loads the shipment list once and every Shipment
+Details sub-page reads its `shipment` prop from that same in-memory array (not a fresh per-page
+fetch), the list route is the field's real source for almost every consumer.
+
+**Client-side mirror**, `src/utils/officeSide.js`'s `canEditShipmentSide(auth, shipment, side)` —
+`auth` is whatever `useAuth()` returns (or a matching subset); `false` unless `canEditShipments`,
+then `true` for admin/operator/allOffices, else `shipment.myOfficeSide === 'unrestricted' || side`.
+The server re-checks on every write regardless — this only decides what renders as editable. Every
+consuming page passes `useAuth()`'s own result straight through rather than reconstructing a
+matching object by hand (a v0.91.8 audit-fix simplification across 5 pages that hadn't).
+
+**Three distinct gating shapes, chosen per page rather than one blanket rule:**
+| Shape | Where | Mechanism |
+|---|---|---|
+| Fixed-side page | Schedules, Cargo, Carrier Booking, Shipping Instructions — always export-edit | `blockIfWrongSide(..., 'export')` server-side, `canEditShipmentSide(auth, shipment, 'export')` client-side |
+| Per-record side | Export/Import Services (the service's own `side` column); Customs Filing (AES/EEI→export, ISF/AMS→import, independently per filing type — Option A from the design review, never one blanket page gate); Documents (`DOC_TYPE_SIDE`: FR01/FR02/CN01/BL01→export by construction; BL01 surrender is export/origin, release is import/destination — surrender happens where the shipper hands back the originals, release where cargo is handed over); Cost Lines (`charge_code_sides`, a code with no row is "shared," ungated) | `blockIfWrongSide`/`canEditShipmentSide` called with the record's own resolved side, not a page constant |
+| Role-based | Parties — `PARTY_ROLE_SIDE` (`Customs Broker (Export/Import)`, `Trucker (Pre-carriage/On-carriage)` are side-bound; everything else — Forwarder, Also Notify Party, Bank, Insurance Provider, Agent, NVOCC, Co-Loading NVOCC — stays open to whoever could already write it, since gating the whole shared parties endpoint by one side would wrongly block an import user from setting their own import-side party) | Same primitives, keyed off the role in the request body rather than a fetched record |
+| Deliberately ungated | Container Events (shared, cross-side lifecycle by nature — an import user recording Discharged and an export user recording Gate In are both legitimate on the same shipment) | No gate at all, by design |
+
+**A new `vessel_arrived` milestone trigger** opens an ops-automation Kanban ticket addressed to the
+**import** office's manager the first time that milestone completes — a handoff notification, not
+an authorization mechanism; fires once (idempotent re-run check), and a shipment with no office
+manager still gets the ticket, unassigned rather than silently skipped.
+
+**v0.91.8 follow-on: two real write-side gaps closed.** A same-release self-audit (§11's newest
+audit-log row) found that Cost Lines' and Documents/Invoices' *write* routes had never actually
+been gated, despite their own GET/list routes already filtering reads by the identical
+`charge_code_sides`/`DOC_TYPE_SIDE` rule — a wrong-side user couldn't *see* a line or document
+their side didn't own, but could still write one, or discover-then-delete one by guessing an id.
+Closed via the same `blockIfWrongSide` primitive on every write route in `routes/shipment-ops.js`
+(POST/PUT/PATCH actualize+post/POST adjust/DELETE/POST post-batch for cost lines; generate/PATCH/
+reverse/mark-paid for documents, plus BL surrender/release). `tests/office-side-permissions.test.js`:
+52 assertions (50 at v0.91.7, +2 covering the closed write gap).
+
+### 8.27 Charge Defaults (added v0.91.8)
+
+Master Data → Finance. Lets a Trade Manager predefine a bundle of BUY/SELL charge lines that
+auto-applies, once, to every new shipment matching a scope — the "every shipment for Principal ABC
+on this lane should start with these 4 lines already on it" problem, previously solved only by
+manually re-entering the same lines shipment after shipment.
+
+**Schema** (`lib/schema.js`) — `charge_default_setups` (optional `principal_id`, optional
+`movement_type` FCL/LCL/blank, `location_global` boolean, and up to 3 region/country/location
+columns *per side* — origin and destination each get exactly one of Region/Country/Location set,
+or none at all when `location_global` is true; enforced server-side on save, not just in the UI)
+── `charge_default_lines` (type BUY/SELL, `charge_code` from the fixed vocabulary `CostLineForm`
+already uses, description, currency, amount, `sort_order`) ── `shipment_charge_defaults_applied`
+(one row per shipment, `shipment_id` the PRIMARY KEY).
+
+**Matching engine** (`lib/charge-defaults.js`'s `applyChargeDefaults(shipmentId)`, called from the
+top of `GET /api/shipments/:id/cost-lines` — the one endpoint both Cost Entry and Invoice Entry
+already fetch on mount, so no separate frontend trigger is needed):
+1. Filter `charge_default_setups WHERE is_active` down to those whose principal/movement-type
+   either matches or is blank, and whose origin/destination side each independently matches
+   (Location exact code, else Country, else Region, else — Global only — unconditional).
+2. Rank survivors by **specificity** (a point each for a set principal, a non-global location, a
+   set movement type) then by **most-recently-updated** on a tie — a scoring problem the epic's
+   own three grouped dimensions turn into a simple comparator, not a weighted-scoring model.
+3. The winner's lines are inserted as `shipment_cost_lines` rows, `source='principal_default'`,
+   **skipping any `type`+`charge_code` pair the shipment already carries from any source** — a
+   contract-generated or manually-entered line for that exact code+direction always wins; the
+   default only ever fills a real gap.
+
+**Region resolves from `port_locations.zone_code`, not `countries.region_code`** — a real bug
+caught by a dedicated QA pass before ship: `region_code` is empty on all 208 seeded countries,
+while `zone_code` is populated and is literally what `/api/regions` was itself derived from. A
+region here is a port-level geographic zone, not a strict Region⊃Country containment, so the
+matcher reads `zone_code` directly rather than hopping through `countries` at all. The same QA
+pass also caught the skip-check being keyed on `charge_code` alone — a manual BUY line for a code
+was wrongly blocking an unrelated SELL default of the identical code; fixed by keying the check on
+the `type:charge_code` pair, since BUY and SELL are genuinely independent lines.
+
+**Idempotency is claimed atomically, not checked-then-acted** — `shipment_charge_defaults_applied`
+is inserted via `INSERT ... ON CONFLICT (shipment_id) DO NOTHING RETURNING shipment_id` *before*
+any matching or line-insertion happens; only the caller that gets a row back proceeds, and it later
+`UPDATE`s the same row's `setup_id` once the winner is known. Found and fixed same-release (§11):
+the original plain `SELECT`-then-`INSERT` check let two concurrent `GET /cost-lines` calls for a
+brand-new shipment (e.g. Cost Entry and Invoice Entry both fetching on mount) both pass the "not
+yet applied" check and both insert the matched lines twice.
+
+**Admin UI** (`src/pages/mdm/MdmChargeDefaultsPage.jsx`) renders Origin/Destination each as **three
+separate dedicated input fields** (Region select, Country combobox, Location port-lookup) with
+live mutual-exclusion — picking one clears the other two on that side — rather than one smart
+lookup that infers the type, and the charge-line table's Charge Code column is a plain dropdown
+over the fixed vocabulary, not a lookup. Both were direct, explicit user requirements after an
+early mockup defaulted to the "smarter," more consolidated shape: "some people can barely turn on
+a computer, so clear dedicated fields are unfortunately required." `tests/charge-default-setups.test.js`:
+33 assertions, including a QA-driven section proving the region-via-`zone_code` and
+type+code-keyed-skip fixes hold with real scratch ports/lines, not just in isolation.
+
 ## 9. Data Flow Diagrams
 
 The four diagrams in this section (shipment creation with auto-screening; contract recalculation;
@@ -2491,6 +2659,7 @@ continues; don't rewrite history once an item's checked.
 
 | 2026-09-12 | User Management redesign (new Branch/Country office-visibility grants, `sales` role, Quotes/Opportunities office scoping) — a dedicated exploratory QA pass against the live app, not a code review, before shipping. | **3 real findings, all fixed same day, re-verified against the full test suite.** | **(1) CRITICAL** — `requireRole` (server.js) never actually respected a deliberate role downgrade via `X-Active-Role`: a user holding both `sales` and `occ_bk`, having switched to "Sales," could still `POST /api/shipments` and get 201 — full booking authority despite switching away from it, since `requireRole` always checked the caller's *full* JWT role array. Pre-existing, but `sales`'s entire "no booking authority" premise is the first feature whose correctness depends on it. **Fixed**, in two passes — the first attempt reused the same rank-comparison the read-side scoping engine already used and silently failed for `sales`↔`occ_bk` specifically (both rank 1 by design; a same-rank switch was never "strictly lower"). Landed on membership-based logic (`jwtRoles.includes(requestedRole)`) instead, matching `App.jsx`'s own already-shipped `effectiveRoles` exactly and can never grant more than the JWT allows. **(2) HIGH** — login/`/api/auth/me` never learned about the new grant mechanism; both built the office-picker list from direct `user_offices` rows only, so a user whose *only* access is a Branch/Country grant got an empty picker, `activeOffice` stuck `null` forever, and — with no active-office header ever sent — `applyShipmentAccessFilter` failed **open** (saw every shipment company-wide) while the new quote/opportunity filter failed **closed** (zero results, permanently). **Fixed** by merging grant-derived offices into both endpoints' office list (`isDefault:false`). **(3) HIGH** — the office backfill migration matched almost none of the real dataset (0/150 quotes, 5/33 opportunities) because virtually no real user account has ever had a default office marked. **Fixed** the heuristic to fall back to a user's earliest office assignment when no default exists (verified correct in isolation via a direct SQL dry-run) — though in this specific dataset it still doesn't move the needle much, since the two accounts that created nearly every historical quote/opportunity have no office assignment of any kind, a data-completeness gap no heuristic can invent an answer for. **Known, accepted limitation, unchanged**: `canEditOfficeSide`/`resolveActiveOffice` still don't know about grants — a user can *view* a shipment via a grant but gets 403 editing anything on it (a direct office assignment is still required for write authority); this was a deliberate scope boundary from the original design, confirmed still real by the QA pass, not fixed. Full 73-file backend suite (2452 assertions) and frontend Vitest suite (10/10) both re-run green after all 3 fixes. See `USER-MANAGEMENT-REDESIGN.md` for the complete model and this pass's own write-up. |
 | 2026-09-12 | Shipment creation (`POST /api/shipments`, quote-conversion) and shipment-detail editing (`PUT /api/shipments/:id`) — a dedicated deep-dive QA pass on this central, high-traffic domain object, prompted by the office-carry-forward change quote-conversion had just received as part of the User Management redesign above. | **5 real findings, all fixed same day, re-verified live plus the full test suite. 2 of the 5 are pre-existing and unrelated to that same-day redesign work — surfaced by the same pass, not caused by it.** | **(1) CRITICAL, pre-existing** — the generic `PUT /api/shipments/:id` accepted and persisted `emoOfficeId`/`imoOfficeId`/`controllingOfficeId` with **zero** authorization check, no department-match validation, and no audit trail at all — while the dedicated `POST .../reassign-office` enforces `canEditOfficeSide` + a department match + logs `OFFICE_REASSIGNED`. **Verified live**: a scoped `occ_bk` user correctly 403'd by `reassign-office` could silently reassign the identical office through the *ordinary Edit Shipment form's Save button* instead (the same PUT route), with zero trace afterward — not even a generic `FIELD_UPDATED` event, since these 3 columns were never in `TRACKED_FIELDS`. **Fixed**: PUT now runs the same `canEditOfficeSide` + department-match check (only when an office field is actually changing, composing correctly with fix #2 below), logs a proper `OFFICE_REASSIGNED` event with human-readable office labels, and migrates lingering `shipment_services` to the new office — matching `reassign-office`'s behavior exactly, deliberately without requiring a typed "reason" (a UX addition the ordinary edit form has no field for yet, out of scope for closing this specific gap). **(2) HIGH, pre-existing** — `PUT /api/shipments/:id` was a silent full-replace, not a partial update: only 5 fields (`pol`/`pod`/`carrierCode`/`contractType`/`status`) fell back to the existing row when omitted (originally only to avoid crashing on an `undefined` bind, per the route's own comment); every other field (~30 of them — `vessel`, `voyage`, `bookingRef`, `blNumber`, `incoterm`, etc.) silently blanked when left out of the request body, each logged as though the user deliberately cleared it. **Verified live**: a PUT sending only a handful of fields wiped 6 unrelated, previously-set fields back to blank on a real shipment. **Fixed** — every field now preserves the existing value when omitted; an explicit `""`/`null` still clears it deliberately (re-verified: both behaviors hold). **(3) HIGH, pre-existing** — `POST /api/shipments`'s own create response was a bare `SELECT *`, never enriched — the one shipment-response path the 2026-09 enrichment fix (GET/PUT/reassign-office) never reached. A brand-new shipment's own creation response came back with blank `polName`/`podName`/office names and the margin/teu/bookingStatus fields, and `App.jsx`'s create handler pushes that exact raw object into shared state before navigating to the detail view. **Fixed** by applying the same shared enrichment fragment. **(4) HIGH, introduced by the same-day office-carry-forward change** — the quote-conversion response's `shipment` field had the identical bare-`SELECT *` gap; now sharing the same enrichment fragment (exposed via `ctx` from `routes/shipments.js` specifically so this doesn't become a 4th independent hand-copy of it). **(5) MEDIUM, pre-existing** — quote-line `quantity` had no validation: `0` silently coerced to `1` via `\|\| 1` (the author's stated "0" never actually saved, no error), and a negative value passed straight through into real negative SELL cost-line revenue once converted (verified live: `quantity:-3` produced a genuine `-$3000` line on the converted shipment, while the container-count derivation elsewhere still floored to exactly 1 physical container — money and container count silently disagreeing). **Fixed** with a positive-finite-number check on create and update. **Verified correct, not a bug**: the Cancelled-status → carrier-booking cascade (2026-09 Space Configuration spec) still fires correctly. Full 73-file backend suite (2452 assertions) and frontend Vitest suite (10/10) both re-run green after all 5 fixes; a clean `vite build` throughout. |
+| 2026-09-25 | Self-audit of the prior two days' own commits (v0.91.7's release + this session's own uncommitted diff building Charge Defaults, editable Shipment Conditions, and the Carrier Booking contract-ref fix) — `/code-review`, 8 parallel background review agents plus one direct pass, cross-verified before any fix began. First entry in this log since 2026-09-12; unlike every entry above (an exploratory or targeted QA pass against the running app), this one is a static/diff-based code review. | **16 findings, all fixed same day, 384 regression assertions re-run green across 8 suites afterward.** | **Security (2, both real write-side authorization gaps, closed via §8.26's `blockIfWrongSide`)** — cost-line write routes (POST/PUT/PATCH actualize+post/POST adjust/DELETE/POST post-batch, `routes/shipment-ops.js`) and document/invoice write routes (generate/PATCH/reverse/mark-paid, plus BL surrender/release) had **zero** office-side check despite their own GET/list routes already filtering reads by the identical `charge_code_sides`/`DOC_TYPE_SIDE` rule — a wrong-side user could write, or discover-then-delete (guess an id, since the list correctly hides it), a line or document their own list view never showed them. See §8.26's own write-up for the fix. **Correctness (7)** — §8.27's Charge Defaults check-then-act race (closed via an atomic `ON CONFLICT DO NOTHING RETURNING` claim, not a lock); the Parties & Offices "Your Side" badge read `activeOffice.department` (which KIND of office the user is generally in) instead of the server-computed `shipment.myOfficeSide` (whether their office is actually THIS shipment's EMO/IMO) — cosmetically wrong, no write-authority impact since it's display-only; Carrier Booking Review and Customs Filing Review (`ShipmentCarrierBookingReviewPage.jsx`, `ShipmentCustomsFilingReviewPage.jsx`) never got migrated to `canEditShipmentSide` when their Details siblings did back in v0.91.7 — showed an enabled Confirm/Cancel/Reset to a wrong-side user who'd then hit a 403 from the (correctly gated) server, a UX-only gap, not an exploit; `ShipmentCarrierBookingDetailsPage.jsx`'s Reference tile showed `shipment.contractRef` (a copy of the contract's own number, made at assignment time) for a Central booking instead of the contract's own real, independently-populated reference, silently duplicating the Contract Number tile above it; two more module-level colour objects (`officeMiniLabel`, `RECONCILE_HZ_COLOR`) captured `HZ.*` at import time instead of reading the live theme-toggle-mutated object (the same defect class §4/CLAUDE.md's own established rule already names, just two instances that predated the rule being written down); a NaN amount silently passed Charge Defaults' `validateLines()` non-negative check (`Number(NaN) < 0` is `false`); `chargeCodeSide()` (server.js) now normalizes to only ever return `'Export'`/`'Import'`/`null`, so a `charge_code_sides` row with any other value can no longer be read as "ungated" by one caller (the `!side` write-gate check) while being read as "hidden" by another (the read filter's strict-equality check) — a defensive fix for corrupted data that has no actual write path in this codebase today, marked PLAUSIBLE rather than CONFIRMED. **Efficiency (3)** — §8.26's `resolveOfficeSideAccess` duplicate-check removal; the cost-line side filter (`filterCostLinesBySide`) batched its per-row `chargeCodeSide()` lookup into one `IN (...)` query; the Parties & Offices tab's two independent `shipmentParties.list` fetches (`PartiesOfficesPanel` and `AdditionalPartiesPanel`, each fetching the same data for its own purpose) collapsed into one shared fetch owned by the parent `ShipmentPartiesPage.jsx`. **Simplification (2)** — the identical `dashedBtn` style-factory duplicated across the Costs and Invoices Accounting tabs consolidated into one `makeDashedBtn` (`shipmentDetailTheme.js`); 5 pages that reconstructed a `{canEditShipments, isAdmin, activeRoles, allOffices}` object by hand to call `canEditShipmentSide` now pass `useAuth()`'s own result straight through, matching the pattern's simplest existing callers. **Two stale pre-existing test assertions caught and fixed while re-running the regression suite**, not counted among the 16: `tests/office-side-permissions.test.js` had literally asserted the cost-line write gap as "by design" (predated this epic's write-gating fix); `tests/carrier-booking.test.js` asserted the pre-fix contract-ref duplication as correct (predated the v0.91.8 contract-ref fix itself, an unrelated same-release change). |
 
 ### Low / Enhancement
 
