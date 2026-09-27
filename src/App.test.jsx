@@ -134,10 +134,10 @@ describe("App — sidebar: the Financials group", () => {
     expect(l.indexOf("Financials")).toBeLessThan(l.indexOf("Integration Board"));
   });
 
-  it("lists an admin's five pages in the agreed order once the group is opened — Opportunities beside Quotes, not under it", async () => {
+  it("lists an admin's seven pages in the agreed order once the group is opened — Opportunities beside Quotes, not under it", async () => {
     await bootAs(["admin"]);
     openGroup("Financials");
-    expect(children("Financials", "Integration Board")).toEqual(["Quotes", "Opportunities", "Reports", "Freight Audit", "Credit Overrides"]);
+    expect(children("Financials", "Integration Board")).toEqual(["Quotes", "Opportunities", "Reports", "Freight Audit", "Credit Overrides", "Statements", "GL Export"]);
     // "beside": the same indent as Quotes, not one level deeper
     const pad = label => navButtons().find(b => b.label === label).el.style.padding;
     expect(pad("Opportunities")).toBe(pad("Quotes"));
@@ -145,22 +145,22 @@ describe("App — sidebar: the Financials group", () => {
   });
 
   it("gives each role only what it could already see", async () => {
-    // viewer: the three open pages
+    // viewer: the four open pages
     await bootAs(["viewer"]);
     openGroup("Financials");
-    expect(children("Financials", "Integration Board")).toEqual(["Quotes", "Opportunities", "Freight Audit"]);
+    expect(children("Financials", "Integration Board")).toEqual(["Quotes", "Opportunities", "Freight Audit", "Statements"]);
   });
 
-  it("shows a trade manager Reports and Credit Overrides without any finance access", async () => {
+  it("shows a trade manager Reports and Credit Overrides without any finance access, but not GL Export", async () => {
     await bootAs(["trade_manager"]);
     openGroup("Financials");
-    expect(children("Financials", "Integration Board")).toEqual(["Quotes", "Opportunities", "Reports", "Freight Audit", "Credit Overrides"]);
+    expect(children("Financials", "Integration Board")).toEqual(["Quotes", "Opportunities", "Reports", "Freight Audit", "Credit Overrides", "Statements"]);
   });
 
-  it("adds Reports, but never Credit Overrides, for a sales user with finance access", async () => {
+  it("adds Reports and GL Export, but never Credit Overrides, for a sales user with finance access", async () => {
     await bootAs(["sales"], { canViewFinance: true });
     openGroup("Financials");
-    expect(children("Financials", "Integration Board")).toEqual(["Quotes", "Opportunities", "Reports", "Freight Audit"]);
+    expect(children("Financials", "Integration Board")).toEqual(["Quotes", "Opportunities", "Reports", "Freight Audit", "Statements", "GL Export"]);
   });
 
   it("takes Freight Audit out of the Dashboard group, which keeps Space Configurations and Archive", async () => {
