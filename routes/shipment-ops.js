@@ -69,6 +69,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       relatedDocId: r.related_doc_id || null,
       sourceCostLineIds: r.source_cost_line_ids ? JSON.parse(r.source_cost_line_ids) : null,
       paidAt: r.paid_at || null, paidAmount: r.paid_amount ?? null, transactionId: r.transaction_id || '',
+      paidAmountOriginal: r.paid_amount_original ?? null, paidCurrency: r.paid_currency || '', paidExchangeRate: r.paid_exchange_rate ?? null,
       firstSentAt: r.first_sent_at || null,
       invoiceOwnerId: r.invoice_owner_id || null,
       collectionsAlertedAt: r.collections_alerted_at || null, collectionsEscalatedAt: r.collections_escalated_at || null,
@@ -1470,15 +1471,26 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (doc.status !== "confirmed") return err(res, "Only a confirmed invoice can be marked paid", 409);
     if (await blockIfWrongSideForDocType(req, res, req.params.shipmentId, doc.doc_type)) return;
 
-    const { paidAt, paidAmount, transactionId = "" } = req.body || {};
+    const { paidAt, paidAmount, transactionId = "", paidAmountOriginal, paidCurrency, paidExchangeRate } = req.body || {};
     if (!paidAt) return err(res, "paidAt is required");
     if (paidAmount === undefined || paidAmount === null || paidAmount === "" || Number(paidAmount) <= 0)
       return err(res, "paidAmount must be a positive number");
+    // FX Revaluation's realized-gain/loss half (all 3 optional — omitted, this route behaves
+    // byte-identical to before): what was actually received in the invoice's OWN currency, and
+    // the rate that converts it to paidAmount above. Deliberately not cross-validated against
+    // paidAmount here — a controller entering, say, a bank-fee-adjusted rate is exactly the real
+    // case this is for, not an error to reject.
+    const hasOriginal = paidAmountOriginal !== undefined && paidAmountOriginal !== null && paidAmountOriginal !== "";
+    if (hasOriginal && (!paidCurrency || paidExchangeRate === undefined || paidExchangeRate === null || paidExchangeRate === "" || Number(paidExchangeRate) <= 0))
+      return err(res, "paidCurrency and a positive paidExchangeRate are required when paidAmountOriginal is set");
 
-    await query("UPDATE shipment_documents SET paid_at=$1, paid_amount=$2, transaction_id=$3 WHERE id=$4",
-      [paidAt, Number(paidAmount), transactionId.trim(), doc.id]);
+    await query("UPDATE shipment_documents SET paid_at=$1, paid_amount=$2, transaction_id=$3, paid_amount_original=$4, paid_currency=$5, paid_exchange_rate=$6 WHERE id=$7",
+      [paidAt, Number(paidAmount), transactionId.trim(),
+       hasOriginal ? Number(paidAmountOriginal) : null, hasOriginal ? paidCurrency : null, hasOriginal ? Number(paidExchangeRate) : null,
+       doc.id]);
     await logEntityEvent('document', doc.id, 'MARKED_PAID', null, null, null,
-      JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, paidAt, paidAmount: Number(paidAmount), transactionId: transactionId.trim() || undefined }));
+      JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, paidAt, paidAmount: Number(paidAmount), transactionId: transactionId.trim() || undefined,
+        paidAmountOriginal: hasOriginal ? Number(paidAmountOriginal) : undefined, paidCurrency: hasOriginal ? paidCurrency : undefined, paidExchangeRate: hasOriginal ? Number(paidExchangeRate) : undefined }));
 
     const [row] = await query("SELECT * FROM shipment_documents WHERE id=$1", [doc.id]);
     const updated = await mapDoc(row, doc.shipment_id);

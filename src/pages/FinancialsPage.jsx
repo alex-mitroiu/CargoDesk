@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { T } from "../tokens";
 import { api } from "../api";
-import { IconReceipt, IconFlag, IconChartBar, IconFileCertificate, IconWarning } from "../components/primitives/Icon";
+import { IconReceipt, IconFlag, IconChartBar, IconFileCertificate, IconWarning, IconCoin } from "../components/primitives/Icon";
 
 // ─── Financials (hub) ────────────────────────────────────────────────────────
 // Landing page for the Financials sidebar group — Quotes, Opportunities, Reports, Freight Audit and Credit
@@ -37,6 +37,16 @@ const CARDS = {
     icon: IconWarning, title: "Credit Overrides", unit: ["blocked shipment", "blocked shipments"],
     description: "Shipments held for credit or over a customer's limit. Only the lane's trade manager can release them.",
     count: () => api.creditOverridesQueue().then(r => (Array.isArray(r) ? r.length : null)),
+  },
+  "customer-statements": {
+    icon: IconReceipt, title: "Statements", unit: ["statement", "statements"],
+    description: "Bill a customer once across several shipments, instead of one invoice per shipment.",
+    count: () => api.customerStatements.list().then(r => (Array.isArray(r) ? r.length : null)),
+  },
+  "gl-export": {
+    icon: IconCoin, title: "GL Export", unit: ["export run", "export runs"],
+    description: "Export confirmed invoices and posted costs as a journal-entry file for your accounting system.",
+    count: () => api.glExport.batches().then(r => (Array.isArray(r) ? r.length : null)),
   },
 };
 
@@ -89,12 +99,13 @@ const FinancialsPage = ({ pages, navigate }) => {
       <div style={{ marginBottom: 28 }}>
         <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Financials</h1>
         <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-          Quotes and the pre-sales pipeline, carrier invoice audit, credit holds and reports
+          Quotes and the pre-sales pipeline, carrier invoice audit, credit holds, statements, GL export and reports
         </p>
       </div>
 
-      {/* 320px (the Master Data hubs use 260 for their three cards): with five cards a four-column grid would leave
-          the last one alone on a second row; three columns gives a balanced 3 + 2. */}
+      {/* 320px (the Master Data hubs use 260 for their three cards): auto-fit wraps to as many
+          columns as fit at that width, so this scales cleanly from 5 cards up to today's 7
+          without a hardcoded column count going stale every time a card is added. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
         {pages.filter(key => CARDS[key]).map(key => (
           <FinancialsCard key={key} pageKey={key} count={counts[key]} onClick={() => navigate(key)} />

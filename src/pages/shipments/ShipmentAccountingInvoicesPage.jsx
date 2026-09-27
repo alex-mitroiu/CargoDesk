@@ -57,12 +57,29 @@ const ReverseInvoiceModal = ({ doc, busy, onClose, onConfirm }) => {
 // arrived, so the date field starts blank, not pre-filled), and the amount must be explicit so
 // a partial payment can never silently read as fully settled. transactionId is optional
 // reference data only (bank/wire reference) — never validated or acted on downstream.
-const MarkPaidModal = ({ doc, defaultAmount, busy, onClose, onConfirm }) => {
+const MarkPaidModal = ({ doc, defaultAmount, currency, busy, onClose, onConfirm }) => {
   const [paidAt, setPaidAt] = useState("");
   const [paidAmount, setPaidAmount] = useState(defaultAmount != null ? String(defaultAmount) : "");
   const [transactionId, setTransactionId] = useState("");
+  // FX Revaluation's realized-gain/loss half — optional, and only offered when the invoice was
+  // actually denominated in something other than USD (a USD invoice has no FX exposure to
+  // capture). Filling both fields locks Amount Paid to their product instead of letting the two
+  // silently disagree — see routes/shipment-ops.js's own comment on why paid_amount and
+  // paid_amount_original*paid_exchange_rate aren't cross-validated server-side (a controller
+  // entering a bank-fee-adjusted rate is the real case this is for), but the modal itself should
+  // never invite that mismatch by accident.
+  const [showFx, setShowFx] = useState(false);
+  const [paidAmountOriginal, setPaidAmountOriginal] = useState("");
+  const [paidExchangeRate, setPaidExchangeRate] = useState("");
+  const fxOriginalNum = Number(paidAmountOriginal), fxRateNum = Number(paidExchangeRate);
+  const fxValid = showFx && paidAmountOriginal !== "" && paidExchangeRate !== ""
+    && !Number.isNaN(fxOriginalNum) && fxOriginalNum > 0 && !Number.isNaN(fxRateNum) && fxRateNum > 0;
+  useEffect(() => {
+    if (fxValid) setPaidAmount(String(Math.round(fxOriginalNum * fxRateNum * 100) / 100));
+  }, [showFx, paidAmountOriginal, paidExchangeRate]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const amountNum = Number(paidAmount);
-  const valid = !!paidAt && paidAmount !== "" && !Number.isNaN(amountNum) && amountNum > 0;
+  const valid = !!paidAt && paidAmount !== "" && !Number.isNaN(amountNum) && amountNum > 0 && (!showFx || fxValid);
   const isPartial = defaultAmount != null && valid && amountNum < defaultAmount;
   return (
     <Modal title="Mark as Paid" onClose={() => !busy && onClose()} width={420}>
@@ -73,9 +90,34 @@ const MarkPaidModal = ({ doc, defaultAmount, busy, onClose, onConfirm }) => {
         </div>
         <DatePicker label="Paid On" required value={paidAt} onChange={setPaidAt} maxDate={todayIso()} />
         <Inp label="Amount Paid (USD)" required type="number" value={paidAmount} onChange={setPaidAmount}
-          hint="A partial payment is fine — the remainder stays in outstanding AR" />
+          disabled={fxValid}
+          hint={fxValid ? `Computed from the ${currency} amount and rate below` : "A partial payment is fine — the remainder stays in outstanding AR"} />
         <Inp label="Transaction ID (optional)" value={transactionId} onChange={setTransactionId}
           placeholder="e.g. wire reference, bank confirmation #" />
+        {currency && currency !== "USD" && (
+          !showFx ? (
+            <button type="button" onClick={() => setShowFx(true)}
+              style={{ alignSelf: "flex-start", background: "none", border: "none", padding: 0,
+                fontFamily: HZ_BODY, fontSize: 12, color: HZ.cyan, cursor: "pointer", textDecoration: "underline" }}>
+              + Record what was actually received in {currency} (for FX gain/loss tracking)
+            </button>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, borderRadius: 8,
+              border: `1px dashed ${HZ.cyan}55`, background: HZ.bg }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontFamily: HZ_BODY, fontSize: 11, fontWeight: 700, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".05em" }}>
+                  Actually Received (optional)
+                </span>
+                <button type="button" onClick={() => { setShowFx(false); setPaidAmountOriginal(""); setPaidExchangeRate(""); }}
+                  style={{ background: "none", border: "none", padding: 0, fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, cursor: "pointer" }}>
+                  Remove
+                </button>
+              </div>
+              <Inp label={`Amount Received (${currency})`} type="number" value={paidAmountOriginal} onChange={setPaidAmountOriginal} />
+              <Inp label={`Exchange Rate (USD per ${currency})`} type="number" value={paidExchangeRate} onChange={setPaidExchangeRate} />
+            </div>
+          )
+        )}
         {isPartial && (
           <div style={{ padding: "8px 12px", borderRadius: 6, background: HZ.warnBg,
             border: `1px solid ${HZ.warn}44`, fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.text }}>
@@ -84,7 +126,10 @@ const MarkPaidModal = ({ doc, defaultAmount, busy, onClose, onConfirm }) => {
         )}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <Btn variant="secondary" onClick={onClose} disabled={busy}>Cancel</Btn>
-          <Btn onClick={() => onConfirm({ paidAt, paidAmount: amountNum, transactionId })} disabled={!valid || busy}>
+          <Btn onClick={() => onConfirm({
+            paidAt, paidAmount: amountNum, transactionId,
+            ...(fxValid ? { paidAmountOriginal: fxOriginalNum, paidCurrency: currency, paidExchangeRate: fxRateNum } : {}),
+          })} disabled={!valid || busy}>
             {busy ? "Saving…" : "Mark as Paid"}
           </Btn>
         </div>
@@ -300,6 +345,17 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
     return matched.reduce((s, l) => s + l.amountUsd, 0);
   };
 
+  // Mark as Paid's own FX-capture section only makes sense when the invoice was actually
+  // denominated in something other than USD — this resolves that from the doc's own matched
+  // lines the same way docTotalFor does. Assumes one currency per doc (true by construction:
+  // generateInvoices always builds from lines that share resolveInvoiceCurrency's own resolved
+  // currency); a doc whose lines have drifted to mixed currencies just shows the first one found.
+  const docCurrencyFor = doc => {
+    if (!doc?.sourceCostLineIds?.length) return null;
+    const matched = lines.filter(l => doc.sourceCostLineIds.includes(l.id));
+    return matched[0]?.currency || null;
+  };
+
   const statusPill = doc => {
     const isConfirmed = doc.status === "confirmed";
     const isVoided    = doc.status === "voided";
@@ -396,11 +452,11 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
     setReverseBusy(false);
   };
 
-  const handleMarkPaid = async ({ paidAt, paidAmount, transactionId }) => {
+  const handleMarkPaid = async ({ paidAt, paidAmount, transactionId, paidAmountOriginal, paidCurrency, paidExchangeRate }) => {
     const doc = markPaidDoc;
     setMarkPaidBusy(true);
     try {
-      await api.documents.markPaid(shipment.id, doc.id, { paidAt, paidAmount, transactionId });
+      await api.documents.markPaid(shipment.id, doc.id, { paidAt, paidAmount, transactionId, paidAmountOriginal, paidCurrency, paidExchangeRate });
       toast.success("Marked as paid");
       setMarkPaidDoc(null);
       loadDocs();
@@ -652,7 +708,7 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       )}
 
       {markPaidDoc && (
-        <MarkPaidModal doc={markPaidDoc} defaultAmount={docTotalFor(markPaidDoc)} busy={markPaidBusy}
+        <MarkPaidModal doc={markPaidDoc} defaultAmount={docTotalFor(markPaidDoc)} currency={docCurrencyFor(markPaidDoc)} busy={markPaidBusy}
           onClose={() => !markPaidBusy && setMarkPaidDoc(null)} onConfirm={handleMarkPaid} />
       )}
 

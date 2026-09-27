@@ -356,6 +356,39 @@ export const api = {
     setActive: (id, isActive) => req("PATCH", `/charge-default-setups/${id}/active`, { isActive }),
     remove: (id)       => req("DELETE", `/charge-default-setups/${id}`),
   },
+  glAccountMappings: {
+    list:   ()         => req("GET",    "/gl-account-mappings"),
+    create: (data)     => req("POST",   "/gl-account-mappings", data),
+    update: (id, data) => req("PUT",    `/gl-account-mappings/${id}`, data),
+    remove: (id)       => req("DELETE", `/gl-account-mappings/${id}`),
+  },
+  glExport: {
+    batches: () => req("GET",  "/gl-export/batches"),
+    run:     (dateFrom, dateTo) => req("POST", "/gl-export/run", { dateFrom, dateTo }),
+  },
+  fxRevaluation: {
+    summary: () => req("GET", "/fx-revaluation/summary"),
+  },
+  customerStatements: {
+    list:          (params = {}) => req("GET", `/customer-statements?${new URLSearchParams(params)}`),
+    get:           (id)          => req("GET", `/customer-statements/${id}`),
+    eligibleLines: (customerId, dateFrom, dateTo) =>
+      req("GET", `/customer-statements/eligible-lines?${new URLSearchParams({ customerId, dateFrom, dateTo })}`),
+    generate:  (data)   => req("POST", "/customer-statements/generate", data),
+    confirm:   (id)     => req("POST", `/customer-statements/${id}/confirm`),
+    markPaid:  (id, data) => req("POST", `/customer-statements/${id}/mark-paid`, data),
+    voidStatement: (id) => req("POST", `/customer-statements/${id}/void`),
+    download: async (id, filename) => {
+      const token = localStorage.getItem("cargodesk_token");
+      const res = await fetch(`/api/customer-statements/${id}/download`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error("Download failed");
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    },
+  },
   entityEvents: {
     list: (type, id) => req("GET", `/entity-events/${type}/${id}`),
   },

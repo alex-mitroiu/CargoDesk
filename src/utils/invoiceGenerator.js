@@ -502,3 +502,49 @@ export const buildCreditDebitNoteHtml = ({ shipment: sh, invNumber, invDate, not
   const displayNumber = container ? `${invNumber}-${container.containerNumber || container.id}` : invNumber;
   return _invShell(`Credit / Debit Note — ${displayNumber}`, "CREDIT / DEBIT NOTE", displayNumber, invDate, body);
 };
+
+// Consolidated/Statement Billing — one document covering several shipments for the same
+// customer, alongside (not replacing) buildFreightInvoiceHtml's own single-shipment form.
+// `lines` here is the flat, already-server-fetched shipment_cost_lines selection (shipmentId,
+// chargeCode, amount, currency), grouped here by shipment into its own charges block, since a
+// statement's whole point is "here's what you owe across all of these" rather than one bill per
+// shipment. All lines are guaranteed one currency by the generate route before this is ever
+// called, so — unlike buildFreightInvoiceHtml — there's no multi-currency conversion branch here.
+export const buildStatementHtml = ({ customerName, dateFrom, dateTo, invNumber, invDate, currency, lines, notes }) => {
+  const byShipment = new Map();
+  for (const l of lines) {
+    if (!byShipment.has(l.shipmentId)) byShipment.set(l.shipmentId, []);
+    byShipment.get(l.shipmentId).push(l);
+  }
+
+  const shipmentBlocks = [...byShipment.entries()].map(([shipmentId, shipmentLines]) => {
+    const rows = shipmentLines.map(l => `<tr>
+        <td><span class="code">${l.chargeCode || "—"}</span></td>
+        <td>${_esc(l.notes || "—")}</td>
+        <td class="num">${fmtCurr(l.amount, l.currency)}</td>
+      </tr>`).join("");
+    const subtotal = shipmentLines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+    return `
+      <div class="shp-block"><div class="block-label">Shipment ${_esc(shipmentId)}</div></div>
+      <table><thead><tr><th>Code</th><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <div class="totals"><div class="total-row"><span class="total-label">Subtotal — ${_esc(shipmentId)}</span><span class="total-amt">${fmtCurr(subtotal, currency)}</span></div></div>`;
+  }).join("");
+
+  const grandTotal = lines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+
+  const detailItems = [
+    ["Customer", customerName || "—"],
+    ["Period", `${new Date(dateFrom + "T00:00:00").toLocaleDateString("en-GB")} – ${new Date(dateTo + "T00:00:00").toLocaleDateString("en-GB")}`],
+    ["Shipments Covered", String(byShipment.size)],
+  ].map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${v}</div></div>`).join("");
+
+  const body = `
+    <div class="shp-block"><div class="block-label">Statement Summary</div><div class="details-grid">${detailItems}</div></div>
+    <div class="section-label">Charges by Shipment</div>
+    ${shipmentBlocks}
+    <div class="totals"><div class="total-row grand"><span class="total-label">Grand Total (${currency})</span><span class="total-amt">${fmtCurr(grandTotal, currency)}</span></div></div>
+    ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`Statement — ${invNumber}`, "CUSTOMER STATEMENT", invNumber, invDate, body);
+};

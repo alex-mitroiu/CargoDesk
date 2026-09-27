@@ -661,6 +661,12 @@ const SETTING_DEFAULTS = {
   ais_provider:           'aisstream',
   ais_api_key:            '',
   api_eadapter_enabled:   'true',
+  // GL Export's 3 standing control accounts — a charge code with no gl_account_mappings row
+  // falls into gl_control_account_unmapped instead of silently dropping. 3 fixed keys don't earn
+  // a whole dedicated table; they ride the existing generic settings GET/PUT.
+  gl_control_account_ar:        '',
+  gl_control_account_ap:        '',
+  gl_control_account_unmapped:  '',
 };
 async function seedSettingDefaults() {
   await transaction(async (tx) => {
@@ -2198,11 +2204,17 @@ const {
   mapCustomerContact, mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate, mapContractRouting, mapCarrierInvoice, mapCarrierInvoiceLine,
   mapChargeDefaultSetup, mapChargeDefaultLine,
+  mapGlAccountMapping, mapGlExportBatch, mapCustomerStatement, mapCustomerStatementLine,
   mapQuote, mapQuoteLine, mapOpportunity,
   mapInvoiceReasonCode, mapInvoiceStatusOverride,
   mapEadapterConfig,
   mapLoopCode, mapLoopCodePort,
 } = createMappers({ portLanesMap, CUTOFF_WARNING_DAYS });
+
+// Needs costLineEffectiveUsd (just destructured above from createMappers) and getSettings (a
+// hoisted function declaration, safe to reference from anywhere in this module) — so this can't
+// sit up near applyChargeDefaults' own instantiation, which only needed query/uid.
+const { runGlExport } = require("./lib/gl-export")({ query, uid, costLineEffectiveUsd, getSettings });
 
 function matchesScopeItem(s, item) {
   if (item.item_type === 'trade_lane') {
@@ -3882,6 +3894,8 @@ const ctx = {
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate, mapContractRouting, mapCarrierInvoice, mapCarrierInvoiceLine,
   mapChargeDefaultSetup, mapChargeDefaultLine, applyChargeDefaults,
+  mapGlAccountMapping, mapGlExportBatch, runGlExport,
+  mapCustomerStatement, mapCustomerStatementLine,
   mapQuote, mapQuoteLine, mapOpportunity,
   mapInvoiceReasonCode, mapInvoiceStatusOverride,
   mapLoopCode, mapLoopCodePort,
@@ -3933,6 +3947,10 @@ require('./routes/shipping-instructions')(app, ctx);
 require('./routes/customers')(app, ctx);
 require('./routes/contracts')(app, ctx);
 require('./routes/charge-default-setups')(app, ctx);
+require('./routes/gl-account-mappings')(app, ctx);
+require('./routes/gl-export')(app, ctx);
+require('./routes/fx-revaluation')(app, ctx);
+require('./routes/customer-statements')(app, ctx);
 require('./routes/shipment-ops')(app, ctx);
 require('./routes/carrier-invoices')(app, ctx);
 require('./routes/quotes')(app, ctx);

@@ -7,6 +7,7 @@ import GpBreakdownPanel from "../components/shared/GpBreakdownPanel";
 import BillingPerformancePanel from "../components/shared/BillingPerformancePanel";
 import ScheduledReportsPanel from "../components/shared/ScheduledReportsPanel";
 import InvoiceCollectionsPanel from "../components/shared/InvoiceCollectionsPanel";
+import FxRevaluationPanel from "../components/shared/FxRevaluationPanel";
 import DatePicker from "../components/primitives/DatePicker";
 import Btn from "../components/primitives/Btn";
 
@@ -42,7 +43,7 @@ const ReportsPage = () => {
   // TKT-B4VBDH — Billing Performance joins GP by Trade Area as a second top-level tab on this
   // page rather than its own nav item, mirroring DashboardPage.jsx's own tab-bar pattern for
   // "several distinct reports under one nav entry."
-  const [tab, setTab] = useState("gp"); // "gp" | "billing" | "collections" | "scheduled"
+  const [tab, setTab] = useState("gp"); // "gp" | "billing" | "collections" | "fx" | "scheduled"
   const [groupBy, setGroupBy] = useState("region"); // "region" | "country" | "carrier"
   // Default window is today -> today+30 (a forward-looking "what's coming up" slice) rather
   // than all-time — "" still means no bound at all, reachable via Clear below, since an
@@ -108,6 +109,7 @@ const ReportsPage = () => {
     { key: "gp",         label: "GP by Trade Area",     financeOnly: false },
     { key: "billing",    label: "Billing Performance",  financeOnly: false },
     { key: "collections",label: "Invoice Collections",  financeOnly: false },
+    { key: "fx",         label: "FX Revaluation",       financeOnly: true },
     { key: "scheduled",  label: "Scheduled Reports",    financeOnly: true },
   ].filter(t => hasFinanceAccess || !t.financeOnly);
 
@@ -122,6 +124,8 @@ const ReportsPage = () => {
             ? "Every generated invoice, filterable by status, sent, payment, office, customer, trade lane, and carrier"
             : tab === "collections"
             ? "Every shipment's own invoice status — Paid, Not Paid, Overdue, Missing, or Cancelled — with automated alerts and Trade Manager override"
+            : tab === "fx"
+            ? "Unrealized gain/loss on open foreign-currency invoices, and realized gain/loss on paid ones"
             : "Reports that generate and email themselves automatically, on their own recurring cadence"}
         </p>
       </div>
@@ -142,6 +146,8 @@ const ReportsPage = () => {
         <BillingPerformancePanel />
       ) : tab === "collections" ? (
         <InvoiceCollectionsPanel />
+      ) : tab === "fx" ? (
+        <FxRevaluationPanel />
       ) : tab === "scheduled" ? (
         <ScheduledReportsPanel />
       ) : (

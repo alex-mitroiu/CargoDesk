@@ -6,7 +6,7 @@ Full-stack freight management app. React 18 + Vite frontend, Express + dual-back
 `lib/db.js`) backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.91.8 "Bastion"**
+- Version: **v0.91.9 "Reckoning"**
 - First-time setup: `npm run setup` (`scripts/setup.js`) — boots the server once to create its
   schema, shuts it down cleanly, then seeds MDM reference data, in the correct order. NOT
   zero-script — a genuinely fresh `pgdata/` has no ports/carriers/vessels/commodities until this
@@ -110,6 +110,34 @@ routes/
                      Principal/Movement Type + a Location dimension (Global, or exactly one of
                      Region/Country/Location per side, validated server-side). validateLines()
                      enforces the fixed BUY/SELL charge-code vocabulary and a non-negative amount
+  gl-account-mappings.js /api/gl-account-mappings/* (CRUD, trade_manager+ writes) — GL Export
+                     (v0.91.9, Master Data → Finance): Charge Code + Type (BUY/SELL) -> GL Account,
+                     UNIQUE(charge_code, type) since the same code posts to a different account per
+                     direction. The 3 standing control accounts (AR/AP/Unmapped) are NOT here —
+                     they ride the generic GET/PUT /api/settings as gl_control_account_ar/ap/unmapped
+  gl-export.js       POST /api/gl-export/run (admin/operator), GET /api/gl-export/batches — GL
+                     Export's run + history routes (v0.91.9, Financials -> GL Export); the actual
+                     matching/CSV-building logic lives in lib/gl-export.js, this file is thin
+  fx-revaluation.js  GET /api/fx-revaluation/summary (finance-only gate, own inline check — not
+                     requireRole, since it also admits a plain canViewFinance user) — FX
+                     Revaluation (v0.91.9, Reports -> FX Revaluation tab). Unrealized: confirmed
+                     unpaid non-USD invoices, booked value (costLineEffectiveUsd) vs. toUsd() at
+                     today's live rate. Realized: paid invoices with paid_amount_original set (see
+                     shipment-ops.js's mark-paid below), booked vs. paid_amount (already the USD
+                     equivalent by construction). Both loops skip a doc whose source cost lines
+                     can no longer be resolved (e.g. its shipment was since deleted) — a real bug,
+                     initially only guarded on the unrealized side, found by live verification
+  customer-statements.js /api/customer-statements/* — Consolidated Statement Billing (v0.91.9,
+                     Financials -> Statements): one billing document spanning several shipments
+                     for the same customer. GET .../eligible-lines is registered BEFORE the
+                     GET .../:id route (a real route-ordering bug this feature's own test suite
+                     caught — :id would otherwise swallow "eligible-lines" as an id). Eligibility
+                     excludes a SELL line already on a confirmed FR01/FR02/CN01
+                     (source_cost_line_ids) or already sitting on another non-voided statement; a
+                     voided statement's lines return to the pool. Same credit-hold/over-limit gate
+                     every other billing path enforces, no override path yet (unlike the
+                     per-shipment credit_overrides flow). Only a draft can be voided — reversing a
+                     CONFIRMED statement (across several shipments at once) isn't built
 lib/
   charge-defaults.js applyChargeDefaults(shipmentId) — Charge Defaults' matching+apply engine
                      (v0.91.8), called once from the top of GET /api/shipments/:id/cost-lines.
@@ -120,6 +148,14 @@ lib/
                      charge_code the shipment already has from any source (contract or manual).
                      Region resolves from port_locations.zone_code, NOT countries.region_code
                      (empty on all seeded countries — a real QA-found bug)
+  gl-export.js       runGlExport({dateFrom, dateTo, user}) (v0.91.9) — SELL recognized on invoice
+                     CONFIRM (shipment_documents, FR01/FR02/CN01 — no per-line "posted" concept
+                     maps as naturally to revenue recognition); BUY recognized on cost-line POST
+                     (no wrapping document at all). Marks every exported item
+                     (gl_exported_at/gl_export_batch_id on shipment_documents/shipment_cost_lines)
+                     so a re-run of the same date range only picks up what's new; one row per
+                     run in gl_export_batches is the permanent audit trail. toCsv() output is a
+                     plain generic journal-entry CSV, not a live push to any one accounting system
   tableQuery.js      Shared server-side table engine (v0.91.5) — applyColumnFilters / filterOptions /
                      applySearch / applySort / paginate over an already access-filtered row set.
                      Filter params arrive as REPEATED keys (`?status=Draft&status=Sent`), never
@@ -582,7 +618,7 @@ The original inline routes remain in server.js as **dead code** (route files reg
 Express uses first-match). They act as a fallback and can be deleted once the extracted routes
 are fully validated.
 
-## Database — 64 tables listed below (77 total as of v0.70.0 — see the About page's Architectural Details tab, or `ARCHITECTURE.md` §6, for the full domain-grouped list)
+## Database — 65 tables listed below (106 total, remeasured via `grep -c "CREATE TABLE IF NOT EXISTS" lib/schema.js` — see the About page's Architectural Details tab, or `ARCHITECTURE.md` §6, for the full domain-grouped list)
 | Table | Purpose |
 |---|---|
 | shipments | Core shipment records |
@@ -607,6 +643,10 @@ are fully validated.
 | charge_default_setups | Charge Defaults (v0.91.8) — a predefined BUY/SELL charge-line bundle scoped by optional `principal_id`/`movement_type` + a location dimension (`location_global` boolean, or exactly one of origin/dest region/country/location, enforced on save) |
 | charge_default_lines | The setup's own charge/cost lines (type, charge_code from the fixed vocabulary, description, currency, amount, sort_order) — copied into `shipment_cost_lines` (`source='principal_default'`) on first match, never referenced live afterward |
 | shipment_charge_defaults_applied | One row per shipment (`shipment_id` PRIMARY KEY, FK'd, ON DELETE CASCADE) — idempotency marker so a shipment's defaults are computed and applied at most once, even from concurrent requests (claimed atomically via `INSERT ... ON CONFLICT DO NOTHING`, see `lib/charge-defaults.js`) |
+| gl_account_mappings | GL Export (v0.91.9) — Charge Code + Type (BUY/SELL) → GL Account, `UNIQUE(charge_code, type)`. The 3 standing control accounts (AR/AP/Unmapped) live on `app_settings` instead — 3 fixed keys don't earn a table |
+| gl_export_batches | One row per completed GL export run (v0.91.9) — permanent audit trail (date range, row count, total debit/credit, unmapped count); never deleted, a re-export of the same range is a new batch, not an overwrite |
+| customer_statements | Consolidated Statement Billing (v0.91.9) — one billing document spanning several shipments for the same customer; `customer_id` plain TEXT, no FK (matches `shipments.principal_id`'s own convention). Carries its own `filename`/`stored_name`/`size_bytes` — `shipment_documents` is hard-FK'd to one shipment so couldn't be reused |
+| customer_statement_lines | Snapshot rows (`shipment_id`/`cost_line_id` plain TEXT, no FK — same soft-reference idiom as `shipment_documents.source_cost_line_ids`) so a later shipment/container edit never retroactively changes what an already-generated statement says it billed |
 | quotes | Quoting/RFQ pre-booking stage (v0.70.0) — precedes and converts into a real shipment. Lifecycle Draft (editable) -> Sent (locked, needs `valid_until` + 1+ lines) -> Accepted \| Declined \| Expired (hourly `expireStaleQuotes()` sweep, mirrors `expireStaleContracts`) -> Converted (Accepted only). `contract_id`/`contract_ref` optional — set when a matched contract was used as a pricing reference, not a hard link. `office_id` (v0.91.1, User Management redesign) — bare, no FK (matches `shipments.emo_office_id`'s own convention); office-scopes visibility via `applyOfficeScopedAccessFilter`, previously had NONE at all. On conversion resolves to the new shipment's `emo_office_id`/`imo_office_id` per that office's `department`. `quote_lines.quantity` must be a positive finite number (v0.91.1) — `0`/negative used to silently coerce to `1` or flow straight into negative SELL revenue on conversion |
 | quote_lines | The quote's own customer-facing SELL price per line — kept independent of the referenced contract's live rate (a quote commonly already has margin added). On conversion, each becomes a new `shipment_cost_lines` SELL row, `source='quote'`, while the BUY side still comes from `importContractRates()` unchanged if a contract was referenced |
 | opportunities | CRM pre-sales pipeline (v0.85.0) — precedes and converts into a real quote. Lifecycle New (editable) -> Qualified (editable) -> Converted (to Quote, Qualified only) \| Lost (from New or Qualified). No line-item child table — pre-pricing, real line-item detail belongs on the Quote it converts into. Only `title` is required; `customer_id` is optional (the same unresolved-customer pattern `quotes.customer_id` already established). `office_id` (v0.91.1) — same convention/purpose as `quotes.office_id`, carried into the new quote on conversion |
@@ -657,6 +697,8 @@ are fully validated.
 - **Office-side write gating (Epic TKT-Z0LB0W, v0.91.7)**: every shipment carries a computed `myOfficeSide` field (`"export"`/`"import"`/`"unrestricted"`, from `officeSideOf` in server.js, relative to the requesting user's own office) — the one thing every write route on a fixed-side page (Schedules, Cargo, Carrier Booking, Shipping Instructions) checks via `blockIfWrongSide` before accepting an edit. `src/utils/officeSide.js`'s `canEditShipmentSide(auth, shipment, side)` is the single client-side mirror every consuming page imports — never reimplement this check locally, that's exactly the "two engines computing the same permission and drifting apart" bug class this codebase has hit before. Container Events, and Cost Lines' own writes, are deliberately NOT side-gated (shared/unrestricted by design); Export/Import Services and Customs Filing gate by the record's own side instead of the page as a whole. `tests/office-side-permissions.test.js` is the regression suite covering all of it.
 - **Charge Defaults (v0.91.8)**: `lib/charge-defaults.js`'s `applyChargeDefaults(shipmentId)`, called once from the top of `GET /api/shipments/:id/cost-lines`. A setup scopes by optional Principal/Movement Type + a Location dimension (Global, or exactly one of Region/Country/Location per side — enforced server-side, and rendered as 3 dedicated fields per side with live mutual-exclusion, never one smart lookup, per direct request: "some people can barely turn on a computer"). Matching picks the most-specific-of-3-groups, ties broken by most-recently-updated; skips any type+charge_code the shipment already has from any source. Region comes from `port_locations.zone_code`, not `countries.region_code` (empty on every seeded country).
 - **Idempotent-per-row side effect: claim atomically, don't check-then-act**: when a function must run its side effect at most once per key (row) even under concurrent callers, don't `SELECT` to check then `INSERT` to mark — two callers can both pass the check before either inserts. Instead `INSERT ... ON CONFLICT (key) DO NOTHING RETURNING key` first; only the caller that gets a row back proceeds, everyone else returns immediately. `applyChargeDefaults` is the precedent (claims `shipment_charge_defaults_applied.shipment_id`, a real primary key, before computing anything) — reuse this shape for the next "run once per X" requirement rather than a fresh SELECT-then-INSERT.
+- **Register a specific route before a `:id` wildcard on the SAME resource — every time, no exceptions**: Express matches by registration order; `app.get("/api/foo/:id", ...)` registered before `app.get("/api/foo/bar", ...)` swallows a request for literally `/api/foo/bar` as if `"bar"` were an id. This exact mistake has now been made and caught twice on two different resources (`/api/shipments/compliance-hits` vs `/api/shipments/:id`; `/api/customer-statements/eligible-lines` vs `/api/customer-statements/:id`, v0.91.9) — the second time, in code written specifically to avoid the first. When adding any literal-path route alongside an existing `:id` route on the same base path, register the literal one first, and say so in a comment right there, not just in a memory of the first incident.
+- **GL Export / FX Revaluation / Consolidated Statement Billing (v0.91.9)**: three financial-integration features, none replacing an existing workflow. GL Export (`lib/gl-export.js`) turns confirmed SELL invoices (`shipment_documents`, recognized on **confirm** — no per-line "posted" concept maps as naturally to revenue recognition) and posted BUY cost lines (recognized on **post** — no wrapping document at all) into a generic journal-entry CSV, via an admin-maintained Charge Code+Type→GL Account mapping (`gl_account_mappings`) plus 3 standing control accounts riding the generic Application Settings. FX Revaluation (`routes/fx-revaluation.js`) reports unrealized gain/loss (booked value vs. `toUsd()` at today's live rate) and realized gain/loss, the latter needing Mark as Paid extended with 3 new, fully optional columns (`paid_amount_original`/`paid_currency`/`paid_exchange_rate`) capturing what was actually received in the invoice's own currency — omitted, the route/modal behave byte-identical to before. Consolidated Statement Billing (`customer_statements`/`customer_statement_lines`) bills a customer once across several shipments; eligibility excludes anything already on a confirmed per-shipment invoice or another live statement. All three found real bugs via their own test suites or live verification, not review — see this version's own CHANGELOG entry for the full list.
 - **A colour/style lookup built from `HZ`/`T` must be a function, never a plain object (v0.91.7)**: both are mutable objects swapped in place by the theme toggle (`applyHzTheme`/`applyTheme`, no reload) — `const STATUS_COLOR = { Requested: HZ.warn, ... }` at module scope reads `HZ.warn` exactly once, at import time, and silently keeps that value forever regardless of later theme switches. Write it as `const statusColor = status => ({ Requested: HZ.warn, ... }[status])` instead, so each call re-reads the live object. Found and fixed in `ServicesPanel.jsx`, `DocumentsModal.jsx`, `CarrierBookingsTable.jsx` and `ShipmentDetailPage.jsx`'s `CostLineRow` helpers; the Customs Filing Details/Review pages' own `STATUS_COLOR` already used the safe form (storing the token *name*, e.g. `"cyan"`, and resolving `HZ[name]` at render time) — match that shape when in doubt.
 - **PortCombobox dropdown**: always `position: fixed` with `getBoundingClientRect()` to escape modal `overflow:auto` — `CarrierCombobox` and `DatePicker` (as of v0.40.1) follow the same pattern; any *new* dropdown/popover primitive should too, rather than `position: absolute`, which breaks the moment it lands inside any scrolling/clipped container
 - **Paginated responses**: `api.ports.search(...)` returns `{ results: [], total, limit, offset }` — always use `.results`
@@ -699,6 +741,44 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.91.9 "Reckoning")
+Bundled release — three new financial-integration features, none replacing an existing workflow.
+- **GL Export** (`lib/gl-export.js`, `routes/gl-account-mappings.js`, `routes/gl-export.js`,
+  Master Data → Finance + Financials → GL Export) — an admin-maintained Charge Code + Type
+  (BUY/SELL) → GL Account mapping (a charge code with no mapping falls into a standing
+  Unmapped/Suspense control account); 2 more standing control accounts (AR, AP), all 3 riding the
+  generic Application Settings rather than a dedicated table. SELL recognized on invoice
+  **confirm** (`shipment_documents`, FR01/FR02/CN01); BUY recognized on cost-line **post**. Every
+  exported item is marked (`gl_exported_at`/`gl_export_batch_id`) so re-running a date range only
+  picks up what's new; `gl_export_batches` is the permanent run-history audit trail. Output is a
+  plain, generic journal-entry CSV — importable anywhere, not a live push to one specific system.
+- **FX Revaluation** (`routes/fx-revaluation.js`, Reports → FX Revaluation tab, finance-only) —
+  unrealized gain/loss (booked value at generation vs. today's live rate) and realized gain/loss.
+  Realized needed **Mark as Paid** extended first (`ShipmentAccountingInvoicesPage.jsx`,
+  `routes/shipment-ops.js`) — 3 new, fully optional columns capturing what was actually received
+  in the invoice's own currency and that day's rate; left blank, byte-identical to before. Report
+  only — no journal entries; that's GL Export's job.
+- **Consolidated Statement Billing** (`customer_statements`/`customer_statement_lines`,
+  `routes/customer-statements.js`, `CustomerStatementsPage.jsx`, Financials → Statements) — bill a
+  customer once across several shipments instead of one invoice per shipment. Eligible-lines
+  preview excludes anything already on a confirmed per-shipment invoice/credit-debit note or
+  another live (non-voided) statement; same credit-hold/over-limit gate every other billing path
+  enforces. Manual, on-demand only. A confirmed statement can't yet be voided/reversed (real,
+  disclosed v1 limitation) and only accepts a single currency per statement.
+- **Three real bugs, two found by the new test suite, one by live verification after tests
+  passed** — an `eligible-lines` route registered after the resource's own `:id` wildcard was
+  silently swallowed by it (the exact "specific route before `:id`" mistake this codebase has hit
+  before, this time in code written for this same release — now a named Key pattern above so it
+  stops recurring); a `$3,$4`-offset placeholder string built for one query was mistakenly reused
+  in a second query binding only 2 values (Postgres/pglite can't type-infer the unreferenced
+  `$1`/`$2`); the realized-gain/loss loop didn't skip a document whose cost lines could no longer
+  be resolved (its shipment had been deleted — `shipment_documents` has no cascade relationship
+  with `shipments`), fabricating a full "gain" against a $0 booked value.
+- **Verification** — every touched file `node --check`ed, clean `vite build`; 96 new assertions
+  across 3 new suites (`gl-export` 24, `fx-revaluation` 22, `customer-statements` 27) all passing,
+  plus 114 adjacent regression assertions re-run clean. Live browser pass confirmed all 4 new
+  pages render real data with no console errors, and is what caught the third bug above.
 
 ## Recent changes (v0.91.8 "Bastion")
 Bundled release — a new Charge Defaults engine, seven newly-editable Shipment Conditions fields, a

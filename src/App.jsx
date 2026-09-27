@@ -96,6 +96,7 @@ import MdmCommoditiesPage     from "./pages/mdm/MdmCommoditiesPage";
 import MdmHsCodesPage         from "./pages/mdm/MdmHsCodesPage";
 import MdmChargeCodesPage     from "./pages/mdm/MdmChargeCodesPage";
 import MdmChargeDefaultsPage  from "./pages/mdm/MdmChargeDefaultsPage";
+import MdmGlAccountMappingsPage from "./pages/mdm/MdmGlAccountMappingsPage";
 import MdmDutyRatesPage       from "./pages/mdm/MdmDutyRatesPage";
 import MdmPackTypesPage       from "./pages/mdm/MdmPackTypesPage";
 import MdmInvoiceReasonCodesPage from "./pages/mdm/MdmInvoiceReasonCodesPage";
@@ -104,6 +105,8 @@ import MdmContainerTypesPage  from "./pages/mdm/MdmContainerTypesPage";
 import MdmEquipmentPage       from "./pages/mdm/MdmEquipmentPage";
 import MdmFinancePage         from "./pages/mdm/MdmFinancePage";
 import FinancialsPage         from "./pages/FinancialsPage";
+import CustomerStatementsPage from "./pages/CustomerStatementsPage";
+import GlExportPage           from "./pages/GlExportPage";
 import { FINANCIALS_PAGES, visibleFinancialsPages } from "./utils/financialsNav";
 import MdmLocationsPage       from "./pages/mdm/MdmLocationsPage";
 import MdmCustomersPage           from "./pages/mdm/MdmCustomersPage";
@@ -167,8 +170,10 @@ function App() {
     "dashboard-archive":"api_shipments_enabled",
     "freight-audit":   "api_shipments_enabled",
     "credit-overrides":"api_shipments_enabled",
+    "customer-statements": "api_shipments_enabled",
+    "gl-export":       "api_shipments_enabled",
     reports:           "api_shipments_enabled",
-    financials:        "api_shipments_enabled",   // the hub over Quotes/Opportunities/Reports/Freight Audit/Credit Overrides
+    financials:        "api_shipments_enabled",   // the hub over Quotes/Opportunities/Reports/Freight Audit/Credit Overrides/Statements/GL Export
     // Promoted shipment sub-pages inherit the same gate "detail" uses — otherwise
     // disabling the Shipments module only hides Overview, not Cargo/Accounting/etc.
     // Flat (non-Accounting) entries come from the shared config; Accounting's own
@@ -710,7 +715,7 @@ function App() {
   }, [authLoading, user, page]);
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-carrier-integrations", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-loop-map-explorer", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-charge-defaults", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-carrier-integrations", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-loop-map-explorer", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-charge-defaults", "mdm-gl-account-mappings", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
@@ -785,6 +790,8 @@ function App() {
     "dashboard-archive": "Dashboard — Archive",
     "freight-audit":     "Freight Audit & Payment",
     "credit-overrides":  "Credit Overrides",
+    "customer-statements": "Statements",
+    "gl-export":         "GL Export",
     kanban:             "Integration Board",
     "test-tools":       "Test Tools",
     "user-manual":      "User Manual",
@@ -811,6 +818,7 @@ function App() {
     "mdm-finance": "Master Data — Finance",
     "mdm-charge-codes": "Master Data — Automated Charge Codes",
     "mdm-charge-defaults": "Master Data — Charge Defaults",
+    "mdm-gl-account-mappings": "Master Data — GL Account Mappings",
     "mdm-duty-rates": "Master Data — Duty Rate Chapters",
     "mdm-equipment": "Master Data — Equipment",
     "mdm-pack-types": "Master Data — Pack Types",
@@ -1783,6 +1791,8 @@ function App() {
     reports:            { icon: IconChartBar,        label: "Reports" },
     "freight-audit":    { icon: IconFileCertificate, label: "Freight Audit" },
     "credit-overrides": { icon: IconWarning,         label: "Credit Overrides" },
+    "customer-statements": { icon: IconReceipt,      label: "Statements" },
+    "gl-export":        { icon: IconCoin,            label: "GL Export" },
   };
 
   return (
@@ -1954,6 +1964,7 @@ function App() {
                     <>
                       <NavBtn pageKey="mdm-charge-codes" icon={IconTag} label="Charge Codes"    subIndent />
                       <NavBtn pageKey="mdm-charge-defaults" icon={IconReceipt} label="Charge Defaults" subIndent />
+                      <NavBtn pageKey="mdm-gl-account-mappings" icon={IconCoin} label="GL Account Mappings" subIndent />
                       <NavBtn pageKey="mdm-duty-rates" icon={IconCoin} label="Duty Rate Chapters" subIndent />
                       <NavBtn pageKey="mdm-invoice-reason-codes" icon={IconTag} label="Invoice Reason Codes" subIndent />
                     </>
@@ -2358,6 +2369,10 @@ function App() {
 
         {page === "credit-overrides" && <CreditOverridesPage />}
 
+        {page === "customer-statements" && <CustomerStatementsPage />}
+
+        {page === "gl-export" && <GlExportPage />}
+
         {/* MDM pages */}
         {page === "mdm-carriers" && isEnabled("mdm-carriers") && (
           <MdmCarriersPage
@@ -2392,6 +2407,7 @@ function App() {
         {page === "mdm-locations"&&                                   <MdmLocationsPage navigate={navigate} />}
         {page === "mdm-charge-codes"&&                                <MdmChargeCodesPage />}
         {page === "mdm-charge-defaults"&&                             <MdmChargeDefaultsPage />}
+        {page === "mdm-gl-account-mappings"&&                         <MdmGlAccountMappingsPage />}
         {page === "mdm-duty-rates"&&                                  <MdmDutyRatesPage />}
         {page === "mdm-equipment"&&                                   <MdmEquipmentPage navigate={navigate} />}
         {page === "mdm-pack-types"&&                                  <MdmPackTypesPage />}
