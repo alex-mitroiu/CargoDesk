@@ -39,12 +39,19 @@ function assert(label, condition, detail = "") {
 }
 
 (async () => {
-  let token; const cleanup = { shipments: [], allocations: [], contracts: [] };
+  let token; const cleanup = { shipments: [], allocations: [], contracts: [], customers: [] };
   try {
     token = (await request("POST", "/api/auth/login", { email: "claudeagent@localhost", password: "TestFixture!2026Zq" })).body.token;
     const { emoOfficeId, imoOfficeId } = await ensureOffices(token);
-    const custList = await request("GET", "/api/customers?limit=3", null, token);
-    const [acme, other] = custList.body.results || custList.body;
+    // Own customers, not the first ones listed: CI starts from an empty database with none.
+    const newCustomer = async companyName => {
+      const r = await request("POST", "/api/customers", { companyName }, token);
+      if (!r.body.id) throw new Error(`customer ${companyName}: ${JSON.stringify(r.body)}`);
+      cleanup.customers.push(r.body.id);
+      return r.body;
+    };
+    const acme = await newCustomer("Space Lines Acme BV");
+    const other = await newCustomer("Space Lines Other Inc");
 
     console.log("\nScratch contract: three routing lines, two loops, two commodities, Q4 validity");
     const contract = await request("POST", "/api/contracts", {
@@ -149,5 +156,6 @@ function assert(label, condition, detail = "") {
     for (const id of cleanup.shipments) { try { await request("DELETE", `/api/shipments/${id}`, null, token); } catch {} }
     for (const id of cleanup.allocations) { try { await request("DELETE", `/api/allocations/${id}`, null, token); } catch {} }
     for (const id of cleanup.contracts) { try { await request("DELETE", `/api/contracts/${id}`, null, token); } catch {} }
+    for (const id of cleanup.customers) { try { await request("DELETE", `/api/customers/${id}`, null, token); } catch {} }
   }
 })();

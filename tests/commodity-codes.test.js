@@ -37,7 +37,7 @@ function assert(label, condition, detail = "") {
 }
 
 (async () => {
-  let token; const cleanup = { shipments: [], quotes: [], opportunities: [], contracts: [] };
+  let token; const cleanup = { shipments: [], quotes: [], opportunities: [], contracts: [], customers: [] };
   try {
     const login = await request("POST", "/api/auth/login", { email: "claudeagent@localhost", password: "TestFixture!2026Zq" });
     token = login.body.token;
@@ -51,13 +51,20 @@ function assert(label, condition, detail = "") {
     assert("scratch contract created with a registry commodity", contract.status === 201 && contract.body.commodityTypes === "001404", JSON.stringify(contract.body.commodityTypes));
     cleanup.contracts.push(contract.body.id);
 
-    const customers = await request("GET", "/api/customers?limit=2", null, token);
-    const [shipper, consignee] = customers.body.results || customers.body;
+    // Own customers, not the first ones listed: CI starts from an empty database with none.
+    const newCustomer = async companyName => {
+      const r = await request("POST", "/api/customers", { companyName }, token);
+      if (!r.body.id) throw new Error(`customer ${companyName}: ${JSON.stringify(r.body)}`);
+      cleanup.customers.push(r.body.id);
+      return r.body;
+    };
+    const shipper = await newCustomer("Commodity Codes Shipper BV");
+    const consignee = await newCustomer("Commodity Codes Consignee Inc");
     const shipment = code => ({
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "Central", contractId: contract.body.id,
       etd: "2026-11-02", eta: "2026-11-14", incoterm: "FOB", commodityCode: code,
-      shipperId: shipper?.id || "", shipperName: shipper?.companyName || "", consigneeId: consignee?.id || "", consigneeName: consignee?.companyName || "",
-      principalId: shipper?.id || "", principalName: shipper?.companyName || "", emoOfficeId, imoOfficeId,
+      shipperId: shipper.id, shipperName: shipper.companyName, consigneeId: consignee.id, consigneeName: consignee.companyName,
+      principalId: shipper.id, principalName: shipper.companyName, emoOfficeId, imoOfficeId,
     });
 
     console.log("\nShipments");
@@ -101,5 +108,6 @@ function assert(label, condition, detail = "") {
     for (const id of cleanup.quotes) { try { await request("DELETE", `/api/quotes/${id}`, null, token); } catch {} }
     for (const id of cleanup.opportunities) { try { await request("DELETE", `/api/opportunities/${id}`, null, token); } catch {} }
     for (const id of cleanup.contracts) { try { await request("DELETE", `/api/contracts/${id}`, null, token); } catch {} }
+    for (const id of cleanup.customers) { try { await request("DELETE", `/api/customers/${id}`, null, token); } catch {} }
   }
 })();

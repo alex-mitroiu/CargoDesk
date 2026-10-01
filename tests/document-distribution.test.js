@@ -110,8 +110,11 @@ async function scratchShipment(token) {
     const offices = await request("GET", "/api/offices", null, token);
     // Offices are tenant/org-specific data, never MDM-seeded (unlike ports/carriers/vessels) —
     // a genuinely fresh environment (every CI run) has none at all. Create a scratch one rather
-    // than assuming a pre-existing office, same as every other fixture in this file.
-    let officeId = offices.body[0]?.id;
+    // than assuming a pre-existing office, same as every other fixture in this file. Only an
+    // ACTIVE one: suites whose shipments billed a customer deactivate their scratch office
+    // instead of deleting it (tests/helpers/offices.mjs retireOffice), and an inactive office
+    // can't be assigned.
+    let officeId = (offices.body || []).find(o => o.isActive)?.id;
     let scratchOfficeId = null;
     if (!officeId) {
       const newOffice = await request("POST", "/api/offices",

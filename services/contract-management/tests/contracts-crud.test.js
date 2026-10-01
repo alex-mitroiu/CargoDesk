@@ -79,7 +79,10 @@ function assert(label, condition, detail = "") {
     const contractId = create.body.id;
     cleanupIds.push(contractId);
     assert("contractNumber round-trips", create.body.contractNumber === num);
-    assert("routings array empty", create.body.routings.length === 0);
+    // No named routings sent, but every leg now belongs to a routing line (lib/routingLines.js):
+    // the single leg becomes the contract's one line.
+    assert("its leg becomes one routing line", create.body.routings.length === 1
+      && create.body.legs.every(l => l.routingId === create.body.routings[0].id), JSON.stringify(create.body.routings));
 
     console.log("\nDuplicate contractNumber+ref+account is rejected");
     const dup = await request("POST", "/internal/contracts", {
