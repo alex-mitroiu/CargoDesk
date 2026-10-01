@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
 import useSaving from "../../hooks/useSaving";
+import { presetChoices, takenCodes, summarizeChoices } from "../../utils/reconcileChoices";
 import { T, INCOTERMS_2020, teuOf,
          statusVariant, contractVariant, IMDG_CLASSES,
          worstComplianceState, CUTOFF_STATE_VARIANT, COMPLIANCE_STATE_LABEL } from "../../tokens";
@@ -2573,6 +2574,7 @@ export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockTyp
   const [amount,       setAmount]       = useState(init.amount       != null ? String(init.amount) : "");
   const [exchangeRate, setExchangeRate] = useState(init.exchangeRate != null ? String(init.exchangeRate) : "1");
   const [vatRate,      setVatRate]      = useState(init.vatRate      != null ? String(init.vatRate) : "0");
+  const [vatTreatment, setVatTreatment] = useState(init.vatTreatment || "standard");
   const [notes,        setNotes]        = useState(init.notes        || "");
   const [containerId,  setContainerId]  = useState(init.containerId  || "");
   const [paymentIndicator, setPaymentIndicator] = useState(init.paymentIndicator || "Prepaid");
@@ -2600,9 +2602,11 @@ export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockTyp
 
   const amtNum  = parseFloat(amount)       || 0;
   const rateNum = parseFloat(exchangeRate) || 1;
-  const vatNum  = parseFloat(vatRate)      || 0;
+  // A zero-rated / reverse-charged / exempt line never carries a rate — the server forces it to 0
+  // too; mirrored here so the preview can't show VAT the saved line won't have.
+  const vatNum  = vatTreatment === "standard" ? (parseFloat(vatRate) || 0) : 0;
   const amtUsd  = Math.round(amtNum * rateNum * 100) / 100;
-  const vatUsd  = type === "SELL" ? Math.round(amtUsd * vatNum / 100 * 100) / 100 : 0;
+  const vatUsd  = Math.round(amtUsd * vatNum / 100 * 100) / 100;
   const valid   = amtNum > 0 && chargeCode;
 
   const lbl = { fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600, color: HZ.textMuted,
@@ -2653,20 +2657,35 @@ export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockTyp
           ≈ {fmtUsd(amtUsd)} USD at rate {rateNum}
         </div>
       )}
-      {type === "SELL" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 12, alignItems: "end" }}>
-          <div>
-            <div style={lbl}>VAT Rate (%)</div>
-            <input type="number" min="0" max="100" step="0.1" value={vatRate}
-              onChange={e => setVatRate(e.target.value)} placeholder="0" style={inp} />
-          </div>
-          {vatNum > 0 && (
-            <div style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted, paddingBottom: 9 }}>
-              VAT: {fmtUsd(vatUsd)} — Total incl. VAT: {fmtUsd(amtUsd + vatUsd)}
-            </div>
-          )}
+      {/* Both directions: output VAT on a SELL line (charged to the customer), input VAT on a
+          BUY line (paid to a vendor, reclaimable) — the VAT Liability report nets one against the
+          other. BUY lines used to have no VAT field at all. */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 12, alignItems: "end" }}>
+        <div>
+          <div style={lbl}>VAT Treatment</div>
+          <select id="costline-vat-treatment" value={vatTreatment} onChange={e => setVatTreatment(e.target.value)} style={inp}>
+            <option value="standard">Standard</option>
+            <option value="zero_rated">Zero-rated</option>
+            <option value="reverse_charge">Reverse charge</option>
+            <option value="exempt">Exempt</option>
+          </select>
         </div>
-      )}
+        <div>
+          <div style={lbl}>{type === "SELL" ? "Output VAT (%)" : "Input VAT (%)"}</div>
+          <input id="costline-vat-rate" type="number" min="0" max="100" step="0.1"
+            value={vatTreatment === "standard" ? vatRate : "0"}
+            disabled={vatTreatment !== "standard"}
+            onChange={e => setVatRate(e.target.value)} placeholder="0"
+            style={{ ...inp, ...(vatTreatment !== "standard" ? { opacity: 0.5, cursor: "not-allowed" } : {}) }} />
+        </div>
+        <div style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted, paddingBottom: 9 }}>
+          {vatTreatment === "reverse_charge"
+            ? (type === "SELL" ? "Customer accounts for the VAT — noted on the invoice" : "You self-assess this VAT")
+            : vatTreatment === "zero_rated" ? "Taxable at 0% — still reported"
+            : vatTreatment === "exempt" ? "Outside VAT — reported separately"
+            : vatNum > 0 ? `VAT: ${fmtUsd(vatUsd)} — Total incl. VAT: ${fmtUsd(amtUsd + vatUsd)}` : ""}
+        </div>
+      </div>
       {containers.length > 0 && (
         <div>
           <div style={lbl}>Container <span style={{ fontWeight: 400, color: HZ.textMuted, textTransform: "none", letterSpacing: 0 }}>(optional — leave blank for shipment-level)</span></div>
@@ -2696,12 +2715,12 @@ export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockTyp
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
         <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
         <Btn variant="secondary"
-          onClick={() => submit(() => onSaveAndMirror({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, notes, containerId, paymentIndicator }))}
+          onClick={() => submit(() => onSaveAndMirror({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, vatTreatment, notes, containerId, paymentIndicator }))}
           disabled={!valid || saving}
           title={`Save this line and create a mirrored ${type === "BUY" ? "SELL" : "BUY"} line with the same values`}>
           {saving ? "Saving…" : `⇄ Mirror as ${type === "BUY" ? "SELL" : "BUY"}`}
         </Btn>
-        <Btn onClick={() => submit(() => onSave({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, notes, containerId, paymentIndicator }))} disabled={!valid || saving}>
+        <Btn onClick={() => submit(() => onSave({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, vatTreatment, notes, containerId, paymentIndicator }))} disabled={!valid || saving}>
           {saving ? "Saving…" : (isEdit ? "Save Changes" : "Add Line")}
         </Btn>
       </div>
@@ -2925,7 +2944,7 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
     : l.source === "contract" ? { label: "Contract", color: HZ.info }
     : l.source === "mirror" ? { label: l.type === "SELL" ? "Mirrored ← Cost Entry" : "Mirrored ← Invoice Entry", color: HZ.violet }
     : l.source === "automated" ? { label: "Automated", color: HZ.good }
-    : l.source === "principal_default" ? { label: "Default", color: HZ.cyan }
+    : l.source === "principal_default" ? { label: "CCD", title: "Charge Cost Default", color: HZ.cyan }
     : l.source === "reversal" ? { label: "Reversal", color: HZ.crit }
     : l.source === "adjustment" ? { label: "Adjustment", color: HZ.warn }
     : l.source === "merchant_haulage" ? { label: "Merchant's Haulage", color: HZ.amber }
@@ -2948,11 +2967,15 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
         <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
           <span style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.chargeCode}</span>
-          {l.type === "SELL" && l.vatRate > 0 && (
-            <span style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, color: HZ.info,
+          {(l.vatRate > 0 || (l.vatTreatment && l.vatTreatment !== "standard")) && (
+            <span title={l.type === "SELL" ? "Output VAT — charged to the customer" : "Input VAT — paid to the vendor"}
+              style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, color: HZ.info,
               background: HZ.infoBg, border: `1px solid ${HZ.info}44`,
               borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
-              VAT {l.vatRate}%
+              {l.vatTreatment === "zero_rated" ? "VAT 0% ZERO-RATED"
+                : l.vatTreatment === "reverse_charge" ? "REVERSE CHARGE"
+                : l.vatTreatment === "exempt" ? "VAT EXEMPT"
+                : `${l.type === "BUY" ? "INPUT " : ""}VAT ${l.vatRate}%`}
             </span>
           )}
           {l.paymentIndicator === "Collect" && (
@@ -2961,6 +2984,16 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
               background: HZ.warnBg, border: `1px solid ${HZ.warn}44`,
               borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
               COLLECT
+            </span>
+          )}
+          {l.billedOn && (
+            // One SELL line, one live billing document (TKT-2F19XD) — a new invoice leaves it out.
+            <span data-testid={`costline-${l.id}-billed-on`}
+              title={`Billed on ${l.billedOn.kind === "statement" ? `statement ${l.billedOn.id}` : (l.billedOn.label || l.billedOn.id)} (${l.billedOn.status}) — left out of new invoices`}
+              style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, color: HZ.good,
+              background: HZ.good + "22", border: `1px solid ${HZ.good}44`,
+              borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
+              BILLED · {l.billedOn.kind === "statement" ? l.billedOn.id : `${l.billedOn.docType}${l.billedOn.status === "draft" ? " DRAFT" : ""}`}
             </span>
           )}
         </div>
@@ -2975,7 +3008,8 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
         <td style={{ padding: "9px 14px" }}>
           <span style={{ fontFamily: HZ_BODY, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".03em",
             color: src.color, background: src.color + "22",
-            borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap" }}>
+            borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap", cursor: src.title ? "help" : undefined }}
+            title={src.title}>
             {src.label}
           </span>
         </td>
@@ -3100,69 +3134,117 @@ export const CostLineAdjustModal = ({ line, onSave, onClose }) => {
   );
 };
 
-// ─── Reconcile Carrier Costs modal (2026-09-06) ────────────────────────────────
-// Shared by both "Import from Contract" and "Update Carrier Costs" (ShipmentAccountingCostsPage) —
-// they compare against different rate sources (mode 'import' = the shipment's own already-issued
-// snapshot, mode 'update' = the contract's current live rates) but share the exact same
-// preview/decide/apply shape. Always shown, even when nothing conflicts, per direct decision —
-// consistency over skipping the modal on a "nothing to do" preview. Real finding behind this:
-// SHP-WKX04E had a contract-sourced cost line silently re-overwritten every time carrier costs
-// were refreshed, since a manual correction was never distinguishable from an untouched line.
 const RECONCILE_STATUS = {
-  match:   { label: "Match",                 variant: "success" },
-  changed: { label: "Contract rate changed", variant: "info" },
-  manual:  { label: "Manual override",       variant: "manual" },
-  new:     { label: "New on contract",       variant: "info" },
-  removed: { label: "Removed from contract", variant: "danger" },
+  match:   { label: "Match",                  color: "good" },
+  changed: { label: "Contract rate changed",  color: "info" },
+  manual:  { label: "Manual override",        color: "cyan" },
+  new:     { label: "New on contract",        color: "info" },
+  removed: { label: "Removed from contract",  color: "crit" },
+  locked:  { label: "Locked",                 color: "warn" },
+  kept:    { label: "Not on contract — kept", color: "textMuted" },
 };
-// HZ-token equivalent of the variants above — ReconcileCarrierCostsModal renders its own pill
-// (Badge is hardcoded to the base app's T tokens and shared app-wide) now that it's on Trade
-// Horizon tokens alongside the rest of Cost Entry (Accounting Tabs Restyle). Stores the HZ.*
-// KEY, not the resolved value — HZ is a live-mutated object (theme toggle calls applyHzTheme
-// in place, no reload), so resolving via HZ[key] at render time is required; a plain object of
-// resolved values here would freeze whichever theme was active at module import.
-const RECONCILE_HZ_COLOR_KEY = { match: "good", changed: "info", manual: "cyan", new: "info", removed: "crit" };
+// Colors are HZ.* KEYS resolved at render time — HZ is mutated in place on a theme toggle, so
+// resolved values captured at module import would freeze whichever theme was active then.
+const RECONCILE_SOURCE_CHIP = {
+  contract: { label: "Contract", color: "info" },
+  manual: { label: "Manual", color: "textMuted" },
+  principal_default: { label: "CCD", color: "cyan", title: "Charge Cost Default" },
+  merchant_haulage: { label: "Haulage", color: "amber" },
+  carrier_invoice: { label: "Carrier invoice", color: "violet" },
+  adjustment: { label: "Adjustment", color: "warn" },
+  reversal: { label: "Reversal", color: "crit" },
+  quote: { label: "Quote", color: "info" },
+  mirror: { label: "Mirrored", color: "violet" },
+  posted: { label: "Posted", color: "warn" },
+  actualized: { label: "Actualized", color: "good" },
+};
+const RECONCILE_OPTIONS = {
+  changed: [["keep", "Keep existing"], ["take", "Use contract"]],
+  manual:  [["keep", "Keep existing"], ["take", "Use contract"]],
+  new:     [["keep", "Don't add"], ["take", "Add"]],
+  removed: [["keep", "Keep line"], ["take", "Remove line"]],
+};
+const reconcileNote = r => {
+  if (r.status === "match") return "Same rate. Nothing to do.";
+  if (r.status === "kept") return "Not on the contract. Left as is.";
+  if (r.reason === "posted" || r.reason === "actualized") return `${r.reason[0].toUpperCase()}${r.reason.slice(1)}. Correct it with Adjust.`;
+  if (r.reason === "already invoiced") return "Already invoiced. Correct it with a credit note.";
+  return `Has a line ${r.reason}. Left as is.`;
+};
 
-export const ReconcileCarrierCostsModal = ({ shipmentId, mode, containerCount = 1, onClose, onApplied }) => {
+// ─── Reconcile Carrier Costs modal ─────────────────────────────────────────────
+// Shared by "Import from Contract" (mode 'import' — the shipment's snapshot for its current
+// contract, or the contract's live rates when it hasn't been applied yet) and "Update Carrier
+// Costs" (mode 'update' — live rates, frozen into a new snapshot on apply). One keep/take choice
+// per changeable charge (approved mockup: https://claude.ai/artifact/FkyfRCjLpjiEjoRBGHSprX),
+// defaulting to the "suggested" preset; the decision logic lives in utils/reconcileChoices.js.
+export const ReconcileCarrierCostsModal = ({ shipmentId, mode, containerCount = 1, firstImport = false, onClose, onApplied }) => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [rows, setRows] = useState([]);
+  const [choices, setChoices] = useState({});
+  const [preset, setPreset] = useState("suggested");
   const [splitPerContainer, setSplitPerContainer] = useState(containerCount > 1);
   const [isSaving, withSaving] = useSaving();
 
   useEffect(() => {
     api.costLines.reconcilePreview(shipmentId, mode)
-      .then(d => setRows(d.rows || []))
+      .then(d => { const r = d.rows || []; setRows(r); setChoices(presetChoices(r, "suggested")); })
       .catch(e => setLoadError(e.message))
       .finally(() => setLoading(false));
   }, [shipmentId, mode]);
 
-  const counts = rows.reduce((acc, r) => ({ ...acc, [r.status]: (acc[r.status] || 0) + 1 }), {});
-  const summary = ["manual", "changed", "new", "removed"]
-    .filter(k => counts[k])
-    .map(k => `${counts[k]} ${RECONCILE_STATUS[k].label.toLowerCase()}${counts[k] !== 1 ? "s" : ""}`)
-    .join(" · ") || "Everything matches";
+  const pickPreset = p => { setPreset(p); setChoices(presetChoices(rows, p)); };
+  const pick = (code, value) => { setPreset(null); setChoices(c => ({ ...c, [code]: value })); };
+  const sum = summarizeChoices(rows, choices);
+  const summaryText = [
+    sum.updated && `${sum.updated} updated to the contract rate`,
+    sum.added && `${sum.added} added`,
+    sum.removed && `${sum.removed} removed`,
+  ].filter(Boolean).join(" · ") || "No changes selected";
 
-  const apply = action => withSaving(async () => {
+  const apply = () => withSaving(async () => {
     try {
       const fn = mode === "update" ? api.costLines.updateCarrierCosts : api.costLines.importContract;
-      const result = await fn(shipmentId, { action, splitPerContainer });
-      toast.success(`${result.imported} line${result.imported !== 1 ? "s" : ""} ${action === "overwrite" ? "regenerated" : "added"}`);
+      await fn(shipmentId, { action: "selected", take: takenCodes(rows, choices), splitPerContainer });
+      toast.success(sum.total ? `Contract applied — ${summaryText}` : "Contract applied — existing lines kept as they are");
       onApplied();
     } catch (e) { toast.error(e.message); }
   });
 
-  const th = { fontFamily: HZ_BODY, fontSize: 10, fontWeight: 600, color: HZ.textMuted,
-    textTransform: "uppercase", letterSpacing: ".07em" };
+  const th = { fontFamily: HZ_BODY, fontSize: 10, fontWeight: 600, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".07em" };
+  const grid = { display: "grid", gridTemplateColumns: "minmax(150px, 1.3fr) 1fr 1fr minmax(210px, 1.35fr)", gap: 12, alignItems: "center", padding: "10px 14px" };
+  const pill = (colorKey, extra = {}) => ({ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".03em",
+    color: HZ[colorKey], background: HZ[colorKey] + "22", borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap", ...extra });
+  const money = (v, c) => `${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${c || ""}`.trim();
+
+  const amountCell = (value, currency, state, chips = []) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 3, fontFamily: HZ_MONO, fontSize: 12.5, fontVariantNumeric: "tabular-nums" }}>
+      {value == null ? <span style={{ color: HZ.textFaint }}>—</span> : (
+        <span style={{
+          color: state === "dropped" ? HZ.textFaint : HZ.text, fontWeight: state === "chosen" ? 700 : 500,
+          textDecoration: state === "dropped" ? "line-through" : "none" }}>{money(value, currency)}</span>
+      )}
+      {chips.length > 0 && (
+        <span style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {chips.map(k => { const c = RECONCILE_SOURCE_CHIP[k] || { label: k, color: "textMuted" }; return (
+            <span key={k} title={c.title} style={{ ...pill(c.color, { fontFamily: HZ_BODY, fontSize: 9, padding: "1px 5px", borderRadius: 3 }), cursor: c.title ? "help" : undefined }}>{c.label}</span>
+          ); })}
+        </span>
+      )}
+    </div>
+  );
+
+  const intro = mode === "update"
+    ? "Comparing your current cost lines against the contract's CURRENT live rates. Choose, per charge, whether to keep what's there or take the contract's rate."
+    : firstImport
+      ? "This shipment's contract hasn't been applied to its costs yet, and some of its charges already have lines. Choose, per charge, whether to keep what's there or take the contract's rate."
+      : "Comparing your current cost lines against this shipment's committed rate snapshot. Choose, per charge, whether to keep what's there or take the contract's rate.";
 
   return (
-    <Modal title="Reconcile Carrier Costs" onClose={onClose} width={640}>
+    <Modal title="Reconcile Carrier Costs" onClose={onClose} width={780}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, lineHeight: 1.5 }}>
-          {mode === "update"
-            ? "Comparing your current cost lines against the contract's CURRENT live rates."
-            : "Comparing your current cost lines against this shipment's own already-issued rate snapshot."}
-        </div>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, lineHeight: 1.55 }}>{intro}</div>
 
         {loading ? (
           <div style={{ padding: 24, textAlign: "center" }}><Spinner /></div>
@@ -3173,31 +3255,64 @@ export const ReconcileCarrierCostsModal = ({ shipmentId, mode, containerCount = 
             Nothing to compare — the contract has no rates.
           </div>
         ) : (
-          <div style={{ border: `1px solid ${HZ.border}`, borderRadius: 8, overflow: "hidden", maxHeight: 320, overflowY: "auto" }}>
-            <div style={{ display: "flex", padding: "7px 12px", background: HZ.bg, borderBottom: `1px solid ${HZ.border}`, position: "sticky", top: 0 }}>
-              <div style={{ ...th, flex: 1 }}>Charge Code</div>
-              <div style={{ ...th, width: 100, textAlign: "right" }}>Current</div>
-              <div style={{ ...th, width: 100, textAlign: "right" }}>Contract</div>
-              <div style={{ ...th, width: 150, paddingLeft: 8 }}>Status</div>
+          <>
+            <div role="group" aria-label="Quick choice" style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+              <span style={{ ...th, marginRight: 4 }}>Quick choice</span>
+              {[["suggested", "Suggested"], ["all", "Take all contract rates"], ["missing", "Only add new charges"]].map(([k, label]) => (
+                <button key={k} id={`reconcile-preset-${k}`} type="button" aria-pressed={preset === k} onClick={() => pickPreset(k)}
+                  style={{ fontFamily: HZ_BODY, fontSize: 11.5, fontWeight: 600, borderRadius: 999, padding: "4px 11px", cursor: "pointer",
+                    color: preset === k ? HZ.cyan : HZ.text, background: preset === k ? HZ.cyanBg : HZ.surface2,
+                    border: `1px solid ${preset === k ? HZ.cyan : HZ.border}` }}>{label}</button>
+              ))}
             </div>
-            {rows.map(r => (
-              <div key={r.chargeCode} style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderBottom: `1px solid ${HZ.border}` }}>
-                <div style={{ flex: 1, fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.chargeCode}</div>
-                <div style={{ width: 100, textAlign: "right", fontFamily: HZ_MONO, fontSize: 12,
-                  color: r.status === "manual" ? HZ.cyan : HZ.text, fontWeight: r.status === "manual" ? 700 : 400 }}>
-                  {r.currentAmount != null ? `${r.currentAmount.toFixed(2)} ${r.currentCurrency}` : <span style={{ color: HZ.textMuted }}>—</span>}
-                </div>
-                <div style={{ width: 100, textAlign: "right", fontFamily: HZ_MONO, fontSize: 12, color: HZ.text }}>
-                  {r.contractAmount != null ? `${r.contractAmount.toFixed(2)} ${r.contractCurrency}` : <span style={{ color: HZ.textMuted }}>—</span>}
-                </div>
-                <div style={{ width: 150, paddingLeft: 8 }}>
-                  <span style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase",
-                    color: HZ[RECONCILE_HZ_COLOR_KEY[r.status]], background: HZ[RECONCILE_HZ_COLOR_KEY[r.status]] + "22",
-                    borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap" }}>{RECONCILE_STATUS[r.status].label}</span>
-                </div>
+
+            <div style={{ border: `1px solid ${HZ.border}`, borderRadius: 8, overflow: "hidden", maxHeight: 380, overflowY: "auto" }}>
+              <div style={{ ...grid, padding: "8px 14px", background: HZ.bg, borderBottom: `1px solid ${HZ.border}`, position: "sticky", top: 0, zIndex: 1 }}>
+                <div style={th}>Charge</div><div style={th}>Existing</div><div style={th}>Contract</div><div style={th}>Decision</div>
               </div>
-            ))}
-          </div>
+              {rows.map(r => {
+                const opts = RECONCILE_OPTIONS[r.status];
+                const take = choices[r.chargeCode] === "take";
+                let exState = r.currentAmount != null ? "chosen" : "", ctState = "";
+                if (opts) {
+                  if (r.status === "removed") exState = take ? "dropped" : "chosen";
+                  else if (r.status === "new") ctState = take ? "chosen" : "dropped";
+                  else { exState = take ? "dropped" : "chosen"; ctState = take ? "chosen" : "dropped"; }
+                }
+                const accent = r.status === "removed" ? HZ.crit : HZ.cyan;
+                const st = RECONCILE_STATUS[r.status];
+                return (
+                  <div key={r.chargeCode} data-testid={`reconcile-row-${r.chargeCode}`}
+                    style={{ ...grid, borderBottom: `1px solid ${HZ.border}`, background: opts ? "transparent" : HZ.surface }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+                      <span style={{ fontFamily: HZ_BODY, fontSize: 13, fontWeight: 600, color: HZ.text }}>{r.chargeCode}</span>
+                      <span style={{ ...pill(st.color), alignSelf: "flex-start" }}>{st.label}</span>
+                    </div>
+                    {amountCell(r.currentAmount, r.currentCurrency, exState, r.currentSources || [])}
+                    {amountCell(r.contractAmount, r.contractCurrency, ctState)}
+                    <div>
+                      {opts ? (
+                        <div role="group" aria-label={r.chargeCode} style={{ display: "inline-flex", border: `1px solid ${HZ.borderStrong}`, borderRadius: 7, overflow: "hidden" }}>
+                          {opts.map(([value, label], i) => {
+                            const on = (choices[r.chargeCode] || "keep") === value;
+                            return (
+                              <button key={value} type="button" aria-pressed={on} onClick={() => pick(r.chargeCode, value)}
+                                style={{ fontFamily: HZ_BODY, fontSize: 11.5, fontWeight: 600, padding: "6px 10px", cursor: "pointer", whiteSpace: "nowrap",
+                                  border: 0, borderLeft: i ? `1px solid ${HZ.borderStrong}` : 0,
+                                  color: on ? HZ.text : HZ.textMuted, background: on ? HZ.surface2 : "transparent",
+                                  boxShadow: on ? `inset 0 -2px 0 ${accent}` : "none" }}>{label}</button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div style={{ fontFamily: HZ_BODY, fontSize: 11.5, lineHeight: 1.4, color: r.status === "locked" ? HZ.warn : HZ.textMuted }}>{reconcileNote(r)}</div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
         )}
 
         {containerCount > 1 && (
@@ -3215,24 +3330,20 @@ export const ReconcileCarrierCostsModal = ({ shipmentId, mode, containerCount = 
           </div>
         )}
 
-        {!loading && !loadError && rows.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 12px",
-            background: HZ.infoBg, border: `1px solid ${HZ.info}44`, borderRadius: 6,
-            fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.text, lineHeight: 1.5 }}>
-            <div><strong style={{ color: HZ.crit }}>Overwrite All</strong> — regenerates every line above except "New on contract" from scratch, using the contract's current numbers. This includes <strong>Manual override</strong> lines — a human correction is discarded in favor of the contract's value.</div>
-            <div><strong style={{ color: HZ.text }}>Ignore &amp; Add Missing Only</strong> — touches nothing that already exists, whatever its status. Only "New on contract" charges are created; a stale "Contract rate changed" line is left exactly as it is.</div>
-            <div><strong style={{ color: HZ.textMuted }}>Discard</strong> — closes this without creating or changing anything, including no new rate snapshot.</div>
-          </div>
-        )}
-
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted }}>{loading ? "" : summary}</span>
+          <span style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted }}>{loading || loadError ? "" : summaryText}</span>
           <div style={{ display: "flex", gap: 8 }}>
             <Btn variant="secondary" onClick={onClose} disabled={isSaving}>Discard</Btn>
-            <Btn variant="secondary" onClick={() => apply("ignore")} disabled={isSaving || loading}>Ignore &amp; Add Missing Only</Btn>
-            <Btn variant="danger" onClick={() => apply("overwrite")} disabled={isSaving || loading}>{isSaving ? "Working…" : "Overwrite All"}</Btn>
+            <Btn id="reconcile-apply-btn" onClick={apply} disabled={isSaving || loading || !!loadError || rows.length === 0}>
+              {isSaving ? "Working…" : sum.total ? `Apply ${sum.total} change${sum.total !== 1 ? "s" : ""}` : "Keep everything as is"}
+            </Btn>
           </div>
         </div>
+        {firstImport && !loading && (
+          <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textFaint }}>
+            Discard changes nothing. Cost Entry will ask again next time, until this contract has been applied.
+          </div>
+        )}
       </div>
     </Modal>
   );

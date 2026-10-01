@@ -18,7 +18,7 @@ const { applyColumnFilters, filterOptions, applySearch, applySort, paginate, bla
 // equivalent.
 module.exports = function opportunitiesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, mapOpportunity, mapQuote, logEntityEvent, toUsd,
-          resolveAssigneeNames, applyOfficeScopedAccessFilter } = ctx;
+          resolveAssigneeNames, applyOfficeScopedAccessFilter , commodityCodeError } = ctx;
 
   // sales (User Management redesign, 2026-09-12) owns the pipeline this file manages.
   const opportunityWrite = requireRole(["admin", "operator", "occ_bk", "sales"]);
@@ -94,6 +94,8 @@ module.exports = function opportunitiesRoutes(app, ctx) {
             commodityCode = "", movementType = "FCL", estimatedValue = 0, currency = "USD",
             estimatedCloseDate = "", leadSource = "", assigneeId = "", officeId = "", notes = "" } = req.body || {};
     if (!title.trim()) return err(res, "title is required");
+    const commodityError = await commodityCodeError(commodityCode);
+    if (commodityError) return err(res, commodityError);
     const id = `OPP-${uid()}`;
     const now = new Date().toISOString();
     const actor = req.user?.name || req.user?.email || "";
@@ -122,6 +124,8 @@ module.exports = function opportunitiesRoutes(app, ctx) {
             commodityCode = "", movementType = "FCL", estimatedValue = 0, currency = "USD",
             estimatedCloseDate = "", leadSource = "", assigneeId = "", officeId = "", notes = "" } = req.body || {};
     if (!title.trim()) return err(res, "title is required");
+    const commodityError = await commodityCodeError(commodityCode, existing.commodity_code);
+    if (commodityError) return err(res, commodityError);
     const cur = (currency || "USD").toUpperCase();
     const estimatedValueUsd = await toUsd(Number(estimatedValue) || 0, cur);
     await query(`UPDATE opportunities SET title=$1, customer_id=$2, customer_name=$3, pol=$4, pod=$5,

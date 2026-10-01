@@ -114,7 +114,10 @@ async function confirmDoc(shipmentId, docId, token) {
     assert("status is confirmed", confirmed.body.status === "confirmed");
 
     console.log("\nReversing a draft doc is rejected (generate a second, unconfirmed invoice)");
-    const draftDoc = await generateInvoiceDoc(shipmentId, token, { sourceCostLineIds: [line1.id] });
+    // The draft bills a line of its own: the confirmed invoice above already holds line1, and a
+    // line can be on only one live billing document (TKT-2F19XD).
+    const draftLine = await addSellLine(shipmentId, token, 35, "DOC");
+    const draftDoc = await generateInvoiceDoc(shipmentId, token, { sourceCostLineIds: [draftLine.id] });
     const draftReverse = await request("POST", `/api/shipments/${shipmentId}/documents/${draftDoc.id}/reverse`, {}, token);
     assert("reversing a draft invoice 409s", draftReverse.status === 409, JSON.stringify(draftReverse.body));
 

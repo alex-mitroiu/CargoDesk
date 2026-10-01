@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo, useCallback } from "react";
+﻿import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
          Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 import { T, STATUSES, statusVariant, contractVariant, addDays, diffDays,
@@ -11,7 +11,8 @@ import PageSizeSelect, { getStoredPageSize } from "../components/primitives/Page
 import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
 import { IconWarning, IconRefresh, IconArrowDown, IconDashboard, IconFileCertificate, IconShip, IconCoin } from "../components/primitives/Icon";
-import ConsumptionBar from "../components/shared/ConsumptionBar";
+import { buildContractRows, buildWeeklyTrend } from "../utils/contractConsumption";
+import { UnitSwitch, ChartCard, StatusLegend, ContractBarsChart, ContractTrendChart, ContractBreakdown } from "../components/dashboard/ContractConsumptionCharts";
 import InfoHint from "../components/primitives/InfoHint";
 import { inputBase } from "../components/primitives/Form";
 import ColumnFilter from "../components/shared/ColumnFilter";
@@ -48,7 +49,7 @@ const HZ_DARK = {
   border: "rgba(255,255,255,0.09)", borderSoft: "rgba(255,255,255,0.055)",
   ink: "#f3f5fc", inkMuted: "#8c93b5", inkFaint: "#4d5476",
   gradCyan: ["#38d4e8", "#3987e5"], gradAmber: ["#fbc531", "#d9772a"], gradViolet: ["#9085e9", "#d5519f"],
-  good: "#22c55e", warning: "#fab219", critical: "#f0526b",
+  good: "#22c55e", warning: "#fab219", critical: "#f0526b", available: "#a78bfa",
   chartCategorical: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"],
   cardShadow: "none",
 };
@@ -57,7 +58,7 @@ const HZ_LIGHT = {
   border: "rgba(15,20,40,0.12)", borderSoft: "rgba(15,20,40,0.07)",
   ink: "#10142a", inkMuted: "#5b6178", inkFaint: "#7c8299",
   gradCyan: ["#006970", "#006795"], gradAmber: ["#796100", "#8c5000"], gradViolet: ["#8d45b3", "#9d2962"],
-  good: "#087736", warning: "#af4e05", critical: "#ad0e3a",
+  good: "#087736", warning: "#af4e05", critical: "#ad0e3a", available: "#8b5cf6",
   chartCategorical: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"],
   cardShadow: "0 1px 2px rgba(16,20,40,.05), 0 14px 32px -16px rgba(16,20,40,.20)",
 };
@@ -211,37 +212,44 @@ const KpiTile = ({ label, value, caption, tintColor, unit, breakdown }) => {
 };
 
 // ─── Consumption ring (Trade Horizon hero stat) ───────────────────────────────
-// Replaces the plain "Confirmed Consumption" KpiTile as the Overview tab's hero element — an SVG
-// circular progress ring is this direction's single most defining piece. Legend colors are the
-// real, reserved status palette (HZ.good/warning/critical), never the decorative ring gradient —
-// a status color must never double as this ring's cosmetic gradient (dataviz skill's own rule).
-const KpiRing = ({ pct, confirmed, pending, rejected, remaining }) => {
-  const r = 56, circ = 2 * Math.PI * r;
-  const offset = circ - (Math.min(100, pct) / 100) * circ;
+// Overview tab's hero element. Two arcs in the reserved status palette, matching the legend:
+// Confirmed (HZ.good) and Pending confirmation (HZ.warning, drawn right after it) — a booking that
+// was never sent or isn't confirmed yet is visible as space "in the pipe", not just a number
+// (approved mockup: https://claude.ai/artifact/4BNCe9xBoNDguyPWVGhh8K). 176px so the centre fits
+// "100.0%" and "+100.0% pending"; pending past the full circle is capped in the drawing only.
+export const KpiRing = ({ allocated, confirmed, pending, rejected, remaining }) => {
+  const size = 176, c = size / 2, r = 72, stroke = 16, circ = 2 * Math.PI * r;
+  const confirmedPct = allocated > 0 ? (confirmed / allocated) * 100 : 0;
+  const pendingPct   = allocated > 0 ? (pending / allocated) * 100 : 0;
+  const confirmedArc = Math.min(1, confirmedPct / 100);
+  const pendingArc   = Math.min(1 - confirmedArc, pendingPct / 100);
+  const arc = (frac, startFrac, color) => frac > 0 && (
+    <circle cx={c} cy={c} r={r} fill="none" stroke={color} strokeWidth={stroke}
+      strokeDasharray={`${frac * circ} ${circ}`} strokeDashoffset={-startFrac * circ} />
+  );
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
-      <div style={{ position: "relative", width: 132, height: 132, flexShrink: 0 }}>
-        <svg width="132" height="132" viewBox="0 0 132 132" style={{ transform: "rotate(-90deg)" }}>
-          <circle cx="66" cy="66" r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="14" />
-          <circle cx="66" cy="66" r={r} fill="none" stroke="url(#hzRingGrad)" strokeWidth="14"
-            strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" />
-          <defs>
-            <linearGradient id="hzRingGrad" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor={HZ.gradCyan[0]} /><stop offset="100%" stopColor={HZ.gradCyan[1]} />
-            </linearGradient>
-          </defs>
+      <div data-testid="consumption-ring" style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: "rotate(-90deg)" }} role="img"
+          aria-label={`${confirmedPct.toFixed(1)}% confirmed, ${pendingPct.toFixed(1)}% pending confirmation`}>
+          <circle cx={c} cy={c} r={r} fill="none" stroke={HZ.border} strokeWidth={stroke} />
+          {arc(confirmedArc, 0, HZ.good)}
+          {arc(pendingArc, confirmedArc, HZ.warning)}
         </svg>
-        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1 }}>
           <div style={{ fontFamily: HZ.fontDisplay, fontSize: 28, fontWeight: 700, color: HZ.ink }}>
-            {pct.toFixed(1)}<span style={{ fontSize: 14 }}>%</span>
+            {confirmedPct.toFixed(1)}<span style={{ fontSize: 15 }}>%</span>
           </div>
-          <div style={{ fontFamily: HZ.fontMono, fontSize: 10, color: HZ.inkMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>utilized</div>
+          <div style={{ fontFamily: HZ.fontMono, fontSize: 10, color: HZ.inkMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>confirmed</div>
+          <div data-testid="consumption-ring-pending" style={{ fontFamily: HZ.fontMono, fontSize: 11.5, fontWeight: 600, color: HZ.warning, marginTop: 3, whiteSpace: "nowrap" }}>
+            +{pendingPct.toFixed(1)}% pending
+          </div>
         </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 9, flex: 1, minWidth: 160 }}>
         {[
-          ["Confirmed", confirmed, HZ.good], ["Pending", pending, HZ.warning],
-          ["Rejected", rejected, HZ.critical], ["Remaining", remaining, "rgba(255,255,255,0.2)"],
+          ["Confirmed", confirmed, HZ.good], ["Pending confirmation", pending, HZ.warning],
+          ["Rejected", rejected, HZ.critical], ["Remaining", remaining, HZ.inkFaint],
         ].map(([label, val, color]) => (
           <div key={label} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5 }}>
             <span style={{ width: 8, height: 8, borderRadius: 3, background: color, flexShrink: 0 }} />
@@ -526,15 +534,35 @@ export const MatchedShipmentsTable = ({
 };
 
 // ─── Contract Consumption View (Contract tab) ─────────────────────────────────
+// Grouped by carrier + contract number (a contract number can have several records — number +
+// reference + named account — each one a "reference" in the breakdown). Bars and breakdown cover
+// the space configurations active in the selected period and the period's shipments on them; the
+// weekly trend covers the 6 weeks ending with the period's first week. A shipment counts through
+// its space configuration (allocationId), exactly like the Space Configurations page. Logic in
+// src/utils/contractConsumption.js, charts in src/components/dashboard/ContractConsumptionCharts.jsx.
 
-const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocations = [], contractTrendData, teuDefs }) => {
+const CONSUMPTION_UNIT_KEY = "cd_dashboard_consumption_unit";
+
+const ContractConsumptionView = ({ shipments, rangeShipments, containers, carriers, allocations = [], allAllocations = [], rangeStart, teuDefs }) => {
   const [contractMap, setContractMap] = useState({});
   const [loading,     setLoading]     = useState(false);
   // Display-layer filter for "Shipments by Contract" below — applied once, per contract
-  // group's own shipment list, not duplicated per card. Does not touch allocByContract/
-  // consumedByContract/chartRows (the charts above stay date-range-scoped only, untouched).
+  // group's own shipment list, not duplicated per card. Doesn't touch the charts above.
   const [statusFilter, setStatusFilter]   = useState("All");
   const [bookingFilter, setBookingFilter] = useState("All");
+  // One unit for the whole tab (bars, trend + table, breakdown); per-viewer, remembered.
+  const [unit, setUnitState] = useState(() => { try { return localStorage.getItem(CONSUMPTION_UNIT_KEY) === "pct" ? "pct" : "teu"; } catch { return "teu"; } });
+  const setUnit = u => { setUnitState(u); try { localStorage.setItem(CONSUMPTION_UNIT_KEY, u); } catch {} };
+  const [selectedKey, setSelectedKey] = useState(null);
+  const [trendAsTable, setTrendAsTable] = useState(false);
+  const breakdownRef = useRef(null);
+
+  const teuByShipment = useMemo(() => {
+    const m = new Map();
+    containers.forEach(c => m.set(c.shipmentId, (m.get(c.shipmentId) || 0) + teuOf(c.size, c.type, teuDefs)));
+    return m;
+  }, [containers, teuDefs]);
+  const teuOfShipment = useCallback(s => teuByShipment.get(s.id) || 0, [teuByShipment]);
 
   const centralShipments = useMemo(() =>
     rangeShipments.filter(s => s.contractType === "Central" && s.contractId),
@@ -553,77 +581,32 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
     return Object.values(m);
   }, [centralShipments]);
 
-  // Allocated TEU per contract from space configs
-  const allocByContract = useMemo(() => {
-    const m = {};
-    allocations.forEach(a => {
-      if (!a.contractId) return;
-      m[a.contractId] = (m[a.contractId] || 0) + a.allocatedTEU;
-    });
-    return m;
-  }, [allocations]);
+  const rows = useMemo(() => buildContractRows({ allocations, shipments: rangeShipments, contractMap, teuOfShipment }),
+    [allocations, rangeShipments, contractMap, teuOfShipment]);
+  const trend = useMemo(() => buildWeeklyTrend({
+    allocations: allAllocations, shipments, contractMap, teuOfShipment, rangeStart, addDays,
+    formatWeek: iso => parseIso(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+  }), [allAllocations, shipments, contractMap, teuOfShipment, rangeStart]);
+  const allocByKey = useMemo(() => Object.fromEntries(rows.map(r => [r.key, r.totals.alloc])), [rows]);
 
-  // TEU per contract from shipments, bucketed by booking status — same rule as loadTeuBuckets()
-  // (routes/allocations.js): only a Confirmed booking counts as real consumption; Pending covers
-  // Created/Pending/no-booking-row-yet; Rejected is its own bucket; Cancelled is excluded
-  // entirely. Matched to a contract via the shipment's own allocationId -> that allocation's
-  // contractId (exactly what loadTeuBuckets keys off), NOT the old carrier+contract+lane
-  // heuristic — this page used to be able to disagree with the Space Configurations page's own
-  // per-allocation figures for the same contract (2026-09 Space Configuration spec, gap #1: a
-  // shipment matching by attributes alone but never actually linked via allocationId would count
-  // here and not there, or vice versa). Date-range scoping (this view's own distinct value) is
-  // unchanged — only the matching key changed.
-  const allocationToContract = useMemo(() => {
-    const m = new Map();
-    allocations.forEach(a => { if (a.contractId) m.set(a.id, a.contractId); });
-    return m;
-  }, [allocations]);
+  // Keep a valid selection: the fullest contract until the user picks one, and again if the
+  // picked one drops out of the period.
+  const selectedRow = rows.find(r => r.key === selectedKey) || rows[0] || null;
+  const select = key => {
+    if (!rows.some(r => r.key === key)) return; // a trend-only contract has no space in this period
+    setSelectedKey(key);
+    requestAnimationFrame(() => breakdownRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+  };
 
-  const consumedByContract = useMemo(() => {
-    const m = {};
-    centralShipments.forEach(s => {
-      if (!s.allocationId || !allocationToContract.has(s.allocationId)) return;
-      const contractId = allocationToContract.get(s.allocationId);
-      const teu = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0);
-      const bucket = m[contractId] || (m[contractId] = { confirmed: 0, pending: 0, rejected: 0 });
-      if (s.bookingStatus === "Confirmed") bucket.confirmed += teu;
-      else if (s.bookingStatus === "Rejected") bucket.rejected += teu;
-      else if (s.bookingStatus === "Cancelled") { /* excluded — no live demand left */ }
-      else bucket.pending += teu; // Created, Pending, or no carrier_bookings row yet
-    });
-    return m;
-  }, [centralShipments, containers, allocationToContract, teuDefs]);
-
-  const emptyBucket = { confirmed: 0, pending: 0, rejected: 0 };
-
-  // Chart rows — union of contracts from allocations + shipments, sorted by utilisation desc
-  const chartRows = useMemo(() => {
-    const ids = new Set([
-      ...Object.keys(allocByContract),
-      ...Object.keys(consumedByContract),
-    ]);
-    return Array.from(ids).map(id => {
-      const alloc    = allocations.find(a => a.contractId === id);
-      const group    = groups.find(g => g.contractId === id);
-      const contract = contractMap[id] || null; // populated async by the useEffect below
-      const allocated = allocByContract[id] || 0;
-      const b         = consumedByContract[id] || emptyBucket;
-      const pct       = allocated > 0 ? Math.round((b.confirmed / allocated) * 100) : null;
-      return {
-        contractId:     id,
-        contractNumber: contract?.contractNumber || alloc?.contractNumber || group?.contractRef || id,
-        carrierCode:    contract?.carrierCode    || alloc?.carrierCode    || group?.carrierCode || "",
-        allocated, confirmed: b.confirmed, pending: b.pending, rejected: b.rejected, pct,
-      };
-    }).sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1));
-  }, [allocByContract, consumedByContract, allocations, groups, contractMap]);
-
+  // Contract records for the live contract number / reference / account (the allocation's own
+  // contract_number copy can be stale), for the charts and the shipment cards below.
   useEffect(() => {
-    // Fetch contract details for all IDs visible in the chart (shipment groups + allocation-only contracts)
+    const trendAllocIds = new Set(shipments.filter(s => s.allocationId && s.bookingStatus === "Confirmed").map(s => s.allocationId));
     const allIds = [
       ...groups.map(g => g.contractId),
-      ...Object.keys(allocByContract),
-    ];
+      ...allocations.map(a => a.contractId),
+      ...allAllocations.filter(a => trendAllocIds.has(a.id)).map(a => a.contractId),
+    ].filter(Boolean);
     const missing = [...new Set(allIds)].filter(id => !contractMap[id]);
     if (!missing.length) return;
     setLoading(true);
@@ -636,29 +619,36 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
         });
       })
       .finally(() => setLoading(false));
-  }, [groups, allocByContract]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [groups, allocations, allAllocations, shipments]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const teuFor = s => containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0);
+  const teuFor = teuOfShipment;
 
   const SHP_COL = "140px 130px 90px 48px 90px 90px";
   const SHP_HDR = ["Shipment ID", "POL → POD", "ETD", "TEU", "Status", "Booking"];
 
-  if (centralShipments.length === 0) {
+  const header = (
+    <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-end", gap: 10, marginBottom: 16 }}>
+      <div>
+        <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 19, fontWeight: 600, color: HZ.ink, margin: 0 }}>Contract Consumption</h2>
+        <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "3px 0 0" }}>
+          Allocated space per contract number. Hover a bar for its numbers; click a bar, its name or a line to see how that contract's space is split.
+        </p>
+      </div>
+      {rows.length > 0 && <UnitSwitch unit={unit} onChange={setUnit} hz={HZ} />}
+    </div>
+  );
+
+  if (rows.length === 0 && centralShipments.length === 0) {
     return (
       <div>
-        <div style={{ marginBottom: 16 }}>
-          <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 19, fontWeight: 600, color: HZ.ink, margin: 0 }}>Contract Consumption</h2>
-          <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "3px 0 0" }}>
-            Central shipments in the selected period, grouped by contract
-          </p>
-        </div>
+        {header}
         <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)",
           padding: 48, textAlign: "center" }}>
           <div style={{ fontFamily: T.body, fontSize: 14, color: T.textMuted, marginBottom: 8 }}>
-            No Central shipments in this period.
+            No space configurations or Central shipments in this period.
           </div>
           <div style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>
-            Shipments must have contract type "Central" and a linked system contract to appear here.
+            Contracts appear here once a space configuration covers the selected dates.
           </div>
         </div>
       </div>
@@ -667,129 +657,32 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 19, fontWeight: 600, color: HZ.ink, margin: 0 }}>Contract Consumption</h2>
-        <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "3px 0 0" }}>
-          {groups.length} contract{groups.length !== 1 ? "s" : ""} · {centralShipments.length} Central shipment{centralShipments.length !== 1 ? "s" : ""} in range
-        </p>
-      </div>
+      {header}
 
-      {/* ── Charts row ── */}
-      {(chartRows.length > 0 || contractTrendData?.contractIds?.length > 0) && (
-        <div style={{ display: "grid",
-          gridTemplateColumns: contractTrendData?.contractIds?.length > 0 ? "1fr 1fr" : "1fr",
-          gap: 16, marginBottom: 18 }}>
-
-          {/* Left: allocated vs consumed bars */}
-          {chartRows.length > 0 && (
-            <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)",
-              padding: "18px 20px" }}>
-              <div style={{ marginBottom: 14 }}>
-                <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 3px" }}>
-                  Allocated vs Confirmed TEU
-                </h2>
-                <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
-                  Contract-level rollup for the selected date range — sums every one of this
-                  contract's space configurations, scoped to shipments actually linked to them
-                  (same allocationId match the Space Configurations page itself uses), just
-                  restricted to this date range and rolled up per contract instead of per config.
-                  Only a Confirmed booking counts as consumed; Pending and Rejected are shown
-                  alongside, not folded in.
-                </p>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10,
-                maxHeight: 260, overflowY: "auto" }}>
-                {chartRows.map(row => (
-                  <div key={row.contractId} style={{ display: "grid",
-                    gridTemplateColumns: "160px 1fr 120px", gap: 10, alignItems: "center" }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {row.contractNumber}
-                      </div>
-                      {row.carrierCode && (
-                        <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 1 }}>
-                          {row.carrierCode}
-                        </div>
-                      )}
-                    </div>
-                    <ConsumptionBar allocated={row.allocated} confirmed={row.confirmed}
-                      pending={row.pending} rejected={row.rejected} height={16} width="100%" />
-                    <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.text }}>
-                        {row.confirmed}
-                      </span>
-                      <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
-                        {" / "}{row.allocated > 0 ? row.allocated : "—"} TEU
-                      </span>
-                      {row.pct !== null && (
-                        <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted,
-                          marginLeft: 5, background: T.border + "22",
-                          border: `1px solid ${T.border}`,
-                          borderRadius: 3, padding: "0 4px" }}>
-                          {row.pct}%
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 12, marginTop: 14, paddingTop: 12,
-                borderTop: `1px solid ${T.border}22`, flexWrap: "wrap" }}>
-                {[
-                  { color: T.success, label: "Confirmed" },
-                  { color: T.warning, label: "Pending" },
-                  { color: T.danger,  label: "Rejected" },
-                ].map(({ color, label }) => (
-                  <div key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
-                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Right: 6-week trend by contract */}
-          {contractTrendData?.contractIds?.length > 0 && (
-            <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16, backdropFilter: "blur(16px)",
-              padding: "20px 20px 14px" }}>
-              <div style={{ marginBottom: 16 }}>
-                <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 3px" }}>
-                  6-Week TEU Trend
-                </h2>
-                <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
-                  Weekly Confirmed consumption per contract — last 6 weeks
-                </p>
-              </div>
-              <ResponsiveContainer width="100%" height={240}>
-                <LineChart data={contractTrendData.weeks} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
-                  <XAxis dataKey="week" tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }}
-                    axisLine={{ stroke: T.border }} tickLine={false} />
-                  <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }}
-                    axisLine={false} tickLine={false} allowDecimals={false} />
-                  <Tooltip
-                    contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
-                    labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }}
-                    itemStyle={{ color: T.textMuted }}
-                    formatter={(v, name) => [`${v} TEU`, contractTrendData.refMap[name] || name]}
-                    cursor={{ stroke: T.border, strokeWidth: 1 }} />
-                  <Legend
-                    wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }}
-                    formatter={name => contractTrendData.refMap[name] || name} />
-                  {contractTrendData.contractIds.map((id, i) => (
-                    <Line key={id} type="monotone" dataKey={id}
-                      stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2}
-                      dot={{ r: 3, fill: CHART_COLORS[i % CHART_COLORS.length] }} activeDot={{ r: 5 }} />
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
+      {rows.length > 0 && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(460px, 1fr))", gap: 16, marginBottom: 16 }}>
+            <ChartCard hz={HZ} testId="consumption-bars-card" title="Allocation by contract"
+              legend={<StatusLegend hz={HZ} items={[[HZ.good, "Confirmed"], [HZ.warning, "Pending confirmation"], [HZ.available, "Available"], [null, "⚠ a reference is over its allocation"]]} />}>
+              <ContractBarsChart rows={rows} selectedKey={selectedRow?.key} onSelect={select} unit={unit} hz={HZ} />
+            </ChartCard>
+            <ChartCard hz={HZ} testId="consumption-trend-card" title="Weekly confirmed per contract — last 6 weeks"
+              action={trend.series.length > 0 && (
+                <button type="button" data-testid="consumption-trend-table-toggle" onClick={() => setTrendAsTable(v => !v)}
+                  style={{ font: `600 11.5px ${HZ.fontBody}`, color: HZ.gradCyan[0], background: "none", border: 0, cursor: "pointer", padding: 0 }}>
+                  {trendAsTable ? "View as chart" : "View as table"}
+                </button>
+              )}>
+              <ContractTrendChart trend={trend} allocByKey={allocByKey} selectedKey={selectedRow?.key} onSelect={select} unit={unit} hz={HZ} asTable={trendAsTable} />
+            </ChartCard>
+          </div>
+          <div ref={breakdownRef} style={{ marginBottom: 18 }}>
+            <ContractBreakdown row={selectedRow} unit={unit} hz={HZ} />
+          </div>
+        </>
       )}
 
+      {centralShipments.length > 0 && (<>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
         marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: T.body, fontSize: 10.5,
@@ -806,9 +699,8 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {groups.map(g => {
           const contract = contractMap[g.contractId];
-          // Pure display-layer filter — applied to this group's own shipment list only,
-          // the contract-level totals/bars above (allocByContract/consumedByContract/
-          // chartRows) are untouched.
+          // Pure display-layer filter — applied to this group's own shipment list only;
+          // the charts and breakdown above are untouched.
           const filteredShipments = g.shipments.filter(s =>
             (statusFilter === "All"  || s.status === statusFilter) &&
             (bookingFilter === "All" || s.bookingStatus === bookingFilter)
@@ -908,6 +800,7 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
           );
         })}
       </div>
+      </>)}
     </div>
   );
 };
@@ -1837,42 +1730,6 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
 
   const trendCarriers = [...new Set(filteredActiveAllocations.map(a => a.carrierCode))];
 
-  // 6-week TEU trend by contract (Central shipments only). 2026-09-03 audit: contractIds used to
-  // be every Central contract that EVER had a shipment, all-time, unbounded — not scoped to this
-  // chart's own 6-week window at all (unlike its sibling trend chart, trendChartData/
-  // activeCodesSet above, which correctly limits itself to allocations active in the visible
-  // range). Verified live against this dev DB: 12 contracts drew a line, only 1 had any real
-  // (Confirmed, in-window) data — the other 11 were permanent flat-zero clutter, directly
-  // contradicting the chart's own caption ("Weekly Confirmed consumption per contract — last 6
-  // weeks"), and only grows worse as more historical contracts accumulate. Fixed: a contract only
-  // earns a line if it has at least one Confirmed shipment whose ETD actually falls somewhere in
-  // the visible 6-week window — the same criterion that would make its line non-zero anyway.
-  const contractTrendData = useMemo(() => {
-    const trendWindowStart = addDays(rangeStart, -35);
-    const trendWindowEnd   = addDays(rangeStart, 6);
-    const centralSh    = shipments.filter(s => s.contractType === "Central" && s.contractId);
-    const inWindow      = centralSh.filter(s =>
-      s.bookingStatus === "Confirmed" && s.etd && s.etd >= trendWindowStart && s.etd <= trendWindowEnd);
-    const contractIds  = [...new Set(inWindow.map(s => s.contractId))];
-    const refMap       = {};
-    inWindow.forEach(s => { if (!refMap[s.contractId]) refMap[s.contractId] = s.contractRef || String(s.contractId); });
-    const weeks = Array.from({ length: 6 }, (_, i) => {
-      const wStart = addDays(rangeStart, -(5 - i) * 7);
-      const wEnd   = addDays(wStart, 6);
-      const label  = parseIso(wEnd).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-      const pt     = { week: label };
-      contractIds.forEach(id => {
-        // Confirmed only — matches what "consumption" means everywhere else post-v0.86.0;
-        // raw all-status volume is still available, unchanged, on the Carrier Volumes tab.
-        pt[id] = centralSh
-          .filter(s => s.contractId === id && s.bookingStatus === "Confirmed" && s.etd >= wStart && s.etd <= wEnd)
-          .reduce((acc, s) =>
-            acc + containers.filter(c => c.shipmentId === s.id).reduce((a2, c) => a2 + teuOf(c.size, c.type, teuDefs), 0), 0);
-      });
-      return pt;
-    });
-    return { weeks, contractIds, refMap };
-  }, [shipments, containers, rangeStart, teuDefs]);
 
   const totalConfirmed = chartData.reduce((s, d) => s + d.confirmed, 0);
   const totalPending   = chartData.reduce((s, d) => s + d.pending, 0);
@@ -2009,7 +1866,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
               <div style={{ fontFamily: HZ.fontBody, fontSize: 12, color: HZ.inkMuted, marginBottom: 16 }}>
                 Across {filteredActiveAllocations.length} active allocation{filteredActiveAllocations.length !== 1 ? "s" : ""} · {totalAlloc.toLocaleString("en-US")} TEU committed
               </div>
-              <KpiRing pct={totalAlloc > 0 ? (totalConfirmed / totalAlloc) * 100 : 0}
+              <KpiRing allocated={totalAlloc}
                 confirmed={totalConfirmed} pending={totalPending} rejected={totalRejected} remaining={totalRemain} />
             </div>
             <div data-testid="active-carriers-card" style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 20, backdropFilter: "blur(18px)", padding: 22 }}>
@@ -2217,12 +2074,14 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
       {view === "contracts" && (
         <div data-testid="dashboard-panel-contracts">
           <ContractConsumptionView
+            shipments={shipments}
             rangeShipments={rangeShipments}
             containers={containers}
             carriers={carriers}
             allocations={activeAllocations}
+            allAllocations={allocations}
+            rangeStart={rangeStart}
             teuDefs={teuDefs}
-            contractTrendData={contractTrendData}
           />
         </div>
       )}

@@ -13,7 +13,7 @@
  */
 
 import http from "node:http";
-import { ensureOffices } from "./helpers/offices.mjs";
+import { ensureOffices, retireOffice, retireBranch } from "./helpers/offices.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -150,6 +150,50 @@ const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
     console.log("\nBatch history");
     const batches = await request("GET", "/api/gl-export/batches", null, token);
     assert("batch history includes both runs", batches.body.some(b => b.id === run1.body.batchId) && batches.body.some(b => b.id === run2.body.batchId));
+
+    // ── TKT-AEPGWA — VAT posts to the Output / Input VAT control accounts; AR and AP carry gross.
+    console.log("\nVAT: output VAT on sales, input VAT on purchases, self-assessed reverse charge");
+    const { gl_control_account_vat_output: prevVatOut, gl_control_account_vat_input: prevVatIn } = settingsBefore.body;
+    await request("PUT", "/api/settings", { gl_control_account_vat_output: `2200-${rand}`, gl_control_account_vat_input: `1400-${rand}` }, token);
+    const vatBranch = await request("POST", "/api/branches", { code: `GV${rand}`, name: `GL VAT Entity ${rand}`, countryCode: "NL", currency: "EUR", standardVatRate: 20 }, token);
+    const vatOffice = await request("POST", "/api/offices", { unlocode: `NV${rand.slice(0, 3)}`, department: "SE", name: "GL VAT Office", branchId: vatBranch.body.id }, token);
+    assert("scratch entity with a 20% standard rate", vatBranch.body.standardVatRate === 20 && !!vatOffice.body.id, JSON.stringify([vatBranch.body, vatOffice.body]));
+    const vShip = (await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-GLVAT", etd: "2026-10-05", incoterm: "FOB",
+      emoOfficeId: vatOffice.body.id, imoOfficeId: vatOffice.body.id }, token)).body.id;
+    const vLine = body => request("POST", `/api/shipments/${vShip}/cost-lines`, { currency: "USD", exchangeRate: 1, ...body }, token).then(r => r.body.id);
+    const sellStd = await vLine({ type: "SELL", chargeCode: "Ocean Freight", amount: 1000, vatRate: 20 });
+    const sellZero = await vLine({ type: "SELL", chargeCode: `Customs-${rand}`, amount: 300, vatTreatment: "zero_rated" });
+    const vDoc = await request("POST", `/api/shipments/${vShip}/documents/generate`, { html: SAMPLE_HTML, filename: `FR01-${vShip}.html`, docType: "FR01", sourceCostLineIds: [sellStd, sellZero] }, token);
+    await request("PATCH", `/api/shipments/${vShip}/documents/${vDoc.body.id}`, { status: "confirmed" }, token);
+    for (const body of [{ chargeCode: "Ocean Freight", amount: 700, vatRate: 20 }, { chargeCode: "Ocean Freight", amount: 400, vatTreatment: "reverse_charge" }]) {
+      const id = await vLine({ type: "BUY", ...body });
+      await request("PATCH", `/api/shipments/${vShip}/cost-lines/${id}/actualize`, { actualAmount: body.amount }, token);
+      await request("PATCH", `/api/shipments/${vShip}/cost-lines/${id}/post`, {}, token);
+    }
+    const vRun = await request("POST", "/api/gl-export/run", { dateFrom: today, dateTo: today }, token);
+    const docRows = vRun.body.rows.filter(r => r.reference === vDoc.body.id), buyRows = vRun.body.rows.filter(r => r.reference === vShip);
+    const acct = (rows, code) => rows.filter(r => r.accountCode === code);
+    const sum = (rows, k) => Math.round(rows.reduce((s, r) => s + (r[k] || 0), 0) * 100) / 100;
+    assert("sale: revenue credited at net (1000 + 300)", sum(docRows.filter(r => r.accountCode !== `1200-${rand}` && r.accountCode !== `2200-${rand}`), "credit") === 1300, JSON.stringify(docRows));
+    assert("sale: 200 output VAT (20% of 1000; the zero-rated line adds none)", sum(acct(docRows, `2200-${rand}`), "credit") === 200, JSON.stringify(docRows));
+    assert("sale: AR debit is the gross 1500", sum(acct(docRows, `1200-${rand}`), "debit") === 1500, JSON.stringify(docRows));
+    assert("purchase: 140 input VAT (20% of 700) plus 80 self-assessed (20% of the reverse-charged 400)",
+      sum(acct(buyRows, `1400-${rand}`), "debit") === 220, JSON.stringify(buyRows));
+    assert("reverse charge: the same 80 credited to output VAT", sum(acct(buyRows, `2200-${rand}`), "credit") === 80, JSON.stringify(buyRows));
+    assert("purchase: AP credit is the gross 840 + 400", sum(acct(buyRows, `2100-${rand}`), "credit") === 1240, JSON.stringify(buyRows));
+    assert("every entry balances (debits = credits)", sum(docRows, "debit") === sum(docRows, "credit") && sum(buyRows, "debit") === sum(buyRows, "credit"),
+      `${sum(docRows, "debit")}/${sum(docRows, "credit")} · ${sum(buyRows, "debit")}/${sum(buyRows, "credit")}`);
+    const vReport = await request("GET", `/api/vat-liability/summary?dateFrom=${today}&dateTo=${today}`, null, token);
+    const vEnt = vReport.body.entities.find(e => e.entityId === vatBranch.body.id);
+    assert("the GL's VAT matches the VAT Liability report for the same entity (output 280, input 220)",
+      vEnt?.output.totalVatUsd === sum([...docRows, ...buyRows].filter(r => r.accountCode === `2200-${rand}`), "credit")
+      && vEnt?.input.totalVatUsd === sum([...docRows, ...buyRows].filter(r => r.accountCode === `1400-${rand}`), "debit")
+      && vEnt?.output.totalVatUsd === 280 && vEnt?.input.totalVatUsd === 220, JSON.stringify({ output: vEnt?.output.totalVatUsd, input: vEnt?.input.totalVatUsd }));
+    await request("DELETE", `/api/shipments/${vShip}`, null, token);
+    await retireOffice(token, vatOffice.body.id); // vShip billed its customer, so it stays and the office deactivates
+    await retireBranch(token, vatBranch.body.id);
+    await request("PUT", "/api/settings", { gl_control_account_vat_output: prevVatOut || "", gl_control_account_vat_input: prevVatIn || "" }, token);
 
     console.log("\nCleanup");
     await request("DELETE", `/api/shipments/${shipmentId}`, null, token);

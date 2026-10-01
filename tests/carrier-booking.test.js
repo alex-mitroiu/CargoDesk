@@ -727,7 +727,7 @@ async function testExtendedPayloadFields(token) {
     etd: "2026-09-01", vesselImo: "9321483", cargoReadyDate: "2026-08-15",
     placeOfReceipt: "Utrecht", placeOfDelivery: "Newark",
     shipperName: "Test Shipper Co", consigneeName: "Test Consignee Co", notifyName: "Test Notify Co",
-    commodityCode: "HS8471",
+    commodityCode: "001404", // registry code (Electronics); commodity codes must come from Master Data → Commodities
     emoOfficeId: fullEmoOfficeId, imoOfficeId: fullImoOfficeId,
   }, token);
   const fullId = fullCreate.body.id;
@@ -742,7 +742,7 @@ async function testExtendedPayloadFields(token) {
   assert("shipperName round-trips", fullPayload.shipperName === "Test Shipper Co");
   assert("consigneeName round-trips", fullPayload.consigneeName === "Test Consignee Co");
   assert("notifyName round-trips", fullPayload.notifyName === "Test Notify Co");
-  assert("commodityCode round-trips", fullPayload.commodityCode === "HS8471");
+  assert("commodityCode round-trips", fullPayload.commodityCode === "001404");
   await request("DELETE", `/api/shipments/${fullId}`, null, token);
 }
 

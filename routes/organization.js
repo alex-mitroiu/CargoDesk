@@ -1,27 +1,12 @@
 "use strict";
 
 module.exports = function organizationRoutes(app, ctx) {
-  const { query, ok, err, uid, auth, requireRole, mapOffice, mapCountry, isUniqueViolation } = ctx;
-
-  const mapBranch = r => ({
-    id:          r.id,
-    code:        r.code,
-    name:        r.name,
-    countryCode: r.country_code,
-    locode:      r.locode      || null,
-    city:        r.city        || null,
-    address:     r.address     || null,
-    timezone:    r.timezone    || null,
-    phone:       r.phone       || null,
-    email:       r.email       || null,
-    // Multi-Entity Accounting (TKT-EEV4I9) — a branch's own reporting/functional currency, since
-    // it doubles as CargoDesk's legal-entity boundary for GP-by-entity reporting (routes/finance.js).
-    // Defaults from org_countries.default_currency at creation time (below) but stays independently
-    // editable — a branch reporting in a currency other than its own country's default is a real case.
-    currency:    r.currency    || null,
-    isActive:    !!r.is_active,
-    createdAt:   r.created_at,
-  });
+  // mapBranch comes from lib/mappers.js via ctx. This file used to define its own identical local
+  // copy, which silently shadowed the shared one — so the shared one was dead code, and a field
+  // added there (tax_registration_number, 2026-09-29) never reached /api/branches until this was
+  // removed. A branch's currency is its Multi-Entity Accounting reporting currency (TKT-EEV4I9);
+  // defaulted from org_countries.default_currency at creation (below), independently editable.
+  const { query, ok, err, uid, auth, requireRole, mapOffice, mapCountry, mapBranch, isUniqueViolation } = ctx;
 
   const mapOrgCountry = r => ({
     countryCode:      r.country_code,
@@ -73,9 +58,20 @@ module.exports = function organizationRoutes(app, ctx) {
     ok(res, rows.map(r => ({ ...mapOffice(r), userCount: Number(r.user_count), emoCount: Number(r.emo_count), imoCount: Number(r.imo_count) })));
   });
 
+  // The entity's standard VAT rate, used to self-assess reverse-charged purchases (TKT-MQAXQX).
+  // Blank / null = not set; otherwise a percentage from 0 to 100.
+  const parseVatRate = v => {
+    if (v === undefined) return { skip: true };
+    if (v === null || v === "") return { value: null };
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 && n <= 100 ? { value: n } : { error: "standardVatRate must be a percentage from 0 to 100" };
+  };
+
   app.post("/api/branches", requireRole(["admin"]), async (req, res) => {
-    const { code, name, countryCode, locode, city, address, timezone, phone, email, currency } = req.body || {};
+    const { code, name, countryCode, locode, city, address, timezone, phone, email, currency, taxRegistrationNumber, standardVatRate } = req.body || {};
     if (!code || !name || !countryCode) return err(res, "code, name, countryCode required");
+    const vatRate = parseVatRate(standardVatRate);
+    if (vatRate.error) return err(res, vatRate.error);
     const id = `BRN-${uid()}`;
     const loc = locode ? locode.toUpperCase().trim() : null;
     const cc = countryCode.toUpperCase().trim();
@@ -87,10 +83,11 @@ module.exports = function organizationRoutes(app, ctx) {
     const resolvedCurrency = currency || orgCountry?.default_currency || null;
     try {
       await query(
-        `INSERT INTO branches (id, code, name, country_code, locode, city, address, timezone, phone, email, currency)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        `INSERT INTO branches (id, code, name, country_code, locode, city, address, timezone, phone, email, currency, tax_registration_number, standard_vat_rate)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [id, code.toUpperCase().trim(), name.trim(), cc,
-             loc, city || null, address || null, timezone || null, phone || null, email || null, resolvedCurrency]);
+             loc, city || null, address || null, timezone || null, phone || null, email || null, resolvedCurrency,
+             (taxRegistrationNumber || "").trim(), vatRate.skip ? null : vatRate.value]);
       const [row] = await query("SELECT * FROM branches WHERE id=$1", [id]);
       ok(res, mapBranch(row));
     } catch (e) {
@@ -101,17 +98,22 @@ module.exports = function organizationRoutes(app, ctx) {
   app.put("/api/branches/:id", requireRole(["admin"]), async (req, res) => {
     const [existing] = await query("SELECT * FROM branches WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
-    const { name, locode, city, address, timezone, phone, email, currency, isActive } = req.body || {};
+    const { name, locode, city, address, timezone, phone, email, currency, isActive, taxRegistrationNumber, standardVatRate } = req.body || {};
+    const vatRate = parseVatRate(standardVatRate);
+    if (vatRate.error) return err(res, vatRate.error);
     const loc = locode !== undefined ? (locode ? locode.toUpperCase().trim() : null) : existing.locode;
     await query(
-      `UPDATE branches SET name=$1, locode=$2, city=$3, address=$4, timezone=$5, phone=$6, email=$7, currency=$8, is_active=$9 WHERE id=$10`,
+      `UPDATE branches SET name=$1, locode=$2, city=$3, address=$4, timezone=$5, phone=$6, email=$7, currency=$8, is_active=$9, tax_registration_number=$10,
+         standard_vat_rate=$12 WHERE id=$11`,
       [
       name    ?? existing.name,    loc,             city    ?? existing.city,
       address ?? existing.address, timezone ?? existing.timezone,
       phone   ?? existing.phone,   email   ?? existing.email,
       currency !== undefined ? (currency || null) : existing.currency,
       isActive !== undefined ? !!isActive : existing.is_active,
-      req.params.id
+      taxRegistrationNumber !== undefined ? (taxRegistrationNumber || "").trim() : (existing.tax_registration_number || ""),
+      req.params.id,
+      vatRate.skip ? existing.standard_vat_rate : vatRate.value,
       ]);
     const [row] = await query("SELECT * FROM branches WHERE id=$1", [req.params.id]);
     ok(res, mapBranch(row));

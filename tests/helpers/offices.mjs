@@ -61,3 +61,22 @@ export async function ensureOffices(token) {
   const imoOfficeId = await ensureOffice(token, "SI");
   return { emoOfficeId, imoOfficeId };
 }
+
+/**
+ * Removes a scratch office (or branch) a test created. A shipment that has billed its customer
+ * can't be deleted (2026-09-30, routes/shipments.js), so an office such a shipment still
+ * references can't be deleted either. It is deactivated instead, the office route's own advice,
+ * which also keeps it out of ensureOffices()'s "first active office" pick for every later test.
+ * Resolves "deleted" | "deactivated" | "kept" (neither worked).
+ */
+export async function retireOffice(token, officeId) {
+  if (!officeId) return "kept";
+  if ((await call("DELETE", `/api/offices/${officeId}`, token)).status === 200) return "deleted";
+  return (await call("PUT", `/api/offices/${officeId}`, token, { isActive: false })).status === 200 ? "deactivated" : "kept";
+}
+
+export async function retireBranch(token, branchId) {
+  if (!branchId) return "kept";
+  if ((await call("DELETE", `/api/branches/${branchId}`, token)).status === 200) return "deleted";
+  return (await call("PUT", `/api/branches/${branchId}`, token, { isActive: false })).status === 200 ? "deactivated" : "kept";
+}

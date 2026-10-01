@@ -1,3 +1,5 @@
+import { lineChain } from "../../utils/routingLines";
+import useCommodityLabel from "../../hooks/useCommodityLabel";
 import { useState, useEffect } from "react";
 import { useAuth } from "../../AuthContext";
 import { api } from "../../api";
@@ -117,7 +119,7 @@ const LineAgentField = ({ label, role, party, canEdit, onAssign, onRemove }) => 
   );
 };
 
-const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, onRefresh }) => {
+const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onBack, onUpdate, onRefresh }) => {
   const auth = useAuth();
   const { canEditShipments: canEdit, activeOffice, allOffices, isAdmin, activeRoles } = auth;
   // Change Contract's own carrier-changed cascade (below) is the one remaining multi-step async
@@ -192,6 +194,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, on
   // no contract_rates row to speak of, the table renders a dashed placeholder row for those
   // instead of attempting a fetch that has nothing to return.
   const [contractDetail, setContractDetail] = useState(null);
+  const contractCommodityLabel = useCommodityLabel(contractDetail?.commodityTypes);
   useEffect(() => {
     if (shipment.contractType !== "Central" || !shipment.contractId) { setContractDetail(null); return; }
     let live = true;
@@ -426,15 +429,29 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, on
   const [linkedAlloc, setLinkedAlloc] = useState(null);
   useEffect(() => {
     let live = true;
-    if (shipment.contractType !== "Central" || !shipment.allocationId || !pol || !pod || !shipment.etd) {
+    if (shipment.contractType !== "Central" || !shipment.allocationId) {
       setLinkedAlloc(null);
       return;
     }
-    api.allocations.match({ pol, pod, etd: shipment.etd })
-      .then(matches => { if (live) setLinkedAlloc(matches.find(a => a.id === shipment.allocationId) || null); })
+    // The configuration this shipment is already on, looked up by id — /match would filter it by
+    // loop, customer and commodity, which is right for choosing space but not for showing it.
+    api.allocations.list()
+      .then(all => { if (live) setLinkedAlloc(all.find(a => a.id === shipment.allocationId) || null); })
       .catch(() => { if (live) setLinkedAlloc(null); });
     return () => { live = false; };
-  }, [shipment.contractType, shipment.allocationId, pol, pod, shipment.etd]);
+  }, [shipment.contractType, shipment.allocationId]);
+
+  // A shipment on a space configuration searches sailings by that configuration's routing
+  // (decided 2026-09-30): its loop, and the routing line's first transshipment port when it has
+  // one — see SailingPickerModal's requiredService/requiredHub.
+  const spaceSailingFilter = (() => {
+    if (!linkedAlloc) return null;
+    const ids = linkedAlloc.routingIds || [];
+    const rid = ids.includes(shipment.contractRoutingId) ? shipment.contractRoutingId : ids[0];
+    const chain = rid && contractDetail ? lineChain((contractDetail.legs || []).filter(l => l.routingId === rid)) : null;
+    const loop = linkedAlloc.loopCode || "", hub = chain?.viaOrigin || "";
+    return loop || hub ? { loop, hub } : null;
+  })();
 
   // Wraps LegsTable's own onDraftLegsChange (add/edit/remove a leg) — a multi-leg (TSP) sailing's
   // legs are one connected journey, so removing just ONE of them (whichever leg the user had
@@ -525,18 +542,23 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, on
     const seaLegsNow = (draftLegs || []).filter(l => l.legType === "SEA");
     const hasVesselNow = seaLegsNow.some(l => l.vessel || l.voyage);
     const updatedSeaLegs = updated.filter(l => l.legType === "SEA");
+    // Set when the server dropped the shipment's space configuration because the sailing is on
+    // another loop than the configuration's (see revalidateSpaceLoop, server.js).
+    let spaceUnlinked = null;
     if (draftSailing) {
       await Promise.all(scheduleList.map(s => api.schedules.remove(shipment.id, s.id)));
-      await api.schedules.save(shipment.id, { ...draftSailing, templateId: draftSailing.scheduleId ?? null });
+      const saved = await api.schedules.save(shipment.id, { ...draftSailing, templateId: draftSailing.scheduleId ?? null });
+      spaceUnlinked = saved?.spaceUnlinked || null;
     } else if (!hasVesselNow && scheduleList.length > 0) {
       await Promise.all(scheduleList.map(s => api.schedules.remove(shipment.id, s.id)));
     } else if (hasVesselNow && scheduleList.length > 0 && updatedSeaLegs.length > 0) {
       const firstSea = seaLegsNow[0];
       const lastSea = seaLegsNow[seaLegsNow.length - 1];
-      await api.schedules.update(shipment.id, scheduleList[0].id, {
+      const upd = await api.schedules.update(shipment.id, scheduleList[0].id, {
         vesselName: firstSea.vessel, voyageNumber: firstSea.voyage,
         etd: firstSea.etd, eta: lastSea.eta, carrier: firstSea.carrierCode,
       });
+      spaceUnlinked = upd?.spaceUnlinked || null;
     }
 
     setLegsVersion(v => v + 1); // re-seeds draftLegs/originalLegsSnapshot from the fresh server state
@@ -544,6 +566,9 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, on
     await onRefresh?.();
     emitLegsScheduleChanged(shipment.id);
     toast.success("Saved");
+    if (spaceUnlinked) {
+      toast.warning(`This sailing is on loop ${spaceUnlinked.loop}, but space configuration ${spaceUnlinked.allocationId} is for loop ${spaceUnlinked.configLoop}, so the shipment is no longer on that space. Pick space again from the contract.`);
+    }
   };
 
   const handleSave = async () => {
@@ -739,7 +764,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, on
               ["Contract Number", isCentral ? (contractDetail?.contractNumber || "") : ""],
               ["Contract Reference", shipment.contractRef || ""],
               ["Named Account", isCentral ? (contractDetail?.namedAccount || "") : ""],
-              ["Commodity", isCentral ? (contractDetail?.commodityTypes || "") : ""],
+              ["Commodity", isCentral ? contractCommodityLabel : ""],
               ["Rate ID", isCentral ? (latestRateSnapshotId || "") : ""],
               ["Valid From", isCentral ? (contractDetail?.validFrom || "") : (shipment.contractValidFrom || "")],
               ["Valid To", isCentral ? (contractDetail?.validTo || "") : (shipment.contractValidTo || "")],
@@ -858,6 +883,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, on
           pol={sailingPol} pod={sailingPod} carrierCode={carrier}
           routingTerm={shipment.routingTerm}
           expectedHub={routeOverride?.hub || null} expectedService={routeOverride?.service || null}
+          requiredService={spaceSailingFilter?.loop || null} requiredHub={spaceSailingFilter?.hub || null}
           activeSailing={draftSailing || scheduleList[0] || null}
           onSelect={handleSelectSailing}
           onClose={() => {
@@ -891,7 +917,8 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, onBack, onUpdate, on
 
       {contractModalOpen && (
         <ContractAssignModal
-          shipment={shipment} legs={draftLegs} pol={pol} pod={pod} shipmentTEU={shipmentTEU} onUpdate={onUpdate}
+          shipment={shipment} legs={draftLegs} pol={pol} pod={pod} shipmentTEU={shipmentTEU} containers={containers} onUpdate={onUpdate}
+          loopCode={deriveLoopCode(draftSailing || scheduleList[0])}
           onClose={() => setContractModalOpen(false)}
           onDone={async ({ isCentral, contractPicked, carrierCode, matchedRoute }) => {
             setContractModalOpen(false);

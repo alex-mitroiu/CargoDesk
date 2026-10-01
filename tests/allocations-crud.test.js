@@ -69,14 +69,17 @@ async function login() {
     const { emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId } = await ensureOffices(token);
 
     console.log("\nScratch contract + two linked ports (own scratch pair, doesn't touch real MDM data) for the conflict/linked-match tests");
+    const portA = "ZALCA", portB = "ZALCB";
+    // Space configurations sit on a contract's routing lines (2026-09-30), so the contract needs a
+    // real leg: portA → USNYC, accepting linked ports at the POL for the linked-match checks.
+    const scratchLegs = [{ pol: portA, pod: "USNYC", polLinkedAllowed: true }];
     const contract = await request("POST", "/api/contracts", {
       carrierCode: "MAEU", contractNumber: `ALC-TEST-${Date.now()}`, contractType: "Central",
-      status: "Active", validFrom: "2026-01-01", validTo: "2030-01-01",
+      status: "Active", validFrom: "2026-01-01", validTo: "2030-01-01", legs: scratchLegs,
     }, token);
     assert("scratch contract created", contract.status === 201, JSON.stringify(contract.body));
     const contractId = contract.body.id;
 
-    const portA = "ZALCA", portB = "ZALCB";
     await request("POST", "/api/port-locations", { unlocode: portA, name: "Zed Alloc Port A", countryCode: "NL" }, token);
     await request("POST", "/api/port-locations", { unlocode: portB, name: "Zed Alloc Port B", countryCode: "NL" }, token);
     const link = await request("POST", "/api/linked-ports", { primaryUnlocode: portA, linkedUnlocode: portB }, token);
@@ -109,7 +112,7 @@ async function login() {
       carrierCode: "MAEU", allocatedTEU: 30, effectiveDate: "2026-03-01", endDate: "2026-04-01",
       pol: portA, pod: "USNYC", contractId,
     }, token);
-    assert("overlapping same-route allocation rejected", overlapping.status >= 400 && /already covers/i.test(overlapping.body.error || ""));
+    assert("overlapping same-route allocation rejected", overlapping.status >= 400 && /already has a space configuration/i.test(overlapping.body.error || ""));
 
     console.log("\nUpdate — happy path, validation, overlap (excluding self), 404");
     const update = await request("PUT", `/api/allocations/${allocId}`, {
@@ -157,6 +160,27 @@ async function login() {
       `/api/allocations/conflicts?carrierCode=MAEU&pol=${portA}&pod=USNYC&effectiveDate=2026-02-01&endDate=2026-03-01&excludeId=${allocId}`, null, token);
     assert("excludeId omits our own allocation from its own conflict check", !conflictsExcluded.body.exact.some(a => a.id === allocId));
 
+    console.log("\nOverlap is per contract: another contract may hold space on the same lane and dates");
+    const contract2 = await request("POST", "/api/contracts", {
+      carrierCode: "MAEU", contractNumber: contract.body.contractNumber, contractRef: "REF-2",
+      status: "Active", validFrom: "2026-01-01", validTo: "2030-01-01", legs: scratchLegs,
+    }, token);
+    assert("second contract record (same number, other reference) created", contract2.status === 201, JSON.stringify(contract2.body));
+    const sameLaneOtherContract = await request("POST", "/api/allocations", {
+      carrierCode: "MAEU", allocatedTEU: 20, effectiveDate: "2026-02-01", endDate: "2026-03-01", pol: portA, pod: "USNYC", contractId: contract2.body.id,
+    }, token);
+    assert("same lane + overlapping dates on a DIFFERENT contract is allowed", sameLaneOtherContract.status === 201, JSON.stringify(sameLaneOtherContract.body));
+    const sameLaneSameContract = await request("POST", "/api/allocations", {
+      carrierCode: "MAEU", allocatedTEU: 20, effectiveDate: "2026-02-01", endDate: "2026-03-01", pol: portA, pod: "USNYC", contractId,
+    }, token);
+    assert("same lane + overlapping dates on the SAME contract is still rejected", sameLaneSameContract.status === 400 && /already has/.test(sameLaneSameContract.body.error || ""), JSON.stringify(sameLaneSameContract.body));
+    const moveOnto = await request("PUT", `/api/allocations/${sameLaneOtherContract.body.id}`, {
+      carrierCode: "MAEU", allocatedTEU: 20, effectiveDate: "2026-02-01", endDate: "2026-03-01", pol: portA, pod: "USNYC", contractId,
+    }, token);
+    assert("moving it onto the contract that already has that space is rejected", moveOnto.status === 400, JSON.stringify(moveOnto.body));
+    if (sameLaneOtherContract.body?.id) await request("DELETE", `/api/allocations/${sameLaneOtherContract.body.id}`, null, token);
+    if (contract2.body?.id) await request("DELETE", `/api/contracts/${contract2.body.id}`, null, token);
+
     const conflictsMissingParams = await request("GET", "/api/allocations/conflicts?carrierCode=MAEU", null, token);
     assert("conflicts with missing params returns empty shape, not an error", conflictsMissingParams.status === 200 && conflictsMissingParams.body.exact.length === 0);
 
@@ -171,6 +195,19 @@ async function login() {
     const exactResult = matchExact.body.find(a => a.id === allocId);
     assert("exact-port match returns matchKind 'exact'", exactResult?.matchKind === "exact");
     assert("linkedPolVia/linkedPodVia are null on an exact match", exactResult?.linkedPolVia === null && exactResult?.linkedPodVia === null);
+    assert("match carries the contract's details for the picker's same-contract suggestion",
+      exactResult?.contract?.contractNumber === contract.body.contractNumber && exactResult.contract.namedAccountId === ""
+        && Array.isArray(exactResult.contract.containerTypes) && typeof exactResult.contract.oceanRates === "object", JSON.stringify(exactResult?.contract));
+
+    console.log("\nGET /api/allocations/match reads the contract number live, not the allocation's stored copy");
+    const renamed = `${contract.body.contractNumber}-R`;
+    // A PUT replaces the whole contract, so send it back complete — without its legs the routing
+    // line the space configuration sits on would be removed, which is now refused.
+    const current = (await request("GET", `/api/contracts/${contractId}`, null, token)).body;
+    const rename = await request("PUT", `/api/contracts/${contractId}`, { ...current, contractNumber: renamed }, token);
+    assert("contract renumbered", rename.status === 200, JSON.stringify(rename.body));
+    const afterRename = (await request("GET", `/api/allocations/match?pol=${portA}&pod=USNYC&etd=2026-02-15`, null, token)).body.find(a => a.id === allocId);
+    assert("match reports the new contract number", afterRename?.contractNumber === renamed && afterRename?.contract?.contractNumber === renamed, JSON.stringify(afterRename));
 
     const matchNoParams = await request("GET", "/api/allocations/match", null, token);
     assert("match with no pol/pod/etd returns an empty array, not an error", matchNoParams.status === 200 && matchNoParams.body.length === 0);
@@ -216,6 +253,27 @@ async function login() {
       bucketAlloc?.confirmedTEU + bucketAlloc?.pendingTEU + bucketAlloc?.rejectedTEU === 4);
     assert("remainingTEU deducts only the Confirmed booking (75 - 1 = 74)", bucketAlloc?.remainingTEU === 74, JSON.stringify(bucketAlloc));
 
+    console.log("\nHow the space configuration was picked (spaceSelection) — stored, validated, reset when the configuration changes");
+    const selPayload = {
+      pol: portA, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "Central", contractId,
+      etd: "2026-02-01", allocationId: allocId, emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
+    };
+    const badSel = await request("POST", "/api/shipments", { ...selPayload, spaceSelection: "guessed" }, token);
+    assert("an unknown spaceSelection is rejected", badSel.status === 400 && /spaceSelection/.test(badSel.body.error || ""), JSON.stringify(badSel.body));
+    const selShip = await request("POST", "/api/shipments", { ...selPayload, spaceSelection: "suggested" }, token);
+    const selId = selShip.body.id;
+    const selGet = async () => (await request("GET", `/api/shipments/${selId}`, null, token)).body.spaceSelection;
+    assert("a shipment booked through the suggestion is recorded as 'suggested'", await selGet() === "suggested");
+    await request("PUT", `/api/shipments/${selId}`, { status: "Active", etd: "2026-02-02" }, token);
+    assert("an unrelated edit keeps it", await selGet() === "suggested");
+    await request("PUT", `/api/shipments/${selId}`, { status: "Active", spaceSelection: "overbooked" }, token);
+    assert("re-picking with 'Book here anyway' records 'overbooked'", await selGet() === "overbooked");
+    await request("PUT", `/api/shipments/${selId}`, { status: "Active", allocationId: "" }, token);
+    assert("unlinking the space configuration clears it", await selGet() === "");
+    await request("PUT", `/api/shipments/${selId}`, { status: "Active", allocationId: allocId }, token);
+    assert("re-linking without saying how leaves it 'not recorded'", await selGet() === "");
+    await request("DELETE", `/api/shipments/${selId}`, null, token);
+
     const bucketMatch = await request("GET", `/api/allocations/match?pol=${portA}&pod=USNYC&etd=2026-02-15`, null, token);
     const bucketMatchAlloc = bucketMatch.body.find(a => a.id === allocId);
     assert("GET /api/allocations/match reports the identical bucket split", bucketMatchAlloc?.confirmedTEU === 1 &&
@@ -223,7 +281,9 @@ async function login() {
 
     console.log("\nOverflow — Pending demand can exceed allocated capacity, uncapped, no crash");
     const overflowAlloc = await request("POST", "/api/allocations", {
-      carrierCode: "MAEU", allocatedTEU: 1, effectiveDate: "2026-01-01", endDate: "2026-06-01",
+      // Its own period: portB is a linked port of portA, so it resolves to the same routing line
+      // as allocId, and an overlapping period there would be a duplicate (per-line rule).
+      carrierCode: "MAEU", allocatedTEU: 1, effectiveDate: "2026-08-01", endDate: "2026-09-30",
       pol: portB, pod: "USNYC", contractId,
     }, token);
     const overflowAllocId = overflowAlloc.body.id;

@@ -102,24 +102,26 @@ async function login() {
       contractId = r.body.id;
     }
 
-    console.log("\ncommodityTypes — free text, defaults to FAK when blank, capped at 32 chars");
+    // Commodity types are codes from Master Data → Commodities since 2026-09-30 (they used to be
+    // free text capped at 32 characters): blank means FAK, the registry's own code 9999.
+    console.log("\ncommodityTypes — registry codes, defaults to FAK (9999) when blank, unknown codes refused");
     {
       const base = { contractNumber: `TESTCOMM-${Date.now()}`, carrierCode: "MAEU", status: "Active",
         validFrom: "2026-01-01", validTo: "2027-01-01" };
 
       const blank = await request("POST", "/api/contracts", { ...base, contractRef: "blank" }, token);
-      assert("blank commodityTypes defaults to FAK on create", blank.body.commodityTypes === "FAK", JSON.stringify(blank.body.commodityTypes));
+      assert("blank commodityTypes defaults to FAK (9999) on create", blank.body.commodityTypes === "9999", JSON.stringify(blank.body.commodityTypes));
       await request("DELETE", `/api/contracts/${blank.body.id}`, null, token);
 
-      const explicit = await request("POST", "/api/contracts", { ...base, contractRef: "explicit", commodityTypes: "Electronics" }, token);
-      assert("explicit commodityTypes preserved on create", explicit.body.commodityTypes === "Electronics");
+      const explicit = await request("POST", "/api/contracts", { ...base, contractRef: "explicit", commodityTypes: "001404, 002001" }, token);
+      assert("registry codes kept on create (normalized, comma-separated)", explicit.body.commodityTypes === "001404,002001", JSON.stringify(explicit.body.commodityTypes));
       const putBack = await request("PUT", `/api/contracts/${explicit.body.id}`, { ...explicit.body, commodityTypes: "" }, token);
-      assert("blanking commodityTypes on update re-defaults to FAK", putBack.body.commodityTypes === "FAK");
+      assert("blanking commodityTypes on update re-defaults to FAK (9999)", putBack.body.commodityTypes === "9999");
       await request("DELETE", `/api/contracts/${explicit.body.id}`, null, token);
 
-      const long = await request("POST", "/api/contracts", { ...base, contractRef: "long", commodityTypes: "A".repeat(50) }, token);
-      assert("commodityTypes capped at 32 chars", long.body.commodityTypes.length === 32, `got length ${long.body.commodityTypes.length}`);
-      await request("DELETE", `/api/contracts/${long.body.id}`, null, token);
+      const unknown = await request("POST", "/api/contracts", { ...base, contractRef: "unknown", commodityTypes: "Electronics" }, token);
+      assert("free text / unknown codes are refused (400)", unknown.status === 400 && /commodity code/i.test(unknown.body.error || ""), JSON.stringify(unknown.body));
+      if (unknown.body.id) await request("DELETE", `/api/contracts/${unknown.body.id}`, null, token);
     }
 
     console.log("\nAmendment history — field diff + content-keyed rate diff");

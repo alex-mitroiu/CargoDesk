@@ -2,18 +2,18 @@
 
 module.exports = function shipmentOpsRoutes(app, ctx) {
   const { query, transaction, ok, err, uid, auth, requireRole, validCoord, GPS_LOC_TYPE,
-          mapCostLine, mapService, mapMilestone, mapMilestoneTemplate,
+          mapCostLine, mapService, mapMilestone, mapMilestoneTemplate, billingHolds, describeHolds,
           sanctionsMap, screenShipmentById,
           logEvent, logEntityEvent, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
           computeCostLineReconciliation, applyReconciliation,
-          mapRateSnapshot, syncShipmentFromLegs, ensureBookingCreated, autoCompleteMilestone, applyChargeDefaults,
+          mapRateSnapshot, syncShipmentFromLegs, ensureBookingCreated, autoCompleteMilestone, applyChargeDefaults, autoImportContractCosts,
           UPLOADS_DIR, fs, path,
           renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
           buildMailOptions, sendViaOffice,
           createRateLimiter, getSettings, callContractService, callMdmService, getCustomerRow,
           computeArExposure, toUsd, roundCents, OVERRIDE_GRACE_MS,
           userOwnsLaneForShipment, mapInvoiceStatusOverride, docAmountUsd, canEditOfficeSide,
-          officeSideOf, blockIfWrongSide, chargeCodeSide, mapShipment } = ctx;
+          officeSideOf, blockIfWrongSide, chargeCodeSide, mapShipment , revalidateSpaceLoop } = ctx;
 
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
 
@@ -198,10 +198,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // own comment for the exact Overwrite-reaches-manual-lines / Ignore-touches-nothing-existing
   // semantics agreed for this feature.
   app.post("/api/shipments/:id/cost-lines/import-contract", shipmentWrite, async (req, res) => {
-    const { action = 'overwrite', splitPerContainer = false } = req.body || {};
-    if (!['overwrite', 'ignore'].includes(action)) return err(res, "action must be overwrite or ignore");
+    const { action = 'overwrite', splitPerContainer = false, take = [] } = req.body || {};
+    if (!['overwrite', 'ignore', 'selected'].includes(action)) return err(res, "action must be overwrite, ignore or selected");
+    if (action === 'selected' && (!Array.isArray(take) || take.some(c => typeof c !== 'string')))
+      return err(res, "take must be an array of charge codes");
     try {
-      const result = await applyReconciliation(req.params.id, 'import', action, { splitPerContainer });
+      const result = await applyReconciliation(req.params.id, 'import', action, { splitPerContainer, take });
       ok(res, result);
     } catch (e) { err(res, e.message, e.message === "Shipment not found" ? 404 : 400); }
   });
@@ -214,24 +216,25 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!shipment) return err(res, "Shipment not found", 404);
     if (shipment.contract_type !== 'Central' || !shipment.contract_id)
       return err(res, "Shipment is not linked to a Central contract");
-    const [snapshot] = await query("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 ORDER BY generated_at DESC LIMIT 1", [req.params.id]);
+    const [snapshot] = await query("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 AND contract_id=$2 ORDER BY generated_at DESC LIMIT 1", [req.params.id, shipment.contract_id]);
     if (!snapshot) return err(res, "No rate snapshot found for this shipment — use Import from Contract first");
-    const existingSell = await query("SELECT id FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND source='contract'", [req.params.id]);
-    const includeSell = existingSell.length > 0;
-    for (const row of await query("SELECT id FROM shipment_cost_lines WHERE shipment_id=$1 AND source='contract'", [req.params.id]))
-      await query("DELETE FROM shipment_cost_lines WHERE id=$1", [row.id]);
-    const count = await generateCostLinesFromSnapshot(req.params.id, snapshot.id, { splitPerContainer, includeSell });
-    ok(res, { imported: count, snapshotId: snapshot.id });
+    // Same rules as Overwrite against the committed snapshot: an edited contract line is reverted
+    // (it used to be skipped AND regenerated, leaving the charge twice), posted/actualized/invoiced
+    // lines and charges the contract never had are never touched (they used to be deleted).
+    const result = await applyReconciliation(req.params.id, 'import', 'overwrite', { splitPerContainer });
+    ok(res, { imported: result.imported, deleted: result.deleted, snapshotId: result.snapshotId });
   });
 
   // Pulls CURRENT live contract_rates into a NEW frozen snapshot, then regenerates cost lines
   // from it — the only action that changes the committed rate (carrier rates can move; this is
   // how that gets picked up deliberately, with a record of when/why it happened).
   app.post("/api/shipments/:id/cost-lines/update-carrier-costs", shipmentWrite, async (req, res) => {
-    const { action = 'overwrite', splitPerContainer = false } = req.body || {};
-    if (!['overwrite', 'ignore'].includes(action)) return err(res, "action must be overwrite or ignore");
+    const { action = 'overwrite', splitPerContainer = false, take = [] } = req.body || {};
+    if (!['overwrite', 'ignore', 'selected'].includes(action)) return err(res, "action must be overwrite, ignore or selected");
+    if (action === 'selected' && (!Array.isArray(take) || take.some(c => typeof c !== 'string')))
+      return err(res, "take must be an array of charge codes");
     try {
-      const result = await applyReconciliation(req.params.id, 'update', action, { splitPerContainer });
+      const result = await applyReconciliation(req.params.id, 'update', action, { splitPerContainer, take });
       ok(res, result);
     } catch (e) { err(res, e.message, e.message === "Shipment not found" ? 404 : 400); }
   });
@@ -303,7 +306,22 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     return await blockIfWrongSide(req, res, shipmentRow, side);
   }
 
+  // Invoices and credit/debit notes — the documents that bill a customer.
+  const BILLING_DOC_TYPES = ["FR01", "FR02", "CN01"];
+
+  // Which live billing document holds each SELL line (TKT-2F19XD, lib/billing-holds.js) —
+  // Invoice Entry labels those lines and leaves them out of a new invoice. null = unbilled.
+  const withBilledOn = async rows => {
+    const holds = await billingHolds(rows.filter(r => r.type === "SELL").map(r => r.id));
+    return rows.map(r => {
+      const h = holds.get(r.id);
+      return { ...mapCostLine(r), billedOn: h ? { kind: h.kind, id: h.id, docType: h.docType, status: h.status, label: h.label } : null };
+    });
+  };
+
   app.get("/api/shipments/:id/cost-lines", costLineRead, async (req, res) => {
+    // Contract first: a CCD skips any charge the shipment already has, so the contract gets its say.
+    await autoImportContractCosts(req.params.id);
     await applyChargeDefaults(req.params.id);
     const { limit, offset } = req.query;
     // Pagination is opt-in (TKT-UAJGR3) — every existing consumer (CostLineRow lists, GP Overview,
@@ -311,7 +329,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     // so the default response stays today's exact bare array.
     if (limit === undefined && offset === undefined) {
       const rows = await query("SELECT * FROM shipment_cost_lines WHERE shipment_id=$1 ORDER BY type, created_at ASC", [req.params.id]);
-      return ok(res, (await filterCostLinesBySide(req, req.params.id, rows)).map(mapCostLine));
+      return ok(res, await withBilledOn(await filterCostLinesBySide(req, req.params.id, rows)));
     }
     // Filtered before paging (same "scope-filter BEFORE anything else" discipline
     // routes/carrier-invoices.js's own loadVisibleInvoices already uses) so total/limit/offset
@@ -319,36 +337,57 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const allRows = await query("SELECT * FROM shipment_cost_lines WHERE shipment_id=$1 ORDER BY type, created_at ASC", [req.params.id]);
     const visible = await filterCostLinesBySide(req, req.params.id, allRows);
     const lim = Math.min(parseInt(limit) || 50, 500), off = parseInt(offset) || 0;
-    ok(res, { results: visible.slice(off, off + lim).map(mapCostLine), total: visible.length, limit: lim, offset: off });
+    ok(res, { results: await withBilledOn(visible.slice(off, off + lim)), total: visible.length, limit: lim, offset: off });
   });
 
+  // Tax handling (2026-09-29). VAT applies to BOTH directions now — a SELL line's rate is output
+  // VAT (charged to the customer), a BUY line's is input VAT (paid to a vendor, reclaimable).
+  // Until this, BUY lines had their rate silently forced to 0 here, so input VAT could never be
+  // recorded at all. vat_treatment distinguishes the three legally different ways a line can
+  // carry 0% (zero-rated / reverse-charged / exempt) from an ordinary standard-rated line; any
+  // non-standard treatment forces the rate to 0, since none of them charge VAT on the line itself.
+  const VAT_TREATMENTS = ["standard", "zero_rated", "reverse_charge", "exempt"];
+  const resolveVat = (vatRate, vatTreatment) => {
+    if (!VAT_TREATMENTS.includes(vatTreatment)) return { error: `vatTreatment must be one of: ${VAT_TREATMENTS.join(", ")}` };
+    if (vatTreatment !== "standard") return { vat: 0, treatment: vatTreatment };
+    const n = Number(vatRate || 0);
+    if (!Number.isFinite(n) || n < 0 || n > 100) return { error: "vatRate must be between 0 and 100" };
+    return { vat: n, treatment: "standard" };
+  };
+
   app.post("/api/shipments/:id/cost-lines", shipmentWrite, async (req, res) => {
-    const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, vatRate = 0, notes = '', containerId = '', source: rawSource, paymentIndicator: rawPI } = req.body;
+    const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, vatRate = 0, vatTreatment = 'standard', notes = '', containerId = '', source: rawSource, paymentIndicator: rawPI } = req.body;
     if (!type || !chargeCode || amount == null) return err(res, "type, chargeCode, amount required");
     if (!['BUY','SELL'].includes(type)) return err(res, "type must be BUY or SELL");
+    const vatResolved = resolveVat(vatRate, vatTreatment);
+    if (vatResolved.error) return err(res, vatResolved.error);
     if (await blockIfWrongSideForChargeCode(req, res, req.params.id, chargeCode)) return;
     const source = ['contract', 'mirror', 'automated'].includes(rawSource) ? rawSource : 'manual';
     const paymentIndicator = rawPI === 'Collect' ? 'Collect' : 'Prepaid';
-    const vat = type === 'SELL' ? Number(vatRate) || 0 : 0;
+    const { vat, treatment } = vatResolved;
     const id  = `CL-${uid()}`;
     const now = new Date().toISOString();
-    await query("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,notes,container_id,created_at,source,payment_indicator) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
-      [id, req.params.id, type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), vat, notes, containerId, now, source, paymentIndicator]);
+    await query("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,vat_treatment,notes,container_id,created_at,source,payment_indicator) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
+      [id, req.params.id, type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), vat, treatment, notes, containerId, now, source, paymentIndicator]);
     await logEntityEvent('cost_line', id, 'CREATED', null, null, null,
-      JSON.stringify({ shipmentId: req.params.id, type, chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchangeRate: Number(exchangeRate), vatRate: vat }));
-    ok(res, mapCostLine({ id, shipment_id: req.params.id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), vat_rate: vat, notes, container_id: containerId, source, payment_indicator: paymentIndicator, modified_at: null, created_at: now }), 201);
+      JSON.stringify({ shipmentId: req.params.id, type, chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchangeRate: Number(exchangeRate), vatRate: vat, vatTreatment: treatment }));
+    ok(res, mapCostLine({ id, shipment_id: req.params.id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), vat_rate: vat, vat_treatment: treatment, notes, container_id: containerId, source, payment_indicator: paymentIndicator, modified_at: null, created_at: now }), 201);
   });
 
   app.put("/api/shipments/:shipmentId/cost-lines/:id", shipmentWrite, async (req, res) => {
-    const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, vatRate = 0, notes = '', containerId = '', paymentIndicator: rawPI } = req.body;
+    const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, vatRate = 0, vatTreatment, notes = '', containerId = '', paymentIndicator: rawPI } = req.body;
     if (!type || !chargeCode || amount == null) return err(res, "type, chargeCode, amount required");
     if (!['BUY','SELL'].includes(type)) return err(res, "type must be BUY or SELL");
     const [existing] = await query("SELECT * FROM shipment_cost_lines WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
     if (existing.status === 'posted') return err(res, "This line is posted and locked — add a new adjusting line instead of editing it", 409);
+    // An omitted vatTreatment keeps the line's current one, so a caller that predates the field
+    // (or simply doesn't send it) can never silently reset a reverse-charged line to standard.
+    const vatResolved = resolveVat(vatRate, vatTreatment ?? (existing.vat_treatment || 'standard'));
+    if (vatResolved.error) return err(res, vatResolved.error);
     if (await blockIfWrongSideForChargeCode(req, res, req.params.shipmentId, existing.charge_code)) return;
     const paymentIndicator = rawPI === 'Collect' ? 'Collect' : 'Prepaid';
-    const vat = type === 'SELL' ? Number(vatRate) || 0 : 0;
+    const { vat, treatment } = vatResolved;
     const now = new Date().toISOString();
     const fieldDiffs = [
       ['type',          existing.type,          type],
@@ -357,6 +396,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       ['amount',        String(existing.amount), String(Number(amount))],
       ['exchange_rate', String(existing.exchange_rate), String(Number(exchangeRate))],
       ['vat_rate',      String(existing.vat_rate || 0), String(vat)],
+      ['vat_treatment', existing.vat_treatment || 'standard', treatment],
       ['notes',         existing.notes || '',   notes],
       ['container_id',  existing.container_id || '', containerId],
       ['payment_indicator', existing.payment_indicator || 'Prepaid', paymentIndicator],
@@ -371,8 +411,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     // isn't distinguishable from "never touched" anyway, and reverting a source automatically
     // would just reopen the same silent-overwrite risk this exists to close.
     const newSource = (anyChanged && existing.source === 'contract') ? 'manual' : existing.source;
-    await query("UPDATE shipment_cost_lines SET type=$1,charge_code=$2,currency=$3,amount=$4,exchange_rate=$5,vat_rate=$6,notes=$7,container_id=$8,payment_indicator=$9,modified_at=$10,source=$11 WHERE id=$12",
-      [type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), vat, notes, containerId, paymentIndicator, now, newSource, req.params.id]);
+    await query("UPDATE shipment_cost_lines SET type=$1,charge_code=$2,currency=$3,amount=$4,exchange_rate=$5,vat_rate=$6,notes=$7,container_id=$8,payment_indicator=$9,modified_at=$10,source=$11,vat_treatment=$12 WHERE id=$13",
+      [type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), vat, notes, containerId, paymentIndicator, now, newSource, treatment, req.params.id]);
     for (const [field, oldV, newV] of fieldDiffs) {
       if (String(oldV) !== String(newV))
         await logEntityEvent('cost_line', req.params.id, 'UPDATED', field, oldV, newV,
@@ -381,7 +421,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (newSource !== existing.source)
       await logEntityEvent('cost_line', req.params.id, 'UPDATED', 'source', existing.source, newSource,
         JSON.stringify({ shipmentId: existing.shipment_id, chargeCode, type, reason: 'edited away from the contract-generated value' }));
-    ok(res, mapCostLine({ id: req.params.id, shipment_id: existing.shipment_id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), vat_rate: vat, notes, container_id: containerId, source: newSource, payment_indicator: paymentIndicator, modified_at: now, created_at: existing.created_at }));
+    ok(res, mapCostLine({ id: req.params.id, shipment_id: existing.shipment_id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), vat_rate: vat, vat_treatment: treatment, notes, container_id: containerId, source: newSource, payment_indicator: paymentIndicator, modified_at: now, created_at: existing.created_at }));
   });
 
   // ─── Accrual / posting state machine (TKT-83O41G) ──────────────────────────
@@ -1213,6 +1253,18 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         consumeOverrideId = overLimit.override.id;
       }
     }
+    // One SELL line, one live billing document (TKT-2F19XD): refuse charges already on another
+    // draft/confirmed invoice or credit note, or on a statement that isn't voided. Invoice Entry
+    // leaves such lines out itself (billedOn on each cost line); this catches a stale page or a
+    // direct API call. Checked again under a lock just before the insert, below.
+    const billedLineIds = ["FR01", "FR02", "CN01"].includes(docType) && Array.isArray(sourceCostLineIds) ? sourceCostLineIds : [];
+    const billedLines = billedLineIds.length
+      ? await query(`SELECT * FROM shipment_cost_lines WHERE id IN (${billedLineIds.map((_, i) => `$${i + 1}`).join(",")})`, billedLineIds)
+      : [];
+    if (billedLineIds.length) {
+      const holds = await billingHolds(billedLineIds);
+      if (holds.size) return err(res, `Cannot generate this ${docType} — ${describeHolds(holds, billedLines)}`, 409);
+    }
     // Written BEFORE the render/sign calls (both real, per-call network round-trips to the
     // pdf-render service) so a crash or hang mid-call still leaves a durable trace — previously
     // a failure anywhere in this block (render timeout, signing error, process crash) left
@@ -1222,13 +1274,14 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     // marker in the shipment's existing event history.
     await logEvent(req.params.id, 'DOCUMENT_GENERATION_ATTEMPTED', null, null, null,
       JSON.stringify({ docType: docType || "OT", filename }), req.user?.name || req.user?.email || "");
+    let storedName = null, committed = false;
     try {
       const cert = await getActiveSigningCert(query);
       const rawPdf = await renderHtmlToPdf(html);
       const signedPdf = await signPdfBuffer(Buffer.from(rawPdf), cert);
 
       const pdfFilename = `${path.parse(filename).name}.pdf`;
-      const storedName  = `${Date.now()}_${uid()}.pdf`;
+      storedName = `${Date.now()}_${uid()}.pdf`;
       fs.writeFileSync(path.join(UPLOADS_DIR, storedName), signedPdf);
 
       const id       = `DOC-${uid()}`;
@@ -1237,11 +1290,22 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       // sourceCostLineIds (FR01/FR02 only) records exactly which cost lines this invoice was
       // built from, so a later reversal (TKT-DUADU3) knows precisely what to negate rather than
       // re-deriving from whatever SELL lines happen to exist by then.
-      await query(`INSERT INTO shipment_documents
-        (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party, source_cost_line_ids, related_doc_id)
-        VALUES ($1, $2, $3, $4, 'application/pdf', $5, $6, $7, $8, 'draft', $9, $10, $11, $12)`,
-        [id, req.params.id, pdfFilename, storedName, signedPdf.length, docType || "OT", uploader, now, containerId, responsibleParty,
-             Array.isArray(sourceCostLineIds) ? JSON.stringify(sourceCostLineIds) : null, relatedDocId]);
+      // Rendering above waits on the network, so a statement or another invoice may have billed
+      // these lines meanwhile: lock the shipment, check again and insert in one transaction (a
+      // statement for the same shipment takes the same lock, routes/customer-statements.js).
+      await transaction(async tx => {
+        if (billedLineIds.length) {
+          await tx.query("SELECT id FROM shipments WHERE id=$1 FOR UPDATE", [req.params.id]);
+          const holds = await billingHolds(billedLineIds);
+          if (holds.size) throw Object.assign(new Error(`Cannot generate this ${docType} — ${describeHolds(holds, billedLines)}`), { status: 409 });
+        }
+        await tx.query(`INSERT INTO shipment_documents
+          (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party, source_cost_line_ids, related_doc_id)
+          VALUES ($1, $2, $3, $4, 'application/pdf', $5, $6, $7, $8, 'draft', $9, $10, $11, $12)`,
+          [id, req.params.id, pdfFilename, storedName, signedPdf.length, docType || "OT", uploader, now, containerId, responsibleParty,
+               Array.isArray(sourceCostLineIds) ? JSON.stringify(sourceCostLineIds) : null, relatedDocId]);
+      });
+      committed = true;
       await logEntityEvent('document', id, 'GENERATED', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, docType: docType || "OT", filename: pdfFilename, containerId, signed: true, certFingerprint: cert.fingerprint_sha256 }));
       await logEvent(req.params.id, 'DOCUMENT_GENERATED', null, null, pdfFilename,
@@ -1252,6 +1316,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       const [row] = await query("SELECT * FROM shipment_documents WHERE id = $1", [id]);
       ok(res, await mapDoc(row, req.params.id), 201);
     } catch (e) {
+      // Nothing points at the PDF unless the insert committed — don't leave it on disk.
+      if (storedName && !committed) try { fs.unlinkSync(path.join(UPLOADS_DIR, storedName)); } catch {}
       await logEvent(req.params.id, 'DOCUMENT_GENERATION_FAILED', null, null, null,
         JSON.stringify({ docType: docType || "OT", filename, error: e.message }), req.user?.name || req.user?.email || "");
       err(res, e.message, e.status || 500);
@@ -1302,6 +1368,16 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const { status, relatedDocId } = req.body;
     if (status !== undefined) {
       if (!["draft", "confirmed", "voided"].includes(status)) return err(res, "status must be draft, confirmed, or voided");
+      // An issued invoice or credit note only moves forward (2026-09-30): draft → confirmed, and
+      // draft or confirmed → voided. Taking a confirmed one back to draft would let it be deleted
+      // (see DELETE below), and re-confirming a voided one would bill it again next to the credit
+      // note that reversed it — the Documents modal offered exactly that.
+      if (BILLING_DOC_TYPES.includes(doc.doc_type) && status !== doc.status) {
+        if (doc.status === "voided")
+          return err(res, `This ${doc.doc_type} is voided and stays voided — generate a new one if the charges need billing again`, 409);
+        if (doc.status === "confirmed" && status === "draft")
+          return err(res, `A confirmed ${doc.doc_type} can't go back to draft — reverse it with a credit note instead`, 409);
+      }
       const now = new Date().toISOString();
       if (status === "confirmed") {
         await query("UPDATE shipment_documents SET status=$1, confirmed_at=$2, confirmed_by=$3 WHERE id=$4",
@@ -1426,10 +1502,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           const id = `CL-${uid()}`;
           const notes = `Reversal of invoice ${doc.filename}` + (reason ? ` — ${reason}` : "");
           await tx.query(`INSERT INTO shipment_cost_lines
-            (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,notes,container_id,created_at,source,payment_indicator,status,posted_at,posted_by)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+            (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,notes,container_id,created_at,source,payment_indicator,status,posted_at,posted_by,vat_treatment)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
             [id, req.params.shipmentId, line.type, line.charge_code, line.currency, -line.amount, line.exchange_rate,
-                 line.vat_rate || 0, notes, line.container_id || '', now, 'reversal', line.payment_indicator || 'Prepaid', 'posted', now, actor]);
+                 line.vat_rate || 0, notes, line.container_id || '', now, 'reversal', line.payment_indicator || 'Prepaid', 'posted', now, actor,
+                 // Same treatment as the line it reverses — otherwise a reversed reverse-charge line
+                 // would land in the VAT report's standard-rated bucket and fail to net out.
+                 line.vat_treatment || 'standard']);
           eventsToLog.push(['cost_line', id, 'CREATED', null, null, null,
             JSON.stringify({ shipmentId: req.params.shipmentId, type: line.type, chargeCode: line.charge_code, currency: line.currency, amount: -line.amount, reversalOf: doc.id })]);
           reversalLineIds.push(id);
@@ -1574,6 +1653,11 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   app.delete("/api/shipments/:shipmentId/documents/:docId", shipmentWrite, async (req, res) => {
     const [doc] = await query("SELECT * FROM shipment_documents WHERE id = $1 AND shipment_id = $2", [req.params.docId, req.params.shipmentId]);
     if (!doc) return err(res, "Not found", 404);
+    // An invoice or credit note can be deleted only while it's a draft (2026-09-30). Once
+    // confirmed it's an issued document — AR, the VAT report and GL Export count it, and deleting
+    // it also freed its charges to be billed again. Reverse it with a credit note instead.
+    if (BILLING_DOC_TYPES.includes(doc.doc_type) && doc.status !== "draft")
+      return err(res, `A ${doc.status} ${doc.doc_type} can't be deleted — ${doc.status === "confirmed" ? "reverse it with a credit note instead" : "it stays as the record of what was issued"}`, 409);
     try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.stored_name)); } catch {}
     await query("DELETE FROM shipment_documents WHERE id = $1", [req.params.docId]);
     await logEntityEvent('document', req.params.docId, 'DELETED', null, null, null,
@@ -1789,10 +1873,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     await logEvent(req.params.id, 'SCHEDULE_ASSIGNED', null, null, `${carrier} ${vesselName} ${voyageNumber}`.trim(),
       JSON.stringify({ carrier, vesselName, voyageNumber, pol, pod, etd, eta }), req.user?.name || req.user?.email || "");
     await ensureBookingCreated(req.params.id);
-    ok(res, await mapSchedule({ id, shipment_id: req.params.id, carrier, vessel_name: vesselName, vessel_imo: vesselImo,
+    // A sailing on another loop than the shipment's space configuration drops that space link.
+    const spaceUnlinked = await revalidateSpaceLoop(req.params.id, req.user?.name || req.user?.email || "");
+    ok(res, { ...(await mapSchedule({ id, shipment_id: req.params.id, carrier, vessel_name: vesselName, vessel_imo: vesselImo,
       voyage_number: voyageNumber, service, pol, pod, etd, eta,
       transit_days: Number(transitDays), is_mock: !!isMock, saved_at: savedAt, saved_by: savedBy,
-      template_id: templateId, schedule_key: scheduleKey }), 201);
+      template_id: templateId, schedule_key: scheduleKey })), ...(spaceUnlinked && { spaceUnlinked }) }, 201);
   });
 
   // Lightweight correction for an already-saved sailing (e.g. a carrier-driven ETD/ETA shift) —
@@ -1865,7 +1951,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     }
 
     const [fresh] = await query("SELECT * FROM shipment_schedules WHERE id=$1", [req.params.scheduleId]);
-    ok(res, await mapSchedule(fresh));
+    const spaceUnlinked = await revalidateSpaceLoop(req.params.id, req.user?.name || req.user?.email || "");
+    ok(res, { ...(await mapSchedule(fresh)), ...(spaceUnlinked && { spaceUnlinked }) });
   });
 
   app.delete("/api/shipments/:id/schedules/:scheduleId", shipmentWrite, async (req, res) => {
@@ -1881,7 +1968,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         actor: req.user?.name || req.user?.email || "" }));
     await logEvent(req.params.id, 'SCHEDULE_REMOVED', null, `${existing.carrier} ${existing.vessel_name} ${existing.voyage_number}`.trim(), null,
       JSON.stringify({ carrier: existing.carrier, vesselName: existing.vessel_name, voyageNumber: existing.voyage_number }), req.user?.name || req.user?.email || "");
-    ok(res, { deleted: req.params.scheduleId });
+    const spaceUnlinked = await revalidateSpaceLoop(req.params.id, req.user?.name || req.user?.email || "");
+    ok(res, { deleted: req.params.scheduleId, ...(spaceUnlinked && { spaceUnlinked }) });
   });
 
   // ─── Schedule catalog (Test Tools > Schedule Generator) ────────────────────────────────

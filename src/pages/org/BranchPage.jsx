@@ -30,6 +30,8 @@ function BranchForm({ branch, onSave, onCancel }) {
     phone:       branch?.phone       || "",
     email:       branch?.email       || "",
     currency:    branch?.currency    || "",
+    taxRegistrationNumber: branch?.taxRegistrationNumber || "",
+    standardVatRate: branch?.standardVatRate ?? "",
   });
   const [saving, setSaving] = useState(false);
 
@@ -167,6 +169,30 @@ function BranchForm({ branch, onSave, onCancel }) {
         </select>
       </div>
 
+      {/* Row 6: VAT / Tax Registration Number — the same branch-is-the-legal-entity reasoning as
+          Reporting Currency above. Printed as the supplier's number on every invoice and credit
+          note issued from an office in this branch, and shown on the VAT Liability report. */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+        <div style={{ flex: "1 1 280px", maxWidth: 280 }}>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>
+            VAT / Tax Registration Number
+          </div>
+          <input id="branch-tax-registration-number" value={form.taxRegistrationNumber}
+            onChange={e => setForm(p => ({ ...p, taxRegistrationNumber: e.target.value }))}
+            placeholder="e.g. GB123456789" style={{ ...inp, fontFamily: T.mono }} />
+        </div>
+        {/* The rate this entity self-assesses a reverse-charged purchase at (TKT-MQAXQX) — the
+            buyer is always one of our own entities, so its own country's standard rate applies. */}
+        <div style={{ flex: "0 1 160px" }}>
+          <label htmlFor="branch-standard-vat-rate" style={{ display: "block", fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>
+            Standard VAT Rate (%)
+          </label>
+          <input id="branch-standard-vat-rate" type="number" min={0} max={100} step="0.01" value={form.standardVatRate}
+            onChange={e => setForm(p => ({ ...p, standardVatRate: e.target.value }))}
+            placeholder="e.g. 21" style={{ ...inp, fontFamily: T.mono }} />
+        </div>
+      </div>
+
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         <button type="button" onClick={onCancel} disabled={saving}
           style={{ padding: "6px 14px", borderRadius: 7, border: `1px solid ${T.border}`,
@@ -221,7 +247,8 @@ function BranchDetail({ branch, onClose, onEdit }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 20 }}>
           {[["Country", branch.countryCode], ["LOCODE", branch.locode], ["City", branch.city],
             ["Timezone", branch.timezone], ["Phone", branch.phone], ["Email", branch.email],
-            ["Reporting Currency", branch.currency]].map(([label, val]) => val ? (
+            ["Reporting Currency", branch.currency], ["VAT / Tax No.", branch.taxRegistrationNumber],
+            ["Standard VAT Rate", branch.standardVatRate != null ? `${branch.standardVatRate}%` : ""]].map(([label, val]) => val ? (
             <div key={label}>
               <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{label}</div>
               <div style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{val}</div>

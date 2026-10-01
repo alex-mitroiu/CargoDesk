@@ -6,13 +6,13 @@ module.exports = function shipmentsRoutes(app, ctx) {
           mapShipment, mapShipmentLeg, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation, mapEdiMessage,
           mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice, canEditOfficeSide,
           officeSideOf, blockIfWrongSide, PARTY_ROLE_SIDE, resolveOfficeSideAccess, sideFromAccess,
-          applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates,
+          applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates, autoImportContractCosts,
           broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, recomputeSpaceBadgesForAllocation, TEU_EXPR, screenShipmentById, resolveCarrierAgent, resolveCarrierAgentCandidates,
           checkLineAgentCapabilityGaps,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
           sanctionsMap, autoCompleteMilestone, ensureBookingCreated, toUsd,
           validCoord, GPS_LOC_TYPE, getSettings, callContractService, callMdmService, getCustomerRow,
-          COST_LINE_EFFECTIVE_USD_SQL } = ctx;
+          COST_LINE_EFFECTIVE_USD_SQL , commodityCodeError, UPLOADS_DIR, fs, path } = ctx;
 
   // trade_manager and viewer are read-only on all shipment write operations
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
@@ -501,6 +501,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     })));
   });
 
+  // How the space configuration was picked in the contract picker (Dashboard → Contract Consumption
+  // breakdown: steered vs not). '' = not recorded.
+  const SPACE_SELECTIONS = ["", "suggested", "direct", "overbooked"];
+
   app.post("/api/shipments", shipmentWrite, async (req, res) => {
     const { pol, pod, carrierCode, contractType, contractNotes = "", status = "Active",
             etd = "", eta = "", bookingRef = "", blNumber = "", blReleaseType = "", masterBlNumber = "", masterBlReleaseType = "", coloadTariffReference = "", vessel = "", voyage = "",
@@ -519,6 +523,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '' && Number(declaredValue) < 0)
       return err(res, "declaredValue cannot be negative");
     if (!CONTRACT_TYPES.includes(contractType)) return err(res, `contractType must be one of: ${CONTRACT_TYPES.join(", ")}`);
+    const commodityError = await commodityCodeError(commodityCode);
+    if (commodityError) return err(res, commodityError);
+    const spaceSelection = String(req.body.spaceSelection || "");
+    if (!SPACE_SELECTIONS.includes(spaceSelection)) return err(res, `spaceSelection must be one of: ${SPACE_SELECTIONS.filter(Boolean).join(", ")}`);
     if (!SHIPMENT_STATUSES.includes(status)) return err(res, `status must be one of: ${SHIPMENT_STATUSES.join(", ")}`);
     if (blReleaseType && !BL_RELEASE_TYPES.includes(blReleaseType)) return err(res, `blReleaseType must be one of: ${BL_RELEASE_TYPES.join(", ")}`);
     if (masterBlReleaseType && !BL_RELEASE_TYPES.includes(masterBlReleaseType)) return err(res, `masterBlReleaseType must be one of: ${BL_RELEASE_TYPES.join(", ")}`);
@@ -533,6 +541,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       if (isForeignKeyViolation(e)) return err(res, "allocationId does not match any existing space configuration", 400);
       throw e;
     }
+    if (spaceSelection && allocationId) await query("UPDATE shipments SET space_selection=$1 WHERE id=$2", [spaceSelection, id]);
     await logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }), req.user?.name || req.user?.email || "");
     await maybeAssignLineAgents(id, carrierCode, polU, podU, req.user?.name || req.user?.email || "");
@@ -621,6 +630,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const contractId = field('contractId', 'contract_id');
     const contractRef = field('contractRef', 'contract_ref');
     const commodityCode = field('commodityCode', 'commodity_code');
+    const commodityError = await commodityCodeError(commodityCode, existing.commodity_code);
+    if (commodityError) return err(res, commodityError);
     const shipperId = field('shipperId', 'shipper_id');
     const shipperName = field('shipperName', 'shipper_name');
     const consigneeId = field('consigneeId', 'consignee_id');
@@ -630,6 +641,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const allocationId = field('allocationId', 'allocation_id') || '';
     const spaceSkipReason = field('spaceSkipReason', 'space_skip_reason');
     const spaceOverageReason = field('spaceOverageReason', 'space_overage_reason');
+    // A new space configuration without a stated choice resets it to "not recorded".
+    const spaceSelection = req.body.spaceSelection !== undefined ? String(req.body.spaceSelection || '')
+      : (allocationId !== (existing.allocation_id || '') ? '' : (existing.space_selection || ''));
+    if (!SPACE_SELECTIONS.includes(spaceSelection)) return err(res, `spaceSelection must be one of: ${SPACE_SELECTIONS.filter(Boolean).join(", ")}`);
     const freightTerms = field('freightTerms', 'freight_terms');
     const movementType = field('movementType', 'movement_type');
     const serviceType = field('serviceType', 'service_type');
@@ -761,6 +776,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
       throw e;
     }
     if (updatedRows.length === 0) return err(res, "Not found", 404);
+    const finalSpaceSelection = effAllocationId ? spaceSelection : '';
+    if (finalSpaceSelection !== (existing.space_selection || '')) {
+      await query("UPDATE shipments SET space_selection=$1 WHERE id=$2", [finalSpaceSelection, req.params.id]);
+      await logEvent(req.params.id, 'FIELD_UPDATED', 'space_selection', existing.space_selection || null, finalSpaceSelection || null, '', req.user?.name || req.user?.email || "");
+    }
     // Only re-attempt Line Agent resolution when carrier/route actually changed — the existing
     // partyOrRouteChanged flag (further below) doesn't check carrier_code, so this needs its
     // own condition rather than reusing that one.
@@ -771,6 +791,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // when the contract fields actually changed, since ensureBookingCreated no-ops otherwise.
     if (effContractId !== existing.contract_id || effContractRef !== existing.contract_ref)
       await ensureBookingCreated(req.params.id);
+    if (effContractId !== existing.contract_id || contractType !== existing.contract_type)
+      await autoImportContractCosts(req.params.id);
     const newVals = { pol: polU, pod: podU, status: effStatus, etd, eta, carrier_code: carrierCode,
       vessel, vessel_imo: vesselImo, voyage, incoterm, commodity_code: commodityCode,
       booking_ref: bookingRef, bl_number: blNumber, bl_release_type: blReleaseType, master_bl_number: masterBlNumber, master_bl_release_type: masterBlReleaseType, coload_tariff_reference: coloadTariffReference, contract_type: contractType,
@@ -911,8 +933,38 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // its former allocation-mates' badges, even though real capacity just freed up — capture the
     // link before it's gone (the row disappears with the DELETE), recompute after.
     const [existing] = await query("SELECT allocation_id FROM shipments WHERE id=$1", [req.params.id]);
-    const deleted = await query("DELETE FROM shipments WHERE id=$1 RETURNING id", [req.params.id]);
-    if (deleted.length === 0) return err(res, "Not found", 404);
+    if (!existing) return err(res, "Not found", 404);
+
+    // A shipment that has billed its customer is part of the financial record (2026-09-30): its
+    // cost lines cascade-delete with it, so an issued invoice would lose its charges and silently
+    // drop out of the VAT report, GL Export and AR — while the invoice row itself was left behind,
+    // orphaned. Refuse, and point to cancelling instead. Issued = a confirmed or voided (reversed)
+    // FR01/FR02/CN01, or charges on a statement that isn't voided.
+    const issued = await query(
+      `SELECT doc_type, status, filename FROM shipment_documents
+       WHERE shipment_id=$1 AND doc_type IN ('FR01','FR02','CN01') AND status IN ('confirmed','voided')
+       ORDER BY created_at`, [req.params.id]);
+    if (issued.length) {
+      const list = issued.slice(0, 3).map(d => `${d.filename} (${d.status})`).join(", ") + (issued.length > 3 ? ` and ${issued.length - 3} more` : "");
+      return err(res, `This shipment has issued invoices — ${list}. Cancel the shipment instead; issued invoices and their charges stay on record.`, 409);
+    }
+    const onStatements = await query(
+      `SELECT DISTINCT cs.id, cs.status FROM customer_statement_lines csl JOIN customer_statements cs ON cs.id = csl.statement_id
+       WHERE csl.shipment_id=$1 AND cs.status != 'voided' ORDER BY cs.id`, [req.params.id]);
+    if (onStatements.length) {
+      const drafts = onStatements.filter(s => s.status === "draft").map(s => s.id), confirmed = onStatements.filter(s => s.status !== "draft").map(s => s.id);
+      return err(res, `This shipment's charges are on ${onStatements.length === 1 ? "statement" : "statements"} ${onStatements.map(s => s.id).join(", ")}. `
+        + (confirmed.length ? "Cancel the shipment instead; a confirmed statement stays on record." : `Void the draft statement${drafts.length === 1 ? "" : "s"} first.`), 409);
+    }
+
+    // What's left is drafts and non-billing documents (packing lists, photos, …). They go with the
+    // shipment — rows and files — instead of being orphaned as they used to be.
+    const docs = await query("SELECT id, stored_name FROM shipment_documents WHERE shipment_id=$1", [req.params.id]);
+    await transaction(async tx => {
+      await tx.query("DELETE FROM shipment_documents WHERE shipment_id=$1", [req.params.id]);
+      await tx.query("DELETE FROM shipments WHERE id=$1", [req.params.id]);
+    });
+    for (const d of docs) if (d.stored_name) { try { fs.unlinkSync(path.join(UPLOADS_DIR, d.stored_name)); } catch {} }
     if (existing?.allocation_id) await recomputeSpaceBadgesForAllocation(existing.allocation_id);
     ok(res, { deleted: req.params.id });
   });

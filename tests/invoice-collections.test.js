@@ -24,7 +24,7 @@
  */
 
 import http from "node:http";
-import { ensureOffices } from "./helpers/offices.mjs";
+import { ensureOffices, retireOffice } from "./helpers/offices.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -319,7 +319,7 @@ async function confirmDoc(shipmentId, docId, token) {
     if (token) {
       for (const id of cleanup.shipments) await request("DELETE", `/api/shipments/${id}`, null, token).catch(() => {});
       for (const id of cleanup.customers) await request("DELETE", `/api/customers/${id}`, null, token).catch(() => {});
-      for (const id of cleanup.offices) await request("DELETE", `/api/offices/${id}`, null, token).catch(() => {});
+      for (const id of cleanup.offices) await retireOffice(token, id).catch(() => {}); // deactivated if its billed shipments still reference it
       if (cleanup.users.length) {
         const allUsers = await request("GET", "/api/users", null, token).catch(() => ({ body: [] }));
         for (const email of cleanup.users) {

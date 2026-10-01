@@ -23,6 +23,7 @@ import { GPS_LOC_TYPE, formatLegPoint, isGpsLeg, LOC_TYPE_OPTIONS } from "../../
 import { countryCodeOf } from "../../utils/countryTag";
 import useResolvedPortName from "../../hooks/useResolvedPortName";
 import ConsumptionBar from "../../components/shared/ConsumptionBar";
+import { suggestAlternatives, isFull, availableTEU } from "../../utils/spaceSuggestions";
 import { applySailingToLegs as applySailingToLegsShared } from "../../utils/applySailingToLegs";
 
 // ─── Draft Container Manager ──────────────────────────────────────────────────
@@ -149,11 +150,11 @@ const SearchTermChip = ({ label, value }) => !value ? null : (
   </div>
 );
 
-export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0, searchCriteria = null, currentSelection = null, onSelectContract, onSelectAllocation, onClose, onBack }) => {
+export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0, cargo = {}, searchCriteria = null, currentSelection = null, onSelectContract, onSelectAllocation, onClose, onBack }) => {
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [skipMode,       setSkipMode]       = useState(false);
   const [skipReason,     setSkipReason]     = useState("");
-  const [overageReasons, setOverageReasons] = useState({});
+  const [overbook,       setOverbook]       = useState(null); // { alloc, reason } while the overbooking confirmation is open
   // Clicking a card no longer commits immediately — it stages a pick, shown highlighted with a
   // Confirm Selection / Cancel bar, so a single click can't fire the real onSelectContract/
   // onSelectAllocation side effects (which, from the Schedules page, chain straight into a
@@ -190,13 +191,56 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
   const totalUsd = rates => rates && rates.length ? rates.reduce((s, r) => s + r.amountUsd, 0) : null;
   const fmtUsd   = v => `$${Math.round(v).toLocaleString("en-US")}`;
 
+  const allocLabel = a => a.contract?.contractRef || `${a.pol} → ${a.pod}`;
+  const accountLabel = a => !a.contract ? "" : a.contract.namedAccountId ? (a.contract.namedAccount || "named account") : "all accounts";
+  const chip = (ok, label, key) => (
+    <span key={key} style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, borderRadius: 999, padding: "2px 9px",
+      color: ok ? T.success : T.danger, border: `1px solid ${ok ? T.success : T.danger}66` }}>{ok ? "✓" : "✗"} {label}</span>
+  );
+
+  // Another reference under the same contract number that could take this shipment instead.
+  const renderSuggestion = s => {
+    const a = s.alloc;
+    const delta = s.rateDelta;
+    return (
+      <div key={a.id} data-testid={`shipment-form-contract-picker-suggestion-${a.id}`}
+        style={{ border: `1px solid ${s.fits ? T.success : T.border}`, background: s.fits ? T.success + "10" : "transparent",
+          borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8, opacity: s.fits ? 1 : 0.75 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontFamily: T.mono, fontSize: 12.5, fontWeight: 700, color: T.text }}>{allocLabel(a)}</span>
+          <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>· {accountLabel(a)}</span>
+          <span style={{ background: (s.fits ? T.success : T.textMuted) + "22", color: s.fits ? T.success : T.textMuted,
+            padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>{s.fits ? "Suggested" : "Not suitable"}</span>
+          <span style={{ flex: 1 }} />
+          {s.fits && (
+            <Btn size="sm" onClick={() => setStagedPick({ type: "alloc", alloc: a, reason: "", selection: "suggested" })}
+              data-testid={`shipment-form-contract-picker-suggestion-${a.id}-use-btn`}>Use {allocLabel(a)}</Btn>
+          )}
+        </div>
+        <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>
+          {a.pol} → {a.pod} · Valid {a.effectiveDate} → {a.endDate} · {a.allocatedTEU} TEU · {a.confirmedTEU} confirmed{a.pendingTEU ? ` · ${a.pendingTEU} pending` : ""}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {(s.fits ? s.checks : s.checks.filter(c => !c.ok)).map((c, i) => chip(c.ok, c.label, i))}
+          {s.fits && delta && (
+            <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, borderRadius: 999, padding: "2px 9px",
+              color: T.warning, border: `1px solid ${T.warning}66` }}>
+              {Object.entries(delta.perType).map(([t, d]) => `${d > 0 ? "+" : "−"}${Math.abs(d).toLocaleString("en-US")} ${delta.currency} per ${t}`).join(", ")}
+              {` (${delta.total > 0 ? "+" : "−"}${Math.abs(delta.total).toLocaleString("en-US")} on this shipment)`}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const renderAllocCard = alloc => {
-    const overage = shipmentTEU > 0 && shipmentTEU > alloc.remainingTEU;
-    const reason  = overageReasons[alloc.id] || "";
+    const overage = isFull(alloc, shipmentTEU);
     const isCurrent = isCurrentAlloc(alloc);
     const isStaged = stagedPick?.type === "alloc" && stagedPick.alloc.id === alloc.id;
-    const canSelect = !isCurrent && (!overage || !!reason);
     const k       = kindBadge(alloc.matchKind);
+    const alts    = overage && !isCurrent ? suggestAlternatives(allocs, alloc, { ...cargo, shipmentTEU }) : [];
+    const fitting = alts.filter(s => s.fits);
     return (
       <div key={alloc.id} data-testid={`shipment-form-contract-picker-alloc-${alloc.id}`}
         style={{ background: T.bg, border: `1px solid ${isCurrent || isStaged ? T.accent : T.border}`, borderRadius: 8, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -215,6 +259,8 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
         </div>
         <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
           {alloc.contractNumber ? <>Contract <span style={{ fontFamily: T.mono, color: T.text }}>{alloc.contractNumber}</span>{" · "}</> : null}
+          {alloc.contract?.contractRef ? <>Ref <span style={{ fontFamily: T.mono, color: T.text }}>{alloc.contract.contractRef}</span>{" · "}</> : null}
+          {alloc.contract ? <>{accountLabel(alloc)}{" · "}</> : null}
           Valid {alloc.effectiveDate} → {alloc.endDate}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
@@ -223,31 +269,88 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
             <span style={{ color: T.textMuted }}>{alloc.confirmedTEU} confirmed</span>
             {alloc.pendingTEU > 0 && <span style={{ color: T.warning }}>{alloc.pendingTEU} pending</span>}
             {alloc.rejectedTEU > 0 && <span style={{ color: T.danger }}>{alloc.rejectedTEU} rejected</span>}
-            <span style={{ color: alloc.remainingTEU > 0 ? T.success : T.danger, fontWeight: 700 }}>{alloc.remainingTEU} remaining</span>
+            <span style={{ color: availableTEU(alloc) > 0 ? T.success : T.danger, fontWeight: 700 }}
+              title="Allocated − confirmed − pending">{availableTEU(alloc)} available</span>
           </div>
           <ConsumptionBar allocated={alloc.allocatedTEU} confirmed={alloc.confirmedTEU}
             pending={alloc.pendingTEU} rejected={alloc.rejectedTEU} height={6} width="100%" />
         </div>
-        {overage && (
-          <div style={{ background: T.warning + "15", border: `1px solid ${T.warning}55`, borderRadius: 6, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ fontFamily: T.body, fontSize: 12, color: T.warning, fontWeight: 600,
-              display: "flex", alignItems: "center", gap: 5 }}>
-              <IconWarning size={12} />Shipment is {shipmentTEU} TEU — only {alloc.remainingTEU} TEU remaining
+        {overage && !isCurrent && (
+          <>
+            <div data-testid={`shipment-form-contract-picker-alloc-${alloc.id}-full-banner`}
+              style={{ background: T.warning + "15", border: `1px solid ${T.warning}55`, borderRadius: 6, padding: "10px 12px",
+                fontFamily: T.body, fontSize: 12, color: T.text, display: "flex", alignItems: "center", gap: 6 }}>
+              <IconWarning size={12} style={{ color: T.warning }} />
+              <span>
+                {availableTEU(alloc) > 0 ? `Only ${availableTEU(alloc)} TEU available` : "No space available"}{alloc.pendingTEU > 0 ? ` (${alloc.pendingTEU} pending counted)` : ""} — this shipment is {shipmentTEU} TEU.
+                {fitting.length > 0 && <> <strong>{fitting.length} other reference{fitting.length !== 1 ? "s" : ""}</strong> under the same contract number fit{fitting.length === 1 ? "s" : ""} this shipment.</>}
+              </span>
             </div>
-            <select value={reason} onChange={e => setOverageReasons(p => ({ ...p, [alloc.id]: e.target.value }))}
-              data-testid={`shipment-form-contract-picker-alloc-${alloc.id}-overage-select`}
+            {alts.map(renderSuggestion)}
+          </>
+        )}
+        {overage && !isCurrent ? (
+          <Btn variant="secondary" onClick={() => setOverbook({ alloc, reason: "" })}
+            data-testid={`shipment-form-contract-picker-alloc-${alloc.id}-overbook-btn`}
+            style={{ alignSelf: "flex-start" }}>Book here anyway</Btn>
+        ) : (
+          <Btn disabled={isCurrent} onClick={() => !isCurrent && setStagedPick({ type: "alloc", alloc, reason: "", selection: "direct" })}
+            data-testid={`shipment-form-contract-picker-alloc-${alloc.id}-select-btn`}
+            style={{ alignSelf: "flex-start" }}>
+            {isCurrent ? "Currently selected" : isStaged ? "Selected — confirm below" : "Select this configuration"}
+          </Btn>
+        )}
+      </div>
+    );
+  };
+
+  // Booking onto a full configuration is allowed, but only through this confirmation, with a reason
+  // — the reason is saved on the shipment as its space overage reason (SPACE_OVERAGE event + message).
+  const renderOverbookDialog = () => {
+    const a = overbook.alloc;
+    const over = shipmentTEU - availableTEU(a);
+    const fact = (label, value, color) => (
+      <>
+        <span style={{ color: T.textMuted }}>{label}</span>
+        <span style={{ fontFamily: T.mono, textAlign: "right", color: color || T.text, fontWeight: 600 }}>{value}</span>
+      </>
+    );
+    const betterOption = suggestAlternatives(allocs, a, { ...cargo, shipmentTEU }).find(s => s.fits);
+    return (
+      <Modal title={`Overbook ${allocLabel(a)}?`} onClose={() => setOverbook(null)} width={480}>
+        <div data-testid="shipment-form-contract-picker-overbook-dialog" style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: T.body, fontSize: 13, color: T.text, lineHeight: 1.55 }}>
+          <div>
+            {allocLabel(a)} has <strong>{availableTEU(a)} TEU available</strong>, counting bookings still pending confirmation. Booking this shipment here puts it <strong style={{ color: T.warning }}>{over} TEU over</strong> its
+            allocation, and the carrier may roll or reject the booking.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: "4px 16px", fontSize: 12.5, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" }}>
+            {fact("Allocated", `${a.allocatedTEU} TEU`)}
+            {fact("Confirmed", `${a.confirmedTEU} TEU`)}
+            {fact("Pending confirmation", `${a.pendingTEU} TEU`)}
+            {fact("This shipment", `${shipmentTEU} TEU`)}
+            {fact("Over allocation after this booking", `+${over} TEU`, T.warning)}
+          </div>
+          {betterOption && (
+            <div style={{ fontSize: 12, color: T.textMuted }}>
+              {allocLabel(betterOption.alloc)} under the same contract still has {availableTEU(betterOption.alloc)} TEU available.
+            </div>
+          )}
+          <Field label="Reason (required)">
+            <select value={overbook.reason} onChange={e => setOverbook(o => ({ ...o, reason: e.target.value }))}
+              data-testid="shipment-form-contract-picker-overbook-reason"
               style={{ ...inputBase, fontFamily: T.body, fontSize: 13 }}>
-              <option value="">Select overage reason to proceed…</option>
+              <option value="">Select a reason…</option>
               {OVERAGE_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
             </select>
+          </Field>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <Btn variant="secondary" onClick={() => setOverbook(null)}>Cancel</Btn>
+            <Btn variant="danger" disabled={!overbook.reason}
+              onClick={() => { setStagedPick({ type: "alloc", alloc: a, reason: overbook.reason, selection: "overbooked" }); setOverbook(null); }}
+              data-testid="shipment-form-contract-picker-overbook-confirm">Overbook by {over} TEU</Btn>
           </div>
-        )}
-        <Btn disabled={!canSelect} onClick={() => canSelect && setStagedPick({ type: "alloc", alloc, reason })}
-          data-testid={`shipment-form-contract-picker-alloc-${alloc.id}-select-btn`}
-          style={{ alignSelf: "flex-start" }}>
-          {isCurrent ? "Currently selected" : isStaged ? "Selected — confirm below" : "Select this configuration"}
-        </Btn>
-      </div>
+        </div>
+      </Modal>
     );
   };
 
@@ -500,10 +603,11 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
             <Btn variant="secondary" onClick={() => setStagedPick(null)} data-testid="shipment-form-contract-picker-cancel-btn">Cancel</Btn>
             <Btn onClick={() => stagedPick.type === "contract"
                 ? onSelectContract(stagedPick.c, skipReason)
-                : onSelectAllocation(stagedPick.alloc, stagedPick.reason)}
+                : onSelectAllocation(stagedPick.alloc, stagedPick.reason, stagedPick.selection || "direct")}
               data-testid="shipment-form-contract-picker-confirm-btn">Confirm Selection</Btn>
           </div>
         )}
+        {overbook && renderOverbookDialog()}
       </div>
     </Modal>
   );
@@ -528,7 +632,7 @@ export const deriveHaulageNeeds = (legs) => {
   };
 };
 
-export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation, contractType, carrierCode, shipmentTEU = 0 }) => {
+export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation, contractType, carrierCode, shipmentTEU = 0, cargo = {} }) => {
   const isCentral = contractType === "Central";
   const [matches,    setMatches]    = useState(null);
   const [allocs,     setAllocs]     = useState(null);
@@ -556,7 +660,12 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
         const matchParams = { pol, pod, ...(dateRef && { crd: dateRef }), ...haulageParams };
         const [contractRes, allocRes] = await Promise.all([
           api.contracts.match(matchParams),
-          api.allocations.match({ pol, pod, etd, ...haulageParams }),
+          // Principal, commodity and (once the shipment has a sailing) loop narrow the space
+          // configurations to the ones this shipment may use; customer-specific space comes first.
+          api.allocations.match({ pol, pod, etd, ...haulageParams,
+            ...(cargo.principalId && { principalId: cargo.principalId }),
+            ...(cargo.commodityCode && { commodityCode: cargo.commodityCode }),
+            ...(cargo.loopCode && { loopCode: cargo.loopCode }) }),
         ]);
         const filteredContracts = carrierCode ? contractRes.filter(c => c.carrierCode === carrierCode) : contractRes;
         const filteredAllocs    = carrierCode ? allocRes.filter(a => a.carrierCode === carrierCode)    : allocRes;
@@ -564,20 +673,22 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
         setAllocs(filteredAllocs);
         if (filteredAllocs.length === 0 && filteredContracts.length === 1 && !value.id && !autoSelected.current) {
           autoSelected.current = true;
-          onChange({ id: filteredContracts[0].id, ref: filteredContracts[0].contractNumber, carrierCode: filteredContracts[0].carrierCode, routingId: filteredContracts[0].routingId || "", allocationId: "", spaceSkipReason: "", spaceOverageReason: "" });
+          onChange({ id: filteredContracts[0].id, ref: filteredContracts[0].contractNumber, carrierCode: filteredContracts[0].carrierCode, routingId: filteredContracts[0].routingId || "", allocationId: "", spaceSkipReason: "", spaceOverageReason: "", spaceSelection: "" });
         }
       } catch {
         setMatches([]); setAllocs([]);
       } finally { setMatching(false); }
     }, 400);
-  }, [isCentral, pol, pod, dateRef, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation, carrierCode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isCentral, pol, pod, dateRef, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation, carrierCode, cargo.principalId, cargo.commodityCode, cargo.loopCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const clearContract = () => { onChange({ id: "", ref: "", carrierCode: null, routingId: "", allocationId: "", spaceSkipReason: "", spaceOverageReason: "" }); autoSelected.current = false; };
+  const clearContract = () => { onChange({ id: "", ref: "", carrierCode: null, routingId: "", allocationId: "", spaceSkipReason: "", spaceOverageReason: "", spaceSelection: "" }); autoSelected.current = false; };
   // c.routingId is '' for a contract with no named routings, or the specific routing (e.g.
   // "Via Rotterdam") the operator picked among — GET /api/contracts/match returns one match
   // entry per (contract, routing) pair, so the card c is already that specific choice.
-  const pickContract  = (c, skipReason = "") => { onChange({ id: c.id, ref: c.contractNumber, carrierCode: c.carrierCode, routingId: c.routingId || "", allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "" }); setPickerOpen(false); };
-  const pickAllocation = (alloc, overageReason = "") => { onChange({ id: alloc.contractId, ref: alloc.contractNumber, carrierCode: alloc.carrierCode, routingId: "", allocationId: alloc.id, spaceSkipReason: "", spaceOverageReason: overageReason }); setPickerOpen(false); };
+  const pickContract  = (c, skipReason = "") => { onChange({ id: c.id, ref: c.contractNumber, carrierCode: c.carrierCode, routingId: c.routingId || "", allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "", spaceSelection: "" }); setPickerOpen(false); };
+  // A space configuration's match names the ticked routing line that covered this shipment
+  // (matchedRoutingId) — record it, like pickContract records the card's routing.
+  const pickAllocation = (alloc, overageReason = "", selection = "direct") => { onChange({ id: alloc.contractId, ref: alloc.contractNumber, carrierCode: alloc.carrierCode, routingId: alloc.matchedRoutingId || "", allocationId: alloc.id, spaceSkipReason: "", spaceOverageReason: overageReason, spaceSelection: selection }); setPickerOpen(false); };
 
   if (!isCentral) return null;
 
@@ -620,7 +731,7 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
         </button>
       )}
       {pickerOpen && (
-        <ContractPickerModal pol={pol} pod={pod} matches={matches} allocs={allocs} shipmentTEU={shipmentTEU}
+        <ContractPickerModal pol={pol} pod={pod} matches={matches} allocs={allocs} shipmentTEU={shipmentTEU} cargo={cargo}
           searchCriteria={{ pol, pod, crd: dateRef || null, carrierCode: carrierCode || null,
             needsPolHaulage, needsPodHaulage, pkuLocation, delLocation }}
           onSelectContract={pickContract} onSelectAllocation={pickAllocation}
@@ -1427,6 +1538,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     allocationId:       init.allocationId       || "",
     spaceSkipReason:    init.spaceSkipReason    || "",
     spaceOverageReason: init.spaceOverageReason || "",
+    spaceSelection:     init.spaceSelection     || "",
     freightTerms:       init.freightTerms       || "Prepaid",
     movementType:       init.movementType       || "FCL",
     serviceType:        init.serviceType        || "Port-to-Port",
@@ -1608,6 +1720,13 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     : useContainerManager
       ? draftContainers.reduce((sum, c) => sum + teuOf(c.size, c.type, teuDefsMap), 0)
       : (parseInt(quickCargo.count, 10) || 0) * teuOf(quickCargo.size, quickCargo.type, teuDefsMap);
+  // Same three sources, as containers — the contract picker checks container types / DG against a
+  // suggested alternative space configuration and prices the rate difference per container.
+  const formCargoContainers = init.id
+    ? containers.filter(c => c.shipmentId === init.id)
+    : useContainerManager
+      ? draftContainers
+      : Array.from({ length: parseInt(quickCargo.count, 10) || 0 }, () => ({ size: quickCargo.size, type: quickCargo.type, isDg: quickCargo.isDg }));
   const effectiveCarrierCode = firstSeaLeg?.carrierCode || firstLeg?.carrierCode || f.carrierCode || "";
   // Chronological order hard block (TKT-YGIAXG) — ETD/ETA are ISO "YYYY-MM-DD" strings
   // everywhere in this codebase, so a plain string compare is a correct date compare too.
@@ -2282,8 +2401,9 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       {isCentral && (
         <ContractField
           shipmentTEU={formShipmentTEU}
+          cargo={{ principalId: f.principalId, principalName: f.principalName, commodityCode: f.commodityCode, containers: formCargoContainers }}
           value={{ id: f.contractId, ref: f.contractRef, allocationId: f.allocationId }}
-          onChange={({ id, ref, carrierCode, routingId, allocationId, spaceSkipReason, spaceOverageReason }) => {
+          onChange={({ id, ref, carrierCode, routingId, allocationId, spaceSkipReason, spaceOverageReason, spaceSelection }) => {
             setF(p => {
               const next = {
                 ...p,
@@ -2293,6 +2413,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                 allocationId:       allocationId       !== undefined ? allocationId       : p.allocationId,
                 spaceSkipReason:    spaceSkipReason    !== undefined ? spaceSkipReason    : p.spaceSkipReason,
                 spaceOverageReason: spaceOverageReason !== undefined ? spaceOverageReason : p.spaceOverageReason,
+                spaceSelection:     spaceSelection     !== undefined ? spaceSelection     : p.spaceSelection,
               };
               if (carrierCode && carrierCode !== p.carrierCode) { setCarrierUpdated(carrierCode); next.carrierCode = carrierCode; }
               else if (!id) { setCarrierUpdated(""); }

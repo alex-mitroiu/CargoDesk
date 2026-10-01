@@ -25,6 +25,36 @@ export const partyByRole = (parties, role) => (parties || []).find(p => p.role =
 // carried into the signed PDF an operator actually sends a customer.
 const lineVatAmount = cl => (parseFloat(cl.amount) || 0) * ((cl.vatRate || 0) / 100);
 
+// Tax handling (2026-09-29) — a zero-rated, reverse-charged or exempt line carries 0% like an
+// untaxed one, but a tax invoice has to say WHICH, since each is reported differently. The
+// server forces vatRate to 0 for any non-standard treatment, so lineVatAmount stays 0 for them.
+const VAT_TREATMENT_LABEL = { zero_rated: "Zero-rated", reverse_charge: "Reverse charge", exempt: "Exempt" };
+const vatCell = cl => {
+  const t = cl.vatTreatment || "standard";
+  if (t !== "standard") return `<span style="color:#6b7280;font-size:11px">${VAT_TREATMENT_LABEL[t] || _esc(t)}</span>`;
+  return cl.vatRate ? `${fmtCurr(lineVatAmount(cl), cl.currency)}<br><span style="color:#9ca3af;font-size:10px">${cl.vatRate}%</span>` : "—";
+};
+
+// Supplier (our issuing legal entity) and customer tax numbers — most VAT jurisdictions don't
+// treat an invoice as a valid tax invoice without both. Renders nothing when neither is known,
+// so a shipment with no branch/identifier set up yet produces exactly the old document.
+const taxDetailsBlock = taxInfo => {
+  if (!taxInfo || (!taxInfo.supplierTaxNumber && !taxInfo.customerTaxNumber)) return "";
+  const row = (label, name, number) => number
+    ? `<div><div class="detail-key">${label}</div><div class="detail-val">${name ? `${_esc(name)} · ` : ""}<span style="font-family:monospace">${_esc(number)}</span></div></div>`
+    : "";
+  return `<div class="shp-block"><div class="block-label">Tax Details</div><div class="details-grid">
+    ${row("Supplier VAT / Tax No.", taxInfo.supplierName, taxInfo.supplierTaxNumber)}
+    ${row("Customer VAT / Tax No.", taxInfo.customerName, taxInfo.customerTaxNumber)}
+  </div></div>`;
+};
+
+// Required wording on an invoice carrying a reverse-charged supply (EU VAT Directive art. 226(11a),
+// mirrored by e.g. UK "reverse charge" rules) — the customer, not the supplier, accounts for the VAT.
+const reverseChargeNote = lines => lines.some(cl => cl.vatTreatment === "reverse_charge")
+  ? `<div class="notes"><div class="notes-label">Reverse Charge</div><div class="notes-text">Reverse charge: VAT on the lines marked "Reverse charge" is to be accounted for by the customer, not the supplier.</div></div>`
+  : "";
+
 export const INV_CSS = `
   @page{margin:18mm}
   @media print{.no-print{display:none!important}}
@@ -64,6 +94,7 @@ export const INV_CSS = `
   .total-amt{font-size:13px;font-weight:700;color:#111827;font-variant-numeric:tabular-nums;min-width:140px;text-align:right}
   .grand .total-label{color:#111827;font-size:13px}
   .grand .total-amt{font-size:16px}
+  .total-row.grand.lead{padding-top:0;margin-top:0;border-top:0;padding-bottom:10px;margin-bottom:6px;border-bottom:1px solid #d1d5db}
   .notes{background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:14px 16px;margin-bottom:20px}
   .notes-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#9ca3af;margin-bottom:6px}
   .notes-text{font-size:12px;color:#374151;line-height:1.7;white-space:pre-wrap}
@@ -94,7 +125,7 @@ ${body}
 // than one currency — the grand total is then converted (via each line's amountUsd) into
 // targetCurrency and shown as a single figure instead of one "Total X" row per currency.
 // Single-currency invoices are unaffected — same per-currency total as before.
-export const buildFreightInvoiceHtml = ({ shipment: sh, invNumber, invDate, notes, costLines, container, targetCurrency, fxRates }) => {
+export const buildFreightInvoiceHtml = ({ shipment: sh, invNumber, invDate, notes, costLines, container, targetCurrency, fxRates, taxInfo }) => {
   const scopedLines = container ? costLines.filter(cl => cl.containerId === container.id) : costLines;
   const distinctCurrencies = [...new Set(scopedLines.map(cl => cl.currency))];
   const isMultiCurrency = distinctCurrencies.length > 1;
@@ -106,7 +137,7 @@ export const buildFreightInvoiceHtml = ({ shipment: sh, invNumber, invDate, note
         <td>${cl.type || "—"}${cl.notes ? `<br><span style="color:#6b7280;font-size:11px">${cl.notes}</span>` : ""}</td>
         <td>${cl.currency}</td>
         <td class="num">${fmtCurr(cl.amount, cl.currency)}</td>
-        <td class="num">${cl.vatRate ? `${fmtCurr(lineVatAmount(cl), cl.currency)}<br><span style="color:#9ca3af;font-size:10px">${cl.vatRate}%</span>` : "—"}</td>
+        <td class="num">${vatCell(cl)}</td>
       </tr>`).join("");
 
   let totalRows;
@@ -160,11 +191,13 @@ export const buildFreightInvoiceHtml = ({ shipment: sh, invNumber, invDate, note
       <div class="party"><div class="party-label">Shipper / Exporter</div><div class="party-name">${sh.shipperName || "—"}</div></div>
       <div class="party"><div class="party-label">Consignee / Bill To</div><div class="party-name">${sh.consigneeName || "—"}</div></div>
     </div>
+    ${taxDetailsBlock(taxInfo)}
     <div class="shp-block"><div class="block-label">Shipment Details</div><div class="details-grid">${detailItems}</div></div>
     <div class="section-label">Charges</div>
     <table><thead><tr><th>Code</th><th>Type / Description</th><th>Currency</th><th style="text-align:right">Amount</th><th style="text-align:right">VAT</th></tr></thead>
     <tbody>${rows}</tbody></table>
     <div class="totals">${totalRows}</div>
+    ${reverseChargeNote(scopedLines)}
     ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
 
   const invType       = container ? "FREIGHT INVOICE — PER CONTAINER" : "FREIGHT INVOICE";
@@ -285,6 +318,65 @@ export async function resolveInvoiceCurrency(shipment) {
   }
 }
 
+// Tax handling (2026-09-29) — the two tax numbers a valid tax invoice needs, same resolve-up-
+// front shape as resolveInvoiceCurrency. Supplier = the legal entity (branch) behind the
+// shipment's EMO office, falling back to the IMO office's branch — the exact entity resolution
+// Multi-Entity Accounting and the VAT Liability report use, so the number printed on an invoice
+// always belongs to the entity that report attributes its VAT to. Customer = the billed party
+// (Principal, else Consignee — generateInvoices' own responsibleParty precedence), read from the
+// existing customer_identifiers registry rather than a new field: a primary VAT identifier,
+// else any VAT identifier, else a "Tax ID" one. Every lookup degrades to "" rather than failing
+// generation — a missing number just leaves that line off the invoice.
+export async function resolveInvoiceTaxInfo(shipment) {
+  const info = { supplierName: "", supplierTaxNumber: "", customerName: "", customerTaxNumber: "" };
+  try {
+    const officeIds = [shipment.emoOfficeId, shipment.imoOfficeId].filter(Boolean);
+    if (officeIds.length) {
+      const res = await api.offices.list();
+      const offices = Array.isArray(res) ? res : (res?.results ?? []);
+      const branchId = officeIds.map(id => offices.find(o => o.id === id)?.branchId).find(Boolean);
+      if (branchId) {
+        const branch = await api.branches.get(branchId);
+        info.supplierName = branch?.name || "";
+        info.supplierTaxNumber = branch?.taxRegistrationNumber || "";
+      }
+    }
+  } catch { /* no supplier number — omitted from the invoice */ }
+  const customerId = shipment.principalId || shipment.consigneeId;
+  if (customerId) {
+    info.customerTaxNumber = await customerTaxNumber(customerId);
+    info.customerName = shipment.principalId ? (shipment.principalName || "") : (shipment.consigneeName || "");
+  }
+  return info;
+}
+
+// A primary VAT identifier, else any VAT identifier, else a "Tax ID" one; "" when none or the
+// lookup fails (the number is simply left off the document).
+async function customerTaxNumber(customerId) {
+  try {
+    const ids = await api.customers.identifiers.list(customerId);
+    const vat = (ids || []).filter(i => i.idType === "VAT");
+    const pick = vat.find(i => i.isPrimary) || vat[0] || (ids || []).find(i => i.idType === "Tax ID");
+    return pick?.idCode || "";
+  } catch { return ""; }
+}
+
+// A statement's two tax numbers (TKT-1E55AR): the supplier is the statement's one legal entity
+// (every line's shipment belongs to it — the server enforces that), the customer is the billed
+// customer. Same degrade-to-"" rules as resolveInvoiceTaxInfo.
+export async function resolveStatementTaxInfo({ entityId, entityName = "", customerId, customerName = "" }) {
+  const info = { supplierName: entityName, supplierTaxNumber: "", customerName, customerTaxNumber: "" };
+  if (entityId) {
+    try {
+      const branch = await api.branches.get(entityId);
+      info.supplierName = branch?.name || entityName;
+      info.supplierTaxNumber = branch?.taxRegistrationNumber || "";
+    } catch { /* no supplier number — omitted from the statement */ }
+  }
+  if (customerId) info.customerTaxNumber = await customerTaxNumber(customerId);
+  return info;
+}
+
 // Organization Model Enhancement Epic 2 (Credit Control) — resolves whether generating a NEW
 // invoice for this shipment should be hard-blocked (any of Shipper/Consignee/Principal, or the
 // linked contract's Named Account, is on credit_hold) or is over the credit limit (also a hard
@@ -372,6 +464,17 @@ export async function resolveCreditGate(shipment) {
 // than one currency — see buildFreightInvoiceHtml. Resolve targetCurrency up front via
 // resolveInvoiceCurrency() and fxRates via api.fx.rates() before calling this, since the
 // caller is expected to confirm the conversion with the user first when it applies.
+// One SELL line, one live billing document (TKT-2F19XD): a line already on another invoice, a
+// credit note or a statement (cost line `billedOn`, from GET /api/shipments/:id/cost-lines) is
+// left out of a new invoice. The draft a regenerate is about to replace doesn't count — it's
+// deleted just before the new one is made.
+export const billableSellLines = (lines, replacedDraftId = null) =>
+  lines.filter(l => l.type === "SELL" && (!l.billedOn || (l.billedOn.kind === "invoice" && l.billedOn.id === replacedDraftId)));
+
+// "Every charge is already billed — Ocean Freight on STMT-X, THC on FR01-…" for the nothing-left case.
+export const alreadyBilledSummary = lines => lines.filter(l => l.billedOn)
+  .map(l => `${l.chargeCode} on ${l.billedOn.kind === "statement" ? l.billedOn.id : (l.billedOn.label || l.billedOn.id)}`).join(", ");
+
 export async function generateInvoices(shipment, { containers = [], costLines, splitPerContainer = false, targetCurrency = "USD", fxRates = {} }) {
   // Automated charge-code registry (TKT-OK5H34): when splitting per container, any active
   // charge-code definition whose trigger is 'per_container_split' gets auto-injected as a
@@ -412,10 +515,17 @@ export async function generateInvoices(shipment, { containers = [], costLines, s
   const existingDocs = await api.documents.list(shipment.id)
     .then(rows => rows.filter(d => d.docType === "FR01" || d.docType === "FR02"))
     .catch(() => []);
+  // Strictly `draft` — this used to be `!== "confirmed"`, which also matched a VOIDED invoice (one
+  // properly reversed via a Credit/Debit Note) and deleted it on the next regenerate of the same
+  // scope. A reversed invoice is a real issued document the GL Export and VAT Liability report
+  // both still count in its own period, netted by its CN01; deleting it would leave the CN01
+  // offsetting nothing.
+  const draftFor = containerId => existingDocs.find(d => (d.containerId || "") === containerId && d.status === "draft") || null;
   const replaceDraftIfAny = async containerId => {
-    const existing = existingDocs.find(d => (d.containerId || "") === containerId && d.status !== "confirmed");
+    const existing = draftFor(containerId);
     if (existing) await api.documents.remove(shipment.id, existing.id).catch(() => {});
   };
+  const taxInfo = await resolveInvoiceTaxInfo(shipment);
 
   const upload = (html, filename, containerId, sourceCostLineIds) =>
     api.documents.generate(shipment.id, {
@@ -424,9 +534,11 @@ export async function generateInvoices(shipment, { containers = [], costLines, s
     });
 
   if (!splitPerContainer) {
+    const billable = billableSellLines(sellLines, draftFor("")?.id);
+    if (!billable.length) throw new Error(`Every charge on this shipment is already billed — ${alreadyBilledSummary(sellLines)}.`);
     await replaceDraftIfAny("");
-    const html  = buildFreightInvoiceHtml({ shipment, invNumber: baseNumber, invDate, notes: "", costLines: sellLines, targetCurrency, fxRates });
-    const saved = await upload(html, `FR01-${baseNumber}-${invDate}.pdf`, "", sellLines.map(l => l.id));
+    const html  = buildFreightInvoiceHtml({ shipment, invNumber: baseNumber, invDate, notes: "", costLines: billable, targetCurrency, fxRates, taxInfo });
+    const saved = await upload(html, `FR01-${baseNumber}-${invDate}.pdf`, "", billable.map(l => l.id));
     return [saved];
   }
 
@@ -436,13 +548,15 @@ export async function generateInvoices(shipment, { containers = [], costLines, s
   }
   const results = [];
   for (const container of targets) {
+    const scopedLines = billableSellLines(sellLines.filter(cl => cl.containerId === container.id), draftFor(container.id)?.id);
+    if (!scopedLines.length) continue; // everything on this container is already billed
     await replaceDraftIfAny(container.id);
-    const scopedLines = sellLines.filter(cl => cl.containerId === container.id);
-    const html  = buildFreightInvoiceHtml({ shipment, invNumber: baseNumber, invDate, notes: "", costLines: sellLines, container, targetCurrency, fxRates });
+    const html  = buildFreightInvoiceHtml({ shipment, invNumber: baseNumber, invDate, notes: "", costLines: scopedLines, container, targetCurrency, fxRates, taxInfo });
     const label = container.containerNumber || container.id;
     const saved = await upload(html, `FR01-${baseNumber}-${label}-${invDate}.pdf`, container.id, scopedLines.map(l => l.id));
     results.push(saved);
   }
+  if (!results.length) throw new Error(`Every container's charges are already billed — ${alreadyBilledSummary(sellLines)}.`);
   return results;
 }
 
@@ -451,7 +565,7 @@ export async function generateInvoices(shipment, { containers = [], costLines, s
 // totals shape via _invShell) with two differences: the title reads as a credit/debit note, and
 // the body calls out which original invoice it reverses. `costLines` here is already the exact
 // (negative-amount) reversal set the backend created — no further container filtering needed.
-export const buildCreditDebitNoteHtml = ({ shipment: sh, invNumber, invDate, notes, costLines, container, originalDoc }) => {
+export const buildCreditDebitNoteHtml = ({ shipment: sh, invNumber, invDate, notes, costLines, container, originalDoc, taxInfo }) => {
   // Reversal lines carry negative amounts (they're crediting the original charge back) —
   // lineVatAmount(cl) = amount * vatRate/100 stays correctly negative for them too, no special
   // casing needed; the VAT being reversed shows as a negative figure, same sign as the charge.
@@ -462,7 +576,7 @@ export const buildCreditDebitNoteHtml = ({ shipment: sh, invNumber, invDate, not
         <td>${cl.type || "—"}${cl.notes ? `<br><span style="color:#6b7280;font-size:11px">${cl.notes}</span>` : ""}</td>
         <td>${cl.currency}</td>
         <td class="num">${fmtCurr(cl.amount, cl.currency)}</td>
-        <td class="num">${cl.vatRate ? `${fmtCurr(lineVatAmount(cl), cl.currency)}<br><span style="color:#9ca3af;font-size:10px">${cl.vatRate}%</span>` : "—"}</td>
+        <td class="num">${vatCell(cl)}</td>
       </tr>`).join("");
 
   const grouped = {};
@@ -493,10 +607,12 @@ export const buildCreditDebitNoteHtml = ({ shipment: sh, invNumber, invDate, not
       <div class="party"><div class="party-label">Consignee / Bill To</div><div class="party-name">${sh.consigneeName || "—"}</div></div>
     </div>
     <div class="shp-block"><div class="block-label">Shipment Details</div><div class="details-grid">${detailItems}</div></div>
+    ${taxDetailsBlock(taxInfo)}
     <div class="section-label">Reversed Charges</div>
     <table><thead><tr><th>Code</th><th>Type / Description</th><th>Currency</th><th style="text-align:right">Amount</th><th style="text-align:right">VAT</th></tr></thead>
     <tbody>${rows}</tbody></table>
     <div class="totals">${totalRows}</div>
+    ${reverseChargeNote(costLines)}
     ${notes ? `<div class="notes"><div class="notes-label">Reason</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
 
   const displayNumber = container ? `${invNumber}-${container.containerNumber || container.id}` : invNumber;
@@ -510,7 +626,21 @@ export const buildCreditDebitNoteHtml = ({ shipment: sh, invNumber, invDate, not
 // statement's whole point is "here's what you owe across all of these" rather than one bill per
 // shipment. All lines are guaranteed one currency by the generate route before this is ever
 // called, so — unlike buildFreightInvoiceHtml — there's no multi-currency conversion branch here.
-export const buildStatementHtml = ({ customerName, dateFrom, dateTo, invNumber, invDate, currency, lines, notes }) => {
+// A statement shows its three amounts in the order Gross, VAT, Net — per line, in the VAT summary
+// and in the totals (the user's convention for statements, 2026-09-30; invoices keep Net then VAT).
+// VAT per line comes from the line's own rate and treatment (TKT-1E55AR), with the same VAT cell,
+// Tax Details block and reverse-charge wording an invoice uses. `entityName` is the one legal
+// entity issuing the statement; `taxInfo` comes from resolveStatementTaxInfo.
+const statementVatAmount = l => (l.vatTreatment || "standard") === "standard" ? lineVatAmount(l) : 0;
+const vatGroupLabel = l => (l.vatTreatment || "standard") === "standard"
+  ? (l.vatRate ? `Standard ${l.vatRate}%` : "No VAT")
+  : (VAT_TREATMENT_LABEL[l.vatTreatment] || l.vatTreatment);
+
+export const buildStatementHtml = ({ customerName, entityName = "", dateFrom, dateTo, invNumber, invDate, currency, lines, notes, taxInfo }) => {
+  const net = l => parseFloat(l.amount) || 0;
+  const gross = l => net(l) + statementVatAmount(l);
+  const sum = (ls, f) => ls.reduce((s, l) => s + f(l), 0);
+
   const byShipment = new Map();
   for (const l of lines) {
     if (!byShipment.has(l.shipmentId)) byShipment.set(l.shipmentId, []);
@@ -519,31 +649,54 @@ export const buildStatementHtml = ({ customerName, dateFrom, dateTo, invNumber, 
 
   const shipmentBlocks = [...byShipment.entries()].map(([shipmentId, shipmentLines]) => {
     const rows = shipmentLines.map(l => `<tr>
-        <td><span class="code">${l.chargeCode || "—"}</span></td>
+        <td><span class="code">${_esc(l.chargeCode || "—")}</span></td>
         <td>${_esc(l.notes || "—")}</td>
-        <td class="num">${fmtCurr(l.amount, l.currency)}</td>
+        <td class="num">${fmtCurr(gross(l), l.currency)}</td>
+        <td class="num">${vatCell(l)}</td>
+        <td class="num">${fmtCurr(net(l), l.currency)}</td>
       </tr>`).join("");
-    const subtotal = shipmentLines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
     return `
       <div class="shp-block"><div class="block-label">Shipment ${_esc(shipmentId)}</div></div>
-      <table><thead><tr><th>Code</th><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
+      <table><thead><tr><th>Code</th><th>Description</th><th style="text-align:right">Gross</th><th style="text-align:right">VAT</th><th style="text-align:right">Net</th></tr></thead>
       <tbody>${rows}</tbody></table>
-      <div class="totals"><div class="total-row"><span class="total-label">Subtotal — ${_esc(shipmentId)}</span><span class="total-amt">${fmtCurr(subtotal, currency)}</span></div></div>`;
+      <div class="totals"><div class="total-row"><span class="total-label">Subtotal — ${_esc(shipmentId)}</span><span class="total-amt">${fmtCurr(sum(shipmentLines, gross), currency)}</span></div></div>`;
   }).join("");
 
-  const grandTotal = lines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+  // VAT summary by rate / treatment — only when the statement carries any VAT information at all,
+  // so a statement of untaxed charges reads exactly as before.
+  const hasVatInfo = lines.some(l => (l.vatRate || 0) > 0 || (l.vatTreatment && l.vatTreatment !== "standard"));
+  const groups = new Map();
+  for (const l of lines) {
+    const k = vatGroupLabel(l);
+    const g = groups.get(k) || { net: 0, vat: 0 };
+    g.net += net(l); g.vat += statementVatAmount(l);
+    groups.set(k, g);
+  }
+  const vatSummary = hasVatInfo ? `
+    <div class="section-label">VAT Summary</div>
+    <table><thead><tr><th>Rate / Treatment</th><th style="text-align:right">Gross</th><th style="text-align:right">VAT</th><th style="text-align:right">Net</th></tr></thead>
+    <tbody>${[...groups].map(([k, g]) => `<tr><td>${_esc(k)}</td><td class="num">${fmtCurr(g.net + g.vat, currency)}</td><td class="num">${g.vat ? fmtCurr(g.vat, currency) : "—"}</td><td class="num">${fmtCurr(g.net, currency)}</td></tr>`).join("")}</tbody></table>` : "";
 
   const detailItems = [
     ["Customer", customerName || "—"],
     ["Period", `${new Date(dateFrom + "T00:00:00").toLocaleDateString("en-GB")} – ${new Date(dateTo + "T00:00:00").toLocaleDateString("en-GB")}`],
     ["Shipments Covered", String(byShipment.size)],
-  ].map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${v}</div></div>`).join("");
+    ...(entityName ? [["Issued by", entityName]] : []),
+  ].map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${_esc(v)}</div></div>`).join("");
 
+  const totalNet = sum(lines, net), totalVat = sum(lines, statementVatAmount);
   const body = `
+    ${taxDetailsBlock(taxInfo)}
     <div class="shp-block"><div class="block-label">Statement Summary</div><div class="details-grid">${detailItems}</div></div>
     <div class="section-label">Charges by Shipment</div>
     ${shipmentBlocks}
-    <div class="totals"><div class="total-row grand"><span class="total-label">Grand Total (${currency})</span><span class="total-amt">${fmtCurr(grandTotal, currency)}</span></div></div>
+    ${vatSummary}
+    <div class="totals">
+      <div class="total-row grand lead"><span class="total-label">Total incl. VAT (${currency})</span><span class="total-amt">${fmtCurr(totalNet + totalVat, currency)}</span></div>
+      <div class="total-row"><span class="total-label">VAT</span><span class="total-amt">${fmtCurr(totalVat, currency)}</span></div>
+      <div class="total-row"><span class="total-label">Net Total</span><span class="total-amt">${fmtCurr(totalNet, currency)}</span></div>
+    </div>
+    ${reverseChargeNote(lines)}
     ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
 
   return _invShell(`Statement — ${invNumber}`, "CUSTOMER STATEMENT", invNumber, invDate, body);

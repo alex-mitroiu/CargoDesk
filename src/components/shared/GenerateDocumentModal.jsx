@@ -6,6 +6,7 @@ import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
 import { DOC_TYPES, docTypeLabel, getMissingDocRequirements, dispatchDocBuilder } from "../../utils/documentBuilders";
 import { renderTemplateHtml } from "../../utils/templateRenderer";
+import { resolveInvoiceTaxInfo } from "../../utils/invoiceGenerator";
 
 const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
   const defaultNum = `${shipment.id}-${Date.now().toString(36).toUpperCase().slice(-6)}`;
@@ -78,8 +79,13 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
         ? await api.documentTemplates.resolve(docCode, shipment.emoOfficeId || "", shipment.carrierCode || "").catch(() => null)
         : null;
 
+      // Freight invoices generated from the generic Documents picker carry the same supplier/
+      // customer tax numbers as those generated from Invoice Entry — resolved only for FR01/FR02,
+      // so no other document type pays for the extra lookups.
+      const taxInfo = (docCode === "FR01" || docCode === "FR02") ? await resolveInvoiceTaxInfo(shipment) : null;
+
       const dataBag = {
-        shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines, dgCompliance, parties, exportFilingItn, rateSnapshotId, booking, si,
+        shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines, dgCompliance, parties, exportFilingItn, rateSnapshotId, booking, si, taxInfo,
       };
 
       let html;

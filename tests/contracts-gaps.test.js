@@ -73,6 +73,7 @@ async function login() {
     console.log("\nGET /api/contracts/search — typeahead by number/carrier/asOf");
     const active = await request("POST", "/api/contracts", {
       contractNumber: rand, carrierCode: "MAEU", status: "Active", validFrom: "2026-01-01", validTo: "2030-01-01",
+      legs: [{ pol: "NLRTM", pod: "USNYC" }], // a routing line for the space configuration below to sit on
     }, token);
     assert("scratch Active contract created", active.status === 201, JSON.stringify(active.body));
     const activeId = active.body.id;
@@ -122,19 +123,20 @@ async function login() {
     const publish404 = await request("POST", "/api/contracts/CNTR-NOPE/publish", {}, token);
     assert("publish 404 for unknown id", publish404.status === 404);
 
-    console.log("\npublish — an orphaned (routing-less) leg once the contract has a named routing");
+    // An orphaned leg can no longer be saved (lib/routingLines.js gives every leg a routing line),
+    // so publish's orphan-leg guard can't trip. This payload — a loose leg describing the same
+    // NLRTM→USNYC line as the named routing — is now refused at save time as a duplicate line.
+    console.log("\nsave — a loose leg duplicating a named routing's line is refused (no orphan legs any more)");
     const draftOrphan = await request("POST", "/api/contracts", {
       contractNumber: `${rand}-C`, carrierCode: "MAEU", status: "Draft", validFrom: "2026-01-01", validTo: "2030-01-01",
       legs: [
         { pol: "NLRTM", pod: "USNYC", legOrder: 0, routingIndex: 0 },
-        { pol: "NLRTM", pod: "USNYC", legOrder: 1 }, // no routingIndex -> orphaned once a routing exists
+        { pol: "NLRTM", pod: "USNYC", legOrder: 1 }, // no routingIndex — the same line as "Direct"
       ],
       rates: [{ chargeCode: "OFR", amount: 100, currency: "USD" }],
       routings: [{ name: "Direct" }],
     }, token);
-    assert("scratch contract with one routed + one orphan leg created", draftOrphan.status === 201, JSON.stringify(draftOrphan.body));
-    const publishOrphan = await request("POST", `/api/contracts/${draftOrphan.body.id}/publish`, {}, token);
-    assert("publish rejected — an orphan leg exists alongside a named routing", publishOrphan.status >= 400 && /named routing/i.test(publishOrphan.body.error || ""));
+    assert("refused as a duplicate routing line (400)", draftOrphan.status === 400 && /same routing/i.test(draftOrphan.body.error || ""), JSON.stringify(draftOrphan.body));
 
     console.log("\nwithdraw — 404, not-Active, referenced-by-shipment, referenced-by-allocation");
     const withdraw404 = await request("POST", "/api/contracts/CNTR-NOPE/withdraw", {}, token);
@@ -177,7 +179,7 @@ async function login() {
     // Management Service running, which this file deliberately doesn't require.
 
     console.log("\nCleanup");
-    for (const id of [activeId, draftNoDatesId, draftPastDate.body.id, draftOrphan.body.id]) {
+    for (const id of [activeId, draftNoDatesId, draftPastDate.body.id, draftOrphan.body.id].filter(Boolean)) {
       await request("DELETE", `/api/contracts/${id}`, null, token);
     }
 

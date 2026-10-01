@@ -8,6 +8,7 @@ import BillingPerformancePanel from "../components/shared/BillingPerformancePane
 import ScheduledReportsPanel from "../components/shared/ScheduledReportsPanel";
 import InvoiceCollectionsPanel from "../components/shared/InvoiceCollectionsPanel";
 import FxRevaluationPanel from "../components/shared/FxRevaluationPanel";
+import VatLiabilityPanel from "../components/shared/VatLiabilityPanel";
 import DatePicker from "../components/primitives/DatePicker";
 import Btn from "../components/primitives/Btn";
 
@@ -43,7 +44,7 @@ const ReportsPage = () => {
   // TKT-B4VBDH — Billing Performance joins GP by Trade Area as a second top-level tab on this
   // page rather than its own nav item, mirroring DashboardPage.jsx's own tab-bar pattern for
   // "several distinct reports under one nav entry."
-  const [tab, setTab] = useState("gp"); // "gp" | "billing" | "collections" | "fx" | "scheduled"
+  const [tab, setTab] = useState("gp"); // "gp" | "billing" | "collections" | "fx" | "vat" | "scheduled"
   const [groupBy, setGroupBy] = useState("region"); // "region" | "country" | "carrier"
   // Default window is today -> today+30 (a forward-looking "what's coming up" slice) rather
   // than all-time — "" still means no bound at all, reachable via Clear below, since an
@@ -110,6 +111,7 @@ const ReportsPage = () => {
     { key: "billing",    label: "Billing Performance",  financeOnly: false },
     { key: "collections",label: "Invoice Collections",  financeOnly: false },
     { key: "fx",         label: "FX Revaluation",       financeOnly: true },
+    { key: "vat",        label: "VAT Liability",        financeOnly: true },
     { key: "scheduled",  label: "Scheduled Reports",    financeOnly: true },
   ].filter(t => hasFinanceAccess || !t.financeOnly);
 
@@ -126,6 +128,8 @@ const ReportsPage = () => {
             ? "Every shipment's own invoice status — Paid, Not Paid, Overdue, Missing, or Cancelled — with automated alerts and Trade Manager override"
             : tab === "fx"
             ? "Unrealized gain/loss on open foreign-currency invoices, and realized gain/loss on paid ones"
+            : tab === "vat"
+            ? "Output VAT on sales minus input VAT on purchases, per legal entity — the figure a VAT return needs"
             : "Reports that generate and email themselves automatically, on their own recurring cadence"}
         </p>
       </div>
@@ -148,6 +152,8 @@ const ReportsPage = () => {
         <InvoiceCollectionsPanel />
       ) : tab === "fx" ? (
         <FxRevaluationPanel />
+      ) : tab === "vat" ? (
+        <VatLiabilityPanel />
       ) : tab === "scheduled" ? (
         <ScheduledReportsPanel />
       ) : (

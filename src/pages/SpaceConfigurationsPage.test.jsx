@@ -17,12 +17,20 @@ const PORTS = vi.hoisted(() => ({
   lanes: { NLRTM: "EU-N", USLAX: "NAM", CNSHA: "FE", AEJEA: "ME", CNNGB: "FE", GBFXT: "EU-N", USNYC: "NAM" },
   laneNames: { "EU-N": "Europe North", NAM: "North America", FE: "Far East", ME: "Middle East" },
 }));
+// The contract ALC-OK sits on: one routing line NLRTM → USLAX. The form (SpaceConfigurationForm)
+// loads contracts through api.contracts.search() — the real name in src/api.js.
+const CONTRACT = vi.hoisted(() => ({
+  id: "CNTR-OK", carrierCode: "HLCU", contractNumber: "HLCU-EUN_USWC_0001", contractRef: "TEST1", namedAccountId: "", namedAccount: "",
+  status: "Active", validFrom: "2020-01-01", validTo: "2099-12-31", commodityTypes: "9999",
+  routings: [{ id: "R-OK", name: "" }], legs: [{ routingId: "R-OK", legOrder: 0, pol: "NLRTM", pod: "USLAX", vesselService: "", polLocType: "Terminal", podLocType: "Terminal" }],
+}));
 vi.mock("../AuthContext", () => ({ useAuth: () => ({ canManageConfigs: true }) }));
 vi.mock("../api", () => ({
   api: {
     tradeLanes: { list: vi.fn(() => Promise.resolve(Object.entries(PORTS.laneNames).map(([code, name]) => ({ code, name })))) },
     linkedPorts: { list: vi.fn(() => Promise.resolve([])) },
-    contracts: { get: vi.fn(() => Promise.resolve(null)) },
+    contracts: { get: vi.fn(() => Promise.resolve(null)), search: vi.fn(() => Promise.resolve([CONTRACT])) },
+    commodities: { get: vi.fn(code => Promise.resolve({ code, description: code === "9999" ? "FAK (Freight All Kinds)" : "" })) },
     portLinks: vi.fn(() => Promise.resolve([])),
     portLanes: vi.fn(code => Promise.resolve(PORTS.lanes[code]
       ? { lanes: [{ code: PORTS.lanes[code], name: PORTS.laneNames[PORTS.lanes[code]] }], primary: PORTS.lanes[code] }
@@ -33,7 +41,7 @@ vi.mock("../api", () => ({
       search: vi.fn(() => Promise.resolve([])),
     },
     carriers: { list: vi.fn(() => Promise.resolve([])) },
-    allocations: { conflicts: vi.fn(() => Promise.resolve({ exact: [], linked: [] })) },
+    allocations: { conflicts: vi.fn(() => Promise.resolve({ exact: [], linked: [] })), list: vi.fn(() => Promise.resolve([])) },
   },
 }));
 
@@ -48,7 +56,8 @@ const base = {
 const ALLOCATIONS = [
   // Under the alert threshold, with pending TEU and an unmet minimum commitment (MQC).
   { ...base, id: "ALC-OK", carrierCode: "HLCU", pol: "NLRTM", pod: "USLAX", contractNumber: "HLCU-EUN_USWC_0001",
-    allocatedTEU: 50, confirmedTEU: 13, pendingTEU: 5, remainingTEU: 37, minimumTEU: 40, originLane: "EU-N", destLane: "NAM" },
+    allocatedTEU: 50, confirmedTEU: 13, pendingTEU: 5, remainingTEU: 37, minimumTEU: 40, originLane: "EU-N", destLane: "NAM",
+    contractId: "CNTR-OK", routingIds: ["R-OK"], loopCode: "", commodityCode: "9999" },
   // At the alert threshold (85% of 100, threshold 80).
   { ...base, id: "ALC-AT", carrierCode: "EGLV", pol: "CNSHA", pod: "USLAX", contractNumber: "EGLV-AT-001",
     allocatedTEU: 100, confirmedTEU: 85, remainingTEU: 15 },
@@ -367,12 +376,22 @@ describe("Space Configurations — follows the App's allocations", () => {
   });
 });
 
-describe("Space Configurations — the form's Trade panel", () => {
+describe("Space Configurations — the form", () => {
   const openEdit = async id => {
     const row = await screen.findByTestId(`space-configs-row-${id}`);
     fireEvent.click(within(row).getByRole("button"));
     fireEvent.click(await screen.findByText("Edit"));
+    await screen.findByTestId("space-config-form");
   };
+
+  it("opens on the configuration's own contract reference and ticked routing line", async () => {
+    renderPage();
+    await openEdit("ALC-OK");
+    const line = await screen.findByTestId("scf-line-R-OK");
+    expect(within(line).getByRole("checkbox")).toBeChecked();
+    expect(screen.getByRole("radio", { name: /TEST1/ })).toBeChecked();
+    expect(screen.getByText(/Only routing on this reference/)).toBeInTheDocument();
+  });
 
   it("says Origin Trade and Destination Trade, each with its lane, its name and the port it came from", async () => {
     renderPage();
@@ -386,7 +405,6 @@ describe("Space Configurations — the form's Trade panel", () => {
     expect(dest).toHaveTextContent("Destination Trade");
     expect(dest).toHaveTextContent("NAM");
     expect(dest).toHaveTextContent("from POD · USLAX");
-    expect(screen.queryByText(/Trade Lane Route/)).toBeNull();
   });
 
   it("Override turns the two cards into Origin Trade / Destination Trade selectors", async () => {
@@ -394,10 +412,9 @@ describe("Space Configurations — the form's Trade panel", () => {
     await openEdit("ALC-OK");
     await screen.findByTestId("trade-origin");
     fireEvent.click(screen.getByText("Override"));
-    expect(screen.getByText("Origin Trade")).toBeInTheDocument();
-    expect(screen.getByText("Destination Trade")).toBeInTheDocument();
-    expect(screen.queryByText("Origin Lane")).toBeNull();
-    expect(screen.queryByText("Destination Lane")).toBeNull();
+    expect(screen.getByLabelText("Origin Trade")).toBeInTheDocument();
+    expect(screen.getByLabelText("Destination Trade")).toBeInTheDocument();
+    expect(screen.queryByTestId("trade-origin")).toBeNull();
   });
 
   it("keeps a lane that was deliberately set to something other than the port's own primary lane", async () => {

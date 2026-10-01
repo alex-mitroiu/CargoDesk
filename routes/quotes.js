@@ -20,7 +20,7 @@ module.exports = function quotesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, isUniqueViolation, mapQuote, mapQuoteLine, mapShipment,
           logEvent, logEntityEvent, toUsd, SERVICE_CODE_MAP, importContractRates,
           resolveCarrierAgentCandidates, screenShipmentById, schemaReady, getCustomerRow,
-          recomputeSpaceBadge, applyOfficeScopedAccessFilter } = ctx;
+          recomputeSpaceBadge, applyOfficeScopedAccessFilter , commodityCodeError } = ctx;
 
   // sales (User Management redesign, 2026-09-12) owns the quoting pipeline — deliberately not
   // added to shipments.js/shipment-ops.js/edi.js/etc.'s write guards, which stay booking-authority
@@ -207,6 +207,8 @@ module.exports = function quotesRoutes(app, ctx) {
             declaredValue = null, declaredValueCurrency = "USD", freightTerms = "Prepaid",
             officeId = "", lines = [] } = req.body || {};
     if (!pol || !pod) return err(res, "pol and pod are required");
+    const commodityError = await commodityCodeError(commodityCode);
+    if (commodityError) return err(res, commodityError);
     const invalidLine = findInvalidLine(lines);
     if (invalidLine) return err(res, `Each line's quantity must be a positive number (got "${invalidLine.quantity}")`);
     const id = `QT-${uid()}`;
@@ -246,6 +248,8 @@ module.exports = function quotesRoutes(app, ctx) {
             declaredValue = null, declaredValueCurrency = "USD", freightTerms = "Prepaid",
             officeId = "", lines = [] } = req.body || {};
     if (!pol || !pod) return err(res, "pol and pod are required");
+    const commodityError = await commodityCodeError(commodityCode, existing.commodity_code);
+    if (commodityError) return err(res, commodityError);
     const invalidLine = findInvalidLine(lines);
     if (invalidLine) return err(res, `Each line's quantity must be a positive number (got "${invalidLine.quantity}")`);
     await query(`UPDATE quotes SET customer_id=$1, customer_name=$2, consignee_id=$3, consignee_name=$4,

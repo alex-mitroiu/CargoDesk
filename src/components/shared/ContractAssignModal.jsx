@@ -25,7 +25,7 @@ import { HZ, HZ_BODY, useHorizonFonts } from "../../pages/shipments/shipmentDeta
 // space-config/contract search the shipment form already uses.
 // Non-Central types resolve inline on the type step via a free-text ref field.
 
-const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, onUpdate, onDone, onClose }) => {
+const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, containers = [], loopCode = "", onUpdate, onDone, onClose }) => {
   const [type, setType] = useState(shipment.contractType === "Central" ? "Central" : (shipment.contractType || "Central"));
   const [step, setStep] = useState(shipment.contractType === "Central" ? "contract" : "type");
   const [refVal, setRefVal] = useState(shipment.contractRef || "");
@@ -56,7 +56,12 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, onUpda
     // this search exists to surface.
     Promise.all([
       api.contracts.match(matchParams),
-      api.allocations.match({ pol, pod, etd: shipment.etd || "", ...haulageParams }),
+      // Principal, commodity and the sailing's loop narrow the space configurations to the ones
+      // this shipment may use; customer-specific space comes first.
+      api.allocations.match({ pol, pod, etd: shipment.etd || "", ...haulageParams,
+        ...(shipment.principalId && { principalId: shipment.principalId }),
+        ...(shipment.commodityCode && { commodityCode: shipment.commodityCode }),
+        ...(loopCode && { loopCode }) }),
     ]).then(([c, a]) => {
       if (!live) return;
       setMatches(c);
@@ -87,11 +92,14 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, onUpda
     // ContractPickerModal's own card the operator clicked already IS that specific choice.
     finish({ contractId: c.id, contractRef: c.contractNumber, carrierCode: c.carrierCode || shipment.carrierCode,
       contractRoutingId: c.routingId || "",
-      allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "" }, matchedRoute);
+      allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "", spaceSelection: "" }, matchedRoute);
   };
-  const pickAllocation = (alloc, overageReason = "") => {
+  const pickAllocation = (alloc, overageReason = "", selection = "direct") => {
+    // matchedRoutingId is the configuration's ticked line that covered this shipment. Without it
+    // the shipment kept whatever routing its previous contract had.
     finish({ contractId: alloc.contractId, contractRef: alloc.contractNumber, carrierCode: alloc.carrierCode || shipment.carrierCode,
-      allocationId: alloc.id, spaceSkipReason: "", spaceOverageReason: overageReason },
+      contractRoutingId: alloc.matchedRoutingId || "",
+      allocationId: alloc.id, spaceSkipReason: "", spaceOverageReason: overageReason, spaceSelection: selection },
       { pol: alloc.pol, pod: alloc.pod });
   };
   const saveRef = () => {
@@ -116,6 +124,7 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, onUpda
     }
     return (
       <ContractPickerModal pol={pol} pod={pod} matches={matches} allocs={allocs} shipmentTEU={shipmentTEU}
+        cargo={{ principalId: shipment.principalId, principalName: shipment.principalName, containers }}
         searchCriteria={{ pol, pod, crd: (shipment.cargoReadyDate || shipment.etd || "") || null,
           // Deliberately no carrierCode here — this search is intentionally NOT carrier-filtered
           // (see the comment above the match useEffect), so showing one would misrepresent what

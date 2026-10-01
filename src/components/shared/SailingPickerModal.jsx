@@ -1,3 +1,4 @@
+import { deriveLoopCode } from "../../utils/scheduleLoop";
 import { useState, useEffect } from "react";
 import { T } from "../../tokens";
 import { api } from "../../api";
@@ -49,8 +50,10 @@ const JourneyBreadcrumb = ({ pol, pod, routingTerm }) => {
 };
 
 const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing, onSelect, onClose,
-  selectLabel = "Select →", expectedHub = null, expectedService = null }) => {
+  selectLabel = "Select →", expectedHub = null, expectedService = null,
+  requiredService = null, requiredHub = null }) => {
   const [sailings, setSailings] = useState(null);
+  const [showAll,  setShowAll]  = useState(false);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState(null);
   const [weeks,    setWeeks]    = useState(4);
@@ -64,6 +67,14 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
     return false;
   };
   const hasExpectation = !!(expectedHub || expectedService);
+
+  // Hard filter (decided 2026-09-30): a shipment on a space configuration searches sailings by
+  // that configuration's routing — its loop, and its first transshipment port when it has one.
+  // A sailing on another loop would drop the space link on save (revalidateSpaceLoop), so those
+  // are hidden unless the user deliberately asks to see them.
+  const hasRequirement = !!(requiredService || requiredHub);
+  const fitsRequirement = s => (!requiredService || deriveLoopCode(s).toUpperCase() === String(requiredService).toUpperCase())
+    && (!requiredHub || !!(s.legs && s.legs.some(l => l.pod === requiredHub)));
 
   const search = async (w) => {
     setLoading(true); setError(null);
@@ -149,15 +160,35 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
                 Generate real schedules in Test Tools, or disable demo schedules in App Settings.
               </div>
             )}
-            {(sailings.sailings || []).length === 0 ? (
+            {hasRequirement && (
+              <div data-testid="sailing-space-filter" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10,
+                fontFamily: T.body, fontSize: 12, color: T.text, padding: "8px 12px",
+                background: T.accentBg, border: `1px solid ${T.accent}33`, borderRadius: 6 }}>
+                <span>
+                  This shipment is on a space configuration for
+                  {requiredService && <> loop <strong style={{ fontFamily: T.mono }}>{requiredService}</strong></>}
+                  {requiredHub && <> via <strong style={{ fontFamily: T.mono }}>{requiredHub}</strong></>}
+                  {showAll ? ". Showing every sailing — picking one on another loop drops the shipment from that space." : ", so only those sailings are shown."}
+                </span>
+                <button type="button" onClick={() => setShowAll(v => !v)}
+                  style={{ marginLeft: "auto", background: "none", border: `1px solid ${T.border}`, borderRadius: 5, padding: "3px 10px",
+                    cursor: "pointer", fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>
+                  {showAll ? "Only matching sailings" : `Show all sailings (${(sailings.sailings || []).filter(x => !fitsRequirement(x)).length} more)`}
+                </button>
+              </div>
+            )}
+            {(sailings.sailings || []).filter(x => showAll || !hasRequirement || fitsRequirement(x)).length === 0 ? (
               <div style={{ textAlign: "center", padding: "24px 0",
                 fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
-                No sailings found for this route in the {weeks}-week window.
+                {hasRequirement && !showAll && (sailings.sailings || []).length > 0
+                  ? <>No sailings{requiredService ? ` on loop ${requiredService}` : ""}{requiredHub ? ` via ${requiredHub}` : ""} in the {weeks}-week window. Widen the window, or show all sailings.</>
+                  : <>No sailings found for this route in the {weeks}-week window.</>}
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {[...(sailings.sailings || [])]
                   .map((s, i) => ({ s, i }))
+                  .filter(({ s }) => showAll || !hasRequirement || fitsRequirement(s))
                   .sort((a, b) => (hasExpectation ? (matchesContract(b.s) - matchesContract(a.s)) : 0))
                   .map(({ s, i }) => {
                   const isTSP = s.legs && s.legs.length > 1;

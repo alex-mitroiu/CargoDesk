@@ -1,10 +1,12 @@
 "use strict";
 
 const { applyColumnFilters, filterOptions, applySearch, applySort, paginate, blanksLast } = require("../lib/tableQuery");
+const { normalizeRoutingLines } = require("../lib/routingLines");
 
 module.exports = function contractsRoutes(app, ctx) {
   const { query, transaction, ok, err, uid, requireRole, mapContract, mapLeg, mapRate, mapContractRouting, logEntityEvent, toUsd, findMatchingContractLegs,
-          getSettings, callContractService, callMdmService, schemaReady } = ctx;
+          getSettings, callContractService, callMdmService, schemaReady,
+          FAK_COMMODITY, parseCommodityList, unknownCommodityCodes, unknownCommodityError } = ctx;
 
   // Contracts are full-CRUD for trade_manager alongside admin/operator — previously these
   // write routes had no role gate at all (any authenticated user, including viewer, could write).
@@ -181,39 +183,104 @@ module.exports = function contractsRoutes(app, ctx) {
     }
   }
 
-  // Named routings (e.g. "Via Shanghai/Rotterdam") are saved BEFORE legs/rates, same
-  // delete-then-loop-insert-in-a-transaction shape as saveLegs/saveRates below — a routing row
-  // gets a fresh id on every save too, so legs/rates can't reference a stable id from a prior
-  // save. Instead the client correlates a leg/rate to a routing purely by ARRAY INDEX into the
-  // `routings` payload (a leg/rate's `routingIndex` field) — the same "index is the only
-  // identity that survives a save" convention `leg_order`/`sort_order` already rely on. Returns
-  // the freshly generated ids in input order so saveLegs/saveRates can resolve routingIndex -> id.
+  // Named routings (e.g. "Via Shanghai/Rotterdam") are saved BEFORE legs/rates. A routing that
+  // comes back with its own id keeps it (updated in place); one without an id, or with an id
+  // that isn't this contract's, is inserted; a routing left out of the payload is deleted.
+  // Routing ids used to be regenerated on every save, which silently broke every reference to
+  // them: a shipment's contract_routing_id then matched no routing, and its routing-specific
+  // rates dropped out of Update Carrier Costs / Reconcile. Space configurations will reference
+  // routings too, so the id has to survive. Returns the ids in input order so saveLegs/saveRates
+  // can resolve routingIndex -> id.
   async function saveRoutings(contractId, routings) {
     const now = new Date().toISOString();
-    const ids = routings.map(() => `CRTG-${uid()}`);
-    await transaction(async (tx) => {
-      await tx.query("DELETE FROM contract_routings WHERE contract_id=$1", [contractId]);
+    return transaction(async (tx) => {
+      const existing = new Set((await tx.query("SELECT id FROM contract_routings WHERE contract_id=$1", [contractId])).map(r => r.id));
+      const ids = [];
       for (let i = 0; i < routings.length; i++) {
         const r = routings[i];
-        await tx.query(`INSERT INTO contract_routings (id,contract_id,name,sort_order,transit_days,notes,created_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [ids[i], contractId, r.name || "", i, r.transitDays || 0, r.notes || "", now]);
+        const keep = typeof r.id === "string" && existing.has(r.id) && !ids.includes(r.id);
+        const id = keep ? r.id : `CRTG-${uid()}`;
+        if (keep) {
+          await tx.query("UPDATE contract_routings SET name=$1, sort_order=$2, transit_days=$3, notes=$4 WHERE id=$5",
+            [r.name || "", i, r.transitDays || 0, r.notes || "", id]);
+        } else {
+          await tx.query(`INSERT INTO contract_routings (id,contract_id,name,sort_order,transit_days,notes,created_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+            [id, contractId, r.name || "", i, r.transitDays || 0, r.notes || "", now]);
+        }
+        ids.push(id);
       }
+      const removed = [...existing].filter(id => !ids.includes(id));
+      if (removed.length) {
+        await tx.query(`DELETE FROM contract_routings WHERE contract_id=$1 AND id IN (${removed.map((_, i) => `$${i + 2}`).join(",")})`,
+          [contractId, ...removed]);
+      }
+      return ids;
     });
-    return ids;
   }
 
-  // Resolves a leg/rate's target routing to the real, freshly-generated contract_routings id.
+  // ─── Routing lines (lib/routingLines.js) ────────────────────────────────────
+  // Every create/update payload goes through normalizeRoutingLines before it is saved, so a
+  // contract always leaves here as one routing per line. A payload with no `routings` key keeps
+  // the stored routings (loose legs find theirs again by chain, so ids don't churn); legs and
+  // rates stay full-replace, exactly as before.
+  async function storedRoutingState(contractId) {
+    const routings = (await query("SELECT * FROM contract_routings WHERE contract_id=$1 ORDER BY sort_order", [contractId])).map(mapContractRouting);
+    const legs = (await query("SELECT * FROM contract_legs WHERE contract_id=$1 ORDER BY leg_order", [contractId])).map(mapLeg);
+    return { routings, legs };
+  }
+  const normalizePayload = (body, stored) => normalizeRoutingLines({
+    routings: body.routings === undefined ? stored.routings : body.routings,
+    legs: body.legs || [], rates: body.rates || [], storedLegs: stored.legs,
+  });
+  // Commodity types are registry codes (Master Data → Commodities), comma-separated; none means
+  // FAK (9999). Returns { value } or { error }, shared by the local and remote branches.
+  async function resolveCommodityTypes(input) {
+    const codes = parseCommodityList(input);
+    const bad = await unknownCommodityCodes(codes);
+    return bad.length ? { error: unknownCommodityError(bad) } : { value: codes.join(",") || FAK_COMMODITY };
+  }
+  const duplicateLineError = d =>
+    `Two routing lines describe the same routing (${d.label}) — lines ${d.first + 1} and ${d.second + 1}. Remove one, or change a port, location or service code.`;
+
+  // Routings a PUT would delete (in the stored set, missing from the payload) that a shipment
+  // still uses. A removed routing takes its own rates with it, so the shipment's next Update
+  // Carrier Costs / Reconcile would quietly lose them — block it instead, the same way a
+  // referenced contract can't be deleted. Cancelled shipments don't count.
+  async function routingsInUse(storedIds, routings) {
+    const kept = new Set(routings.map(r => r.id).filter(Boolean));
+    const removed = storedIds.filter(id => !kept.has(id));
+    if (!removed.length) return [];
+    const ph = removed.map((_, i) => `$${i + 1}`).join(",");
+    // Space configurations tick routing lines too (allocation_routings, 2026-09-30); removing a
+    // line a configuration holds space on would leave that space covering nothing.
+    const [ships, configs] = await Promise.all([
+      query(`SELECT id, contract_routing_id FROM shipments WHERE status <> 'Cancelled' AND contract_routing_id IN (${ph})`, removed),
+      query(`SELECT allocation_id AS id, routing_id AS contract_routing_id FROM allocation_routings WHERE routing_id IN (${ph})`, removed),
+    ]);
+    return [...ships.map(r => ({ ...r, kind: "shipment" })), ...configs.map(r => ({ ...r, kind: "space configuration" }))];
+  }
+  const routingInUseError = (rows, routingNameById) => {
+    const names = [...new Set(rows.map(r => routingNameById[r.contract_routing_id] || r.contract_routing_id))];
+    const part = kind => {
+      const list = rows.filter(r => r.kind === kind);
+      if (!list.length) return "";
+      const ids = list.slice(0, 3).map(r => r.id).join(", ") + (list.length > 3 ? ` and ${list.length - 3} more` : "");
+      return `${list.length} ${kind}${list.length === 1 ? "" : "s"} (${ids})`;
+    };
+    return `Routing ${names.map(n => `"${n}"`).join(", ")} is used by ${[part("shipment"), part("space configuration")].filter(Boolean).join(" and ")}. Move them to another routing or contract (or untick it on the space configuration) before removing it.`;
+  };
+
+  // Resolves a leg/rate's target routing to its contract_routings id.
   // Preferred path: an explicit routingIndex (an integer index into the CURRENT routings[]
-  // payload) — this is what MdmContractsPage.jsx always sends, since it's the only identity
-  // that survives a save (routing ids get regenerated every save, exactly like legs/rates do).
-  // Fallback path (oldNameById/newIndexByName both optional): a caller that PUTs back
-  // `{...previousGetResponse, someUnrelatedChange}` without re-deriving routingIndex — the
-  // existing amendment-diff test in tests/contract-improvements.test.js does exactly this
-  // pattern — carries a stale routingId instead. That's resolved via the routing's NAME, the
-  // one thing that DOES survive when the routings list itself is unchanged.
+  // payload) — this is what MdmContractsPage.jsx always sends.
+  // Second path: the item's own routingId, when that routing survived this save.
+  // Fallback path (oldNameById/newIndexByName both optional): a stale routingId that no longer
+  // exists, resolved via the routing's NAME — kept for callers that PUT back an older GET
+  // response, like the amendment-diff test in tests/contract-improvements.test.js.
   const resolveRoutingId = (item, routingIds, oldNameById = {}, newIndexByName = {}) => {
     if (Number.isInteger(item.routingIndex) && routingIds[item.routingIndex]) return routingIds[item.routingIndex];
+    if (item.routingId && routingIds.includes(item.routingId)) return item.routingId;
     if (item.routingId && oldNameById[item.routingId] != null) {
       const idx = newIndexByName[oldNameById[item.routingId]];
       if (idx != null && routingIds[idx]) return routingIds[idx];
@@ -287,6 +354,75 @@ module.exports = function contractsRoutes(app, ctx) {
   schemaReady.then(() => expireStaleContracts()).catch(e => console.error("expireStaleContracts failed:", e));
   const expireSweep = setInterval(() => expireStaleContracts().catch(e => console.error("expireStaleContracts failed:", e)), 60 * 60 * 1000);
   expireSweep.unref?.();
+
+  // ─── One-time (idempotent) move to routing lines ─────────────────────────────
+  // Runs every stored contract through normalizeRoutingLines on startup — loose legs become
+  // routings, a routing that isn't one chain is split, a multi-location pick-up/delivery becomes
+  // one line per combination — and only writes a contract that actually changes, so after the
+  // first pass it's a no-op. Then gives each shipment on a contract the routing its route
+  // matches, when exactly one does (a price-neutral link: the rates it would select are the same
+  // contract-wide ones as before; it's what space configurations and routing-specific rates key
+  // on from now on). Local tables only; the Contract Management Service runs its own copy.
+  async function migrateRoutingLines() {
+    let changedContracts = 0, skipped = 0, linkedShipments = 0;
+    for (const { id } of await query("SELECT id FROM contracts ORDER BY created_at")) {
+      const stored = await storedRoutingState(id);
+      if (!stored.legs.length && !stored.routings.length) continue;
+      const rates = (await query("SELECT * FROM contract_rates WHERE contract_id=$1 ORDER BY sort_order", [id])).map(mapRate);
+      const norm = normalizeRoutingLines({ routings: stored.routings, legs: stored.legs, rates, storedLegs: stored.legs });
+      if (!norm.changed) continue;
+      if (norm.duplicate) { skipped++; console.warn(`  ⚠ Contract ${id}: ${duplicateLineError(norm.duplicate)} — left as is`); continue; }
+      if ((await routingsInUse(stored.routings.map(r => r.id), norm.routings)).length) { skipped++; console.warn(`  ⚠ Contract ${id}: a routing in use would be removed — left as is`); continue; }
+      const routingIds = await saveRoutings(id, norm.routings);
+      await saveLegs(id, norm.legs, routingIds);
+      await saveRates(id, norm.rates, routingIds);
+      changedContracts++;
+    }
+    const unlinked = await query(`
+      SELECT s.id, s.pol, s.pod, s.contract_id FROM shipments s
+      WHERE COALESCE(s.contract_id, '') <> '' AND s.status <> 'Cancelled'
+        AND (COALESCE(s.contract_routing_id, '') = ''
+             OR NOT EXISTS (SELECT 1 FROM contract_routings r WHERE r.id = s.contract_routing_id))`);
+    const legsByContract = new Map();
+    for (const s of unlinked) {
+      if (!legsByContract.has(s.contract_id)) legsByContract.set(s.contract_id, await query("SELECT * FROM contract_legs WHERE contract_id=$1", [s.contract_id]));
+      const legRows = legsByContract.get(s.contract_id);
+      if (!legRows.length || !s.pol || !s.pod) continue;
+      const ids = [...new Set((await findMatchingContractLegs(legRows, { pol: s.pol, pod: s.pod, needsPolHaulage: false, needsPodHaulage: false })).map(m => m.routingId))];
+      if (ids.length === 1 && ids[0]) {
+        await query("UPDATE shipments SET contract_routing_id=$1 WHERE id=$2", [ids[0], s.id]);
+        linkedShipments++;
+      }
+    }
+    // Space configurations made before they ticked routing lines: link each to the line of its
+    // (local) contract covering its stored lane, and fill in what the new model adds — the
+    // reference's named account as customer, the contract's commodity, and the line's loop when
+    // it has exactly one. A configuration whose lane is on no line, or on several, is left alone.
+    let linkedConfigs = 0, unlinkedConfigs = 0;
+    const unrouted = await query(`SELECT a.* FROM allocations a WHERE COALESCE(a.contract_id,'') <> ''
+      AND NOT EXISTS (SELECT 1 FROM allocation_routings ar WHERE ar.allocation_id = a.id)`);
+    for (const a of unrouted) {
+      const [c] = await query("SELECT * FROM contracts WHERE id=$1", [a.contract_id]);
+      const legRows = c ? await query("SELECT * FROM contract_legs WHERE contract_id=$1 ORDER BY leg_order", [c.id]) : [];
+      const covering = [...new Set((await findMatchingContractLegs(legRows, { pol: a.pol, pod: a.pod, needsPolHaulage: false, needsPodHaulage: false })).map(m => m.routingId))].filter(Boolean);
+      if (covering.length !== 1) { unlinkedConfigs++; continue; }
+      const loops = [...new Set(legRows.filter(l => l.routing_id === covering[0]).map(l => String(l.vessel_service || "").trim().toUpperCase()).filter(Boolean))];
+      const codes = parseCommodityList(c.commodity_types);
+      await transaction(async tx => {
+        await tx.query("INSERT INTO allocation_routings (allocation_id, routing_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [a.id, covering[0]]);
+        await tx.query(`UPDATE allocations SET
+            loop_code = CASE WHEN COALESCE(loop_code,'') = '' THEN $1 ELSE loop_code END,
+            customer_id = CASE WHEN COALESCE(customer_id,'') = '' THEN $2 ELSE customer_id END,
+            customer_name = CASE WHEN COALESCE(customer_id,'') = '' THEN $3 ELSE customer_name END,
+            commodity_code = CASE WHEN COALESCE(commodity_code,'') = '' THEN $4 ELSE commodity_code END
+          WHERE id=$5`, [loops.length === 1 ? loops[0] : "", c.named_account_id || "", c.named_account || "", codes[0] || FAK_COMMODITY, a.id]);
+      });
+      linkedConfigs++;
+    }
+    if (changedContracts || skipped || linkedShipments || linkedConfigs || unlinkedConfigs)
+      console.log(`  ✔ Contract routing lines: ${changedContracts} contract(s) converted, ${skipped} skipped, ${linkedShipments} shipment(s) linked to their routing, ${linkedConfigs} space configuration(s) linked to their line${unlinkedConfigs ? `, ${unlinkedConfigs} left without a line` : ""}`);
+  }
+  schemaReady.then(() => migrateRoutingLines()).catch(e => console.error("migrateRoutingLines failed:", e));
 
   // Upcoming/just-passed expiries for the Header notification bell — MUST be before
   // /api/contracts/:id. Deliberately checked on the raw date condition (not status='Expired')
@@ -653,23 +789,24 @@ module.exports = function contractsRoutes(app, ctx) {
   });
 
   app.post("/api/contracts", write, async (req, res) => {
+    const norm = normalizePayload(req.body || {}, { routings: [], legs: [] });
+    if (norm.duplicate) return err(res, duplicateLineError(norm.duplicate));
+    const commodity = await resolveCommodityTypes(req.body?.commodityTypes);
+    if (commodity.error) return err(res, commodity.error);
     if (await isRemote()) {
-      try { return ok(res, await callContractService("POST", "/internal/contracts", req.body), 201); }
+      try { return ok(res, await callContractService("POST", "/internal/contracts", { ...req.body, commodityTypes: commodity.value, routings: norm.routings, legs: norm.legs, rates: norm.rates }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
     const { contractNumber="", contractRef="", carrierCode="", namedAccountId="", namedAccount="",
             movementType="FCL", containerTypes=[], commodityTypes="", dgAllowed=false, imdgClasses=[],
-            validFrom="", validTo="", currency="USD", status="Active", notes="",
-            legs=[], rates=[], routings=[] } = req.body;
+            validFrom="", validTo="", currency="USD", status="Active", notes="" } = req.body;
+    const { routings, legs, rates } = norm;
     const [dup] = await query("SELECT id FROM contracts WHERE contract_number=$1 AND contract_ref=$2 AND named_account_id=$3", [contractNumber, contractRef, namedAccountId]);
     if (dup) return err(res, `A contract with this number${contractRef ? ", reference" : ""}${namedAccountId ? ", and account" : ""} already exists (${dup.id})`);
     if (!CONTRACT_STATUSES.includes(status)) return err(res, `status must be one of: ${CONTRACT_STATUSES.join(", ")}`);
     const id = `CNTR-${uid()}`;
     const createdAt = new Date().toISOString();
-    // Free text, no registry behind it — left blank means "no commodity restriction stated",
-    // which is exactly what FAK ("Freight All Kinds") already means in the industry, so an
-    // unfilled field defaults to it here rather than silently staying blank.
-    const effCommodityTypes = (commodityTypes.trim() || "FAK").slice(0, 32);
+    const effCommodityTypes = commodity.value;
     // container_types/imdg_classes no longer written here (TKT-5YYLNT) — saveContractContainerTypes/
     // saveContractImdgClasses below are the real write path now; the columns stay in the schema
     // (DEFAULT '[]', unused) rather than being dropped, matching this codebase's additive-only precedent.
@@ -693,14 +830,29 @@ module.exports = function contractsRoutes(app, ctx) {
 
   app.put("/api/contracts/:id", write, async (req, res) => {
     if (await isRemote()) {
-      try { return ok(res, await callContractService("PUT", `/internal/contracts/${req.params.id}`, req.body)); }
+      // The service owns no shipments, so the routing-in-use guard runs here first, against the
+      // routings the service currently holds (same split as DELETE's reference guard below).
+      try {
+        const current = await callContractService("GET", `/internal/contracts/${req.params.id}`);
+        const norm = normalizePayload(req.body || {}, { routings: current.routings || [], legs: current.legs || [] });
+        if (norm.duplicate) return err(res, duplicateLineError(norm.duplicate));
+        const commodity = await resolveCommodityTypes(req.body?.commodityTypes);
+        if (commodity.error) return err(res, commodity.error);
+        const inUse = await routingsInUse((current.routings || []).map(r => r.id), norm.routings);
+        if (inUse.length) return err(res, routingInUseError(inUse, Object.fromEntries((current.routings || []).map(r => [r.id, r.name]))), 409);
+        return ok(res, await callContractService("PUT", `/internal/contracts/${req.params.id}`, { ...req.body, commodityTypes: commodity.value, routings: norm.routings, legs: norm.legs, rates: norm.rates }));
+      }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
     const { contractNumber="", contractRef="", carrierCode="", namedAccountId="", namedAccount="",
             movementType="FCL", containerTypes=[], commodityTypes="", dgAllowed=false, imdgClasses=[],
-            validFrom="", validTo="", currency="USD", status="Active", notes="",
-            legs=[], rates=[], routings=[] } = req.body;
-    const effCommodityTypes = (commodityTypes.trim() || "FAK").slice(0, 32);
+            validFrom="", validTo="", currency="USD", status="Active", notes="" } = req.body;
+    const norm = normalizePayload(req.body, await storedRoutingState(req.params.id));
+    if (norm.duplicate) return err(res, duplicateLineError(norm.duplicate));
+    const { routings, legs, rates } = norm;
+    const commodity = await resolveCommodityTypes(commodityTypes);
+    if (commodity.error) return err(res, commodity.error);
+    const effCommodityTypes = commodity.value;
     const [dup] = await query("SELECT id FROM contracts WHERE contract_number=$1 AND contract_ref=$2 AND named_account_id=$3 AND id!=$4", [contractNumber, contractRef, namedAccountId, req.params.id]);
     if (dup) return err(res, `A contract with this number${contractRef ? ", reference" : ""}${namedAccountId ? ", and account" : ""} already exists (${dup.id})`);
     if (!CONTRACT_STATUSES.includes(status)) return err(res, `status must be one of: ${CONTRACT_STATUSES.join(", ")}`);
@@ -733,6 +885,8 @@ module.exports = function contractsRoutes(app, ctx) {
     const oldRoutingsById = Object.fromEntries(
       (await query("SELECT id, name FROM contract_routings WHERE contract_id=$1", [req.params.id])).map(r => [r.id, r.name])
     );
+    const inUse = await routingsInUse(Object.keys(oldRoutingsById), routings);
+    if (inUse.length) return err(res, routingInUseError(inUse, oldRoutingsById), 409);
     const updated = await query(`UPDATE contracts SET contract_number=$1,contract_ref=$2,carrier_code=$3,named_account_id=$4,named_account=$5,
       movement_type=$6,dg_allowed=$7,valid_from=$8,valid_to=$9,currency=$10,status=$11,notes=$12,commodity_types=$13
       WHERE id=$14 RETURNING id`,

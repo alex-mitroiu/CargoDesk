@@ -24,18 +24,18 @@ const CONTRACT_STATUSES = ["Active", "Draft", "Expired", "On Hold"];
 // CY and Door share the same pol/pod_carrier_haulage flag at DB level.
 // A future contract_legs.pol_loc_type column would allow exact CY vs Door filtering.
 const ROUTING_TERMS = [
-  { value: "P2P",   label: "PT–PT",  polOriginLabel: "Via Origin",      podDestLabel: "Via Destination"  },
-  { value: "D2P",   label: "DR–PT",  polOriginLabel: "Door Origin",     podDestLabel: "Via Destination"  },
-  { value: "CY2P",  label: "CY–PT",  polOriginLabel: "CY Origin",       podDestLabel: "Via Destination"  },
-  { value: "P2D",   label: "PT–DR",  polOriginLabel: "Via Origin",      podDestLabel: "Door Destination" },
-  { value: "P2CY",  label: "PT–CY",  polOriginLabel: "Via Origin",      podDestLabel: "CY Destination"   },
-  { value: "D2D",   label: "DR–DR",  polOriginLabel: "Door Origin",     podDestLabel: "Door Destination" },
-  { value: "D2CY",  label: "DR–CY",  polOriginLabel: "Door Origin",     podDestLabel: "CY Destination"   },
-  { value: "CY2D",  label: "CY–DR",  polOriginLabel: "CY Origin",       podDestLabel: "Door Destination" },
-  { value: "CY2CY", label: "CY–CY",  polOriginLabel: "CY Origin",       podDestLabel: "CY Destination"   },
+  { value: "P2P",   label: "PT–PT",  polOriginLabel: "Pick-up",         podDestLabel: "Delivery"         },
+  { value: "D2P",   label: "DR–PT",  polOriginLabel: "Door pick-up",    podDestLabel: "Delivery"         },
+  { value: "CY2P",  label: "CY–PT",  polOriginLabel: "CY pick-up",      podDestLabel: "Delivery"         },
+  { value: "P2D",   label: "PT–DR",  polOriginLabel: "Pick-up",         podDestLabel: "Door delivery"    },
+  { value: "P2CY",  label: "PT–CY",  polOriginLabel: "Pick-up",         podDestLabel: "CY delivery"      },
+  { value: "D2D",   label: "DR–DR",  polOriginLabel: "Door pick-up",    podDestLabel: "Door delivery"    },
+  { value: "D2CY",  label: "DR–CY",  polOriginLabel: "Door pick-up",    podDestLabel: "CY delivery"      },
+  { value: "CY2D",  label: "CY–DR",  polOriginLabel: "CY pick-up",      podDestLabel: "Door delivery"    },
+  { value: "CY2CY", label: "CY–CY",  polOriginLabel: "CY pick-up",      podDestLabel: "CY delivery"      },
 ];
 
-const DEFAULT_TERM = { polOriginLabel: "Via Origin", podDestLabel: "Via Destination" };
+const DEFAULT_TERM = { polOriginLabel: "Pick-up", podDestLabel: "Delivery" };
 
 const EMPTY_FILTERS = {
   contractNumber: "",
@@ -510,8 +510,8 @@ const SearchForm = ({ onSearch, loading }) => {
         const anyTerm      = !term;
         const showOrigin   = anyTerm || ["D2P","CY2P","D2D","D2CY","CY2D","CY2CY"].includes(term);
         const showDest     = anyTerm || ["P2D","P2CY","D2D","D2CY","CY2D","CY2CY"].includes(term);
-        const originLabel  = termDef?.polOriginLabel || "Pre-carriage Origin";
-        const destLabel    = termDef?.podDestLabel   || "On-carriage Destination";
+        const originLabel  = termDef?.polOriginLabel || "Pick-up";
+        const destLabel    = termDef?.podDestLabel   || "Delivery";
 
         // Build slots left-to-right in actual journey order
         const slots = [];
@@ -519,7 +519,7 @@ const SearchForm = ({ onSearch, loading }) => {
           <div key="origin" style={{ flex: 1, minWidth: 0 }}>
             {lbl(originLabel)}
             <PortCombobox value={f.polOrigin} onChange={v => set("polOrigin", v)}
-              placeholder="Pickup location…" />
+              placeholder="Pick-up location…" />
           </div>
         );
         slots.push(
@@ -1330,8 +1330,8 @@ const SchedulesPage = () => {
           </div>
           <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted,
             textAlign: "center", maxWidth: 440, lineHeight: 1.6 }}>
-            Use POL / POD to find contracts by seaport, or Via Origin / Via Destination
-            to find contracts with Carrier's Haulage coverage at door or CY locations.
+            Use POL / POD to find contracts by seaport, or pick a door or CY routing term and fill in
+            Pick-up / Delivery to find contracts with carrier's haulage coverage at those locations.
           </div>
         </div>
       ) : (

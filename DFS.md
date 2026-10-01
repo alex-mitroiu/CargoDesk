@@ -1,6 +1,8 @@
 # CargoDesk — Design & Functional Specification (DFS)
 
-**Status**: first pass, top-down. **Scope**: whole application, at the level of its major
+**Status**: first pass, top-down; last updated 2026-09-29 (v0.91.9 "Reckoning" plus the unreleased
+work after it — finance integrations, VAT, contract cost reconciliation, space steering). **Scope**:
+whole application, at the level of its major
 functional domains and system-to-system data flows — not an exhaustive per-route specification.
 **Companion documents**: [`ARCHITECTURE.md`](ARCHITECTURE.md) (technical architecture, module
 maps, per-subsystem implementation detail — the authoritative reference for *how* something is
@@ -78,7 +80,7 @@ The whole system as one process, with every genuinely external actor and system 
 
 ```mermaid
 flowchart TB
-    Users(["Operations Users\n(Admin · Operator · OCC-Booking ·\nTrade Manager · Viewer)"])
+    Users(["Operations Users\n(Admin · Operator · OCC-Booking ·\nTrade Manager · Sales · Viewer)"])
     Carriers(["Ocean Carriers\n(EDI / DCSA Booking API)"])
     SSO(["Azure AD / Entra ID"])
     SMTP(["Per-Office SMTP\nMail Servers"])
@@ -86,11 +88,13 @@ flowchart TB
     AIS(["aisstream.io\n(live AIS feed)"])
     FX(["Frankfurter FX API"])
     SANC(["US Treasury OFAC +\ntrade.gov CSL"])
+    ACC(["External Accounting\nSystem (any)"])
 
     SYS(("CargoDesk\nSystem"))
 
     Users -->|credentials / SSO login| SYS
     SYS -->|shipments, contracts,\nreports, documents| Users
+    SYS -->|GL journal-entry CSV\n(downloaded, imported by the user)| ACC
     SYS -->|booking requests| Carriers
     Carriers -->|confirmations, webhooks| SYS
     SSO -->|ID token / claims| SYS
@@ -105,7 +109,9 @@ flowchart TB
 **Reading this diagram**: a circle is a process (here, the whole system as one box); a rounded
 rectangle is an external entity — something CargoDesk exchanges data with but does not control.
 Every arrow is a real, code-traceable data flow (§6 names the exact call sites); none are
-aspirational.
+aspirational. The accounting-system flow is the only one a person carries by hand: CargoDesk
+produces a generic journal-entry file and the user imports it; there is no live connection to any
+specific accounting product (§5.11).
 
 ### 4.2 Level 1 — Major Process Decomposition
 
@@ -119,6 +125,7 @@ flowchart TB
     Users(["Operations Users"])
     Carriers(["Ocean Carriers"])
     Ext(["SMTP · Anthropic AI ·\naisstream.io · FX · Sanctions sources"])
+    Acc(["External Accounting System"])
 
     P1["P1 · Shipment & Cargo\nManagement"]
     P2["P2 · Pre-Booking / Quoting"]
@@ -129,6 +136,7 @@ flowchart TB
     P8["P8 · Customer / Organization"]
     P9["P9 · Document Generation\n& Distribution"]
     P10["P10 · Platform —\nAuth, Settings, AI Agent, WebSocket"]
+    P11["P11 · Finance —\nBilling, GL Export, VAT & FX"]
 
     D1[("D1 · Monolith DB")]
     D2[("D2 · Contract Service DB")]
@@ -145,10 +153,14 @@ flowchart TB
     Users --> P5
     Users --> P7
     Users --> P8
+    Users --> P11
 
     P2 -->|quote converted| P1
     P1 <--> Carriers
-    P1 <-->|space match,\nconsumption tracking| P3
+    P1 <-->|space match & steering,\nconsumption, contract costs| P3
+    P1 -->|charge lines,\nissued invoices| P11
+    P11 -->|GL journal CSV| Acc
+    P11 --> D1
     P1 --> P4
     P1 --> P5
     P1 -->|generate B/L, invoice,\npacking list| P9
@@ -175,7 +187,7 @@ flowchart TB
 ```
 
 **Reading this diagram**: a rectangle is a process; a cylinder is a data store. `P1`–`P5`, `P7`,
-`P8`, `P10` are logical processes hosted in the monolith today; five of them (`P3`, `P4`, `P7`,
+`P8`, `P10`, `P11` are logical processes hosted in the monolith today; five of them (`P3`, `P4`, `P7`,
 `P8`, and the MDM lookups every process makes) can be re-pointed at a standalone service and its
 own database (`D2`–`D6`) without any other process's code changing — the dashed lines are exactly
 that seam. `P9` (document generation) is always split across two real, always-on services
@@ -228,12 +240,21 @@ ARCHITECTURE.md §8.6, §8.10, §8.12, §8.26.
 **Purpose**: the commercial terms a shipment books against, and the physical capacity a carrier has
 actually committed.
 **Key functions**: contract CRUD (legs, rates, routings, container-type/IMDG filters); contract
-matching by route/date/routing-term; space configuration (TEU allocation per carrier/route/period)
-with conflict detection; real-time Confirmed/Pending/Rejected consumption tracking against each
+matching by route/date/routing-term; space configuration — the TEU a carrier has committed on one
+contract record (contract number + reference) for a route and period — with conflict detection;
+real-time Confirmed/Pending/Rejected consumption tracking against each configuration. When a
+shipment's chosen space is full, the contract picker suggests another reference under the same
+contract number that fits (checking named account, container types, DG and space, and showing the
+freight-rate difference), or lets the user book anyway after confirming an overage reason; how the
+space was picked (suggested / direct / overbooked) is recorded on the shipment. The Dashboard's
+Contract Consumption view groups consumption per carrier + contract number — a bar per contract,
+a six-week confirmed trend, and a breakdown per reference showing confirmed, pending, available and
+over-allocated space plus how many bookings followed the steering suggestion — in TEU or % of the
 allocation. The contracts list is filterable the way the Shipments list is — a checklist on every
 column header, free-text search, sort, an "active as of" date, and server-side paging (the shared
-table system, ARCHITECTURE.md §8.23). Schedule Search finds contracts for a lane (POL/POD, as-of date,
-carrier, account, routing term) and lets the user request sailings on any result; its results can be
+table system, ARCHITECTURE.md §8.23). Schedule Search finds contracts for a lane (POL/POD, carrier-haulage
+Pick-up / Delivery points — renamed from "Via Origin / Via Destination", a name kept free for the first / last
+transshipment port in a planned contract-routing rework — as-of date, carrier, account, routing term) and lets the user request sailings on any result; its results can be
 narrowed by column and sorted (including cheapest-first once a container mix is chosen), in the browser.
 The Space Configurations list shows each configuration's trade as an Origin Trade and a Destination Trade
 (lanes not stored on an older configuration are worked out from its ports and marked as such), and can be
@@ -242,11 +263,17 @@ searched, filtered by carrier / route / trade / contract / status, and sorted by
 **Primary data**: `contracts`* , `contract_legs`* , `contract_rates`* , `allocations`.
 *(owned by the Contract Management Service when `contract_source=remote`, monolith-local
 otherwise.)*
-**Business rules**: only a *Confirmed* booking counts as real consumption against an allocation's
-capacity — Pending and Rejected are shown but never subtracted. This single rule is the
-authoritative definition every consumption view in the app (Dashboard, Space Configurations page,
-per-shipment badge) must agree with; disagreement between views has been a recurring, actively
-hunted bug class in this codebase. See ARCHITECTURE.md §8.6.
+**Business rules**: every consumption view buckets bookings the same way — *Confirmed* (the
+operator's own confirmation, not the carrier's raw reply), *Pending* (no booking yet, created but not
+sent, or sent and awaiting the carrier), *Rejected* (shown, never subtracted), *Cancelled* (excluded) — and a shipment counts against
+a configuration only through its own link to it, never by matching carrier/route/contract. From
+those buckets come two deliberate figures: *Remaining* (allocated − confirmed) is the
+configuration's own number; *Available* (allocated − confirmed − pending) is what booking decisions
+use — the contract picker and the Dashboard's Contract Consumption — so space already waiting on a
+carrier reply isn't sold twice. Disagreement between views has been a recurring, actively hunted bug
+class in this codebase. A configuration is unique per contract record, route and period: two
+references under one contract number may each hold space on the same lane, which is what makes
+steering between them possible. See ARCHITECTURE.md §8.6, §8.31, §8.32.
 
 ### 5.4 Compliance Screening (P4 / P4a)
 **Purpose**: screen every shipment party and customer against denied-party lists before/while a
@@ -263,8 +290,12 @@ review and override, logged. See ARCHITECTURE.md §8.4.
 ### 5.5 Freight Audit & Payment (P5)
 **Purpose**: reconcile what a carrier actually invoices against what was contracted and accrued.
 **Key functions**: carrier invoice import/matching against contract rates and accrued cost lines;
-Detention & Demurrage pre-audit; a reconciliation modal (Overwrite All / Ignore & Add Missing /
-Discard) when a rate refresh would otherwise silently clobber a manual correction. Both the invoice list
+Detention & Demurrage pre-audit; a Reconcile Carrier Costs modal — the shipment's existing lines
+against the contract, charge by charge, with a keep-or-take choice per charge (pre-set to a
+suggested choice, or "take all" / "add missing only") — behind Import Contract Costs, Update Carrier
+Costs and Reset to Contract. A Central contract's costs are imported automatically, once per
+contract, when nothing on the shipment clashes with them; otherwise Cost Entry opens the Reconcile
+modal and the user decides (including after a contract swap). Both the invoice list
 and the open-exceptions queue are filterable the way the Shipments list is — header checklists, search,
 sort, paging (the shared table system, ARCHITECTURE.md §8.23). Since v0.91.8, a **Charge Defaults**
 setup (Master Data → Finance) can pre-populate a matching shipment's BUY/SELL cost lines once,
@@ -273,12 +304,16 @@ re-entering shipment by shipment.
 **Roles**: operator, admin, trade_manager (with `canViewFinance`).
 **Primary data**: `shipment_cost_lines`, `carrier_invoices`, `charge_default_setups`,
 `charge_default_lines`.
-**Business rules**: a cost line's `source` (contract/manual/automated) must survive a rate refresh
-correctly, or a dispatcher's manual correction gets silently destroyed by the next "Update Carrier
-Costs" run — a real, previously-shipped bug. See ARCHITECTURE.md §8.3. A Charge Default only ever
-fills a gap: it never overrides a line the shipment already has from a contract or a manual entry,
-and it applies at most once per shipment, even if a better-matching setup is created afterward. See
-ARCHITECTURE.md §8.27.
+**Business rules**: a contract refresh may only ever replace an *accrued* contract or manual BUY
+line. Posted, actualized or invoiced lines, Charge Default lines (labelled **CCD**, "Charge Cost
+Default"), haulage, carrier-invoice and adjustment lines are never touched — a charge that has one
+is shown as locked, and a posted amount is corrected with an adjustment instead. A line the user
+deletes after the automatic import stays deleted; bringing it back is a deliberate Import Contract
+Costs click. A cost line's `source` must survive a rate refresh correctly, or a dispatcher's manual
+correction gets silently destroyed — a real, previously-shipped bug. See ARCHITECTURE.md §8.3,
+§8.30. A Charge Default only ever fills a gap: it never overrides a line the shipment already has
+from a contract or a manual entry, and it applies at most once per shipment, even if a
+better-matching setup is created afterward. See ARCHITECTURE.md §8.27.
 
 ### 5.6 Master Data Management (P6a)
 **Purpose**: the shared reference data every other domain depends on.
@@ -341,13 +376,45 @@ there, only rendered and handed off. See ARCHITECTURE.md §8.1, §12.
 **Purpose**: the cross-cutting concerns every other domain relies on.
 **Key functions**: authentication (JWT + optional Azure AD/Entra SSO) and 5-role RBAC; app-wide
 feature toggles; system messages; live FX rates; per-shipment WebSocket subscriptions (not blanket
-broadcast); the AI Agent (tool-calling chat + document extraction); GP-by-trade-area reporting.
+broadcast); the AI Agent (tool-calling chat + document extraction); GP-by-trade-area reporting
+(the finance reports — FX Revaluation, VAT Liability — belong to §5.11).
 **Roles**: admin (settings, secrets, user management); all roles (auth, as a precondition for
 everything else).
 **Primary data**: `users`, `app_settings`, `system_messages`.
 **Business rules**: a secret setting (SSO client secret, AI API key, AIS key) is never returned in
 plaintext to any role via the generic settings read — a real, previously-shipped vulnerability
 class, now closed with a masked-boolean pattern. See ARCHITECTURE.md §8.8, §8.9, §8.13.
+
+### 5.11 Finance — Billing, GL Export, VAT & FX (P11)
+**Purpose**: turn a shipment's charges into customer bills, and hand the resulting figures to the
+company's accounting and tax processes.
+**Key functions**: per-shipment invoices (FR01/FR02) and credit/debit notes (CN01), showing the
+supplier's VAT number (per legal entity / branch) and the customer's (from its identifiers), with a
+VAT treatment per charge line — standard, zero-rated, reverse-charged or exempt — on both customer
+(output VAT) and vendor (input VAT) lines; Mark as Paid, optionally recording the amount received in
+the invoice's own currency; **Consolidated Statements** — bill one customer once across several
+shipments (draft → confirmed → paid); **GL Export** — a generic journal-entry file built from an
+admin-maintained charge code → GL account mapping, picking up only what is new each run, with a
+permanent run history; **FX Revaluation** — unrealized and realized exchange gain/loss on non-USD
+invoices; **VAT Liability** — output minus input VAT per legal entity for a period, with
+zero-rated, reverse-charged and exempt amounts shown separately.
+**Roles**: admin, operator (generate statements, run GL exports, mark invoices paid);
+trade_manager also maintains GL account mappings; FX Revaluation and VAT Liability need admin or
+finance access; the GL Export page is shown to admin, operator or finance access; the Statements
+page is shown to every role.
+**Primary data**: `shipment_documents`, `shipment_cost_lines`, `customer_statements`,
+`customer_statement_lines`, `gl_account_mappings`, `gl_export_batches`; tax numbers on `branches`
+and `customer_identifiers`.
+**Business rules**: an invoice or credit note counts as *issued* if it was confirmed, or voided by
+a proper credit note (the original and its credit note both count and net to zero) — a bare manual
+void never counted; every revenue and tax figure uses this one definition. Revenue is recognised
+when a billing document is confirmed, cost when a vendor line is posted. A non-standard VAT
+treatment always means 0% on the line itself; the three kinds are kept apart because a VAT return
+reports them in different boxes. A charge line should be billed once: a statement skips lines
+already on an issued invoice or another live statement. Known gaps — the reverse check (an invoice
+does not yet skip statement-billed lines), statement scope, statements missing from the GL / VAT /
+FX figures, VAT in statements and GL export, and GL-export atomicity — are ticketed under Epic
+TKT-XV4UHD. See ARCHITECTURE.md §8.28, §8.29, §11 M15.
 
 ## 6. Design Specification Summary
 
@@ -381,7 +448,7 @@ ARCHITECTURE.md §§2–7 and is intentionally not duplicated here.
 
 | ID | Store | Owner | Representative tables |
 |---|---|---|---|
-| D1 | Monolith DB | `server.js` + `routes/*.js` | `shipments`, `containers`, `shipment_cost_lines`, `shipment_parties`, `shipment_milestones`, `carrier_bookings`, `quotes`, `allocations`, `users`, `app_settings` |
+| D1 | Monolith DB | `server.js` + `routes/*.js` | `shipments`, `containers`, `shipment_cost_lines`, `shipment_parties`, `shipment_milestones`, `carrier_bookings`, `quotes`, `allocations`, `shipment_documents`, `customer_statements`, `gl_export_batches`, `users`, `app_settings` |
 | D2 | Contract Service DB | `services/contract-management/` | `contracts`, `contract_legs`, `contract_rates`, `contract_routings` |
 | D3 | MDM Service DB | `services/mdm/` | `carriers`, `vessels`, `port_locations`, `linked_ports`, `trade_lanes`, `countries`, `commodities`, `carrier_agents` |
 | D4 | Screening Service DB | `services/screening/` | `sanctions_entries`, `sanctions_syncs` |
@@ -410,3 +477,12 @@ and `loop_code_ports` (carrier service loops and their directional rotations) an
 | **HS Code** | Harmonized System code — the international goods-classification number; the first 6 digits are common worldwide (chapter = the first 2). CargoDesk's registry holds real 6-digit codes; national extensions (e.g. the EU's 8-digit CN) are looked up live, never stored. |
 | **Loop code** | A carrier's named recurring service rotation (e.g. `AL1`) — the ordered list of ports one vessel string calls at, out and back. |
 | **Eastbound / Westbound (EB / WB)** | The two directional legs of a loop. By convention transatlantic Europe→US is Westbound and transpacific Asia→US is Eastbound; each stop in a loop's rotation carries one of the two. |
+| **Contract number / contract reference** | One carrier contract number can have several contract records, each with its own reference (and optionally a named account, validity and rates). Space is committed per record; the Dashboard adds records up per contract number. |
+| **Space configuration** | The TEU a carrier has committed on one contract record for a route and period (stored as an `allocation`). |
+| **Steering** | Directing a booking to another reference under the same contract number that still has space, via the contract picker's suggestion; recorded per shipment as suggested / direct / overbooked. |
+| **Remaining / Available** | Remaining = allocated − confirmed; Available = allocated − confirmed − pending. Booking decisions use Available (§5.3). |
+| **CCD** | Charge Cost Default — a cost line added automatically from a Charge Defaults setup (Master Data → Finance). |
+| **GL / journal entry** | General Ledger — the company's accounting books. A journal entry is a balanced set of debits and credits; GL Export produces them as a file (§5.11). |
+| **AR / AP** | Accounts Receivable (owed by customers) / Accounts Payable (owed to vendors) — the two control accounts GL Export posts invoice and cost totals against. |
+| **Output / input VAT** | VAT charged to customers on sales / VAT paid to vendors on purchases (normally reclaimable). The VAT owed for a period is output minus input. |
+| **Zero-rated / reverse charge / exempt** | Three different reasons a line carries 0% VAT: taxable at 0%; the customer accounts for the VAT instead of the supplier; outside the scope of VAT. Reported separately. |

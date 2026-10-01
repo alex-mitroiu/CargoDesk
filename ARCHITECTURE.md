@@ -1,10 +1,26 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.91.8 "Bastion" · **Date:** 2026-09-25
+**Version:** 0.91.9 "Reckoning" + unreleased work (uncommitted as of this pass) · **Date:** 2026-09-29
 **Audience:** Software architects, senior engineers, technical reviewers
 **See also:** [`DFS.md`](DFS.md) — the Design & Functional Specification (data flow diagrams,
 per-domain functional scope, roles) covers *what* the system does and *how data moves through it*;
 this document covers *how it's built*.
 
+> **2026-09-29 pass (v0.91.9 "Reckoning" + the unreleased work after it) — incremental.** v0.91.9
+> shipped with no architectural documentation, and a further batch of work has landed since without
+> a version number yet (the version bump is held for the next batch push). Adds **§8.28 (GL Export,
+> FX Revaluation & Consolidated Statement Billing)**, **§8.29 (Tax / VAT Handling)**, **§8.30
+> (Contract Rate Reconciliation & Auto-Import)**, **§8.31 (Contract Picker: Space Suggestions,
+> Overbooking & `space_selection`)** and **§8.32 (Dashboard Contract Consumption by Contract
+> Number)**. §5's `routes/` table is **re-measured in full**: it had drifted to 31 files / 10,057
+> lines against a real 46 / 15,905, so 15 route files were not listed at all. §6's table count is
+> re-measured (**106**, +4: `gl_account_mappings`, `gl_export_batches`, `customer_statements`,
+> `customer_statement_lines`). §8.6 gains the per-contract uniqueness rule and corrects a stale
+> claim that the Dashboard matched shipments to space by a carrier/route heuristic (it has used the
+> `allocationId` link since the 2026-09 Space Configuration spec). §8.5, §11 (C4/C5, a new M15 for
+> seven open finance-integration gaps ticketed under Epic TKT-XV4UHD, one audit-log row) and §14
+> (the new auto-import trigger) are updated.
+> Everything else is **not** re-verified.
+>
 > **2026-09-25 pass (v0.91.8 "Bastion") — incremental, and backfills the skipped v0.91.7 pass.**
 > Two releases had shipped since the last pass with zero architectural documentation: v0.91.7
 > "Landfall"'s entire Office-Side Permissions Epic (TKT-Z0LB0W, 6 phases) had no §8.x section at
@@ -72,7 +88,8 @@ this document covers *how it's built*.
 ---
 
 ## Table of Contents
-_(§8.26–8.27 and the §4/§6/§11 updates added 2026-09-25 (v0.91.8); §8.25 added 2026-09-20 (v0.91.6);
+_(§8.28–8.32, the full §5 `routes/` re-measure and the §4/§6/§8.5/§8.6/§11/§14 updates added
+2026-09-29 (v0.91.9 + unreleased); §8.26–8.27 and the §4/§6/§11 updates added 2026-09-25 (v0.91.8); §8.25 added 2026-09-20 (v0.91.6);
 §8.23–8.24 added 2026-09-19 (v0.91.5); §8.15 extended 2026-08-29 (v0.87.0); §8.21 added 2026-08-29
 (v0.86.0); §8.20, and the §8.6/§8.9/§8.12 extensions, added 2026-08-28 (v0.85.0); §8.19 and the
 version-banner fix added 2026-08-25; §8.12 deepened 2026-08-25; §8.17–8.18 and the §5 routes/ table
@@ -272,20 +289,23 @@ src/
 │                                      Small pub-sub/utility modules (cargo-value recompute
 │                                      notifications, unsaved-changes guard on nav, etc.)
 │
-├─ pages/                              22 top-level pages, plus 3 sub-directories
+├─ pages/                              28 top-level pages, plus 3 sub-directories
 │   ├─ LoginPage.jsx / ForgotPasswordPage.jsx / ResetPasswordPage.jsx / LicensePage.jsx
 │   ├─ LandingPage.jsx                 Home — clock, weather, fleet KPIs, currency converter
 │   ├─ QuotesPage.jsx                  Quote list + New Quote modal + lifecycle detail (v0.69.0)
 │   ├─ FreightAuditPage.jsx            Carrier invoice reconciliation (v0.69.0)
 │   ├─ DashboardPage.jsx               Space-allocation consumption + Contract Consumption tabs
+│   │                                  (the latter's charts live in components/dashboard/, §8.32)
 │   ├─ SpaceConfigurationsPage.jsx / DashboardArchivePage.jsx
+│   ├─ FinancialsPage.jsx              Financials hub (§8.25); GlExportPage.jsx and
+│   │                                  CustomerStatementsPage.jsx sit under it (v0.91.9, §8.28)
 │   ├─ KanbanPage.jsx                  Kanban board — Epic/Story/sub-task nesting, WIP limits
 │   ├─ TestPlansPage.jsx / TestRunsPage.jsx / TestCasesPage.jsx / TestToolsPage.jsx
 │   ├─ SchedulesPage.jsx / RateBenchmarkPage.jsx / TrackingPage.jsx / ReleasesPage.jsx
 │   ├─ AppSettingsPage.jsx             Feature toggles, external APIs, user management
 │   ├─ AboutPage.jsx / UserManualPage.jsx
 │   │
-│   ├─ shipments/  (21 files)          Promoted sub-pages replacing the old anchor-scroll
+│   ├─ shipments/  (23 files)          Promoted sub-pages replacing the old anchor-scroll
 │   │                                  ShipmentDetailPage (see §8.9 — this resolved the old
 │   │                                  "no shared source of truth for sections" debt)
 │   │   ├─ ShipmentDetailPage.jsx (2,811 lines)   Now the Overview anchor page only
@@ -297,15 +317,24 @@ src/
 │   │   ├─ ShipmentAccounting{Costs,Invoices,Gp}Page.jsx
 │   │   └─ GenericServicePage.jsx / LoadingServicePage.jsx / VgmServicePage.jsx
 │   │
-│   ├─ mdm/  (15 files)                Master data management CRUD pages
+│   ├─ mdm/  (28 files)                Master data management CRUD pages
 │   └─ org/  (3 files)                 Branches, Countries, Offices (organization structure)
 │
-└─ components/
-    ├─ primitives/  (13 files)         Btn, Modal, Form, Badge, Spinner, DatePicker, Pagination, …
-    └─ shared/  (30 files)             PortCombobox, CarrierCombobox, CustomerCombobox,
-                                       CommodityCombobox, VesselCombobox, EntityHistoryModal,
-                                       UserManagementPanel, …
+├─ components/
+│   ├─ primitives/  (15 files)         Btn, Modal, Form, Badge, Spinner, DatePicker, Pagination, …
+│   ├─ shared/  (58 files)             PortCombobox, CarrierCombobox, CustomerCombobox,
+│   │                                  CommodityCombobox, VesselCombobox, EntityHistoryModal,
+│   │                                  FxRevaluationPanel / VatLiabilityPanel (Reports tabs), …
+│   └─ dashboard/  (1 file)            ContractConsumptionCharts.jsx — bars, trend, Sankey (§8.32)
+│
+└─ utils/  (18 files)                  Pure, unit-tested logic kept out of the page components.
+                                       Recent: contractConsumption.js (§8.32),
+                                       spaceSuggestions.js (§8.31), reconcileChoices.js (§8.30),
+                                       invoiceGenerator.js's resolveInvoiceTaxInfo (§8.29)
 ```
+
+*(Every directory file count above re-measured 2026-09-29, test files excluded. The individual
+file names listed are representative, not a full inventory.)*
 
 ### Routing
 
@@ -442,58 +471,84 @@ server.js  (4,292 lines)
 └─ httpServer.listen(3001)
 ```
 
-### routes/ — 31 files, 10,057 lines
+### routes/ — 46 files, 15,905 lines
 
 Each file is a factory function `module.exports = function xRoutes(app, ctx) { ... }`, called
-once from `server.js` with the shared `ctx`. Roughly ordered by size — remeasured directly for
-this pass (the doc's previous "25 files, 8,290 lines" figure had drifted six files and ~1,800
-lines out of date, not from any one release but from several additive passes never circling back
-to update this table; corrected here rather than left compounding):
+once from `server.js` with the shared `ctx`. Ordered by size, re-measured in full on 2026-09-29
+(`wc -l routes/*.js`). The previous table said 31 files and 10,057 lines: 15 files added by later
+releases (Opportunities, Loop Codes, HS Codes, Charge Defaults, the carrier-integration epic,
+v0.91.9's three finance files and others) were never added to it, and the listed files' own sizes
+had grown by roughly half. Same failure mode the 2026-08-24 pass already corrected once — each
+additive pass documented its own feature and never came back to this table.
 
 ```
-routes/shipment-ops.js     1,486   Cost lines, milestones, documents, container events, services
-routes/shipments.js          968   Core shipment CRUD, legs, routing-term engine, list-page
-                                    status/carrier/search/sort filters (v0.78.0)
-routes/customers.js          794   Customer CRUD, contacts, screening, documents, sanctions sync
-routes/contracts.js          674   Contract CRUD, matching, publish/withdraw, local/remote toggle
-routes/auth.js                657   Login, users, password reset, RBAC role management
-routes/export.js              649   CSV/Excel export (configurable field sets)
-routes/reports.js             488   GP by Trade Area, Billing Performance, Invoice Collections
-routes/edi.js                  461   Carrier booking EDI (request/response/confirm/supersede)
-routes/mdm.js                  422   Ports, carriers, vessels, trade lanes, countries, commodities,
-                                    linked ports + carrier agents (real pagination, v0.78.0)
-routes/ai.js                   376   AI chat (tool-calling) + document extraction (v0.69.0)
-routes/carrier-invoices.js     337   Freight Audit & Payment matching engine (v0.69.0)
-routes/quotes.js                269   Quoting/RFQ lifecycle (v0.69.0)
-routes/command-center.js        260   Command Center — Quality & Exception Management (v0.77.0, §8.17)
-routes/kanban.js                259   Tickets, ticket links, Kanban projects/columns
-routes/system.js                228   Settings, system messages, contract-source toggle
-routes/organization.js          221   Branches, offices, org countries
-routes/customs-filing.js        203   AES/EEI + ISF/AMS filing lifecycle
-routes/allocations.js           191   Space allocation CRUD + conflict detection
-routes/document-distribution.js 173   Proxy to the Document Distribution service
-routes/testcases.js             157   Test plans/runs/cases, ticket↔test-case links
-routes/offices.js               125   Office CRUD
-routes/share.js                  99   Public read-only shipment-tracking share links
-routes/office-mail.js            96   Per-office SMTP settings
-routes/finance.js                87   Margin/GP aggregation
-routes/ais.js                    85   AIS listener status + manual controls
-routes/scheduled-reports.js      82   Recurring emailed reports (TKT-IXAR9G)
-routes/duty-rates.js             46   Duty rate chapters — HS-chapter flat-rate registry
-routes/invoice-reason-codes.js   45   Invoice status override reason codes (Epic TKT-G11AHW)
-routes/pack-types.js             40   Pack type definitions (cargo manifest tree)
-routes/container-types.js        40   Container type registry (Equipment section)
-routes/charge-codes.js           39   Charge code registry
+routes/shipment-ops.js         2,055   Cost lines (incl. reconcile preview / import / reset /
+                                        update-carrier-costs, §8.30; VAT treatment, §8.29),
+                                        milestones, documents + Mark as Paid, container events,
+                                        services
+routes/shipments.js            2,002   Core shipment CRUD, legs, routing-term engine, list-page
+                                        filters (v0.78.0), space_selection (§8.31), contract-change
+                                        auto-import trigger (§8.30)
+routes/mdm.js                  1,046   Ports, carriers, vessels, trade lanes, countries, commodities,
+                                        linked ports + carrier agents (real pagination, v0.78.0)
+routes/customers.js              887   Customer CRUD, contacts, identifiers, screening, documents
+routes/contracts.js              816   Contract CRUD, matching, publish/withdraw, local/remote toggle
+routes/auth.js                   798   Login, users, password reset, RBAC role management
+routes/export.js                 659   CSV/Excel export (configurable field sets)
+routes/edi.js                    599   Carrier booking EDI (request/response/confirm/supersede)
+routes/reports.js                526   GP by Trade Area, Billing Performance, Invoice Collections
+routes/quotes.js                 485   Quoting/RFQ lifecycle (v0.69.0), shared table system (§8.23)
+routes/carrier-invoices.js       465   Freight Audit & Payment matching engine (v0.69.0)
+routes/ai.js                     449   AI chat (tool-calling) + document extraction (v0.69.0)
+routes/system.js                 440   Settings, system messages, contract-source toggle
+routes/kanban.js                 393   Tickets, ticket links, Kanban projects/columns
+routes/allocations.js            303   Space configuration CRUD (per-contract overlap rule), match
+                                        (+ per-result contract info, §8.31), conflicts
+routes/command-center.js         280   Command Center — Quality & Exception Management (§8.17)
+routes/finance.js                270   Margin/GP aggregation + VAT Liability summary (§8.29)
+routes/organization.js           230   Branches (incl. tax registration number), offices, org countries
+routes/customs-filing.js         225   AES/EEI + ISF/AMS filing lifecycle
+routes/opportunities.js          223   CRM pre-sales pipeline (§8.20)
+routes/customer-statements.js    215   Consolidated Statement Billing (v0.91.9, §8.28)
+routes/testcases.js              209   Test plans/runs/cases, ticket↔test-case links
+routes/sanctions.js              182   OFAC SDN + CSL sync/import/entries (§8.4) — admin-only writes
+routes/document-distribution.js  179   Proxy to the Document Distribution service
+routes/loop-codes.js             159   Loop Codes registry + /resolve (§8.24)
+routes/offices.js                148   Office CRUD + referencing-table delete guard
+routes/shipping-instructions.js  144   Shipping Instructions lifecycle (simulated SI/EDI)
+routes/charge-default-setups.js  142   Charge Defaults setups (§8.27)
+routes/hs-codes.js               116   HS Codes registry + typeahead + live EU lookup (§8.24)
+routes/eadapter.js               101   Per-carrier, per-office EDI connectivity config (§8.12)
+routes/share.js                   99   Public read-only shipment-tracking share links
+routes/admin-reset.js             97   Admin "Reset Demo Data" (§8.21)
+routes/office-mail.js             96   Per-office SMTP settings
+routes/document-templates.js      95   Document Template Editor (BL01 pilot)
+routes/fx-revaluation.js          93   FX Revaluation report (v0.91.9, §8.28)
+routes/carrier-integrations.js    86   Carrier API connectivity config (DCSA epic TKT-KG4E49)
+routes/ais.js                     85   AIS listener status + manual controls
+routes/scheduled-reports.js       82   Recurring emailed reports (TKT-IXAR9G)
+routes/charge-codes.js            78   Charge code registry
+routes/carrier-webhooks.js        63   Inbound carrier webhook receiver (DCSA async bookings)
+routes/gl-account-mappings.js     61   GL Export's Charge Code + Type → GL Account mapping (§8.28)
+routes/container-types.js         58   Container type registry (Equipment section)
+routes/invoice-reason-codes.js    50   Invoice status override reason codes (Epic TKT-G11AHW)
+routes/pack-types.js              46   Pack type definitions (cargo manifest tree)
+routes/duty-rates.js              46   Duty rate chapters — HS-chapter flat-rate registry
+routes/gl-export.js               24   GL Export run + batch history (thin; logic in lib/, §8.28)
 ```
 
 ### lib/ — shared, non-route modules
 
 `ais-listener.js` (its own runtime lifecycle, §12), `mappers.js` (every `map*()` DTO function,
-factored out for reuse across route modules), `pdf-signing.js` (cert lookup + cryptographic
+factored out for reuse across route modules; also exports `ISSUED_BILLING_DOC_SQL`, the one
+definition of an "issued" billing document, §8.29), `pdf-signing.js` (cert lookup + cryptographic
 signing — calls out to the PDF Render service for the actual rendering, §8.1), `mailer.js`,
 `rateLimit.js` (the `createRateLimiter` factory every route module's rate limiters are built
 from), `shareToken.js`, `dockerSecret.js` (env var / Docker secret file resolution, shared by
-every service-to-service auth check).
+every service-to-service auth check). Added since that list was written: `schema.js` (every
+`CREATE TABLE` plus the incremental `ALTER TABLE` migrations), `db.js` (the pglite/Postgres
+connection), `tableQuery.js` (§8.23), `charge-defaults.js` (§8.27), `gl-export.js` (§8.28), `routingLines.js` (§8.33),
+`business-days.js`, `staticConfig.js`.
 
 ### Request lifecycle
 
@@ -506,8 +561,14 @@ and 25 indexes now exist beyond primary keys (§11 — this resolves the old "no
 
 ## 6. Data Model
 
-**102 tables** in the monolith's own `cargodesk.db` (remeasured directly via
-`grep -c "CREATE TABLE IF NOT EXISTS" lib/schema.js`; 98 as of the 2026-09-19 pass (v0.91.5) — up
+**106 tables** in the monolith's own database (remeasured directly on 2026-09-29 via
+`grep -c "CREATE TABLE IF NOT EXISTS" lib/schema.js`; +4 since v0.91.8, all from v0.91.9, §8.28:
+`gl_account_mappings`, `gl_export_batches`, `customer_statements`, `customer_statement_lines`.
+The unreleased work after v0.91.9 added columns only: `branches.tax_registration_number`,
+`shipment_cost_lines.vat_treatment` (§8.29) and `shipments.space_selection` (§8.31); v0.91.9 itself
+also added `gl_exported_at`/`gl_export_batch_id` to `shipment_documents` and `shipment_cost_lines`
+and `paid_amount_original`/`paid_currency`/`paid_exchange_rate` to `shipment_documents`. The
+history of this figure: 102 as of the 2026-09-25 pass (v0.91.8); 98 as of the 2026-09-19 pass (v0.91.5) — up
 from the 77 as of the 2026-08-25 pass, +1 for `opportunities`, §8.20 — which was itself up from the
 35–54 this doc previously and inconsistently claimed. The latest +4: `charge_code_sides` (§8.26,
 v0.91.7) and `charge_default_setups`/`charge_default_lines`/`shipment_charge_defaults_applied`
@@ -628,14 +689,41 @@ charge_default_setups ──── charge_default_lines   (a predefined BUY/SELL
 shipment_charge_defaults_applied        (shipment_id PRIMARY KEY, ON DELETE CASCADE — idempotency
                                           marker claimed atomically via INSERT ... ON CONFLICT DO
                                           NOTHING RETURNING, not a SELECT-then-INSERT check)
+
+FINANCIAL INTEGRATION (added v0.91.9 — see §8.28)
+──────────────────────────────────────────────────
+gl_account_mappings                     (charge_code + type BUY/SELL → GL account,
+                                          UNIQUE(charge_code, type); the AR/AP/Unmapped control
+                                          accounts are app_settings keys, not rows here)
+gl_export_batches                       (one row per export run, never deleted; exported
+                                          shipment_documents / shipment_cost_lines rows carry
+                                          gl_exported_at + gl_export_batch_id)
+customer_statements ──── customer_statement_lines
+                                        (one billing document across several shipments for one
+                                          customer; lines are soft-referenced snapshots —
+                                          shipment_id / cost_line_id plain TEXT, no FK)
+
+COLUMNS ADDED AFTER v0.91.9 (unreleased — §8.29, §8.31)
+─────────────────────────────────────────────────────────
+branches.tax_registration_number        (the supplier's VAT number per legal entity; the
+                                          customer's lives in customer_identifiers, type VAT)
+shipment_cost_lines.vat_treatment       ('standard'|'zero_rated'|'reverse_charge'|'exempt';
+                                          vat_rate now applies to BUY lines too)
+shipments.space_selection               (''|'suggested'|'direct'|'overbooked' — how the space
+                                          configuration was picked in the contract picker)
 ```
 
 ### ID format
 
 Unchanged convention — `uid()` generates 6 upper-hex characters, prefixed by entity type
 (`SHP-`, `CTR-`, `CL-`, `QT-`/`QTL-`, `CINV-`/`CINL-`, `CUS-`, `TKT-`, `EDI-`, `CEV-`, …). New
-prefix as of v0.85.0: `OPP-` (opportunities, §8.20). New this pass: `CDS-`/`CDL-` (charge default
-setups/lines, §8.27).
+prefix as of v0.85.0: `OPP-` (opportunities, §8.20). v0.91.8: `CDS-`/`CDL-` (charge default
+setups/lines, §8.27). v0.91.9: `GAM-` (GL account mappings), `GLB-` (GL export batches), `STMT-`
+(customer statements) and `CSL-` (customer statement lines). Note that `CSL-` was already in use as
+the id prefix of Consolidated Screening List rows in `sanctions_entries` (§8.4), whose sync deletes
+`WHERE id LIKE 'CSL-%'`. The two share nothing but the prefix — the sync's delete is scoped to
+`sanctions_entries`, so there is no collision today — but a grep or a future cross-table cleanup
+keyed on the prefix alone would conflate them.
 
 ---
 
@@ -1056,6 +1144,15 @@ last review: `'quote'` (§8.2) and `'carrier_invoice'` (§8.3). New states beyon
 posted line is locked; corrections are new adjusting lines, never rewrites) with a computed
 variance (`actual - accrued`) once a line is actualized.
 
+**Updated 2026-09-29 (unreleased).** The "`contract` lines are replaced, `manual` lines preserved"
+rule above is no longer how contract costs are applied. Every import, reset and carrier-rate update
+now goes through one reconciliation engine that decides per charge code what may be replaced, and
+leaves posted, actualized, invoiced and non-contract lines alone; a Central contract's costs are also
+imported automatically, once per contract. See §8.30. Two more `source` values exist:
+`'principal_default'` (§8.27, shown as a **CCD** badge — "Charge Cost Default" on hover) and
+`'adjustment'`. VAT now applies to BUY lines as well as SELL, with a per-line `vat_treatment` — see
+§8.29.
+
 ### 8.6 Space Configurations & TEU Accounting (deepened v0.85.0 — Space Consumption Split)
 
 An `allocations` row's TEU consumption is now split three ways, not one flat number. Before this
@@ -1096,16 +1193,36 @@ with a small "+N over" caption naming the real gap instead of hiding it.
 
 `DashboardPage.jsx` — the page literally titled "Consumption Dashboard" — is a deliberately
 **separate** client-side computation from `loadTeuBuckets()`, not a consumer of it: it re-derives
-TEU totals from `rangeShipments`+`containers`, matched to allocations via its own carrier/
-route/contract heuristic (`allocContractMatch`), scoped to a selectable date range — a genuinely
+TEU totals from `rangeShipments`+`containers`, scoped to a selectable date range — a genuinely
 different question ("how much moved in this window") from the allocation's own live, unscoped
-state. Both now apply the identical Confirmed/Pending/Rejected bucket rule (keyed off
+state. *(Corrected 2026-09-29: this paragraph used to say the Dashboard matched shipments to
+allocations by its own carrier/route/contract heuristic, `allocContractMatch`. That heuristic was
+removed by the 2026-09 Space Configuration spec's gap #1; every Dashboard figure that concerns
+allocated space now follows the shipment's own `allocationId`, the same link `loadTeuBuckets()`
+uses. The Contract Consumption tab's last holdout — its weekly trend, which still keyed off the
+shipment's own `contractId` — moved to `allocationId` too, see §8.32.)* Both now apply the identical Confirmed/Pending/Rejected bucket rule (keyed off
 `shipment.bookingStatus`, already present on every shipment row via the existing
 `LEFT JOIN carrier_bookings` in `GET /api/shipments`) independently, so the two pages agree on
 what each color means even though their underlying scoping intentionally differs. A third,
 still-independent figure — `DashboardPage.jsx`'s Carrier Volumes tab — is explicitly **not**
 bucketed this way: it's a raw all-status freight-volume metric by design, unrelated to allocated
 space, and was confirmed out of scope for this pass.
+
+**Two rules changed 2026-09-29 (unreleased):**
+
+- **A space configuration is unique per contract record, not per lane.** `checkOverlap()`
+  (server.js) used to reject any second configuration for the same carrier + POL + POD + overlapping
+  period, whatever its contract. It now also matches on `contract_id`, so two contract records (for
+  example two references under one contract number) can each hold space on the same lane and
+  period. The reason is commercial: a space configuration is the quantity committed with the
+  carrier on one contract. The Space Configurations form already treated a different-contract
+  overlap as a warning; only the server rejected it. The error now reads "This contract already has
+  a space configuration for …".
+- **In the contract picker, pending bookings count against space.** "Available" there is
+  `allocated − confirmed − pending`, not `allocated − confirmed` (§8.31). The goal is to prevent
+  overbooking while replies are outstanding. `loadTeuBuckets()`'s own `remainingTEU` is unchanged
+  (confirmed only), because other screens read it; the picker and the Dashboard's Contract
+  Consumption tab (§8.32) apply the stricter figure themselves.
 
 ### 8.7 WebSocket — per-shipment subscription, not blanket broadcast
 
@@ -1433,7 +1550,9 @@ GET /api/customers/:id/credit-status (routes/customers.js) is the single compute
 the hold and the limit checks read from — computeArExposure(customerId, creditTermsDays) returns:
   - outstandingAr        sum of confirmed (non-voided) FR01/FR02 invoice totals, resolved via
                           each invoice's source_cost_line_ids (falls back to a live
-                          container-scoped SELL-line query for invoices predating that column)
+                          container-scoped SELL-line query for invoices predating that column),
+                          PLUS confirmed consolidated statements (2026-09-30). All at GROSS
+                          (VAT included, `vatFactor`), less what has been paid
   - committedExposure    (v0.73.0) sum of accrued SELL cost lines NEVER invoiced at all — kept
                           visibly separate from outstandingAr, never merged; a shipment can carry
                           real risk a hold check that only looks at invoices would miss entirely
@@ -2104,7 +2223,7 @@ per refresh (once for rows, once for checklist options). Instead the page fetche
   that can grow (invoices, customers, contracts) stays server-driven; nothing about this tier scales.
 
 **Schedule Search is the seventh adopter, the second client-side one, and deliberately the lightest touch.** It is a
-search *tool*, not a browse list: a structured form (contract #, carriers, account, POL/POD, Via Origin/Destination,
+search *tool*, not a browse list: a structured form (contract #, carriers, account, POL/POD, Pick-up/Delivery,
 routing term, as-of date, status, container mix) is its filter, and its results are grouped by contract number with
 expandable headers, selectable rows that open an inline sailings panel, and a BEST badge on the cheapest Buy Rate.
 `DataTable` cannot express grouping, row expansion or per-row emphasis, so a full migration would have meant building
@@ -2403,6 +2522,561 @@ a computer, so clear dedicated fields are unfortunately required." `tests/charge
 33 assertions, including a QA-driven section proving the region-via-`zone_code` and
 type+code-keyed-skip fixes hold with real scratch ports/lines, not just in isolation.
 
+### 8.28 GL Export, FX Revaluation & Consolidated Statement Billing (added v0.91.9)
+
+Three financial-integration features. None replaces an existing workflow; each sits beside the
+per-shipment accounting pages.
+
+**GL Export** (`lib/gl-export.js`, `routes/gl-export.js`, `routes/gl-account-mappings.js`; UI:
+Master Data → Finance → GL Account Mappings, and Financials → GL Export). It turns a date range into
+a generic journal-entry CSV (date, account code, account name, debit, credit, currency, memo,
+reference) for import into any accounting system. It does not push to a specific system. SELL and
+BUY are recognized on different triggers because the two sides are modelled differently:
+
+```
+SELL  issued billing document  (ISSUED_BILLING_DOC_SQL: FR01/FR02/CN01 confirmed, or voided with a
+      shipment_documents        related_doc_id, i.e. properly reversed by a CN01), by confirmed_at
+        → one AR debit per document (control account)
+        → one revenue credit per (document, charge code), account from gl_account_mappings
+BUY   posted cost line          (no wrapping document exists), by posted_at
+      shipment_cost_lines
+        → one expense debit per line, account from gl_account_mappings
+        → one AP credit per line (control account)
+
+No mapping for a charge code + type → the Unmapped / Suspense control account (counted per batch).
+Control accounts AR / AP / Unmapped = app_settings gl_control_account_ar / _ap / _unmapped.
+```
+
+Every exported document and line is stamped `gl_exported_at` + `gl_export_batch_id`, and each run
+writes a `gl_export_batches` row (range, row count, debit/credit totals, unmapped count) that is
+never deleted. Re-running a range therefore picks up only what is new. All amounts are exported
+in USD via `costLineEffectiveUsd`. The export originally selected documents on
+`status='confirmed'`, which skipped an invoice that had been reversed before its first export. That
+left the reversing CN01's negative amount standing alone in the GL. It was found while building VAT
+(§8.29) and fixed by moving to `ISSUED_BILLING_DOC_SQL`, the same definition the VAT report uses.
+
+A run **claims its rows atomically** (TKT-OBCQH7, fixed 2026-09-30). It builds the candidate
+journal rows first, then stamps them with a conditional
+`UPDATE … WHERE gl_exported_at IS NULL … RETURNING id` and exports only what that UPDATE returned.
+The stamping and the batch row commit in one transaction. On Postgres a second run started at the
+same moment waits on the first run's UPDATE and then finds the rows already stamped, so two runs
+never export the same rows. Before this, select, stamp and batch insert were separate statements,
+and a crash between them could leave rows stamped with a batch that has no `gl_export_batches` row.
+The race cannot be reproduced against the dev pglite database: a request that only awaits pglite
+queries runs start to finish before the next request is read. `tests/gl-export-claim.test.js`
+therefore drives `lib/gl-export.js` against an in-memory fake that interleaves two runs. It fails
+on the pre-fix code, where both runs exported every row.
+
+Known gaps are listed in §11 M15.
+
+**FX Revaluation** (`routes/fx-revaluation.js`, `FxRevaluationPanel.jsx`, Reports → FX Revaluation
+tab). This is a report only and writes no journal entries. Access is restricted to finance users by
+the route's own check (admin or `canViewFinance`), not `requireRole`.
+- *Unrealized:* confirmed, unpaid, non-USD invoices. The value booked at generation
+  (`costLineEffectiveUsd` over the document's source cost lines) is compared with `toUsd()` at
+  today's live rate.
+- *Realized:* paid invoices that have `paid_amount_original` set. Booked value is compared with
+  `paid_amount`, which is already the USD equivalent.
+
+Realized gain/loss needed **Mark as Paid** to be extended first. Three new, fully optional columns
+on `shipment_documents` — `paid_amount_original`, `paid_currency`, `paid_exchange_rate` — record what
+was actually received in the invoice's own currency. Left blank, Mark as Paid behaves exactly as
+before. Both loops skip a document whose source cost lines can no longer be resolved.
+`shipment_documents` has no cascade from `shipments`, so a document can outlive its shipment.
+Without the skip, such a document produced a full "gain" against a $0 booked value. That bug was
+found in the live browser pass after the tests had passed.
+
+**Consolidated Statement Billing** (`routes/customer-statements.js`, `CustomerStatementsPage.jsx`,
+Financials → Statements). Bills one customer once across several shipments instead of once per
+shipment. `customer_statements` carries its own file fields; `shipment_documents` could not be
+reused because it is hard-FK'd to a single shipment. `customer_statement_lines` are snapshots that
+reference their shipment and cost line by plain TEXT, so a later edit never changes what a
+generated statement says it billed.
+- **Lifecycle:** `draft` → `confirmed` → paid (`mark-paid`). Only a draft can be voided, and a
+  voided statement's lines return to the eligible pool. Reversing a *confirmed* statement is not
+  built. A statement accepts a single currency.
+- **Eligibility** (`GET .../eligible-lines`, registered before `GET .../:id` — the second time this
+  codebase hit the "`:id` swallows a literal path" bug, see CLAUDE.md Key patterns): the customer's
+  SELL lines in the date range, on shipments the caller can see, that no live billing document holds.
+- **One SELL line, one live billing document** (TKT-2F19XD, decided 2026-09-30). A line may sit on at
+  most one invoice or credit note (FR01/FR02/CN01, draft or confirmed) or one statement that isn't
+  voided. `lib/billing-holds.js` (`billingHolds`, `describeHolds`) is the one implementation. It is
+  used by statement generation, `eligible-lines`, `POST /api/shipments/:id/documents/generate` and
+  the cost-lines list, whose SELL lines carry `billedOn`. Deleting a draft invoice, voiding an
+  invoice (a reversal voids it) or voiding a draft statement frees the lines. The rule used to hold
+  one way only: a statement skipped invoiced lines, but `generateInvoices()` billed every SELL line,
+  so a statement-billed line went onto the next FR01 too. Reproduced live before the fix.
+  - Both generate routes check before rendering the PDF. Rendering waits on the network, so they
+    check again under `SELECT … FOR UPDATE` on the lines' shipments, in the same transaction as the
+    insert. A concurrent statement and invoice for the same shipment therefore can't both succeed.
+  - Statement generation also refuses a line that is not on one of that customer's shipments. The
+    line list comes from the client.
+  - Invoice Entry (`generateInvoices`, `billableSellLines`) bills only unbilled lines. It still
+    includes the lines of the draft a regenerate replaces, shows a "BILLED · …" chip on held lines,
+    and refuses with a message naming the documents when nothing is left. Regenerating after a
+    confirmed invoice used to bill every line again.
+  - A CN01 now records its reversal lines in `sourceCostLineIds`. The UI never passed them, although
+    the VAT test did; no CN01 existed in the dev data yet. Recording them means the credit note holds
+    those lines, and GL Export and the VAT report net the reversed invoice through them.
+- **Scope** (TKT-6T97DY, decided 2026-09-30): a statement is visible only when the caller can see
+  every shipment on it, using `applyShipmentAccessFilter`, the same rule as `GET /api/shipments`. The
+  list filters, detail and download answer 404, and `eligible-lines` offers only lines on visible
+  shipments. Admin and operator see everything. A line whose shipment was deleted counts as out of
+  scope for a restricted caller. There is deliberately no finance-access gate on top: every role
+  keeps the Statements page. Reproduced live before the fix: a POL-scoped `occ_bk` user could list,
+  read and download another office's statement.
+- **Credit gate:** generation applies the same credit-hold and over-limit block as every other
+  billing path, with no override route yet.
+- **Reconciliation:** a contract SELL line that sits on a live statement counts as billed in
+  §8.30's rules, so reconciliation locks it instead of deleting it.
+
+`tests/gl-export.test.js` (24), `tests/gl-export-claim.test.js` (6, pure unit test),
+`tests/fx-revaluation.test.js` (22), `tests/customer-statements.test.js` (51),
+`src/utils/invoiceGenerator.billing.test.js` (8).
+
+### 8.29 Tax / VAT Handling (added after v0.91.9, unreleased)
+
+Before this, VAT existed only as a per-line rate on SELL lines. BUY lines had their rate forced to 0
+server-side, so input VAT could not be recorded. Invoices showed neither party's VAT number, and
+no report said what a legal entity owed.
+
+- **Rates and treatment per cost line** (`routes/shipment-ops.js`, `resolveVat()`). `vat_rate`
+  now applies to both sides: output VAT on SELL, reclaimable input VAT on BUY. A new
+  `vat_treatment` column — `standard` | `zero_rated` | `reverse_charge` | `exempt` — separates the
+  three legally different ways a line carries 0%. Any non-standard treatment forces the rate to 0,
+  and a reversal copies the original line's treatment.
+- **Supplier and customer tax numbers on invoices.** The supplier's number is stored per legal
+  entity on `branches.tax_registration_number` (Organization → Branches). The customer's is not a
+  `customers` column; it comes from the existing `customer_identifiers` table (type VAT, per
+  country, `is_primary`). `resolveInvoiceTaxInfo(shipment)` (`src/utils/invoiceGenerator.js`)
+  resolves both:
+  - branch via the EMO office, else the IMO office;
+  - customer = the principal, else the consignee;
+  - number = the primary VAT → any VAT → a Tax ID.
+
+  Every FR01/FR02/CN01 builder takes the result as `taxInfo`, and the block is omitted when neither
+  number is known. A reverse-charged line adds the "VAT to be accounted for by the customer" note.
+- **VAT Liability report** (`GET /api/vat-liability/summary`, `routes/finance.js`;
+  `VatLiabilityPanel.jsx`, Reports → VAT Liability). Output VAT is taken from issued billing
+  documents (`ISSUED_BILLING_DOC_SQL`) by confirm date, counted *per document*: a line billed on two
+  issued invoices was charged VAT twice until a credit note says otherwise. Input VAT is taken from
+  posted BUY lines by post date. Results are grouped by the shipment's legal entity (EMO branch,
+  else IMO branch), with the same branch scoping as the margin report's `byEntity`. An
+  "Unassigned" bucket is shown only to unrestricted callers. Zero-rated, reverse-charged and exempt
+  amounts are reported as separate base-amount buckets, not folded into "0% VAT", because a VAT
+  return reports them in different boxes. The net figure is also converted to the entity's own
+  currency.
+- **Adjacent fix:** `replaceDraftIfAny` (invoice regeneration) deleted *voided* invoices along with
+  the draft it meant to replace. It now removes only the draft.
+
+**Closing the gaps (2026-09-30, Epic TKT-XV4UHD, all four stories decided with the user):**
+
+- **One legal-entity rule** (`lib/legal-entities.js`, `entityByShipment`): EMO office's branch, else
+  the IMO office's. The VAT report, consolidated statements, reverse-charge self-assessment and GL
+  VAT posting all use it. The VAT report's inline SQL was replaced by it.
+- **Statements carry VAT** (TKT-1E55AR). A statement is issued by **one** legal entity: generation
+  refuses a mix with 400, and the Statements page groups eligible charges by entity. Each line
+  snapshots `vat_rate`, `vat_treatment` and `vat_amount` like it snapshots the amount.
+  `customer_statements` gains `entity_id`, `entity_name`, `vat_amount` and `gross_amount`;
+  `total_amount` stays the net figure, and statements generated earlier have gross = net. The
+  statement document (`buildStatementHtml`) prints Tax Details via `resolveStatementTaxInfo`, VAT per
+  line, a VAT summary by rate and treatment, the reverse-charge note and "Issued by". **On a
+  statement every set of amounts is ordered Gross, VAT, Net** (the user's convention): columns, VAT
+  summary, totals and both modals. Invoices keep Net then VAT. Approved mockup:
+  https://claude.ai/artifact/846XpgViNbf5JAdU9PkPHW. `eligible-lines` returns each line's entity and
+  VAT; `withHeld=1` also returns the charges another document already bills.
+  - Found on the way: opening a statement from the list crashed, because list rows carry no `lines`.
+    The page now fetches the full statement first.
+- **Statement revenue in every finance report** (TKT-02776W). A confirmed statement is an issued
+  billing document in GL Export (`statementRows`, stamped `customer_statements.gl_exported_at` /
+  `gl_export_batch_id`), in the VAT Liability report (output on `confirmed_at`) and in FX
+  Revaluation (rows tagged `source: "invoice" | "statement"`). Each reads the cost lines the
+  statement bills, the same source an invoice uses.
+  - Statement Mark as Paid takes the invoice modal's optional `paidAmountOriginal`, `paidCurrency`
+    and `paidExchangeRate`, which realized FX needs.
+  - FX Revaluation now values invoices and statements at **gross** (net + VAT on standard-rated
+    lines). The customer pays the VAT too, so a net booking would have reported the VAT as an FX
+    gain. No line carried VAT in the dev data, so no figure changed.
+  - **Receivables are gross** (2026-09-30, the follow-up the user asked for). `computeArExposure`
+    (outstanding AR and aging, committed exposure), `docAmountUsd` (dunning, Billing Performance,
+    Invoice Collections, the unpaid-invoice sweep) and Invoice Entry's Mark as Paid default all
+    count VAT through one helper, `vatFactor` in server.js, which FX Revaluation reuses. Before
+    this a customer's VAT never counted against their credit limit, and an invoice paid in full,
+    VAT included, looked overpaid. A **confirmed statement is now a receivable** as well: it
+    counts in outstanding AR and aging, and its lines leave committed exposure. It used to be
+    missing from AR, while its lines stayed "committed" even after it was paid.
+  - **An issued invoice stays issued** (2026-09-30). `DELETE /api/shipments/:id/documents/:docId`
+    refuses an FR01/FR02/CN01 that isn't a draft (409: "reverse it with a credit note instead").
+    Such a document's status only moves forward: draft → confirmed, draft or confirmed → voided.
+    A confirmed one can't go back to draft, which was a path to deleting it, and a voided one is
+    never re-confirmed. The Documents modal offered "Confirm" on a reversed invoice, which would
+    have billed it again beside its credit note. Other document types are unchanged.
+  - **A shipment that billed its customer can't be deleted** (2026-09-30). `DELETE
+    /api/shipments/:id` refuses with 409 when the shipment has a confirmed or voided
+    FR01/FR02/CN01 ("cancel the shipment instead"), or charges on a statement that isn't voided
+    (a draft is voided first; a confirmed one means cancelling). Cost lines cascade-delete with the
+    shipment and documents don't, so an issued invoice used to lose its charges, drop silently out
+    of the VAT report, GL Export and AR, and remain as an orphaned row. On an allowed delete, the
+    shipment's remaining documents (drafts, packing lists, photos: rows and files) now go with it
+    instead of being orphaned.
+    - Test side effect: suites whose shipments billed a customer now leave those shipments behind.
+      Their scratch office and branch can't be deleted either, so `tests/helpers/offices.mjs`
+      `retireOffice` / `retireBranch` deactivate them. Otherwise `ensureOffices()` would pick up a
+      leftover active office in every later test. A full run was diffed to confirm no office stays
+      active.
+    `tests/receivables-gross.test.js` (26).
+- **Reverse-charge self-assessment** (TKT-MQAXQX). The rate is `branches.standard_vat_rate`, set
+  per legal entity under Organization → Branches (0–100, blank = not set). A reverse-charged
+  **purchase** adds base × rate to both output and input VAT, as its own `self_assessed` row, so
+  net VAT is unchanged. With no rate set it stays base-only, and the entity is flagged
+  (`selfAssessRateMissing`) with a warning in the panel. A reverse-charged sale remains the
+  customer's to account for.
+- **GL Export posts VAT** (TKT-AEPGWA). Two more control-account settings are added:
+  `gl_control_account_vat_output` and `gl_control_account_vat_input` (Master Data → Finance → GL
+  Account Mappings).
+  - Sales document: revenue credits at net, an Output VAT credit, and an AR debit at gross.
+  - Purchase: expense debit at net, an Input VAT debit, and an AP credit at gross.
+  - Reverse-charged purchase: self-assessed VAT debited to Input and credited to Output VAT.
+  - AR and AP are the sum of the rounded rows beside them, so every entry balances to the cent.
+  - The VAT figures use the VAT report's formula, so the two agree for the same period and entity.
+
+`tests/vat-handling.test.js` (43), `tests/gl-export.test.js` (33), `tests/customer-statements.test.js`
+(73), `src/utils/invoiceGenerator.test.js` (15).
+
+### 8.30 Contract Rate Reconciliation & Auto-Import (reworked after v0.91.9, unreleased)
+
+This replaces the original §8.5 rule ("`contract` lines are replaced on recalculate, `manual`
+preserved") and extends the v0.91.x Rate Reconciliation feature (`TKT-NU524E`). All of it lives in
+`server.js`.
+
+**One engine decides, per charge code** (`buildCostLineReconciliation(shipmentId, mode)`). The
+comparison source depends on the mode:
+- `'update'`: live contract rates;
+- `'import'`: the shipment's rate snapshot *for its current contract*, or live rates if none
+  exists.
+
+Snapshots are looked up by shipment **and** `contract_id`. Before this, a snapshot from a previous
+contract was replayed after a contract swap.
+
+```
+replaceable line  = ACCRUED BUY line, source 'contract' or 'manual'
+                    (+ an unposted, unbilled contract SELL line)
+protected line    = anything else: posted / actualized, Charge Default (CCD), Merchant's Haulage,
+                    carrier invoice, adjustment — or a SELL line on an issued document or live
+                    statement → protectedReason()
+cameFromContract  = source 'contract' OR rate_snapshot_id set (survives a hand edit, which flips
+                    source to 'manual' — this is what tells an edited contract line apart from a
+                    hand-added one)
+
+status per charge:  kept     not on the contract and never came from it   → never touched
+                    locked   a protected line is there                    → never touched
+                    new      on the contract, no line yet
+                    removed  came from the contract, contract dropped it  → delete from-contract lines only
+                    manual   a replaceable manual line among the group
+                    changed  amount differs (cents-rounded)
+                    match    same amount
+```
+
+**`applyReconciliation(shipmentId, mode, action, { splitPerContainer, take })`** carries out a
+decision:
+- `'overwrite'` takes every takeable charge;
+- `'ignore'` adds only `new` charges;
+- `'selected'` takes exactly the charge codes in `take`. A code whose status has since become
+  locked or matching is skipped (`RECONCILE_TAKEABLE` = changed / manual / new / removed).
+
+Deletes go **by line id**. The old code deleted by charge code, which wiped posted lines and CCD
+lines that shared the code; regenerating a locked charge would also have duplicated the protected
+line. Every action records a snapshot for the contract. The result is `{ snapshotId, imported,
+deleted }`.
+
+**Routes** (`routes/shipment-ops.js`):
+- `GET .../cost-lines/reconcile-preview` is a pure read.
+- `POST .../import-contract` and `.../update-carrier-costs` accept `action: 'selected'` + `take[]`.
+- `POST .../reset-to-contract` is now `applyReconciliation('import', 'overwrite')`. It previously
+  skipped *and* regenerated an edited contract line, leaving the charge twice, and deleted charges
+  the contract never had.
+
+**Auto-import, once per contract** (`autoImportContractCosts(shipmentId)`). A Central shipment's
+contract costs appear on Cost Entry without clicking Import, subject to three rules:
+- It runs only when no snapshot exists for the current contract. The snapshot is the "already
+  applied" marker, so a line the user deletes stays deleted; restoring it means clicking Import
+  Contract Costs.
+- It writes only when every row is `new` or `kept`. If any contract charge already has a line — a
+  CCD, a hand-added line, or the previous contract's lines after a swap — nothing is written and
+  Cost Entry opens the reconcile modal instead.
+- Concurrent calls for the same shipment share one in-flight promise (a module-level `Map`), because
+  the page's own parallel cost-line reads would otherwise both see "no snapshot" and import twice.
+
+Triggers are listed in §14. `GET /api/shipments/:id/cost-lines` runs it *before*
+`applyChargeDefaults` (§8.27), so a contract line wins over a CCD for the same charge. `PUT
+/api/shipments/:id` runs it when the contract changes.
+
+**Frontend.** `ReconcileCarrierCostsModal` (`ShipmentDetailPage.jsx`) shows existing lines against
+the contract, with one keep/take choice per takeable charge. Three presets come from
+`src/utils/reconcileChoices.js`:
+- **suggested** (the default): take changed and new charges, keep manual corrections and dropped
+  charges;
+- **all**;
+- **missing only**.
+
+A `firstImport` intro explains why the modal opened by itself. Cost Entry
+(`ShipmentAccountingCostsPage.jsx`) opens the modal automatically when there is no snapshot for the
+current contract after the read and the preview has any non-`kept` row. Even "keep everything as
+is" records the snapshot, so the modal does not keep coming back. CCD lines show a **CCD** badge
+(title "Charge Cost Default"), not "default", which the user found misleading.
+`tests/rate-reconciliation.test.js` (53), `tests/contract-auto-import.test.js` (27),
+`src/utils/reconcileChoices.test.js`.
+
+### 8.31 Contract Picker: Space Suggestions, Overbooking & `space_selection` (added after v0.91.9, unreleased)
+
+In `ContractPickerModal` (`ShipmentFormPage.jsx`), a space configuration that cannot fit the
+shipment used to be a dead end. The picker now:
+
+- **Counts pending against space.** `availableTEU = remainingTEU − pendingTEU`
+  (`src/utils/spaceSuggestions.js`), per the §8.6 change.
+- **Suggests same-contract alternatives.** When the chosen configuration is full,
+  `suggestAlternatives()` lists other configurations from the same `/api/allocations/match`
+  result under the same carrier + contract number. That result is already narrowed to the
+  shipment's POL/POD (incl. linked ports), date and haulage. Each alternative shows pass/fail
+  checks for named account vs principal, container types (GP normalised to DC), DG and space, plus
+  the ocean-freight difference for the shipment's own container mix. Fitting alternatives sort
+  first.
+- **Allows overbooking behind a confirmation.** "Book here anyway" opens a pop-up that requires an
+  overage reason (`OVERAGE_REASONS`, saved as `spaceOverageReason`).
+
+`/api/allocations/match` (`routes/allocations.js`) now returns a `contract` object per result:
+- the contract number, read **live** from the contract (`allocations.contract_number` is a copy that
+  goes stale on renumbering);
+- ref, named account (id + name), container types, commodity types, DG allowed;
+- ocean-freight rates per 20DC/40DC/40HC.
+
+It is resolved through a per-request `contractFor` cache, local or remote (§8.1). Callers pass
+`cargo={{ principalId, principalName, containers }}`: the form's `ContractField`,
+`ContractAssignModal` (containers passed down from `App.jsx` via `ShipmentSchedulesPage`) and
+`ContractMismatchModal`.
+
+**`shipments.space_selection`** records how the configuration was picked:
+- `suggested` — the suggestion's "Use <ref>";
+- `direct`;
+- `overbooked` — "Book here anyway";
+- `''` — not recorded (older shipments).
+
+The picker passes it as `spaceSelection`, and `POST`/`PUT /api/shipments` validate it against
+`SPACE_SELECTIONS`. On PUT, a new `allocationId` without a stated choice resets it to `''`, clearing
+the allocation clears it, and a change is logged as `FIELD_UPDATED`. It exists so the Dashboard
+breakdown (§8.32) can show, per contract and reference, how many bookings followed the steering
+suggestion. The user asked for that explicitly. `src/utils/spaceSuggestions.test.js`,
+`tests/allocations-crud.test.js` (51), `tests/shipment-crud.test.js` (35).
+
+### 8.32 Dashboard Contract Consumption by Contract Number (added after v0.91.9, unreleased)
+
+The Contract Consumption tab was a table keyed per contract *record*. One contract number can hold
+several records (number + reference + named account), so it is now grouped by **carrier + contract
+number**, with the references nested under each. The mockup was approved first:
+https://claude.ai/artifact/TqrzSKpPFsUQF6VVkXvrs8.
+
+**Logic** — `src/utils/contractConsumption.js`, pure and unit-tested:
+- `buildContractRows()` groups active space configurations into records and records into contract
+  numbers.
+  - A shipment counts through its `allocationId` only, never its own contract fields.
+  - Buckets follow `bucketOf()`, the same rule as `loadTeuBuckets()`: confirmed / pending / rejected,
+    cancelled excluded.
+  - Each record also counts `space_selection`: steered / direct / overbooked / not recorded.
+  - Rows are sorted by utilisation. Ties are broken by values that do not change when live contract
+    numbers arrive, because the bars used to reshuffle under the pointer a moment after the tab
+    opened and a click could hit the neighbouring bar.
+- `buildWeeklyTrend()` gives confirmed TEU per week for 6 weeks by ETD, over *all* configurations,
+  not only active ones, also through `allocationId`. It used to key off the shipment's
+  `contractId`.
+- `buildBreakdown()` builds the Sankey graph: contract → references → confirmed / pending /
+  available. It is conservation-safe like `ShipmentGpSankey`: a reference booked past its
+  allocation gets an "Over allocation" inflow. Rejected bookings are a note, not a flow. Past 6
+  references, the smallest fold into "Other references".
+- `recordOf()` prefers the live contract (`contractMap`) over the allocation's stored number.
+
+**Components** — `src/components/dashboard/ContractConsumptionCharts.jsx`:
+- `ContractBarsChart`: stacked vertical bars per contract number — confirmed, pending, and
+  available in the `HZ.available` purple.
+- `ContractTrendChart`: a line chart, or a centred table.
+- `ContractBreakdown`: Recharts Sankey plus a per-reference table (steered / direct / overbooked /
+  not recorded).
+- `UnitSwitch`, `ChartCard`, `StatusLegend`.
+
+Clicking a bar, its label or a trend line selects the contract for the breakdown. One page-level
+**TEU / %** switch (`localStorage` `cd_dashboard_consumption_unit`) drives everything except the bar
+tooltip, which always shows TEU and % and is headed by the carrier badge + contract number. % is
+the share of the contract number's total allocation in the period. Tooltips (`ChartTip`) are
+portaled to `<body>` because the glass cards' `backdrop-filter` breaks `position: fixed` (§11
+M12).
+
+`DashboardPage.jsx`'s `ContractConsumptionView` wires it up. The parent's old `contractTrendData`
+is gone. The Overview tab's `KpiRing` grew to 176px and gained a pending arc drawn after the
+confirmed arc, so unconfirmed space "in the pipe" is visible. It is exported and tested. The
+palette was checked with the dataviz validator:
+- categorical slots in fixed order;
+- available = `#8b5cf6` light / `#a78bfa` dark, a new `available` token in both `HZ_LIGHT` and
+  `HZ_DARK`.
+
+`src/utils/contractConsumption.test.js`,
+`src/components/dashboard/ContractConsumptionCharts.test.jsx`, `src/pages/DashboardPage.test.jsx`.
+
+**Still mockup-only, not built** (memory `project_contract_consumption_redesign_2026_09`):
+- unique contract routing lines, meaning one routing per contract line with Via origin /
+  destination derived from the first / last transshipment port;
+- a Space Lookup merged into Schedule Search. It is on hold until it shows only available space
+  configurations and its Container Mix picker uses real container types: it hardcodes 20GP/40GP
+  while contracts use 20DC/40DC, so no type rate ever matches.
+
+Schedule Search's own "Via Origin / Via Destination" fields were renamed **Pick-up / Delivery**
+(`SchedulesPage.jsx`). They mean carrier-haulage pick-up and delivery points, and the old names
+would have clashed with the transshipment meaning above.
+
+### 8.33 Contract Routing Lines (after v0.91.9, unreleased)
+
+Every leg of a contract now belongs to a routing (`contract_routings` row), and each routing is one
+**line**: one connected run of legs, with at most one pick-up location on its first leg and one
+delivery location on its last. No two routings on a contract may describe the same line. The
+approved mockup is https://claude.ai/artifact/YMjKwCQDPdSFYP5auHrki9, and the editor uses its
+Option 1 legs-table layout. Space configurations tick these lines (see the end of this section),
+which is why a line needs a stable identity.
+
+**Stable routing ids (step 1).** `saveRoutings` (`routes/contracts.js` and the Contract Management
+Service) updates a routing sent back with its id, inserts new ones, and deletes only removed ones.
+It used to regenerate every id on every save, which orphaned `shipments.contract_routing_id` (§11
+audit log, 2026-09-29). Removing a routing that a non-cancelled shipment uses is refused with 409.
+The monolith runs this check in both local and remote mode, because the service owns no shipments.
+
+**One normalizer for old data and new saves (step 2).** `lib/routingLines.js`'s
+`normalizeRoutingLines` is a pure function. The service has an identical copy in its own `lib/`.
+It turns any contract payload into the line shape:
+
+- loose legs, those with no routing, become routings, one per connected run (a new run starts
+  where a leg doesn't load where the previous one discharged);
+- a routing that isn't one chain is split, and its own rates are copied onto the split-off lines;
+- a leg listing several pick-up or delivery places becomes one line per combination;
+- a routing left with no legs is dropped together with its own rates. Those rates used to become
+  contract-wide without anyone noticing;
+- a loose run whose chain matches a stored routing gets that routing's id back, so a caller
+  re-saving plain legs doesn't churn ids;
+- two lines with the same key are reported as a duplicate, and the save is refused (400). The key
+  is ports and location types in order, service codes, and the pick-up and delivery.
+
+Contract-wide rates (no routing) are never touched and keep applying to every line, so splitting an
+old contract changes no price.
+
+Every create and update runs through the normalizer, in the monolith (local and remote branches)
+and in the service (POST, PUT, bulk import). A payload without a `routings` key keeps the stored
+routings. Legs and rates remain full-replace, as before.
+
+`migrateRoutingLines()` runs the same function over every stored contract at startup, in the
+monolith and, separately, in the service. It writes only the contracts that change, so it is
+idempotent. It then links each shipment on a contract to the one routing its route matches
+(`findMatchingContractLegs`, including linked ports), and leaves `contract_routing_id` blank when
+none or several match.
+
+The first run on 2026-09-30:
+
+- 29 contracts converted, 0 skipped, into 38 lines in total. 53-2240's references split into their
+  side-by-side lanes, and CMDU-CH-EUN-NAM's "DEBER NLAMS" / "USLAX USCHI" door leg became four lines.
+- 75 shipments linked.
+- REF00404 kept CRTG-6QH95Z.
+
+Both databases were backed up to the session scratchpad first.
+
+**Consequences:**
+
+- Publish's orphan-leg guard can no longer trip.
+- `/api/contracts/match` now returns a real routing id for every result. The number of results is
+  unchanged, because the matcher already walked connected runs.
+
+**Tests:** `tests/routing-lines.test.js` (27, pure unit test, added to `npm test`),
+`tests/contract-routings.test.js` (55), and `tests/contracts-gaps.test.js` (22, its orphan-leg case
+now expects the duplicate refusal).
+
+**Editor (step 4, done 2026-09-30).** `src/components/contracts/RoutingLinesEditor.jsx` renders
+the approved Option 1 layout: one block per line with a header showing the chain (PKU → POL → Via
+origin → Via destination → POD → DEL), the service codes and the transit, then an editable legs
+table. Legs are labelled pre-carriage, sea or on-carriage; a same-port leg at either end is carrier
+haulage. A 📎 on a linked-port flag opens the list from `/api/port-locations/:code/links`. The
+editor also shows:
+
+- a red "same routing as line N" message, which disables ＋ Add routing and blocks Save;
+- a one-pick-up / one-delivery check;
+- chain-gap warnings.
+
+The pure logic lives in `src/utils/routingLines.js`. Its `lineKey` is tested to be identical to
+the server's. A new contract starts with one empty line.
+
+**Commodity codes (done 2026-09-30).** Contracts (`commodity_types`, now comma-separated codes),
+opportunities, quotes and shipments (`commodity_code`) all hold codes from Master Data → Commodities,
+so matching is exact. FAK is the registry's own code **9999**, and blank on a contract is saved as
+9999.
+
+- **Helpers (server.js, mdm_source-aware):** `unknownCommodityCodes` and `commodityCodeError`. A
+  shipment/quote/opportunity code is checked only when it is set and changes, so a record with a
+  legacy value stays editable.
+- **What is refused:** unknown codes, with 400, on contract create/update (local and remote; the
+  service only stores what the monolith validated) and on shipment/quote/opportunity create/update.
+- **Editor:** the contract editor's free-text field became a chip list fed by `CommodityCombobox`.
+- **Display:** the Schedules page shows code · description via `src/hooks/useCommodityLabel.js`.
+- **Migration:** `migrateCommodityCodes()` (startup, idempotent) applied the approved mapping —
+  FAK/blank → 9999, "Elecronics" → 001404, 8471/8517 → 001404, 9403 → 002001, "FAK" → 9999,
+  M001 → blank. It moved 40 contracts and 13 shipment/quote/opportunity rows, with 0 unmapped
+  values; the contract service applies the same values to its own contracts.
+- **Tests:** `tests/commodity-codes.test.js` (12, new), with `contract-improvements` and five other
+  suites updated from HS headings to registry codes.
+
+**Space configurations on routing lines (done 2026-09-30).** A space configuration belongs to one
+contract reference and ticks one or more of that reference's routing lines. The ticked lines share
+one TEU pool.
+
+- **Model.** `allocation_routings` (allocation_id, routing_id; cascades on delete) holds the ticked
+  lines. `allocations` gains `loop_code`, `customer_id`, `customer_name` and `commodity_code`, and
+  `mapAllocation` returns them. The list endpoint adds `routingIds`.
+- **Rules (`resolveConfig` in `routes/allocations.js`, run on POST and PUT).** The contract must
+  exist, and the period must sit inside its validity. At least one line of that contract must be
+  ticked. A body without `routingIds` but with POL/POD is linked to the one line that covers it,
+  and refused if several lines cover it. When the ticked lines carry loop codes, exactly one loop
+  is picked (auto-picked when there is only one) and every ticked line with a loop must sail on it.
+  A named-account reference forces its customer. Otherwise the customer is optional (blank means
+  all customers). The commodity must be one of the contract's commodity types (auto-picked when
+  there is one).
+- **Duplicates.** A configuration is a duplicate when it shares a ticked line with another
+  configuration on the same contract, with the same loop, customer and commodity and an
+  overlapping period. There is no QFP special case. The 90-day maximum is checked only in the form,
+  so older rows of 91 days stay editable.
+- **Untick guard.** On PUT, unticking a line that a non-cancelled shipment on this configuration
+  travels on is refused (409) before the other rules run. `routingsInUse` in `routes/contracts.js`
+  also counts `allocation_routings`, so a contract save can't remove a ticked line.
+- **Match (`GET /api/allocations/match`).** A configuration fits when one of its lines covers the
+  shipment (`findMatchingContractLegs`, linked ports and haulage included) and the ETD is in its
+  period. Its loop must equal the sailing's (`loopCode`, checked only once the shipment has a
+  sailing), its customer the shipment's principal (`principalId`), and its commodity must be FAK or
+  the shipment's own (`commodityCode`). Customer-specific space sorts first. A configuration whose
+  contract can't be read (service down) falls back to its stored lane.
+- **Loop swap.** `revalidateSpaceLoop(shipmentId, actorId)` in server.js runs after POST, PUT and
+  DELETE on `/api/shipments/:id/schedules`. If the new sailing's loop (`shipmentLoopCode`) no longer
+  matches, it drops the SPACE link, keeps the contract, logs `SPACE_UNLINKED` and returns
+  `spaceUnlinked` in the response. The Schedules page shows it as a warning toast.
+- **Sailing search.** For a shipment on a configuration, the Schedules page passes the loop and the
+  line's first origin transshipment port to `SailingPickerModal` (`requiredService`/`requiredHub`).
+  The picker then shows only fitting sailings, with a "Show all sailings" escape that warns a
+  different loop drops the space.
+- **Form.** `src/components/spaceConfig/SpaceConfigurationForm.jsx` replaces the old
+  `AllocationForm`, following the approved mockup. Its sections, in order: carrier and number,
+  reference radios, loop chips, line checkboxes, Trade cards (derived from the first ticked line,
+  with an Override), customer (locked or `CustomerCombobox`), commodity, and period. The period
+  section has a contract-validity timeline, an "Also in this period" verdict table and "Use the
+  next free period". TEU, alert threshold, MQC and notes follow. The pure rules mirror the server
+  in `src/utils/spaceConfigRules.js`.
+- **Migration.** `migrateRoutingLines()` also linked every configuration that had no lines to its
+  covering line, filling the loop (when the line has exactly one), the named-account customer and
+  the commodity. 11 configurations were linked. 5 became customer-specific through their
+  reference's named account.
+- **Tests.** `tests/space-config-lines.test.js` (30, new), `allocations-crud` (51, fixtures now
+  realistic contracts with legs), `src/utils/spaceConfigRules.test.js` (11), and
+  `SpaceConfigurationsPage.test.jsx` (mocks mirror `api.contracts.search`/`api.allocations.list`).
+
 ## 9. Data Flow Diagrams
 
 The four diagrams in this section (shipment creation with auto-screening; contract recalculation;
@@ -2522,8 +3196,8 @@ because the host sets it and the Cypress binary then starts as plain Node and fa
 | ~~C1~~ | ~~No transactions on multi-step writes~~ | **RESOLVED** — see §10. Not exhaustive (a genuinely new multi-step write path isn't automatically covered), but the blanket "none" claim is false. |
 | ~~C2~~ | ~~No authentication~~ | **RESOLVED v0.19.0** (unchanged from last review) |
 | ~~C3~~ | ~~No FK constraints~~ | **RESOLVED** — confirmed directly this pass (§10); the last review's own §10/§11 contradicted each other on this exact point. |
-| C4 | **`server.js`** — still the composition root (§5), now 4,292 lines. Route handling has moved almost entirely to `routes/*.js` (31 files, 10,057 lines) — a much better split than the last review credited, but the file is still large and still owns schema/migrations, shared runtime helpers, and `ctx` wiring in one place. | Splitting the migrations block into its own module remains a logged, not-yet-executed follow-up. |
-| ~~C5~~ | ~~No test suite~~ | **RESOLVED, and grown further** — 36 backend test files (`npm test`), 2 frontend files (Vitest), both wired into CI (`.github/workflows/ci.yml`). |
+| C4 | **`server.js`** — still the composition root (§5), 4,183 lines as of 2026-09-29 (it was 4,292; route extraction outpaced new helpers). Route handling has moved almost entirely to `routes/*.js` (46 files, 15,905 lines) — a much better split than the last review credited, but the file is still large and still owns schema/migrations, shared runtime helpers, and `ctx` wiring in one place. | Splitting the migrations block into its own module remains a logged, not-yet-executed follow-up. |
+| ~~C5~~ | ~~No test suite~~ | **RESOLVED, and grown further** — 92 backend test files (`npm test`) and 18 frontend Vitest files (239 tests) as of 2026-09-29, both wired into CI (`.github/workflows/ci.yml`). |
 
 ### High
 
@@ -2554,6 +3228,7 @@ because the host sets it and the Cypress binary then starts as plain Node and fa
 | M12 | **Non-portaled `position: fixed` dropdowns inside glass cards** — `CommodityCombobox`, `PortCombobox`, `CarrierCombobox` still position from viewport coordinates | Open (v0.91.5). Same defect class as the Equipment Type and HS Code dropdowns that were just fixed with portals (§4). Not checked individually inside a glass card; the defect follows from how the CSS containing block works, so any placement under a `backdrop-filter` ancestor should be assumed affected until verified. **Update (v0.91.6): the same defect hit modals.** `ShipmentHeaderBar` rendered its Loop route, compliance, contract-mismatch and tracking-link modals and its Messages/Tickets drawers *inside* `#shphdr`, which has `backdrop-filter`; the overlay shrank to the header card and the Loop modal's × sat off the top of the screen, so it could not be closed. All overlays now render as siblings of the card (`ShipmentHeaderBar.test.jsx` guards it). A static scan of every component's JSX for a `<Modal>` or `position: fixed` element nested inside an element styled with `backdropFilter`/`filter`/`transform` finds no other same-component case; an overlay reached through a child component is not covered by it, so the rule stands: never render an overlay inside such an element. |
 | M13 | **Two implementations of the list-endpoint filter/sort/search/page logic** — `routes/shipments.js` (inline, comma-joined params) and `lib/tableQuery.js` (repeated params) | Open (v0.91.5). Deliberate for now: the shared module was proven on Quotes first. Migrating Shipments would remove the drift risk and the wire-format inconsistency, at the cost of touching the app's most heavily used route. |
 | M14 | **Five of six seeded loop codes have unverified port lists** (AL5, ME9, PL2, PL7, TP3) | Open (v0.91.5). Only AL1 was checked against a public rotation. The others show a plausible, correctly directional structure but are illustrative until researched. |
+| M15 | **Gaps in the new finance integrations (§8.28–§8.29)**, found by reading the code on 2026-09-29. Only the first three were known when the features shipped; none is verified live. (a) **Reverse-charge purchases are not self-assessed**: the VAT Liability report shows their base amount only, because a reverse-charged line carries no rate. (b) **Consolidated statements carry no VAT**. (c) **GL Export posts no VAT lines**: revenue and cost are exported net, with nothing to VAT control accounts. (d) **Statement-billed revenue never reaches GL Export, the VAT Liability report or FX Revaluation**: all three read only `shipment_documents`, and a statement lives in `customer_statements`. (e) **Statement eligibility is one-directional** — confirmed by reading, not reproduced live: a statement excludes lines already on an issued per-shipment invoice, but `generateInvoices()` bills every SELL line on the shipment and `POST /api/shipments/:id/documents/generate` never reads `customer_statement_lines`, so a statement-billed line goes onto the next per-shipment invoice too. (f) **A GL export run is not atomic**: `runGlExport` marks the rows and inserts the batch in separate statements with no transaction, and it has no lock. Two concurrent runs could both select the same unexported rows. (g) **Statement reads ignore shipment scope**: `GET /api/customer-statements`, `/:id`, `/:id/download` and `/eligible-lines` have only the global login check, with no `applyShipmentAccessFilter`. An office- or lane-scoped user, viewer included, can list and download every statement and query any customer's billable lines company-wide. This is the same class as TKT-Z6C81S (carrier invoices). Showing Statements to every role in the navigation is deliberate (`financialsNav.js`); the missing scope is not. | Epic **TKT-XV4UHD** — **all seven closed 2026-09-30** (after v0.91.9, unreleased). Bugs (§8.28): (g) TKT-6T97DY, (e) TKT-2F19XD, (f) TKT-OBCQH7. (g) and (e) were reproduced live first; (f) can't happen on the dev pglite database, so a unit test interleaves two runs. Stories (§8.29): (b) TKT-1E55AR, (d) TKT-02776W, (a) TKT-MQAXQX, (c) TKT-AEPGWA. The follow-ups found on the way were fixed the same day at the user's request (§8.29, TKT-1V9GYU): receivables are gross and confirmed statements count as receivables; issued invoices and credit notes can't be deleted, sent back to draft or re-confirmed after voiding; and a shipment that billed its customer can't be deleted. |
 
 ### Shipment-Domain Gap & Dead-Code Audit Log (ongoing, started 2026-09-02)
 
@@ -2660,6 +3335,8 @@ continues; don't rewrite history once an item's checked.
 | 2026-09-12 | User Management redesign (new Branch/Country office-visibility grants, `sales` role, Quotes/Opportunities office scoping) — a dedicated exploratory QA pass against the live app, not a code review, before shipping. | **3 real findings, all fixed same day, re-verified against the full test suite.** | **(1) CRITICAL** — `requireRole` (server.js) never actually respected a deliberate role downgrade via `X-Active-Role`: a user holding both `sales` and `occ_bk`, having switched to "Sales," could still `POST /api/shipments` and get 201 — full booking authority despite switching away from it, since `requireRole` always checked the caller's *full* JWT role array. Pre-existing, but `sales`'s entire "no booking authority" premise is the first feature whose correctness depends on it. **Fixed**, in two passes — the first attempt reused the same rank-comparison the read-side scoping engine already used and silently failed for `sales`↔`occ_bk` specifically (both rank 1 by design; a same-rank switch was never "strictly lower"). Landed on membership-based logic (`jwtRoles.includes(requestedRole)`) instead, matching `App.jsx`'s own already-shipped `effectiveRoles` exactly and can never grant more than the JWT allows. **(2) HIGH** — login/`/api/auth/me` never learned about the new grant mechanism; both built the office-picker list from direct `user_offices` rows only, so a user whose *only* access is a Branch/Country grant got an empty picker, `activeOffice` stuck `null` forever, and — with no active-office header ever sent — `applyShipmentAccessFilter` failed **open** (saw every shipment company-wide) while the new quote/opportunity filter failed **closed** (zero results, permanently). **Fixed** by merging grant-derived offices into both endpoints' office list (`isDefault:false`). **(3) HIGH** — the office backfill migration matched almost none of the real dataset (0/150 quotes, 5/33 opportunities) because virtually no real user account has ever had a default office marked. **Fixed** the heuristic to fall back to a user's earliest office assignment when no default exists (verified correct in isolation via a direct SQL dry-run) — though in this specific dataset it still doesn't move the needle much, since the two accounts that created nearly every historical quote/opportunity have no office assignment of any kind, a data-completeness gap no heuristic can invent an answer for. **Known, accepted limitation, unchanged**: `canEditOfficeSide`/`resolveActiveOffice` still don't know about grants — a user can *view* a shipment via a grant but gets 403 editing anything on it (a direct office assignment is still required for write authority); this was a deliberate scope boundary from the original design, confirmed still real by the QA pass, not fixed. Full 73-file backend suite (2452 assertions) and frontend Vitest suite (10/10) both re-run green after all 3 fixes. See `USER-MANAGEMENT-REDESIGN.md` for the complete model and this pass's own write-up. |
 | 2026-09-12 | Shipment creation (`POST /api/shipments`, quote-conversion) and shipment-detail editing (`PUT /api/shipments/:id`) — a dedicated deep-dive QA pass on this central, high-traffic domain object, prompted by the office-carry-forward change quote-conversion had just received as part of the User Management redesign above. | **5 real findings, all fixed same day, re-verified live plus the full test suite. 2 of the 5 are pre-existing and unrelated to that same-day redesign work — surfaced by the same pass, not caused by it.** | **(1) CRITICAL, pre-existing** — the generic `PUT /api/shipments/:id` accepted and persisted `emoOfficeId`/`imoOfficeId`/`controllingOfficeId` with **zero** authorization check, no department-match validation, and no audit trail at all — while the dedicated `POST .../reassign-office` enforces `canEditOfficeSide` + a department match + logs `OFFICE_REASSIGNED`. **Verified live**: a scoped `occ_bk` user correctly 403'd by `reassign-office` could silently reassign the identical office through the *ordinary Edit Shipment form's Save button* instead (the same PUT route), with zero trace afterward — not even a generic `FIELD_UPDATED` event, since these 3 columns were never in `TRACKED_FIELDS`. **Fixed**: PUT now runs the same `canEditOfficeSide` + department-match check (only when an office field is actually changing, composing correctly with fix #2 below), logs a proper `OFFICE_REASSIGNED` event with human-readable office labels, and migrates lingering `shipment_services` to the new office — matching `reassign-office`'s behavior exactly, deliberately without requiring a typed "reason" (a UX addition the ordinary edit form has no field for yet, out of scope for closing this specific gap). **(2) HIGH, pre-existing** — `PUT /api/shipments/:id` was a silent full-replace, not a partial update: only 5 fields (`pol`/`pod`/`carrierCode`/`contractType`/`status`) fell back to the existing row when omitted (originally only to avoid crashing on an `undefined` bind, per the route's own comment); every other field (~30 of them — `vessel`, `voyage`, `bookingRef`, `blNumber`, `incoterm`, etc.) silently blanked when left out of the request body, each logged as though the user deliberately cleared it. **Verified live**: a PUT sending only a handful of fields wiped 6 unrelated, previously-set fields back to blank on a real shipment. **Fixed** — every field now preserves the existing value when omitted; an explicit `""`/`null` still clears it deliberately (re-verified: both behaviors hold). **(3) HIGH, pre-existing** — `POST /api/shipments`'s own create response was a bare `SELECT *`, never enriched — the one shipment-response path the 2026-09 enrichment fix (GET/PUT/reassign-office) never reached. A brand-new shipment's own creation response came back with blank `polName`/`podName`/office names and the margin/teu/bookingStatus fields, and `App.jsx`'s create handler pushes that exact raw object into shared state before navigating to the detail view. **Fixed** by applying the same shared enrichment fragment. **(4) HIGH, introduced by the same-day office-carry-forward change** — the quote-conversion response's `shipment` field had the identical bare-`SELECT *` gap; now sharing the same enrichment fragment (exposed via `ctx` from `routes/shipments.js` specifically so this doesn't become a 4th independent hand-copy of it). **(5) MEDIUM, pre-existing** — quote-line `quantity` had no validation: `0` silently coerced to `1` via `\|\| 1` (the author's stated "0" never actually saved, no error), and a negative value passed straight through into real negative SELL cost-line revenue once converted (verified live: `quantity:-3` produced a genuine `-$3000` line on the converted shipment, while the container-count derivation elsewhere still floored to exactly 1 physical container — money and container count silently disagreeing). **Fixed** with a positive-finite-number check on create and update. **Verified correct, not a bug**: the Cancelled-status → carrier-booking cascade (2026-09 Space Configuration spec) still fires correctly. Full 73-file backend suite (2452 assertions) and frontend Vitest suite (10/10) both re-run green after all 5 fixes; a clean `vite build` throughout. |
 | 2026-09-25 | Self-audit of the prior two days' own commits (v0.91.7's release + this session's own uncommitted diff building Charge Defaults, editable Shipment Conditions, and the Carrier Booking contract-ref fix) — `/code-review`, 8 parallel background review agents plus one direct pass, cross-verified before any fix began. First entry in this log since 2026-09-12; unlike every entry above (an exploratory or targeted QA pass against the running app), this one is a static/diff-based code review. | **16 findings, all fixed same day, 384 regression assertions re-run green across 8 suites afterward.** | **Security (2, both real write-side authorization gaps, closed via §8.26's `blockIfWrongSide`)** — cost-line write routes (POST/PUT/PATCH actualize+post/POST adjust/DELETE/POST post-batch, `routes/shipment-ops.js`) and document/invoice write routes (generate/PATCH/reverse/mark-paid, plus BL surrender/release) had **zero** office-side check despite their own GET/list routes already filtering reads by the identical `charge_code_sides`/`DOC_TYPE_SIDE` rule — a wrong-side user could write, or discover-then-delete (guess an id, since the list correctly hides it), a line or document their own list view never showed them. See §8.26's own write-up for the fix. **Correctness (7)** — §8.27's Charge Defaults check-then-act race (closed via an atomic `ON CONFLICT DO NOTHING RETURNING` claim, not a lock); the Parties & Offices "Your Side" badge read `activeOffice.department` (which KIND of office the user is generally in) instead of the server-computed `shipment.myOfficeSide` (whether their office is actually THIS shipment's EMO/IMO) — cosmetically wrong, no write-authority impact since it's display-only; Carrier Booking Review and Customs Filing Review (`ShipmentCarrierBookingReviewPage.jsx`, `ShipmentCustomsFilingReviewPage.jsx`) never got migrated to `canEditShipmentSide` when their Details siblings did back in v0.91.7 — showed an enabled Confirm/Cancel/Reset to a wrong-side user who'd then hit a 403 from the (correctly gated) server, a UX-only gap, not an exploit; `ShipmentCarrierBookingDetailsPage.jsx`'s Reference tile showed `shipment.contractRef` (a copy of the contract's own number, made at assignment time) for a Central booking instead of the contract's own real, independently-populated reference, silently duplicating the Contract Number tile above it; two more module-level colour objects (`officeMiniLabel`, `RECONCILE_HZ_COLOR`) captured `HZ.*` at import time instead of reading the live theme-toggle-mutated object (the same defect class §4/CLAUDE.md's own established rule already names, just two instances that predated the rule being written down); a NaN amount silently passed Charge Defaults' `validateLines()` non-negative check (`Number(NaN) < 0` is `false`); `chargeCodeSide()` (server.js) now normalizes to only ever return `'Export'`/`'Import'`/`null`, so a `charge_code_sides` row with any other value can no longer be read as "ungated" by one caller (the `!side` write-gate check) while being read as "hidden" by another (the read filter's strict-equality check) — a defensive fix for corrupted data that has no actual write path in this codebase today, marked PLAUSIBLE rather than CONFIRMED. **Efficiency (3)** — §8.26's `resolveOfficeSideAccess` duplicate-check removal; the cost-line side filter (`filterCostLinesBySide`) batched its per-row `chargeCodeSide()` lookup into one `IN (...)` query; the Parties & Offices tab's two independent `shipmentParties.list` fetches (`PartiesOfficesPanel` and `AdditionalPartiesPanel`, each fetching the same data for its own purpose) collapsed into one shared fetch owned by the parent `ShipmentPartiesPage.jsx`. **Simplification (2)** — the identical `dashedBtn` style-factory duplicated across the Costs and Invoices Accounting tabs consolidated into one `makeDashedBtn` (`shipmentDetailTheme.js`); 5 pages that reconstructed a `{canEditShipments, isAdmin, activeRoles, allOffices}` object by hand to call `canEditShipmentSide` now pass `useAuth()`'s own result straight through, matching the pattern's simplest existing callers. **Two stale pre-existing test assertions caught and fixed while re-running the regression suite**, not counted among the 16: `tests/office-side-permissions.test.js` had literally asserted the cost-line write gap as "by design" (predated this epic's write-gating fix); `tests/carrier-booking.test.js` asserted the pre-fix contract-ref duplication as correct (predated the v0.91.8 contract-ref fix itself, an unrelated same-release change). |
+| 2026-09-29 | Bugs found while building the unreleased work after v0.91.9: tax handling (§8.29), the reconciliation and auto-import rework (§8.30), the contract picker (§8.31) and the Dashboard consumption rework (§8.32). Found by building and testing, not by a dedicated audit pass. | **7 real bugs, all fixed the same day; uncommitted.** | **(1) HIGH — Overwrite deleted protected lines.** Reconcile Overwrite deleted by *charge code*, which also wiped posted lines and Charge Default (CCD) lines sharing the code. It then regenerated the charge, which duplicated any line that survived. Deletes now go by line id, and a charge with a protected line is `locked` (§8.30). **(2) HIGH — Reset to Contract duplicated and deleted lines.** It skipped *and* regenerated an edited contract line, so the charge appeared twice, and it deleted charges the contract never had. It now runs the same engine with `overwrite`. **(3) MEDIUM — wrong snapshot after a contract swap.** Rate snapshots were looked up by shipment only, so the previous contract's snapshot was replayed. Lookups are now scoped by `contract_id`. **(4) HIGH — GL Export skipped reversed invoices** (v0.91.9 code). It selected `status='confirmed'`, so an invoice reversed before its first export was skipped and its CN01's negative amount stood alone in the GL. It now uses `ISSUED_BILLING_DOC_SQL`, and the VAT report shares the definition. **(5) MEDIUM — invoice regeneration deleted voided invoices.** `replaceDraftIfAny` removed them along with the draft it meant to replace. **(6) MEDIUM — the Dashboard weekly trend used the wrong link.** It was keyed by the shipment's own `contractId` instead of `allocationId`, unlike every other space figure on the page (§8.6 correction). **(7) Design conflict — per-lane overlap check.** `checkOverlap` rejected a second contract's configuration on the same lane and period, although the form treated that case as a warning. The user decided a configuration is unique per contract (§8.6). Test fixtures were updated for the new message. **Also caught before shipping:** a missing `$` in a SQL placeholder in `applyReconciliation`, caught by the tests, and contract bars reshuffling under the pointer while live contract numbers loaded, so a click selected the neighbouring bar (a tie-break sort fix). Suites re-run green: `allocations-crud` 51, `shipment-crud` 35, `contract-auto-import` 27 (new), `rate-reconciliation` 53, `cost-lines-lifecycle` 42, `contract-routings` 34, `contract-service-toggle` 20, `vat-handling` 36 (new); Vitest 239/239. Every feature was also checked live in a browser. |
+| 2026-09-29 | Contract routing ids, checked while planning space configurations that reference routings (§8.31 follow-up). | **Real bug, dormant in current data, fixed same day; uncommitted.** | `saveRoutings` (`routes/contracts.js` and `services/contract-management/server.js`) deleted and re-inserted every `contract_routings` row on each contract save, so every routing got a new id. `shipments.contract_routing_id` then pointed at nothing, and `resolveLiveContractRates` (server.js) fell back to the contract-wide rates only: after any save of a contract with named routings, Update Carrier Costs / Reconcile on its shipments would silently lose the routing's own charges (e.g. its ocean freight). Only one contract has a named routing today (EC-HLCU-NLAMS-USNYC / REF00404, one shipment on it) and it had not been re-saved, so no data was affected. **Fixed**: routings sent back with their id are updated in place, new ones inserted, removed ones deleted; legs/rates may also name their routing by a surviving id. Removing a routing a non-cancelled shipment uses is now refused (409, naming the shipments), in local and remote mode. `tests/contract-routings.test.js` 34 → 50 (ids survive re-save, rename and add; Update Carrier Costs still sees the routing's 2450 OF after a save; in-use removal refused and nothing changed; unused removal clean). Remote mode verified by script, and a real-browser save of REF00404 kept CRTG-6QH95Z. `contract-improvements` 39, `contract-service-toggle` 20, `contracts-gaps` 23, `rate-reconciliation` 53, `contract-auto-import` 27, `allocations-crud` 51, `contract-carrier-mismatch` 33 re-run green. |
 
 ### Low / Enhancement
 
@@ -2669,7 +3346,7 @@ continues; don't rewrite history once an item's checked.
 | L2 | WAL mode for SQLite | **Moot** — the app fully migrated off SQLite to Postgres/pglite (`project_postgres_migration_progress` memory: monolith + all 6 microservices). A SQLite-specific journaling pragma no longer applies to anything in this codebase. Should be struck from this list rather than "resolved". |
 | L3 | `crypto.randomUUID()` instead of manual `uid()` | Still using manual `uid()` — the 6-char ID format is now load-bearing in a lot of places (prefixes, display), so this is a bigger change than it looks. Flagged, not touched this pass. |
 | L4 | Extract `SERVICE_CODE_MAP`/`TRACKED_FIELDS` to shared config | Confirmed still inline in `server.js` (~2172-2216, ~2762) as plain object literals, exported via `ctx`. Genuinely low-risk to move (pure data, no logic) but zero functional value — deferred as pure code-organization polish, not picked up this pass. |
-| L5 | OpenAPI/Swagger spec | Still true — no route documentation beyond this file and inline comments; now covering well over 200 routes across 31 files. Substantial effort, not a "quick" item — flagged, not started. |
+| L5 | OpenAPI/Swagger spec | Still true — no route documentation beyond this file and inline comments; now covering well over 200 routes across 46 files. Substantial effort, not a "quick" item — flagged, not started. |
 | ~~L6~~ | ~~Version column on `app_settings`~~ | Not applicable — no migration framework exists to version against (see H2). |
 | ~~L7~~ | ~~Containerise with Docker~~ | **RESOLVED** — Dockerfiles + `docker-compose.yml` exist for all 4 processes (§3). |
 | L8 | Cost-line validation endpoint (orphaned/missing lines) | Confirmed via direct grep (`routes/*.js`): no such endpoint exists — only this session's unrelated `shipment_cost_lines` FK-cascade fix (§ audit log above) touches "orphaned" in this codebase. Still open; Kanban ticket status not re-checked live this pass (services were down at verification time). |
@@ -3031,6 +3708,22 @@ inventory of the ~13 hand-coded "if X changes, run Y" functions with no shared d
 mechanism. Reproduced in full in version control history.)* One addition since v0.67.1:
 `expireStaleQuotes()` (§8.2) joins `expireStaleContracts()` as a second hourly-sweep expiry
 trigger, same idempotent shape (check current state, no-op if already there, act once).
+
+**Added 2026-09-29.** Two read- or write-triggered, run-once side effects that were never listed
+here:
+
+- **`applyChargeDefaults(shipmentId)`** (v0.91.8, §8.27). Triggered by
+  `GET /api/shipments/:id/cost-lines`. Idempotent through an atomic claim on
+  `shipment_charge_defaults_applied`.
+- **`autoImportContractCosts(shipmentId)`** (server.js, unreleased, §8.30). Imports a Central
+  contract's costs once per contract. It has two triggers:
+  1. `GET /api/shipments/:id/cost-lines` (`routes/shipment-ops.js`), which runs it before
+     `applyChargeDefaults` so a contract line wins over a CCD for the same charge;
+  2. `PUT /api/shipments/:id` (`routes/shipments.js`) when `contract_id` changes.
+
+  It is idempotent through the per-contract rate snapshot rather than a marker table. Duplicate
+  calls are merged by an in-process map of in-flight promises. That is enough for the monolith's
+  single process, but would not be if the monolith were ever scaled out.
 
 ---
 

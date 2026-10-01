@@ -2197,6 +2197,7 @@ function App() {
             shipment={selectedShipment}
             shipmentTEU={containers.filter(c => c.shipmentId === selectedShipment.id)
               .reduce((sum, c) => sum + teuOf(c.size, c.type, teuDefsMap), 0)}
+            containers={containers.filter(c => c.shipmentId === selectedShipment.id)}
             onBack={() => navigate("detail", selectedShipment.id)}
             onUpdate={handleUpdateShipment}
             onRefresh={async () => {

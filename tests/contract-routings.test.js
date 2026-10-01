@@ -69,8 +69,11 @@ async function login() {
 
     const { emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId } = await ensureOffices(token);
 
-    // ─── Legacy single-routing contract — must be completely unaffected ───────────────────────
-    console.log("\nLegacy contract with no named routings — unaffected by the routing feature");
+    // ─── Plain contract (no routings sent) — becomes one routing line, pricing unchanged ───────
+    // Every leg belongs to a routing line now (lib/routingLines.js): a contract saved with bare
+    // legs gets one routing per connected run, named after its ports. Rates sent without a
+    // routing stay contract-wide, so the price is exactly what it was.
+    console.log("\nPlain contract with no routings sent — becomes one routing line, same price");
     let legacyContractId;
     {
       const num = `RTGTEST-LEGACY-${Date.now()}`;
@@ -80,18 +83,51 @@ async function login() {
         legs: [{ pol: "NLRTM", pod: "USNYC" }],
         rates: [{ serviceCode: "OF", amount: 500, currency: "USD", unit: "per_container" }],
       }, token);
-      assert("legacy contract created", r.status === 201, JSON.stringify(r.body));
+      assert("plain contract created", r.status === 201, JSON.stringify(r.body));
       legacyContractId = r.body.id;
       cleanupContracts.push(legacyContractId);
-      assert("routings array present but empty", Array.isArray(r.body.routings) && r.body.routings.length === 0);
-      assert("leg has routingId ''", r.body.legs[0].routingId === "");
-      assert("rate has routingId ''", r.body.rates[0].routingId === "");
+      assert("one routing line, named after its ports", r.body.routings.length === 1 && r.body.routings[0].name === "NLRTM → USNYC", JSON.stringify(r.body.routings));
+      assert("the leg belongs to it", r.body.legs[0].routingId === r.body.routings[0].id);
+      assert("the rate stays contract-wide (routingId '')", r.body.rates[0].routingId === "");
 
       const match = await request("GET", "/api/contracts/match?pol=NLRTM&pod=USNYC", null, token);
       const mine = match.body.filter(m => m.id === legacyContractId);
-      assert("exactly one match for a legacy contract (not one per routing)", mine.length === 1, `got ${mine.length}`);
-      assert("match routingId is ''", mine[0].routingId === "");
-      assert("match carries all rates (contract-wide behavior preserved)", mine[0].rates.length === 1);
+      assert("exactly one match", mine.length === 1, `got ${mine.length}`);
+      assert("the match names the routing line", mine[0].routingId === r.body.routings[0].id);
+      assert("match carries the contract-wide rate", mine[0].rates.length === 1);
+
+      const resaved = await request("PUT", `/api/contracts/${legacyContractId}`, {
+        contractNumber: num, carrierCode: "MAEU", status: "Active", validFrom: "2026-01-01", validTo: "2027-01-01",
+        legs: [{ pol: "NLRTM", pod: "USNYC" }],
+        rates: [{ serviceCode: "OF", amount: 500, currency: "USD", unit: "per_container" }],
+      }, token);
+      assert("re-saving the same bare legs keeps the routing's id (matched by its chain)",
+        resaved.status === 200 && resaved.body.routings.length === 1 && resaved.body.routings[0].id === r.body.routings[0].id, JSON.stringify(resaved.body.routings));
+    }
+
+    console.log("\nSide-by-side lanes and multi-location pick-ups become separate lines; duplicates are refused");
+    {
+      const lanes = await request("POST", "/api/contracts", {
+        contractNumber: `RTGTEST-LANES-${Date.now()}`, carrierCode: "HLCU", status: "Active", validFrom: "2026-01-01", validTo: "2027-01-01",
+        legs: [
+          { pol: "NLRTM", pod: "USLAX" }, { pol: "DEBRE", pod: "USLAX" },
+          { pol: "NLRTM", pod: "USNYC", polLocType: "Door", podLocType: "Door", polCarrierHaulage: true, podCarrierHaulage: true,
+            polHaulageLocations: "DEBER NLAMS", podHaulageLocations: "USCHI" },
+        ],
+        rates: [{ serviceCode: "OF", amount: 900, currency: "USD", unit: "per_container" }],
+      }, token);
+      assert("contract created", lanes.status === 201, JSON.stringify(lanes.body));
+      if (lanes.body.id) cleanupContracts.push(lanes.body.id);
+      assert("four lines: two lanes + one per pick-up", lanes.body.routings?.length === 4, JSON.stringify(lanes.body.routings?.map(x => x.name)));
+      assert("each door leg now has a single pick-up", (lanes.body.legs || []).filter(l => l.polCarrierHaulage).map(l => l.polHaulageLocations).sort().join(",") === "DEBER,NLAMS");
+
+      const dup = await request("POST", "/api/contracts", {
+        contractNumber: `RTGTEST-DUP-${Date.now()}`, carrierCode: "HLCU", status: "Draft", validFrom: "2026-01-01", validTo: "2027-01-01",
+        routings: [{ name: "Direct" }, { name: "Direct again" }],
+        legs: [{ pol: "NLRTM", pod: "USNYC", routingIndex: 0 }, { pol: "NLRTM", pod: "USNYC", routingIndex: 1 }],
+      }, token);
+      assert("two lines with the same routing are refused (400)", dup.status === 400 && /same routing/i.test(dup.body.error || ""), JSON.stringify(dup.body));
+      if (dup.body.id) cleanupContracts.push(dup.body.id);
     }
 
     // ─── Worked example: HLCU/Kuehne+Nagel, 3 routings, same POL/POD, independent pricing ─────
@@ -173,29 +209,104 @@ async function login() {
       cleanupShipments.push(shipmentId);
       assert("shipment round-trips contractRoutingId", shipRes.body.contractRoutingId === rtgIdA);
       const lines = await request("GET", `/api/shipments/${shipmentId}/cost-lines`, null, token);
-      const lineRows = lines.body.results || lines.body;
+      // Contract lines only: a live DB's own global CCD setups also land lines here.
+      const lineRows = (lines.body.results || lines.body).filter(l => l.source === "contract");
       assert("cost lines generated", lineRows.length === 2, `got ${lineRows.length}`);
       const total = lineRows.reduce((s, l) => s + l.amount, 0);
       assert("cost lines total matches Routing A's own price (2450+45), not Routing B/C's",
         Math.round(total) === 2450 + 45, `got ${total}`);
 
-      console.log("\nPublish guard: an orphan leg (no routing) is rejected once the contract has named routings");
-      const draftNum = `RTGTEST-DRAFT-${Date.now()}`;
-      const draft = await request("POST", "/api/contracts", {
-        contractNumber: draftNum, carrierCode: "HLCU", status: "Draft",
+      // Routing ids used to be regenerated on every contract save, leaving the shipment's
+      // contract_routing_id pointing at nothing — its routing's own rates then vanished from
+      // Update Carrier Costs / Reconcile. The id now survives; removing a routing in use is refused.
+      console.log("\nRouting ids survive a contract save; a routing a shipment uses can't be removed");
+      const before = (await request("GET", `/api/contracts/${contractId}`, null, token)).body;
+      const idsBefore = before.routings.map(rt => rt.id);
+      const resave = await request("PUT", `/api/contracts/${contractId}`, before, token);
+      assert("re-saving the contract unchanged succeeds", resave.status === 200, JSON.stringify(resave.body));
+      assert("every routing keeps its id", JSON.stringify(resave.body.routings.map(rt => rt.id)) === JSON.stringify(idsBefore),
+        `${JSON.stringify(idsBefore)} -> ${JSON.stringify(resave.body.routings.map(rt => rt.id))}`);
+      assert("every leg still points at the same routing",
+        JSON.stringify(resave.body.legs.map(l => l.routingId)) === JSON.stringify(before.legs.map(l => l.routingId)));
+      assert("the shipment's routing still exists on the contract", resave.body.routings.some(rt => rt.id === rtgIdA));
+      const preview = await request("GET", `/api/shipments/${shipmentId}/cost-lines/reconcile-preview?mode=update`, null, token);
+      const ofRow = (preview.body.rows || []).find(row => row.contractAmount === 2450);
+      assert("after the save, Update Carrier Costs still sees Routing A's own 2450 ocean freight", !!ofRow,
+        JSON.stringify(preview.body.rows?.map(row => [row.chargeCode, row.contractAmount])));
+
+      const renamed = await request("PUT", `/api/contracts/${contractId}`, {
+        ...resave.body,
+        routings: resave.body.routings.map(rt => rt.id === rtgIdA ? { ...rt, name: "Via Shanghai/Rotterdam (renamed)" } : rt),
+      }, token);
+      const renamedA = renamed.body.routings?.find(rt => rt.id === rtgIdA);
+      assert("renaming a routing keeps its id", renamed.status === 200 && renamedA?.name === "Via Shanghai/Rotterdam (renamed)", JSON.stringify(renamed.body));
+
+      const added = await request("PUT", `/api/contracts/${contractId}`, {
+        ...renamed.body,
+        routings: [...renamed.body.routings, { name: "Via Shanghai/Antwerp", transitDays: 37 }],
+        legs: [...renamed.body.legs,
+          { pol: "CNCKG", pod: "CNSHA", routingIndex: 3 }, { pol: "CNSHA", pod: "BEANR", routingIndex: 3 }, { pol: "BEANR", pod: "SEGOT", routingIndex: 3 }],
+      }, token);
+      assert("adding a routing succeeds", added.status === 200, JSON.stringify(added.body));
+      assert("the three existing routings keep their ids", idsBefore.every(id => added.body.routings.some(rt => rt.id === id)));
+      const antwerp = added.body.routings?.find(rt => rt.name === "Via Shanghai/Antwerp");
+      assert("the new routing gets its own new id", !!antwerp && !idsBefore.includes(antwerp.id));
+      assert("the new routing's legs point at it", added.body.legs.filter(l => l.routingId === antwerp?.id).length === 3);
+
+      const removeUsed = await request("PUT", `/api/contracts/${contractId}`, {
+        ...added.body,
+        routings: added.body.routings.filter(rt => rt.id !== rtgIdA),
+        legs: added.body.legs.filter(l => l.routingId !== rtgIdA),
+        rates: added.body.rates.filter(rt => rt.routingId !== rtgIdA),
+      }, token);
+      assert("removing the routing the shipment uses is refused (409)", removeUsed.status === 409, JSON.stringify(removeUsed.body));
+      assert("the error names the shipment", (removeUsed.body.error || "").includes(shipmentId), removeUsed.body.error);
+      const afterRefused = (await request("GET", `/api/contracts/${contractId}`, null, token)).body;
+      assert("nothing was changed by the refused save", afterRefused.routings.length === 4 && afterRefused.routings.some(rt => rt.id === rtgIdA));
+
+      const wvnId = afterRefused.routings.find(rt => rt.name === "Via Shanghai/Wilhelmshaven").id;
+      const removeUnused = await request("PUT", `/api/contracts/${contractId}`, {
+        ...afterRefused,
+        routings: afterRefused.routings.filter(rt => rt.id !== wvnId),
+        legs: afterRefused.legs.filter(l => l.routingId !== wvnId),
+        rates: afterRefused.rates.filter(rt => rt.routingId !== wvnId),
+      }, token);
+      assert("removing an unused routing succeeds", removeUnused.status === 200, JSON.stringify(removeUnused.body));
+      assert("it is gone and the others keep their ids",
+        removeUnused.body.routings.length === 3 && !removeUnused.body.routings.some(rt => rt.id === wvnId)
+          && removeUnused.body.routings.some(rt => rt.id === rtgIdA) && removeUnused.body.routings.some(rt => rt.id === antwerp?.id));
+      assert("no leg is left pointing at the removed routing", !removeUnused.body.legs.some(l => l.routingId === wvnId));
+
+      // A leg sent without a routing can no longer be left orphaned: it becomes its own routing
+      // line (so the publish guard's orphan check can't trip any more), unless it describes the
+      // same routing as an existing line — then the save is refused as a duplicate.
+      console.log("\nA leg sent without a routing: its own line, or refused when it duplicates one");
+      const looseDup = await request("POST", "/api/contracts", {
+        contractNumber: `RTGTEST-DRAFT-${Date.now()}`, carrierCode: "HLCU", status: "Draft",
         validFrom: "2026-01-01", validTo: "2027-01-01",
         routings: [{ name: "Via Rotterdam", transitDays: 30 }],
         legs: [
           { pol: "CNCKG", pod: "SEGOT", routingIndex: 0 },
-          { pol: "CNCKG", pod: "SEGOT" }, // deliberately orphaned — no routingIndex
+          { pol: "CNCKG", pod: "SEGOT" }, // no routingIndex — same line as "Via Rotterdam"
         ],
         rates: [{ serviceCode: "OF", amount: 100, currency: "USD", unit: "per_container", routingIndex: 0 }],
       }, token);
-      assert("draft contract with an orphan leg created", draft.status === 201, JSON.stringify(draft.body));
-      cleanupContracts.push(draft.body.id);
-      const pub = await request("POST", `/api/contracts/${draft.body.id}/publish`, {}, token);
-      assert("publish rejected due to the orphan leg", pub.status === 400);
-      assert("error names the reason", /routing/i.test(pub.body.error || ""));
+      assert("a loose leg duplicating a routing is refused (400)", looseDup.status === 400, JSON.stringify(looseDup.body));
+      if (looseDup.body.id) cleanupContracts.push(looseDup.body.id);
+      const looseOwn = await request("POST", "/api/contracts", {
+        contractNumber: `RTGTEST-DRAFT2-${Date.now()}`, carrierCode: "HLCU", status: "Draft",
+        validFrom: "2026-01-01", validTo: "2027-01-01",
+        routings: [{ name: "Via Rotterdam", transitDays: 30 }],
+        legs: [
+          { pol: "CNCKG", pod: "SEGOT", routingIndex: 0 },
+          { pol: "CNSHA", pod: "SEGOT" }, // no routingIndex — a different line
+        ],
+        rates: [{ serviceCode: "OF", amount: 100, currency: "USD", unit: "per_container", routingIndex: 0 }],
+      }, token);
+      assert("a loose leg on a different lane becomes its own line", looseOwn.status === 201 && looseOwn.body.routings.length === 2 && looseOwn.body.legs.every(l => l.routingId), JSON.stringify(looseOwn.body));
+      if (looseOwn.body.id) cleanupContracts.push(looseOwn.body.id);
+      const pub = await request("POST", `/api/contracts/${looseOwn.body.id}/publish`, {}, token);
+      assert("and the contract publishes (no orphan legs are possible)", pub.status === 200, JSON.stringify(pub.body));
     }
 
     console.log(`\n${passed} passed, ${failed} failed`);

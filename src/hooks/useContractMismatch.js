@@ -32,7 +32,11 @@ export default function useContractMismatch(shipment, matchPol, matchPod, legs) 
         // Checking contract id alone would miss a real mismatch: if the shipment's specific
         // routing (e.g. "Via Hamburg") stops matching while a DIFFERENT routing on the same
         // contract still does, that's still a mismatch worth flagging, not a false negative.
-        if (live) setContractMismatch(!matches.some(m => m.id === shipment.contractId && (m.routingId || "") === (shipment.contractRoutingId || "")));
+        // A blank stored routing means "not recorded", so the contract alone decides. Since
+        // 2026-09-30 every contract leg sits on a routing line and match results always carry
+        // one, so comparing '' to it flagged every such shipment (SHP-WIRHFD's endless loop).
+        const routingId = shipment.contractRoutingId || "";
+        if (live) setContractMismatch(!matches.some(m => m.id === shipment.contractId && (!routingId || (m.routingId || "") === routingId)));
       })
       .catch(() => { if (live) setContractMismatch(false); });
     return () => { live = false; };

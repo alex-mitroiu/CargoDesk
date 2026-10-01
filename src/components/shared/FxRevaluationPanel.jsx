@@ -56,7 +56,7 @@ const FxRevaluationPanel = () => {
   );
 
   const unrealizedColumns = [
-    { key: "doc", label: "Invoice", flex: 1.4, render: r => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{r.filename}</span> },
+    { key: "doc", label: "Invoice / Statement", flex: 1.4, render: r => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{r.filename}</span> },
     { key: "currency", label: "Currency", render: r => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{r.currency}</span> },
     { key: "foreign", label: "Amount", align: "right", render: r => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{r.foreignAmount.toLocaleString()}</span> },
     { key: "booked", label: "Booked USD", align: "right", render: r => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{fmtUsd(r.bookedUsd)}</span> },
@@ -64,7 +64,7 @@ const FxRevaluationPanel = () => {
     { key: "gainLoss", label: "Unrealized", align: "right", render: r => <GainLossCell value={r.gainLossUsd} /> },
   ];
   const realizedColumns = [
-    { key: "doc", label: "Invoice", flex: 1.4, render: r => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{r.filename}</span> },
+    { key: "doc", label: "Invoice / Statement", flex: 1.4, render: r => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{r.filename}</span> },
     { key: "currency", label: "Currency", render: r => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{r.currency}</span> },
     { key: "received", label: "Amount Received", align: "right", render: r => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{r.paidAmountOriginal?.toLocaleString() ?? "—"}</span> },
     { key: "booked", label: "Booked USD", align: "right", render: r => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{fmtUsd(r.bookedUsd)}</span> },

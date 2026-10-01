@@ -2,6 +2,7 @@
 const express = require("express");
 const { query, transaction } = require("./lib/db");
 const { readSecret } = require("./lib/dockerSecret");
+const { normalizeRoutingLines } = require("./lib/routingLines");
 
 const PORT = process.env.CONTRACT_SERVICE_PORT || 3004;
 const SERVICE_SECRET_DEV_DEFAULT = "cargoDesk-dev-contract-service-secret-do-not-use-in-prod";
@@ -300,17 +301,31 @@ const CONTRACT_STATUSES = ["Active", "Draft", "Expired", "On Hold"];
 // ─── Save helpers — ported from routes/contracts.js, same shape, now async and wrapped in the
 // shared transaction() helper instead of raw BEGIN/COMMIT/ROLLBACK. ────────────────────────────
 
+// A routing that comes back with its own id keeps it (updated in place); a new one is inserted;
+// one left out of the payload is deleted — same as routes/contracts.js, which explains why the
+// id has to survive a save (shipments and space configurations reference it).
 async function saveRoutings(contractId, routings) {
   return transaction(async ({ query: q }) => {
-    await q("DELETE FROM contract_routings WHERE contract_id=$1", [contractId]);
+    const existing = new Set((await q("SELECT id FROM contract_routings WHERE contract_id=$1", [contractId])).map(r => r.id));
     const now = new Date().toISOString();
     const ids = [];
     for (let i = 0; i < routings.length; i++) {
       const r = routings[i];
-      const id = `CRTG-${uid()}`;
-      await q(`INSERT INTO contract_routings (id,contract_id,name,sort_order,transit_days,notes,created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)`, [id, contractId, r.name || "", i, r.transitDays || 0, r.notes || "", now]);
+      const keep = typeof r.id === "string" && existing.has(r.id) && !ids.includes(r.id);
+      const id = keep ? r.id : `CRTG-${uid()}`;
+      if (keep) {
+        await q("UPDATE contract_routings SET name=$1, sort_order=$2, transit_days=$3, notes=$4 WHERE id=$5",
+          [r.name || "", i, r.transitDays || 0, r.notes || "", id]);
+      } else {
+        await q(`INSERT INTO contract_routings (id,contract_id,name,sort_order,transit_days,notes,created_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7)`, [id, contractId, r.name || "", i, r.transitDays || 0, r.notes || "", now]);
+      }
       ids.push(id);
+    }
+    const removed = [...existing].filter(id => !ids.includes(id));
+    if (removed.length) {
+      await q(`DELETE FROM contract_routings WHERE contract_id=$1 AND id IN (${removed.map((_, i) => `$${i + 2}`).join(",")})`,
+        [contractId, ...removed]);
     }
     return ids;
   });
@@ -318,6 +333,7 @@ async function saveRoutings(contractId, routings) {
 
 const resolveRoutingId = (item, routingIds, oldNameById = {}, newIndexByName = {}) => {
   if (Number.isInteger(item.routingIndex) && routingIds[item.routingIndex]) return routingIds[item.routingIndex];
+  if (item.routingId && routingIds.includes(item.routingId)) return item.routingId;
   if (item.routingId && oldNameById[item.routingId] != null) {
     const idx = newIndexByName[oldNameById[item.routingId]];
     if (idx != null && routingIds[idx]) return routingIds[idx];
@@ -354,6 +370,46 @@ async function saveRates(contractId, rates, routingIds = [], oldNameById = {}, n
          r.unit || "per_container", r.containerType || "", i, r.notes || "", r.validFrom || "", r.validTo || "", resolveRoutingId(r, routingIds, oldNameById, newIndexByName)]);
     }
   });
+}
+
+// ─── Routing lines — same rules as routes/contracts.js (see lib/routingLines.js). Every create/
+// update payload is normalized before saving; a payload with no `routings` key keeps the stored
+// routings. No shipment guard here: this service owns no shipments, the monolith checks first. ───
+async function storedRoutingState(contractId) {
+  const routings = (await query("SELECT * FROM contract_routings WHERE contract_id=$1 ORDER BY sort_order", [contractId])).map(mapContractRouting);
+  const legs = (await query("SELECT * FROM contract_legs WHERE contract_id=$1 ORDER BY leg_order", [contractId])).map(mapLeg);
+  return { routings, legs };
+}
+const normalizePayload = (body, stored) => normalizeRoutingLines({
+  routings: body.routings === undefined ? stored.routings : body.routings,
+  legs: body.legs || [], rates: body.rates || [], storedLegs: stored.legs,
+});
+const duplicateLineError = d =>
+  `Two routing lines describe the same routing (${d.label}) — lines ${d.first + 1} and ${d.second + 1}. Remove one, or change a port, location or service code.`;
+
+// Startup pass over this service's own contracts, same as the monolith's migrateRoutingLines.
+// Commodity types move onto registry codes (same mapping as the monolith's migrateCommodityCodes;
+// this service has no commodity list, so only the known values are rewritten).
+async function migrateCommodityTypes() {
+  const a = await query("UPDATE contracts SET commodity_types='9999' WHERE COALESCE(commodity_types,'') IN ('', 'FAK') RETURNING id");
+  const b = await query("UPDATE contracts SET commodity_types='001404' WHERE UPPER(commodity_types) IN ('ELECRONICS', 'ELECTRONICS') RETURNING id");
+  if (a.length + b.length) console.log(`  ✔ Commodity codes: ${a.length + b.length} contract(s) moved to registry codes`);
+}
+
+async function migrateRoutingLines() {
+  let changed = 0;
+  for (const { id } of await query("SELECT id FROM contracts ORDER BY created_at")) {
+    const stored = await storedRoutingState(id);
+    if (!stored.legs.length && !stored.routings.length) continue;
+    const rates = (await query("SELECT * FROM contract_rates WHERE contract_id=$1 ORDER BY sort_order", [id])).map(mapRate);
+    const norm = normalizeRoutingLines({ routings: stored.routings, legs: stored.legs, rates, storedLegs: stored.legs });
+    if (!norm.changed || norm.duplicate) continue;
+    const routingIds = await saveRoutings(id, norm.routings);
+    await saveLegs(id, norm.legs, routingIds);
+    await saveRates(id, norm.rates, routingIds);
+    changed++;
+  }
+  if (changed) console.log(`  ✔ Contract routing lines: ${changed} contract(s) converted`);
 }
 
 // ─── container_types / imdg_classes (TKT-5YYLNT) — mirrors routes/contracts.js's own
@@ -598,13 +654,18 @@ app.post("/internal/contracts", async (req, res) => {
   const { contractNumber = "", contractRef = "", carrierCode = "", namedAccountId = "", namedAccount = "",
           movementType = "FCL", containerTypes = [], commodityTypes = "", dgAllowed = false, imdgClasses = [],
           validFrom = "", validTo = "", currency = "USD", status = "Active", notes = "",
-          legs = [], rates = [], routings = [] } = req.body;
+          } = req.body;
+  const norm = normalizePayload(req.body, { routings: [], legs: [] });
+  if (norm.duplicate) return err(res, duplicateLineError(norm.duplicate));
+  const { routings, legs, rates } = norm;
   const [dup] = await query("SELECT id FROM contracts WHERE contract_number=$1 AND contract_ref=$2 AND named_account_id=$3", [contractNumber, contractRef, namedAccountId]);
   if (dup) return err(res, `A contract with this number${contractRef ? ", reference" : ""}${namedAccountId ? ", and account" : ""} already exists (${dup.id})`);
   if (!CONTRACT_STATUSES.includes(status)) return err(res, `status must be one of: ${CONTRACT_STATUSES.join(", ")}`);
   const id = `CNTR-${uid()}`;
   const createdAt = new Date().toISOString();
-  const effCommodityTypes = (commodityTypes.trim() || "FAK").slice(0, 32);
+  // Registry commodity codes, comma-separated (the monolith validates them before calling here);
+  // none means FAK, the registry's own code 9999.
+  const effCommodityTypes = String(commodityTypes || "").trim() || "9999";
   // container_types/imdg_classes no longer written here (TKT-5YYLNT) — saveContractContainerTypes/
   // saveContractImdgClasses below are the real write path now.
   await query(`INSERT INTO contracts (id,contract_number,contract_ref,carrier_code,named_account_id,named_account,movement_type,dg_allowed,valid_from,valid_to,currency,status,notes,created_at,commodity_types)
@@ -627,8 +688,13 @@ app.put("/internal/contracts/:id", async (req, res) => {
   const { contractNumber = "", contractRef = "", carrierCode = "", namedAccountId = "", namedAccount = "",
           movementType = "FCL", containerTypes = [], commodityTypes = "", dgAllowed = false, imdgClasses = [],
           validFrom = "", validTo = "", currency = "USD", status = "Active", notes = "",
-          legs = [], rates = [], routings = [] } = req.body;
-  const effCommodityTypes = (commodityTypes.trim() || "FAK").slice(0, 32);
+          } = req.body;
+  const norm = normalizePayload(req.body, await storedRoutingState(req.params.id));
+  if (norm.duplicate) return err(res, duplicateLineError(norm.duplicate));
+  const { routings, legs, rates } = norm;
+  // Registry commodity codes, comma-separated (the monolith validates them before calling here);
+  // none means FAK, the registry's own code 9999.
+  const effCommodityTypes = String(commodityTypes || "").trim() || "9999";
   const [dup] = await query("SELECT id FROM contracts WHERE contract_number=$1 AND contract_ref=$2 AND named_account_id=$3 AND id!=$4", [contractNumber, contractRef, namedAccountId, req.params.id]);
   if (dup) return err(res, `A contract with this number${contractRef ? ", reference" : ""}${namedAccountId ? ", and account" : ""} already exists (${dup.id})`);
   if (!CONTRACT_STATUSES.includes(status)) return err(res, `status must be one of: ${CONTRACT_STATUSES.join(", ")}`);
@@ -717,9 +783,10 @@ app.post("/internal/contracts/bulk-import", async (req, res) => {
          c.validFrom || "", c.validTo || "", c.currency || "USD", c.status || "Active", c.notes || "", createdAt]);
       await saveContractContainerTypes(id, c.containerTypes || []);
       await saveContractImdgClasses(id, c.imdgClasses || []);
-      const routingIds = await saveRoutings(id, c.routings || []);
-      await saveLegs(id, c.legs || [], routingIds);
-      await saveRates(id, c.rates || [], routingIds);
+      const norm = normalizePayload(c, { routings: [], legs: [] });
+      const routingIds = await saveRoutings(id, norm.routings);
+      await saveLegs(id, norm.legs, routingIds);
+      await saveRates(id, norm.rates, routingIds);
       results.push({ sourceId: c.id || null, newId: id, ok: true });
     } catch (e) {
       results.push({ sourceId: c.id || null, ok: false, error: e.message });
@@ -745,6 +812,8 @@ if (require.main === module) {
   initSchema()
     .then(async () => {
       await backfillContractArrayFields();
+      await migrateRoutingLines();
+      await migrateCommodityTypes();
       await expireStaleContracts();
       const expireSweep = setInterval(expireStaleContracts, 60 * 60 * 1000);
       expireSweep.unref?.();

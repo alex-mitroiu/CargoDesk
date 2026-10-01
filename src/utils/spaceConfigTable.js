@@ -59,6 +59,9 @@ export function buildSpaceRows({ allocations, carriers = [], portInfo = {}, toda
       pol: a.pol || "", pod: a.pod || "",
       polName: names[a.pol] || "", podName: names[a.pod] || "",
       route: a.pol && a.pod ? `${a.pol} › ${a.pod}` : "",
+      // A configuration can tick several routing lines of its contract; pol/pod are its first line.
+      extraRoutings: Math.max(0, (a.routingIds || []).length - 1),
+      loopCode: a.loopCode || "", customerName: a.customerName || "",
       origin: laneOf(a.originLane, a.pol),
       dest:   laneOf(a.destLane, a.pod),
       contract: a.contractNumber || "",
@@ -109,7 +112,7 @@ export const SPACE_SORT_OPTIONS = [
 
 // Free-text search: whatever a person can read in the row.
 export const spaceSearchText = r =>
-  [r.carrierCode, r.carrierName, r.pol, r.pod, r.polName, r.podName, r.route, r.contract, r.notes].join(" ");
+  [r.carrierCode, r.carrierName, r.pol, r.pod, r.polName, r.podName, r.route, r.contract, r.notes, r.loopCode, r.customerName].join(" ");
 
 export const SPACE_SPEC = { columns: SPACE_COLUMNS, searchText: spaceSearchText, sorters: SPACE_SORTERS };
 

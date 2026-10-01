@@ -44,20 +44,27 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
       .then(setLines).catch(() => setLines([])).finally(() => setLoading(false));
   };
   const loadSnapshots = () => {
-    if (!isCentral) return;
-    api.costLines.rateSnapshots(shipment.id).then(setSnapshots).catch(() => setSnapshots([]));
+    if (!isCentral) return Promise.resolve([]);
+    return api.costLines.rateSnapshots(shipment.id).then(s => { setSnapshots(s); return s; }).catch(() => { setSnapshots([]); return null; });
   };
 
+  // Reading the cost lines auto-imports the contract once when nothing clashes (server-side), so
+  // snapshots are read AFTER it. No snapshot for the current contract afterwards means the import
+  // was held back for a decision — a contract switch, or charges that already exist — so ask.
   useEffect(() => {
-    load();
-    loadSnapshots();
+    load().then(loadSnapshots).then(async s => {
+      if (!s || !isCentral || !canEdit || s.some(x => x.contractId === shipment.contractId)) return;
+      const preview = await api.costLines.reconcilePreview(shipment.id, "import").catch(() => null);
+      if (preview?.rows?.some(r => r.status !== "kept")) setReconcileMode("import");
+    });
     api.fx.rates().then(d => setFxRates(d.rates || {})).catch(() => {});
-  }, [shipment.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [shipment.id, shipment.contractId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const buyLines  = lines.filter(l => l.type === "BUY");
   const totalBuy  = buyLines.reduce((s, l) => s + l.amountUsd, 0);
   const hasContractLines = buyLines.some(l => l.source === "contract");
-  const latestSnapshot = snapshots[0] || null;
+  // The current contract's snapshot — after a contract switch the newest row can belong to the old one.
+  const latestSnapshot = snapshots.find(s => s.contractId === shipment.contractId) || null;
 
   const handleSave = async (data, mirror = false) => {
     try {
@@ -146,7 +153,7 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
   };
 
   const ACTION_COPY = {
-    reset: { title: "Reset to Contract", confirm: "Reset", body: `Regenerate BUY lines from the rate snapshot already committed to this shipment${latestSnapshot ? ` (${latestSnapshot.reason}, ${new Date(latestSnapshot.generatedAt).toLocaleDateString()})` : ""}. This does NOT pull new rates — manually added lines are untouched.` },
+    reset: { title: "Reset to Contract", confirm: "Reset", body: `Regenerate BUY lines from the rate snapshot already committed to this shipment${latestSnapshot ? ` (${latestSnapshot.reason}, ${new Date(latestSnapshot.generatedAt).toLocaleDateString()})` : ""}. This does NOT pull new rates. Edited contract charges go back to the contract's value; posted or invoiced lines, CCD lines and charges that aren't on the contract are left untouched.` },
   };
 
   // Cargo-style stat strip — real totals, same treatment as the Cargo tab's New Style
@@ -270,6 +277,7 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
 
       {reconcileMode && (
         <ReconcileCarrierCostsModal shipmentId={shipment.id} mode={reconcileMode} containerCount={ctrs.length}
+          firstImport={reconcileMode === "import" && !snapshots.some(x => x.contractId === shipment.contractId)}
           onClose={() => setReconcileMode(null)} onApplied={handleReconciled} />
       )}
 

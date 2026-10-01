@@ -84,7 +84,7 @@ async function login(email, password) {
 
     const ship = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
-      etd: "2026-06-01", eta: "2026-06-25", incoterm: "FOB", commodityCode: "8471",
+      etd: "2026-06-01", eta: "2026-06-25", incoterm: "FOB", commodityCode: "001404",
       emoOfficeId: offA.body.id, imoOfficeId: offB.body.id,
       shipperName: "OSP Shipper Co", consigneeName: "OSP Consignee Co",
     }, admin);
@@ -237,7 +237,7 @@ async function login(email, password) {
     created.offices.push(offC.body.id);
     const ship2 = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USLAX", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
-      etd: "2026-06-01", eta: "2026-06-27", incoterm: "FOB", commodityCode: "8471",
+      etd: "2026-06-01", eta: "2026-06-27", incoterm: "FOB", commodityCode: "001404",
       emoOfficeId: offA.body.id, imoOfficeId: offC.body.id,
     }, admin);
     created.shipments.push(ship2.body.id);
@@ -249,7 +249,7 @@ async function login(email, password) {
     // A third shipment left with vessel_arrived incomplete — proves no premature ticket.
     const ship3 = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
-      etd: "2026-06-01", eta: "2026-06-28", incoterm: "FOB", commodityCode: "8471",
+      etd: "2026-06-01", eta: "2026-06-28", incoterm: "FOB", commodityCode: "001404",
       emoOfficeId: offA.body.id, imoOfficeId: offB.body.id,
     }, admin);
     created.shipments.push(ship3.body.id);

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { MatchedShipmentsTable } from "./DashboardPage";
+import { MatchedShipmentsTable, KpiRing } from "./DashboardPage";
 
 // Regression test for a real bug found via live exploratory QA: MatchedShipmentsTable (the
 // Overview tab's "Shipments in Period" table, "Space Config" column) used to match a shipment to
@@ -59,5 +59,31 @@ describe("MatchedShipmentsTable — Space Config column matches by allocationId,
     renderTable();
     const row = screen.getByText("SHP-VIA-LINKED-PORT").closest("div");
     expect(row).toHaveTextContent("Matched");
+  });
+});
+
+describe("KpiRing — confirmed and pending confirmation drawn as separate arcs", () => {
+  const renderRing = props => render(<KpiRing allocated={830} confirmed={72} pending={41} rejected={5} remaining={758} {...props} />);
+  const arcs = () => [...screen.getByTestId("consumption-ring").querySelectorAll("circle")].slice(1);
+
+  it("shows the confirmed share in the centre and the pending share under it", () => {
+    renderRing();
+    expect(screen.getByTestId("consumption-ring")).toHaveTextContent("8.7%");
+    expect(screen.getByTestId("consumption-ring-pending")).toHaveTextContent("+4.9% pending");
+    expect(arcs()).toHaveLength(2);
+  });
+
+  it("still prints a three-digit pending figure, while the drawn arcs never pass the full circle", () => {
+    renderRing({ confirmed: 540, pending: 910 });
+    expect(screen.getByTestId("consumption-ring-pending")).toHaveTextContent("+109.6% pending");
+    const circ = 2 * Math.PI * 72;
+    const drawn = arcs().reduce((sum, el) => sum + Number(el.getAttribute("stroke-dasharray").split(" ")[0]), 0);
+    expect(drawn).toBeLessThanOrEqual(circ + 0.001);
+  });
+
+  it("draws no pending arc when nothing is pending", () => {
+    renderRing({ pending: 0 });
+    expect(screen.getByTestId("consumption-ring-pending")).toHaveTextContent("+0.0% pending");
+    expect(arcs()).toHaveLength(1);
   });
 });

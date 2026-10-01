@@ -1,8 +1,10 @@
 "use strict";
 
+const { ISSUED_BILLING_DOC_SQL } = require("../lib/mappers");
+
 module.exports = function financeRoutes(app, ctx) {
   const { query, ok, err, auth, resolveCustomerGroup, roundCents, costLineEffectiveUsd, getFxRates,
-          resolveActiveOffice } = ctx;
+          resolveActiveOffice, entityByShipment } = ctx;
 
   // Multi-Entity Accounting (TKT-EEV4I9) — mirrors canEditOfficeSide's (server.js) admin/
   // operator/allOffices bypass exactly, applied to READ visibility of the byEntity breakdown
@@ -153,5 +155,132 @@ module.exports = function financeRoutes(app, ctx) {
     byEntity.sort((a, b) => (b.totalSellUsd || 0) - (a.totalSellUsd || 0));
 
     ok(res, { ...overall, byCarrier, byLane, byCustomer, byEntity });
+  });
+
+  // ─── VAT Liability (2026-09-29) ────────────────────────────────────────────
+  // Output VAT (SELL) minus input VAT (BUY) per legal entity (branch) for a date range — the
+  // figure a VAT return actually needs, not just the per-invoice VAT line. Same recognition
+  // triggers GL Export uses, for the same reasons: output VAT on an ISSUED billing document's
+  // confirm date (ISSUED_BILLING_DOC_SQL — a properly reversed invoice still counts in its own
+  // period, its CN01 offsets it in the credit note's), input VAT on a BUY line's post date. Same
+  // entity resolution and branch scoping as byEntity above (callerEntityScope), deliberately.
+  //
+  // Zero-rated / reverse-charged / exempt lines are reported as their own base-amount buckets
+  // rather than folded into "0% VAT", because a return reports them in different boxes. A
+  // reverse-charged PURCHASE is self-assessed at the buying entity's standard VAT rate (output and
+  // input VAT at once, net zero — TKT-MQAXQX, see add() below). Confirmed consolidated statements
+  // count as issued billing documents (TKT-02776W).
+  app.get("/api/vat-liability/summary", auth(), async (req, res) => {
+    const u = req.user;
+    const roles = Array.isArray(u.roles) ? u.roles : [u.role || 'viewer'];
+    if (!roles.includes('admin') && !u.canViewFinance)
+      return err(res, "Finance access not enabled for your account", 403);
+    const { dateFrom, dateTo } = req.query;
+    if (!dateFrom || !dateTo) return err(res, "dateFrom and dateTo are required (YYYY-MM-DD)");
+    if (dateFrom > dateTo) return err(res, "dateFrom must be on or before dateTo");
+    const toBound = `${dateTo}T23:59:59.999Z`;
+    const idList = ids => ids.map((_, i) => `$${i + 1}`).join(",");
+
+    // Unqualified on purpose (ISSUED_BILLING_DOC_SQL's own column names would be ambiguous
+    // against shipments.status in a join) — entity info is resolved in its own query below.
+    const docs = await query(
+      `SELECT * FROM shipment_documents WHERE ${ISSUED_BILLING_DOC_SQL} AND confirmed_at >= $1 AND confirmed_at <= $2`,
+      [dateFrom, toBound]);
+    const sellIds = [...new Set(docs.flatMap(d => (d.source_cost_line_ids ? JSON.parse(d.source_cost_line_ids) : [])))];
+    const sellLinesById = new Map(sellIds.length
+      ? (await query(`SELECT * FROM shipment_cost_lines WHERE id IN (${idList(sellIds)})`, sellIds)).map(l => [l.id, l])
+      : []);
+    // Per document, not per distinct line: a line billed on two issued invoices was genuinely
+    // charged VAT twice until a credit note says otherwise, so it's owed twice.
+    const outputLines = docs.flatMap(d =>
+      (d.source_cost_line_ids ? JSON.parse(d.source_cost_line_ids) : []).map(id => sellLinesById.get(id)).filter(Boolean));
+    // A confirmed consolidated statement is an issued billing document too (TKT-02776W): its lines
+    // are output on the statement's confirmed_at, read from the cost lines it bills — the same
+    // source an invoice's VAT comes from, so the two can't be reported differently.
+    const statements = await query(
+      "SELECT id FROM customer_statements WHERE status='confirmed' AND confirmed_at >= $1 AND confirmed_at <= $2", [dateFrom, toBound]);
+    if (statements.length) {
+      const ids = statements.map(s => s.id);
+      outputLines.push(...await query(
+        `SELECT scl.* FROM customer_statement_lines csl JOIN shipment_cost_lines scl ON scl.id = csl.cost_line_id
+         WHERE csl.statement_id IN (${idList(ids)})`, ids));
+    }
+
+    const inputLines = await query(
+      "SELECT * FROM shipment_cost_lines WHERE type='BUY' AND status='posted' AND posted_at >= $1 AND posted_at <= $2",
+      [dateFrom, toBound]);
+
+    const shipmentIds = [...new Set([...outputLines, ...inputLines].map(l => l.shipment_id))];
+    const entityMap = await entityByShipment(shipmentIds); // lib/legal-entities.js — one rule for every report
+
+    const emptySide = () => ({
+      standard: { baseUsd: 0, vatUsd: 0 }, zero_rated: { baseUsd: 0 },
+      reverse_charge: { baseUsd: 0 }, exempt: { baseUsd: 0 },
+      self_assessed: { baseUsd: 0, vatUsd: 0 }, totalVatUsd: 0,
+    });
+    const buckets = new Map();
+    const add = (line, side) => {
+      const ent = entityMap.get(line.shipment_id);
+      const key = ent?.entityId || null;
+      if (!buckets.has(key)) buckets.set(key, {
+        entityId: key, entityName: ent?.entityName || "Unassigned (no branch on either office)",
+        currency: ent?.currency || "USD", taxRegistrationNumber: ent?.taxRegistrationNumber || "",
+        standardVatRate: ent?.standardVatRate ?? null, selfAssessRateMissing: false,
+        output: emptySide(), input: emptySide(),
+      });
+      const bucket = buckets.get(key);
+      const b = bucket[side];
+      const base = costLineEffectiveUsd(line);
+      const treatment = line.vat_treatment || "standard";
+      if (treatment === "standard") {
+        const vat = base * (line.vat_rate || 0) / 100;
+        b.standard.baseUsd += base; b.standard.vatUsd += vat; b.totalVatUsd += vat;
+      } else if (b[treatment]) {
+        b[treatment].baseUsd += base;
+      }
+      // Reverse-charge self-assessment (TKT-MQAXQX): on a reverse-charged PURCHASE the buyer — this
+      // entity — accounts for the VAT itself, at its own standard rate, as output AND input VAT at
+      // once. Both sides move by the same amount, so net VAT is unchanged. A reverse-charged SALE is
+      // the customer's to account for and stays base-only. No rate on the entity: base-only as
+      // before, and the entity is flagged so the report can say so.
+      if (side === "input" && treatment === "reverse_charge") {
+        if (bucket.standardVatRate == null) { bucket.selfAssessRateMissing = true; return; }
+        const vat = base * bucket.standardVatRate / 100;
+        for (const s of [bucket.output, bucket.input]) {
+          s.self_assessed.baseUsd += base; s.self_assessed.vatUsd += vat; s.totalVatUsd += vat;
+        }
+      }
+    };
+    for (const l of outputLines) add(l, "output");
+    for (const l of inputLines) add(l, "input");
+
+    const round = side => ({
+      standard: { baseUsd: roundCents(side.standard.baseUsd), vatUsd: roundCents(side.standard.vatUsd) },
+      zero_rated: { baseUsd: roundCents(side.zero_rated.baseUsd) },
+      reverse_charge: { baseUsd: roundCents(side.reverse_charge.baseUsd) },
+      exempt: { baseUsd: roundCents(side.exempt.baseUsd) },
+      self_assessed: { baseUsd: roundCents(side.self_assessed.baseUsd), vatUsd: roundCents(side.self_assessed.vatUsd) },
+      totalVatUsd: roundCents(side.totalVatUsd),
+    });
+
+    // Unassigned rows (a shipment with no branch behind either office) are only shown to an
+    // unrestricted caller — a branch-scoped user can't be told they "own" orphaned VAT.
+    const entityScope = await callerEntityScope(req);
+    const visible = [...buckets.values()].filter(b =>
+      entityScope === null || (b.entityId !== null && entityScope.has(b.entityId)));
+    const entities = await Promise.all(visible.map(async b => {
+      const netVatUsd = roundCents(b.output.totalVatUsd - b.input.totalVatUsd);
+      return { ...b, output: round(b.output), input: round(b.input), netVatUsd, localNetVat: await fromUsd(netVatUsd, b.currency) };
+    }));
+    entities.sort((a, b) => Math.abs(b.netVatUsd) - Math.abs(a.netVatUsd));
+
+    ok(res, {
+      dateFrom, dateTo, entities,
+      totals: {
+        outputVatUsd: roundCents(entities.reduce((s, e) => s + e.output.totalVatUsd, 0)),
+        inputVatUsd:  roundCents(entities.reduce((s, e) => s + e.input.totalVatUsd, 0)),
+        netVatUsd:    roundCents(entities.reduce((s, e) => s + e.netVatUsd, 0)),
+      },
+    });
   });
 };

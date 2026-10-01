@@ -100,7 +100,7 @@ const qs = params => {
     console.log("\nFull happy path — New -> Qualified -> Convert -> the resulting quote is real and independently usable");
     const opp = await request("POST", "/api/opportunities", {
       title: "Q3 lane expansion — NL to US East Coast", customerName: "Acme Trading Co",
-      pol: "nlrtm", pod: "usnyc", carrierCode: "maeu", commodityCode: "8471.30",
+      pol: "nlrtm", pod: "usnyc", carrierCode: "maeu", commodityCode: "001404",
       estimatedValue: "25000", currency: "usd", estimatedCloseDate: futureDate(30),
       leadSource: "Referral", notes: "Existing customer wants to add a second lane",
     }, token);

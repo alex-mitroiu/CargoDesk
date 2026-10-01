@@ -51,6 +51,8 @@ const ControlAccountsCard = ({ canEdit }) => {
   const [ar, setAr] = useState("");
   const [ap, setAp] = useState("");
   const [unmapped, setUnmapped] = useState("");
+  const [vatOutput, setVatOutput] = useState("");
+  const [vatInput, setVatInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
@@ -59,13 +61,16 @@ const ControlAccountsCard = ({ canEdit }) => {
       setAr(s.gl_control_account_ar || "");
       setAp(s.gl_control_account_ap || "");
       setUnmapped(s.gl_control_account_unmapped || "");
+      setVatOutput(s.gl_control_account_vat_output || "");
+      setVatInput(s.gl_control_account_vat_input || "");
     }).finally(() => setLoaded(true));
   }, []);
 
   const save = async () => {
     setSaving(true);
     try {
-      await api.settings.update({ gl_control_account_ar: ar, gl_control_account_ap: ap, gl_control_account_unmapped: unmapped });
+      await api.settings.update({ gl_control_account_ar: ar, gl_control_account_ap: ap, gl_control_account_unmapped: unmapped,
+        gl_control_account_vat_output: vatOutput, gl_control_account_vat_input: vatInput });
       toast.success("Control accounts saved");
     } catch (e) { toast.error(e.message); }
     setSaving(false);
@@ -76,14 +81,17 @@ const ControlAccountsCard = ({ canEdit }) => {
     <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, padding: 20, marginBottom: 20 }}>
       <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 4 }}>Control Accounts</div>
       <p style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, margin: "0 0 14px" }}>
-        The 3 standing accounts every GL export uses — Accounts Receivable (the debit side of every SELL invoice),
-        Accounts Payable (the credit side of every BUY cost), and Unmapped/Suspense (where a charge code with no
-        mapping below falls, so nothing silently drops from an export).
+        The standing accounts every GL export uses — Accounts Receivable (the gross debit of every sales invoice or
+        statement), Accounts Payable (the gross credit of every posted cost), Unmapped/Suspense (where a charge code
+        with no mapping below falls, so nothing silently drops from an export), and the two VAT accounts: output VAT
+        on sales, input VAT on purchases (a reverse-charged purchase posts its self-assessed VAT to both).
       </p>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
         <Inp label="Accounts Receivable" value={ar} onChange={setAr} placeholder="1200" mono disabled={!canEdit} />
         <Inp label="Accounts Payable" value={ap} onChange={setAp} placeholder="2100" mono disabled={!canEdit} />
         <Inp label="Unmapped / Suspense" value={unmapped} onChange={setUnmapped} placeholder="9999" mono disabled={!canEdit} />
+        <Inp label="Output VAT (payable)" value={vatOutput} onChange={setVatOutput} placeholder="2200" mono disabled={!canEdit} />
+        <Inp label="Input VAT (receivable)" value={vatInput} onChange={setVatInput} placeholder="1400" mono disabled={!canEdit} />
       </div>
       {canEdit && (
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>

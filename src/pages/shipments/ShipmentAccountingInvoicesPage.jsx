@@ -6,7 +6,7 @@ import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import TrackedDocPreviewModal from "../../components/shared/TrackedDocPreviewModal";
 import CreditHoldModal from "../../components/shared/CreditHoldModal";
 import { CostLineForm, CostLineHistoryModal, CostLineRow, CostLineActualizeModal } from "./ShipmentDetailPage";
-import { generateInvoices, resolveInvoiceCurrency, resolveCreditGate, buildCreditDebitNoteHtml } from "../../utils/invoiceGenerator";
+import { generateInvoices, resolveInvoiceCurrency, resolveCreditGate, buildCreditDebitNoteHtml, resolveInvoiceTaxInfo } from "../../utils/invoiceGenerator";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { Textarea, Inp } from "../../components/primitives/Form";
@@ -227,9 +227,11 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
   // Lines actually in scope for a given generation action — mirrors generateInvoices()'s own
   // per-container targeting, so both the credit gate and the currency check below agree with
   // what will really be invoiced.
-  const scopedLinesFor = splitPerContainer => splitPerContainer
+  // A line already on another billing document is left out (TKT-2F19XD); one on a draft invoice
+  // stays in, since a regenerate replaces that draft.
+  const scopedLinesFor = splitPerContainer => (splitPerContainer
     ? sellLines.filter(l => l.containerId && ctrs.some(c => c.id === l.containerId))
-    : sellLines;
+    : sellLines).filter(l => !l.billedOn || (l.billedOn.kind === "invoice" && l.billedOn.status === "draft"));
 
   // Generation is blocked with no charge lines present — not just a courtesy message,
   // this is the actual gate: the buttons are disabled AND this guard runs before any
@@ -335,14 +337,14 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
     return ctr ? `Container ${ctr.containerNumber || `(${ctr.size || ""}${ctr.type || ""})`}` : "Container";
   };
 
-  // Mirrors the server's own computeArExposure math (docTotal = sum of amountUsd for this
-  // doc's sourceCostLineIds) — used only as the Mark as Paid modal's starting default, never
-  // persisted or compared against server-side; the server is the actual source of truth.
+  // Mirrors the server's own computeArExposure math (docTotal = the gross, amountUsd + VAT, of this
+  // doc's sourceCostLineIds) — used only as the Mark as Paid modal's starting default and the
+  // outstanding figure, never persisted; the server is the actual source of truth.
   const docTotalFor = doc => {
     if (!doc.sourceCostLineIds?.length) return null;
     const matched = lines.filter(l => doc.sourceCostLineIds.includes(l.id));
     if (!matched.length) return null;
-    return matched.reduce((s, l) => s + l.amountUsd, 0);
+    return matched.reduce((s, l) => s + l.amountUsd + (l.vatAmountUsd || 0), 0);
   };
 
   // Mark as Paid's own FX-capture section only makes sense when the invoice was actually
@@ -437,10 +439,15 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       const now     = new Date();
       const invDate = now.toISOString().slice(0, 10);
       const invNumber = `${doc.filename.replace(/\.pdf$/i, "")}-CN`;
-      const html = buildCreditDebitNoteHtml({ shipment, invNumber, invDate, notes: reason, costLines: reversalLines, container, originalDoc: doc });
+      const taxInfo = await resolveInvoiceTaxInfo(shipment);
+      const html = buildCreditDebitNoteHtml({ shipment, invNumber, invDate, notes: reason, costLines: reversalLines, container, originalDoc: doc, taxInfo });
       const filename = `CN01-${invNumber}-${invDate}.pdf`;
+      // The CN01 records the reversal lines it's built from, like an invoice records its lines:
+      // GL Export and the VAT Liability report net the reversed invoice through them, and it's
+      // what holds those lines so a later invoice doesn't bill them again (TKT-2F19XD).
       const newDoc = await api.documents.generate(shipment.id, {
         html, filename, docType: "CN01", containerId: doc.containerId, responsibleParty: doc.responsibleParty,
+        sourceCostLineIds: reversalLines.map(l => l.id),
       });
       await api.documents.patch(shipment.id, newDoc.id, { status: "confirmed", relatedDocId: doc.id });
       await api.documents.patch(shipment.id, doc.id, { relatedDocId: newDoc.id });

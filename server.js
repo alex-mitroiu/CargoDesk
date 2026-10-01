@@ -19,7 +19,7 @@ const { createAisListener } = require("./lib/ais-listener");
 const { registerCarrierAdapter, getCarrierAdapter, listRegisteredAdapterKeys } = require("./lib/carrier-integrations/registry");
 const dcsaBkgV2Adapter = require("./lib/carrier-integrations/dcsa-bkg-v2");
 registerCarrierAdapter(dcsaBkgV2Adapter.adapterKey, dcsaBkgV2Adapter);
-const { createMappers } = require("./lib/mappers");
+const { createMappers, ISSUED_BILLING_DOC_SQL } = require("./lib/mappers");
 const { readSecret } = require("./lib/dockerSecret");
 const { createRateLimiter } = require("./lib/rateLimit");
 const { addBusinessDays, businessDaysBetween } = require("./lib/business-days");
@@ -667,6 +667,9 @@ const SETTING_DEFAULTS = {
   gl_control_account_ar:        '',
   gl_control_account_ap:        '',
   gl_control_account_unmapped:  '',
+  // VAT control accounts (TKT-AEPGWA) — output VAT payable on sales, input VAT receivable on purchases.
+  gl_control_account_vat_output: '',
+  gl_control_account_vat_input:  '',
 };
 async function seedSettingDefaults() {
   await transaction(async (tx) => {
@@ -1403,6 +1406,12 @@ async function toUsd(amount, currency) {
   return rate ? roundCents(amount / rate) : roundCents(amount);
 }
 
+// A SELL line's VAT factor: 1 + its rate for a standard-rated line, 1 for zero-rated / reverse
+// charge / exempt. A receivable is what the customer owes — the gross, VAT included (2026-09-30:
+// AR, credit exposure and every "outstanding" figure used to be net, so a customer's VAT never
+// counted against their credit limit). FX Revaluation values documents the same way.
+const vatFactor = l => 1 + (((l.vat_treatment || "standard") === "standard" ? Number(l.vat_rate) || 0 : 0) / 100);
+
 // Credit Control's own AR/exposure computation (v0.73.0, TKT-O4DNFX/TKT-AJAEDO) — moved here
 // from routes/customers.js (v0.73.1, TKT-GLWMFP) so routes/shipment-ops.js's invoice-generation
 // gate can reuse the exact same figures the credit-status endpoint and the trade-lane override
@@ -1427,9 +1436,9 @@ async function computeArExposure(customerId, creditTermsDays) {
     for (const doc of docs) {
       const sourceIds = doc.source_cost_line_ids ? JSON.parse(doc.source_cost_line_ids) : null;
       const lines = sourceIds && sourceIds.length
-        ? await query(`SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE id IN (${sourceIds.map((_, i) => `$${i + 1}`).join(',')})`, sourceIds)
-        : await query("SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND container_id=$2", [doc.shipment_id, doc.container_id || '']);
-      const docTotal = lines.reduce((s, l) => s + l.amount * l.exchange_rate, 0);
+        ? await query(`SELECT id, amount, exchange_rate, vat_rate, vat_treatment FROM shipment_cost_lines WHERE id IN (${sourceIds.map((_, i) => `$${i + 1}`).join(',')})`, sourceIds)
+        : await query("SELECT id, amount, exchange_rate, vat_rate, vat_treatment FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND container_id=$2", [doc.shipment_id, doc.container_id || '']);
+      const docTotal = lines.reduce((s, l) => s + l.amount * l.exchange_rate * vatFactor(l), 0);
       for (const l of lines) coveredLineIds.add(l.id);
       // Mark as Paid (TKT-NQ87D3) — paid_amount is recorded in the same USD-equivalent unit as
       // docTotal itself (never the invoice's own display currency, which can differ per line —
@@ -1452,11 +1461,33 @@ async function computeArExposure(customerId, creditTermsDays) {
     }
   }
 
+  // A confirmed consolidated statement is a receivable too (2026-09-30) — it used to be missing
+  // from AR entirely, and its lines stayed in committedExposure below even after it was paid.
+  // Same treatment as an invoice: gross less what's been paid, aged from its confirmation, and its
+  // lines count as billed. A DRAFT statement bills nothing yet, so its lines stay committed.
+  const statements = await query("SELECT * FROM customer_statements WHERE customer_id=$1 AND status='confirmed'", [customerId]);
+  for (const st of statements) {
+    const lines = await query(
+      `SELECT scl.id, scl.amount, scl.exchange_rate, scl.vat_rate, scl.vat_treatment
+       FROM customer_statement_lines csl JOIN shipment_cost_lines scl ON scl.id = csl.cost_line_id WHERE csl.statement_id=$1`, [st.id]);
+    for (const l of lines) coveredLineIds.add(l.id);
+    const total = lines.reduce((s, l) => s + l.amount * l.exchange_rate * vatFactor(l), 0);
+    const netOutstanding = Math.max(0, total - (st.paid_amount || 0));
+    outstandingAr += netOutstanding;
+    const dueMs = new Date(st.confirmed_at || st.created_at).getTime() + (creditTermsDays || 0) * 86400000;
+    const daysOverdue = Math.floor((todayMs - dueMs) / 86400000);
+    if      (daysOverdue <= 0)  aging.current  += netOutstanding;
+    else if (daysOverdue <= 30) aging.d1_30    += netOutstanding;
+    else if (daysOverdue <= 60) aging.d31_60   += netOutstanding;
+    else if (daysOverdue <= 90) aging.d61_90   += netOutstanding;
+    else                        aging.d90_plus += netOutstanding;
+  }
+
   let committedExposure = 0;
   if (shipmentIds.length) {
     const placeholders = shipmentIds.map((_, i) => `$${i + 1}`).join(',');
     const sellLines = await query(
-      `SELECT id, amount, exchange_rate, actual_amount, actual_exchange_rate FROM shipment_cost_lines WHERE shipment_id IN (${placeholders}) AND type='SELL'`,
+      `SELECT id, amount, exchange_rate, actual_amount, actual_exchange_rate, vat_rate, vat_treatment FROM shipment_cost_lines WHERE shipment_id IN (${placeholders}) AND type='SELL'`,
       shipmentIds);
     // Unlike docTotal above (correctly frozen at whatever a line's amount was when an invoice
     // already captured it), a still-uninvoiced SELL line has no reason to stay pinned to a stale
@@ -1464,7 +1495,8 @@ async function computeArExposure(customerId, creditTermsDays) {
     // what's actually about to be billed, and the over-limit credit gate (findOverLimitBlock)
     // should see it, not an outdated guess (2026-09-03 audit: this fed a real understated-
     // exposure gap — an $8,500 actualization correction never reached committedExposure).
-    for (const l of sellLines) if (!coveredLineIds.has(l.id)) committedExposure += costLineEffectiveUsd(l);
+    // Gross: the VAT is about to be billed along with the charge.
+    for (const l of sellLines) if (!coveredLineIds.has(l.id)) committedExposure += costLineEffectiveUsd(l) * vatFactor(l);
   }
 
   return {
@@ -1477,13 +1509,13 @@ async function computeArExposure(customerId, creditTermsDays) {
 // Row-level amount resolution for one FR01/FR02 doc — same source_cost_line_ids-first, live-
 // container-scoped-fallback logic computeArExposure above already uses for AR, factored out so
 // both the Billing Performance report (routes/reports.js) and the dunning sweep below share one
-// implementation instead of drifting apart.
+// implementation instead of drifting apart. Gross — what the customer owes, VAT included.
 async function docAmountUsd(doc) {
   const sourceIds = doc.source_cost_line_ids ? JSON.parse(doc.source_cost_line_ids) : null;
   const lines = sourceIds && sourceIds.length
-    ? await query(`SELECT amount, exchange_rate FROM shipment_cost_lines WHERE id IN (${sourceIds.map((_, i) => `$${i + 1}`).join(',')})`, sourceIds)
-    : await query("SELECT amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND container_id=$2", [doc.shipment_id, doc.container_id || '']);
-  return roundCents(lines.reduce((s, l) => s + l.amount * l.exchange_rate, 0));
+    ? await query(`SELECT amount, exchange_rate, vat_rate, vat_treatment FROM shipment_cost_lines WHERE id IN (${sourceIds.map((_, i) => `$${i + 1}`).join(',')})`, sourceIds)
+    : await query("SELECT amount, exchange_rate, vat_rate, vat_treatment FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND container_id=$2", [doc.shipment_id, doc.container_id || '']);
+  return roundCents(lines.reduce((s, l) => s + l.amount * l.exchange_rate * vatFactor(l), 0));
 }
 
 // ─── Overdue-invoice reminder sweep (Story TKT-4TEYT1, Epic TKT-KR6ZBT) ───────
@@ -2214,7 +2246,12 @@ const {
 // Needs costLineEffectiveUsd (just destructured above from createMappers) and getSettings (a
 // hoisted function declaration, safe to reference from anywhere in this module) — so this can't
 // sit up near applyChargeDefaults' own instantiation, which only needed query/uid.
-const { runGlExport } = require("./lib/gl-export")({ query, uid, costLineEffectiveUsd, getSettings });
+const { runGlExport } = require("./lib/gl-export")({ query, transaction, uid, costLineEffectiveUsd, getSettings,
+  entityByShipment: (...a) => entityByShipment(...a) });
+// One SELL line, one live billing document (TKT-2F19XD) — see lib/billing-holds.js.
+const { billingHolds, describeHolds } = require("./lib/billing-holds")({ query });
+// A shipment's legal entity (branch) — see lib/legal-entities.js.
+const { entityByShipment } = require("./lib/legal-entities")({ query });
 
 function matchesScopeItem(s, item) {
   if (item.item_type === 'trade_lane') {
@@ -3074,16 +3111,66 @@ setInterval(() => runOpsAutomationSweep().catch(e => console.error('runOpsAutoma
 
 // ─── Allocation conflict helpers ──────────────────────────────────────────────
 
-const checkOverlap = async (carrierCode, effectiveDate, endDate, pol = '', pod = '', excludeId = null) => {
-  const params = [carrierCode, pol.toUpperCase(), pod.toUpperCase(), endDate, effectiveDate, ...(excludeId ? [excludeId] : [])];
-  const rows = await query(`
-    SELECT id FROM allocations
-    WHERE carrier_code = $1 AND pol = $2 AND pod = $3
-      AND effective_date <= $4 AND end_date >= $5
-      ${excludeId ? "AND id != $6" : ""}
-  `, params);
-  return rows.length > 0;
-};
+// ─── Commodity codes (Master Data → Commodities) ────────────────────────────────
+// Contracts, opportunities, quotes and shipments all name a commodity by its registry code, so
+// matching them is an exact comparison (decided 2026-09-30 — contracts used to hold free text,
+// and shipments had picked up HS headings such as "8471"). FAK is the registry's own code 9999
+// and covers every commodity. mdm_source-aware, like every other master-data read.
+const FAK_COMMODITY = "9999";
+const parseCommodityList = s => [...new Set(String(s || "").split(/[\s,]+/).map(x => x.trim()).filter(Boolean))];
+async function commodityCodeSet() {
+  if (((await getSettings()).mdm_source || "local") === "remote") {
+    const data = await callMdmService("GET", "/internal/commodities?limit=300");
+    return new Set((Array.isArray(data) ? data : data.results || []).map(c => c.code));
+  }
+  return new Set((await query("SELECT code FROM commodities")).map(r => r.code));
+}
+async function unknownCommodityCodes(codes) {
+  const list = (codes || []).filter(Boolean);
+  if (!list.length) return [];
+  const known = await commodityCodeSet();
+  return list.filter(c => !known.has(c));
+}
+// A shipment/quote/opportunity commodity code is checked only when it is set and differs from the
+// stored one, so a record still carrying an unmapped legacy value can be edited without first
+// fixing that field. Returns an error message or null.
+async function commodityCodeError(code, storedCode = "") {
+  const c = String(code || "").trim();
+  if (!c || c === String(storedCode || "").trim()) return null;
+  const bad = await unknownCommodityCodes([c]);
+  return bad.length ? unknownCommodityError(bad) : null;
+}
+const unknownCommodityError = bad =>
+  `Unknown commodity code${bad.length === 1 ? "" : "s"} ${bad.join(", ")} — pick from Master Data → Commodities (FAK is 9999)`;
+
+// One-off (idempotent) move of stored commodity values onto registry codes, with the mapping the
+// user approved on 2026-09-30. Values already on the registry are left alone; anything unmapped
+// is left too and only counted, never guessed.
+const COMMODITY_REMAP = { "FAK": "9999", "ELECRONICS": "001404", "ELECTRONICS": "001404", "8471": "001404", "8517": "001404", "9403": "002001", "M001": "" };
+async function migrateCommodityCodes() {
+  let known;
+  try { known = await commodityCodeSet(); } catch (e) { console.warn("  ⚠ Commodity code migration skipped (commodity list unavailable):", e.message); return; }
+  if (!known.size) return;
+  const remap = v => (known.has(v) ? v : (Object.prototype.hasOwnProperty.call(COMMODITY_REMAP, v.toUpperCase()) ? COMMODITY_REMAP[v.toUpperCase()] : null));
+  let contracts = 0, rows = 0, leftAlone = 0;
+  for (const c of await query("SELECT id, commodity_types FROM contracts")) {
+    const parts = parseCommodityList(c.commodity_types);
+    const mapped = parts.length ? parts.map(remap) : [FAK_COMMODITY];
+    if (mapped.some(v => v === null)) { leftAlone++; continue; }
+    const next = [...new Set(mapped.filter(Boolean))].join(",") || FAK_COMMODITY;
+    if (next !== (c.commodity_types || "")) { await query("UPDATE contracts SET commodity_types=$1 WHERE id=$2", [next, c.id]); contracts++; }
+  }
+  for (const table of ["shipments", "quotes", "opportunities"]) {
+    for (const r of await query(`SELECT id, commodity_code FROM ${table} WHERE COALESCE(commodity_code,'') <> ''`)) {
+      const next = remap(r.commodity_code);
+      if (next === null) { leftAlone++; continue; }
+      if (next !== r.commodity_code) { await query(`UPDATE ${table} SET commodity_code=$1 WHERE id=$2`, [next, r.id]); rows++; }
+    }
+  }
+  if (contracts || rows || leftAlone)
+    console.log(`  ✔ Commodity codes: ${contracts} contract(s) and ${rows} shipment/quote/opportunity row(s) moved to registry codes, ${leftAlone} unmapped value(s) left as they were`);
+}
+schemaReadyPromise.then(() => migrateCommodityCodes()).catch(e => console.error("migrateCommodityCodes failed:", e));
 
 // ─── Shared route/haulage matching (contracts + allocations) ──────────────────
 // One codepath for "does this leg actually cover the requested route + haulage",
@@ -3441,6 +3528,38 @@ const recomputeSpaceBadge = async shipmentId => {
 // linked shipments needs to be refreshed at once: a shipment being deleted/unlinked/retyped away
 // (its former allocation-mates just gained capacity back), or a booking being cancelled (2026-09
 // Space Configuration spec, gap #9 — recomputeSpaceBadge's own trigger coverage was incomplete).
+// ─── Space configuration loop check (decided 2026-09-30) ──────────────────────────
+// A shipment's loop is its latest saved sailing's vessel service — the same rule as
+// src/utils/scheduleLoop.js deriveLoopCode (one leg: its service; several: the shared one, or the
+// longest leg's when they differ). When a shipment on a loop-specific space configuration ends up
+// sailing on a different loop (the sailing was swapped), the SPACE link is dropped — not the
+// contract, whose rates can still cover the route — and the change is logged. Called after every
+// sailing save/change/removal.
+async function shipmentLoopCode(shipmentId) {
+  const [sch] = await query("SELECT id, service FROM shipment_schedules WHERE shipment_id=$1 ORDER BY saved_at DESC LIMIT 1", [shipmentId]);
+  if (!sch) return "";
+  const legs = await query("SELECT service, etd, eta FROM schedule_legs WHERE schedule_id=$1 ORDER BY leg_order", [sch.id]);
+  if (legs.length < 2) return String(sch.service || "").trim().toUpperCase();
+  const named = legs.filter(l => l.service);
+  if (!named.length) return "";
+  const days = l => { const d = (new Date(l.eta) - new Date(l.etd)) / 86400000; return Number.isFinite(d) ? d : 0; };
+  const pick = new Set(named.map(l => l.service)).size === 1 ? named[0] : named.reduce((a, b) => days(b) > days(a) ? b : a);
+  return String(pick.service || "").trim().toUpperCase();
+}
+async function revalidateSpaceLoop(shipmentId, actorId = null) {
+  const [s] = await query("SELECT id, allocation_id FROM shipments WHERE id=$1", [shipmentId]);
+  if (!s?.allocation_id) return null;
+  const [a] = await query("SELECT id, loop_code FROM allocations WHERE id=$1", [s.allocation_id]);
+  if (!a?.loop_code) return null;
+  const loop = await shipmentLoopCode(shipmentId);
+  if (!loop || loop === a.loop_code) return null;
+  await query("UPDATE shipments SET allocation_id=NULL, space_selection='', space_overage_reason='' WHERE id=$1", [shipmentId]);
+  await logEvent(shipmentId, "SPACE_UNLINKED", "allocation_id", a.id, null,
+    JSON.stringify({ reason: `Sailing is on loop ${loop}; space configuration ${a.id} is for loop ${a.loop_code}` }), actorId);
+  await recomputeSpaceBadge(shipmentId);
+  return { allocationId: a.id, loop, configLoop: a.loop_code };
+}
+
 const recomputeSpaceBadgesForAllocation = async allocationId => {
   if (!allocationId) return;
   try {
@@ -3612,7 +3731,7 @@ async function generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerC
 async function importContractRates(shipmentId, opts = {}) {
   const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
   if (!shipment || shipment.contract_type !== 'Central' || !shipment.contract_id) return 0;
-  const [existing] = await query("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 ORDER BY generated_at DESC LIMIT 1", [shipmentId]);
+  const [existing] = await query("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 AND contract_id=$2 ORDER BY generated_at DESC LIMIT 1", [shipmentId, shipment.contract_id]);
   const snapshotId = existing ? existing.id : await createRateSnapshot(shipmentId, shipment.contract_id, 'initial');
   if (!snapshotId) return 0;
   return await generateCostLinesFromSnapshot(shipmentId, snapshotId, opts);
@@ -3654,16 +3773,27 @@ function aggregateRatesByChargeCode(rateRows, containers) {
   return byCode;
 }
 
-// Pure read — computes the diff between what's currently on the shipment's cost lines and what
-// the comparison source (mode 'update' = live contract rates; mode 'import' = the shipment's own
-// already-issued rate snapshot, or live rates if none exists yet) would generate. Never writes
-// anything, so Discard in the frontend modal is a genuine no-op with zero backend call needed
-// beyond this preview. Diff granularity is per charge code (aggregated across containers/BUY
-// lines), not per individual cost line — a per-container-level diff was considered and deferred
-// as more UI than this pass needs; a charge with ANY manually-sourced line among its group is
-// treated as 'manual' for the whole group, matching the coarse per-charge-code decision the
-// Overwrite/Ignore actions themselves operate at.
-async function computeCostLineReconciliation(shipmentId, mode) {
+// Only an accrued contract/manual BUY line is the contract's to replace. Anything posted or
+// actualized is a financial record (correct it with Adjust), and a line from another source
+// (Charge Defaults, Merchant's Haulage, an approved carrier invoice, an adjustment) was never the
+// contract's in the first place. Overwrite used to delete all of these by charge code alone.
+const RECONCILE_SOURCE_LABEL = {
+  principal_default: "CCD", merchant_haulage: "Merchant's Haulage",
+  carrier_invoice: "carrier invoice", adjustment: "adjustment", reversal: "reversal",
+};
+const isReplaceableBuy = l => (l.status || 'accrued') === 'accrued' && (l.source === 'contract' || l.source === 'manual');
+const protectedReason = l => {
+  const status = l.status || 'accrued';
+  if (status === 'posted') return 'posted';
+  if (status === 'actualized') return 'actualized';
+  return `from ${RECONCILE_SOURCE_LABEL[l.source] || l.source || 'another source'}`;
+};
+// A contract-generated line keeps its rate_snapshot_id when edited (its source flips to 'manual'),
+// which is what separates "the contract dropped this charge" from "someone added a charge the
+// contract never had" — only the former can be 'removed'.
+const cameFromContract = l => l.source === 'contract' || !!l.rate_snapshot_id;
+
+async function buildCostLineReconciliation(shipmentId, mode) {
   const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
   if (!shipment) return { error: "Shipment not found", notFound: true };
   if (shipment.contract_type !== 'Central' || !shipment.contract_id)
@@ -3674,55 +3804,108 @@ async function computeCostLineReconciliation(shipmentId, mode) {
   if (mode === 'update') {
     contractRateRows = await resolveLiveContractRates(shipmentId, shipment.contract_id);
   } else {
-    const [snap] = await query("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 ORDER BY generated_at DESC LIMIT 1", [shipmentId]);
+    const [snap] = await query("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 AND contract_id=$2 ORDER BY generated_at DESC LIMIT 1", [shipmentId, shipment.contract_id]);
     contractRateRows = snap
       ? await query("SELECT * FROM shipment_rate_snapshot_lines WHERE snapshot_id=$1", [snap.id])
       : await resolveLiveContractRates(shipmentId, shipment.contract_id); // no snapshot yet — same as a fresh initial import
   }
   const contractByCode = aggregateRatesByChargeCode(contractRateRows, containers);
 
-  const currentLines = await query("SELECT charge_code, amount, currency, source FROM shipment_cost_lines WHERE shipment_id=$1 AND type='BUY'", [shipmentId]);
-  const currentByCode = new Map();
-  for (const l of currentLines) {
-    const g = currentByCode.get(l.charge_code) || { amount: 0, currency: l.currency, hasManual: false };
+  const buyLines = await query("SELECT id, charge_code, amount, currency, source, status, rate_snapshot_id FROM shipment_cost_lines WHERE shipment_id=$1 AND type='BUY'", [shipmentId]);
+  const sellLines = await query("SELECT id, charge_code, status FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND source='contract'", [shipmentId]);
+  // A contract SELL line already billed (issued invoice/credit note, or a live statement) must
+  // survive a regeneration just like a posted one — deleting it would orphan the document.
+  const billedSellIds = new Set();
+  if (sellLines.length) {
+    const docs = await query(`SELECT source_cost_line_ids FROM shipment_documents WHERE shipment_id=$1 AND ${ISSUED_BILLING_DOC_SQL}`, [shipmentId]);
+    docs.forEach(d => (d.source_cost_line_ids ? JSON.parse(d.source_cost_line_ids) : []).forEach(id => billedSellIds.add(id)));
+    const stmt = await query(`SELECT l.cost_line_id FROM customer_statement_lines l JOIN customer_statements s ON s.id=l.statement_id
+      WHERE l.shipment_id=$1 AND s.status <> 'voided'`, [shipmentId]);
+    stmt.forEach(r => billedSellIds.add(r.cost_line_id));
+  }
+
+  const groups = new Map();
+  const groupFor = code => {
+    if (!groups.has(code)) groups.set(code, { amount: 0, currency: null, hasLines: false, hasManual: false,
+      fromContract: false, lockReason: null, replaceableIds: [], removableIds: [], sellIds: [], sources: new Set() });
+    return groups.get(code);
+  };
+  for (const l of buyLines) {
+    const g = groupFor(l.charge_code);
     g.amount += l.amount;
-    if (l.source === 'manual') g.hasManual = true;
-    currentByCode.set(l.charge_code, g);
+    g.currency = g.currency || l.currency;
+    g.hasLines = true;
+    g.sources.add(l.source || 'manual');
+    if (l.status === 'posted' || l.status === 'actualized') g.sources.add(l.status);
+    if (cameFromContract(l)) g.fromContract = true;
+    if (isReplaceableBuy(l)) {
+      g.replaceableIds.push(l.id);
+      if (l.source === 'manual') g.hasManual = true;
+      if (cameFromContract(l)) g.removableIds.push(l.id);
+    } else if (!g.lockReason) g.lockReason = protectedReason(l);
+  }
+  for (const l of sellLines) {
+    const g = groupFor(l.charge_code);
+    if (l.status === 'posted' || billedSellIds.has(l.id)) { if (!g.lockReason) g.lockReason = 'already invoiced'; }
+    else g.sellIds.push(l.id);
   }
 
   const rows = [];
-  for (const chargeCode of new Set([...contractByCode.keys(), ...currentByCode.keys()])) {
+  const plan = new Map(); // chargeCode -> { deleteIds, regenerate }
+  for (const chargeCode of new Set([...contractByCode.keys(), ...groups.keys()])) {
     const contract = contractByCode.get(chargeCode) || null;
-    const current = currentByCode.get(chargeCode) || null;
-    let status;
-    if (!current && contract) status = 'new';
-    else if (current && !contract) status = 'removed';
-    else if (current.hasManual) status = 'manual';
+    const g = groups.get(chargeCode) || groupFor(chargeCode);
+    let status, reason = null;
+    if (!contract && !g.fromContract) {
+      if (!g.hasLines) continue; // only an unbilled contract SELL line with no BUY side — nothing to show
+      status = 'kept';
+    } else if (g.lockReason) { status = 'locked'; reason = g.lockReason; }
+    else if (!g.hasLines && contract) status = 'new';
+    else if (!contract) status = 'removed';
+    else if (g.hasManual) status = 'manual';
     // Cents-rounded comparison (same reasoning as lib/mappers.js's roundCents) — avoids a false
     // 'changed' flag from plain float drift on two numbers that are really equal.
-    else if (Math.round(current.amount * 100) !== Math.round(contract.amount * 100)) status = 'changed';
+    else if (Math.round(g.amount * 100) !== Math.round(contract.amount * 100)) status = 'changed';
     else status = 'match';
+
+    if (status === 'removed') plan.set(chargeCode, { deleteIds: [...g.removableIds, ...g.sellIds], regenerate: false });
+    else if (['match', 'changed', 'manual', 'new'].includes(status))
+      plan.set(chargeCode, { deleteIds: [...g.replaceableIds, ...g.sellIds], regenerate: true });
+
     rows.push({
       chargeCode,
-      currentAmount: current ? current.amount : null, currentCurrency: current ? current.currency : null,
-      currentSource: current ? (current.hasManual ? 'manual' : 'contract') : null,
+      currentAmount: g.hasLines ? g.amount : null, currentCurrency: g.hasLines ? g.currency : null,
+      currentSource: g.hasLines ? (g.hasManual ? 'manual' : 'contract') : null,
+      currentSources: [...g.sources],
       contractAmount: contract ? contract.amount : null, contractCurrency: contract ? contract.currency : null,
-      status,
+      status, reason,
     });
   }
   rows.sort((a, b) => a.chargeCode.localeCompare(b.chargeCode));
-  return { rows };
+  return { rows, plan };
 }
 
-// Applies one of the two reconcile outcomes. 'overwrite' deletes every BUY line (and any SELL
-// line that's still source='contract' — a manually-added/edited SELL line with a coincidentally
-// matching charge code is never touched by this, since it was never shown in the diff either) for
-// every charge code the diff didn't call 'new', then regenerates fresh from the snapshot —
-// deliberately reaching 'manual' BUY lines too, since Overwrite is the explicitly risky option a
-// human chose. 'ignore' only inserts the charge codes the diff called 'new', touching nothing that
-// already exists (manual or not) — a plain, never-touched stale contract price is left stale
-// exactly like a genuine manual override would be; there is no in-between "smart refresh" mode.
-async function applyReconciliation(shipmentId, mode, action, { splitPerContainer = false } = {}) {
+// Pure read — the diff between the shipment's cost lines and what the comparison source (mode
+// 'update' = live contract rates; mode 'import' = the shipment's own already-issued rate snapshot,
+// or live rates if none exists yet) would generate. Never writes, so Discard in the frontend
+// modal is a genuine no-op. Per charge code, not per line: a charge with any manual line among
+// its replaceable ones is 'manual' for the whole group. 'locked' = the contract covers it but a
+// protected line (see isReplaceableBuy) is there; 'kept' = not on the contract and never was.
+async function computeCostLineReconciliation(shipmentId, mode) {
+  const result = await buildCostLineReconciliation(shipmentId, mode);
+  return result.error ? result : { rows: result.rows };
+}
+
+// Applies the user's reconcile decision. Taking the contract for a charge deletes its replaceable
+// lines and regenerates it from the snapshot ('removed' only deletes, and only lines that came from
+// the contract); locked and kept charges can never be taken — regenerating a locked charge would
+// duplicate the posted/billed line still there. 'selected' takes exactly the charge codes in
+// `take` (the per-charge choices in the Reconcile modal — a code whose status has since become
+// locked or matching is skipped); 'overwrite' takes every charge, manual overrides included;
+// 'ignore' only adds charges the diff called 'new'. Every action records a snapshot for the
+// contract, which is also what marks it as applied (see autoImportContractCosts).
+const RECONCILE_TAKEABLE = ['changed', 'manual', 'new', 'removed'];
+async function applyReconciliation(shipmentId, mode, action, { splitPerContainer = false, take = [] } = {}) {
   const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
   if (!shipment) throw new Error("Shipment not found");
   if (shipment.contract_type !== 'Central' || !shipment.contract_id)
@@ -3732,33 +3915,59 @@ async function applyReconciliation(shipmentId, mode, action, { splitPerContainer
   if (mode === 'update') {
     snapshotId = await createRateSnapshot(shipmentId, shipment.contract_id, 'carrier_update');
   } else {
-    const [existing] = await query("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 ORDER BY generated_at DESC LIMIT 1", [shipmentId]);
+    const [existing] = await query("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 AND contract_id=$2 ORDER BY generated_at DESC LIMIT 1", [shipmentId, shipment.contract_id]);
     snapshotId = existing ? existing.id : await createRateSnapshot(shipmentId, shipment.contract_id, 'initial');
   }
   if (!snapshotId) throw new Error("Contract has no rates to snapshot");
 
-  const { rows } = await computeCostLineReconciliation(shipmentId, mode);
+  const { rows, plan } = await buildCostLineReconciliation(shipmentId, mode);
   const existingSell = await query("SELECT id FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND source='contract'", [shipmentId]);
   const includeSell = existingSell.length > 0;
 
-  if (action === 'overwrite') {
-    const toDelete = rows.filter(r => r.status !== 'new').map(r => r.chargeCode);
-    if (toDelete.length) {
-      const ph = toDelete.map((_, i) => `$${i + 2}`).join(',');
-      await query(`DELETE FROM shipment_cost_lines WHERE shipment_id=$1 AND type='BUY' AND charge_code IN (${ph})`, [shipmentId, ...toDelete]);
-      if (includeSell) {
-        await query(`DELETE FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND source='contract' AND charge_code IN (${ph})`, [shipmentId, ...toDelete]);
-      }
-    }
-    const count = await generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerContainer, includeSell });
-    return { snapshotId, imported: count };
-  }
+  const statusOf = new Map(rows.map(r => [r.chargeCode, r.status]));
+  const takeSet = new Set(take);
+  const taken = [...plan.keys()].filter(code =>
+    action === 'overwrite' ? true
+    : action === 'ignore' ? statusOf.get(code) === 'new'
+    : takeSet.has(code) && RECONCILE_TAKEABLE.includes(statusOf.get(code)));
 
-  const onlyChargeCodes = new Set(rows.filter(r => r.status === 'new').map(r => r.chargeCode));
+  const deleteIds = taken.flatMap(code => plan.get(code).deleteIds);
+  if (deleteIds.length) {
+    const ph = deleteIds.map((_, i) => `$${i + 2}`).join(',');
+    await query(`DELETE FROM shipment_cost_lines WHERE shipment_id=$1 AND id IN (${ph})`, [shipmentId, ...deleteIds]);
+  }
+  const onlyChargeCodes = new Set(taken.filter(code => plan.get(code).regenerate));
   const count = onlyChargeCodes.size
     ? await generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerContainer, includeSell, onlyChargeCodes })
     : 0;
-  return { snapshotId, imported: count };
+  return { snapshotId, imported: count, deleted: deleteIds.length };
+}
+
+// Fills a Central shipment's cost lines from its contract without the user clicking Import — but
+// only ONCE per contract (a rate snapshot for the current contract marks it done, so a deliberate
+// delete stays deleted) and only when it can't clash with anything: if any contract charge already
+// has a line (a CCD, a hand-added line, the previous contract's lines after a switch), nothing is
+// written and Cost Entry opens the Reconcile modal for the user to decide. In-flight calls per
+// shipment share one promise — the page's own concurrent cost-line reads (StrictMode double-mount,
+// Invoice Entry + GP Overview) would otherwise both see "no snapshot" and import twice.
+const contractAutoImports = new Map();
+function autoImportContractCosts(shipmentId) {
+  if (contractAutoImports.has(shipmentId)) return contractAutoImports.get(shipmentId);
+  const run = (async () => {
+    const [s] = await query("SELECT contract_type, contract_id FROM shipments WHERE id=$1", [shipmentId]);
+    if (!s || s.contract_type !== 'Central' || !s.contract_id) return { imported: 0 };
+    const [done] = await query("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 AND contract_id=$2 LIMIT 1", [shipmentId, s.contract_id]);
+    if (done) return { imported: 0 };
+    const { rows, error } = await buildCostLineReconciliation(shipmentId, 'import');
+    if (error) return { imported: 0 };
+    if (rows.some(r => !['new', 'kept'].includes(r.status))) return { imported: 0, needsReview: true };
+    if (!rows.some(r => r.status === 'new')) return { imported: 0 };
+    return applyReconciliation(shipmentId, 'import', 'ignore');
+  })()
+    .catch(e => { console.error(`[contract auto-import] ${shipmentId}:`, e.message); return { imported: 0 }; })
+    .finally(() => contractAutoImports.delete(shipmentId));
+  contractAutoImports.set(shipmentId, run);
+  return run;
 }
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
@@ -3860,7 +4069,7 @@ const ctx = {
   gracefulShutdown,
   auth, requireRole,
   portLanesMap, portCountryMap, rebuildPortLanesMap, longestLane,
-  applyShipmentAccessFilter, applyOfficeScopedAccessFilter, resolveOfficeAccess, resolveEffectiveOfficeIds,
+  applyShipmentAccessFilter, applyOfficeScopedAccessFilter, resolveOfficeAccess, resolveEffectiveOfficeIds, deriveEffectiveRole,
   officeSideOf, chargeCodeSide, blockIfWrongSide, PARTY_ROLE_SIDE,
   resolveOfficeSideAccess, sideFromAccess,
   fxCache, getFxRates, toUsd, roundCents, costLineEffectiveUsd, COST_LINE_EFFECTIVE_USD_SQL,
@@ -3868,7 +4077,7 @@ const ctx = {
   syncConsolidatedScreeningList, scheduleNextCslSync,
   normSanctionName, EMBARGOED_COUNTRIES,
   getSettings,
-  shipmentSubs, broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge,
+  shipmentSubs, broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, shipmentLoopCode, revalidateSpaceLoop,
   recomputeSpaceBadgesForAllocation, TEU_EXPR,
   UPLOADS_DIR,
   renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
@@ -3877,7 +4086,7 @@ const ctx = {
   SVC_ABBR, LEG_LOC_ABBR, GPS_LOC_TYPE,
   VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
   SERVICE_CODE_MAP, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
-  computeCostLineReconciliation, applyReconciliation,
+  computeCostLineReconciliation, applyReconciliation, autoImportContractCosts,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
   mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice,
   mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition, mapDutyRateChapter, mapHsCode, mapScheduledReport, mapContainerTypeDefinition, mapDocumentTemplate,
@@ -3894,7 +4103,7 @@ const ctx = {
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate, mapContractRouting, mapCarrierInvoice, mapCarrierInvoiceLine,
   mapChargeDefaultSetup, mapChargeDefaultLine, applyChargeDefaults,
-  mapGlAccountMapping, mapGlExportBatch, runGlExport,
+  mapGlAccountMapping, mapGlExportBatch, runGlExport, billingHolds, describeHolds, entityByShipment,
   mapCustomerStatement, mapCustomerStatementLine,
   mapQuote, mapQuoteLine, mapOpportunity,
   mapInvoiceReasonCode, mapInvoiceStatusOverride,
@@ -3909,14 +4118,14 @@ const ctx = {
   ingestAisMessage: aisListener.ingestMessage,
   getAisListenerStatus: aisListener.getStatus,
   forceRefreshAisTrackedLegs: aisListener.forceRefreshTrackedLegs,
-  checkOverlap,
+  FAK_COMMODITY, parseCommodityList, unknownCommodityCodes, unknownCommodityError, commodityCodeError,
   autoCompleteMilestone,
   ensureBookingCreated, supersedeIfCarrierChanged,
   runOpsAutomationSweep,
   linkedPortCodes, findMatchingContractLegs, resolveCarrierAgent, resolveCarrierAgentCandidates,
   checkLineAgentCapabilityGaps,
   screenShipmentById, rescreenActiveShipments, screenCustomer, rescreenShipmentsForCustomer, rescreenAllCustomers, resolveCustomerGroup,
-  computeArExposure, docAmountUsd, runDunningSweep, runScheduledReportsSweep, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
+  computeArExposure, docAmountUsd, vatFactor, runDunningSweep, runScheduledReportsSweep, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
   canEditOfficeSide, resolveActiveOffice,
   OVERRIDE_GRACE_MS,
   bcrypt, jwt, JWT_SECRET,

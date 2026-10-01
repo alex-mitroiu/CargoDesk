@@ -12,6 +12,10 @@ import SendDocumentWebhookModal from "./SendDocumentWebhookModal";
 import { DOC_TYPES, docTypeLabel, FILE_ICON, fmtBytes, fmtDate } from "../../utils/documentBuilders";
 import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
 
+// Invoices and credit/debit notes: deletable only while draft, and a voided one is never re-confirmed
+// (the server refuses both — routes/shipment-ops.js).
+const BILLING_DOC_TYPES = ["FR01", "FR02", "CN01"];
+
 // ─── Documents Modal ──────────────────────────────────────────────────────────
 // TrackedDocPreviewModal (in-app preview) now lives in
 // src/components/shared/TrackedDocPreviewModal.jsx — shared with the Accounting
@@ -348,7 +352,7 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
                   <button type="button" onClick={() => setEdiDoc(doc)} style={dashedBtn}>📡 EDI</button>
                   <button type="button" onClick={() => setWebhookDoc(doc)} style={dashedBtn}>🔗 Webhook</button>
                   <button type="button" onClick={() => setHistoryDoc(doc)} style={dashedBtn}>🕐</button>
-                  {canEdit && doc.status !== "confirmed" && (
+                  {canEdit && doc.status !== "confirmed" && !(BILLING_DOC_TYPES.includes(doc.docType) && doc.status === "voided") && (
                     <button type="button" onClick={() => handleConfirm(doc.id)}
                       style={{ ...dashedBtn, color: HZ.good, borderColor: HZ.good + "66" }}>
                       ✓ Confirm
@@ -361,7 +365,7 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
                   {canEdit && doc.docType === "BL01" && doc.status === "confirmed" && !doc.blReleasedAt && (
                     <button type="button" onClick={() => handleBlRelease(doc.id)} style={dashedBtn}>Mark Released</button>
                   )}
-                  {canEdit && (
+                  {canEdit && (!BILLING_DOC_TYPES.includes(doc.docType) || doc.status === "draft") && (
                     <button type="button" onClick={() => handleDelete(doc.id)} style={{ ...dashedBtn, color: HZ.crit, borderColor: HZ.crit + "55" }}>✕</button>
                   )}
                 </div>

@@ -131,13 +131,14 @@ async function setSource(token, value) {
     console.log("\nallocations/match resolves a remote contract's legs too (haulage-gated matching)");
     const allocNum = `TGL-${Date.now()}`;
     const createAlloc = await request("POST", "/api/allocations", {
-      carrierCode: "HLCU", allocatedTEU: 10, effectiveDate: "2031-01-01", endDate: "2031-12-31",
+      // Inside the contract's validity (2026-01-01 – 2027-01-01): a space configuration must be.
+      carrierCode: "HLCU", allocatedTEU: 10, effectiveDate: "2026-06-01", endDate: "2026-08-31",
       pol: "CNSHA", pod: "USLAX", contractId: remoteId, contractNumber: numRemote,
     }, token);
     assert("scratch allocation created", createAlloc.status === 201, JSON.stringify(createAlloc.body));
     const allocId = createAlloc.body.id;
     const allocMatch = await request("GET",
-      "/api/allocations/match?pol=CNSHA&pod=USLAX&etd=2031-06-01&needsPolHaulage=1", null, token);
+      "/api/allocations/match?pol=CNSHA&pod=USLAX&etd=2026-07-01&needsPolHaulage=1", null, token);
     assert("allocation matches once its remote contract's leg is fetched and shows carrier haulage",
       allocMatch.body.some(a => a.id === allocId), JSON.stringify(allocMatch.body));
     await request("DELETE", `/api/allocations/${allocId}`, null, token);

@@ -369,11 +369,17 @@ export const api = {
   fxRevaluation: {
     summary: () => req("GET", "/fx-revaluation/summary"),
   },
+  vatLiability: {
+    summary: (dateFrom, dateTo) => req("GET", `/vat-liability/summary?${new URLSearchParams({ dateFrom, dateTo })}`),
+  },
   customerStatements: {
     list:          (params = {}) => req("GET", `/customer-statements?${new URLSearchParams(params)}`),
     get:           (id)          => req("GET", `/customer-statements/${id}`),
     eligibleLines: (customerId, dateFrom, dateTo) =>
       req("GET", `/customer-statements/eligible-lines?${new URLSearchParams({ customerId, dateFrom, dateTo })}`),
+    // { lines, held } — the eligible lines plus the ones another billing document already holds.
+    eligibleLinesWithHeld: (customerId, dateFrom, dateTo) =>
+      req("GET", `/customer-statements/eligible-lines?${new URLSearchParams({ customerId, dateFrom, dateTo, withHeld: "1" })}`),
     generate:  (data)   => req("POST", "/customer-statements/generate", data),
     confirm:   (id)     => req("POST", `/customer-statements/${id}/confirm`),
     markPaid:  (id, data) => req("POST", `/customer-statements/${id}/mark-paid`, data),

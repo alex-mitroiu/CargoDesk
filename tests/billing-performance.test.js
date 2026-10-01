@@ -50,7 +50,7 @@
  */
 
 import http from "node:http";
-import { ensureOffices } from "./helpers/offices.mjs";
+import { ensureOffices, retireOffice } from "./helpers/offices.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -529,7 +529,7 @@ async function confirmDoc(shipmentId, docId, token) {
     await request("DELETE", `/api/customers/${custDisabled.body.id}`, null, token);
     await request("DELETE", `/api/shipments/${shipFuture.body.id}`, null, token);
     await request("DELETE", `/api/customers/${custFuture.body.id}`, null, token);
-    await request("DELETE", `/api/offices/${officeSweep.body.id}`, null, token);
+    await retireOffice(token, officeSweep.body.id); // its shipment billed its customer, so the office may only deactivate
 
     console.log("\n" + "─".repeat(50));
     console.log(`Results: ${passed} passed, ${failed} failed`);
