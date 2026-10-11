@@ -24,6 +24,7 @@ const { readSecret } = require("./lib/dockerSecret");
 const { createRateLimiter } = require("./lib/rateLimit");
 const { addBusinessDays, businessDaysBetween } = require("./lib/business-days");
 const staticConfig = require("./lib/staticConfig");
+const { timezoneFor, timezoneDataVersion } = require("./lib/timezones");
 
 const JWT_DEV_DEFAULT = "cargoDesk-dev-secret-do-not-use-in-prod";
 const JWT_SECRET = readSecret("JWT_SECRET", JWT_DEV_DEFAULT);
@@ -1764,164 +1765,35 @@ async function backfillPortCountryCodes() {
     console.log(`  ✔ Backfilled country_code on ${rows.length.toLocaleString()} port rows`);
 }
 
-// ─── Backfill timezone on port_locations ──────────────────────────────────────
-// Single-TZ countries use a direct IANA map; multi-TZ countries (US, CA, AU,
-// RU, BR, MX, ID) use longitude bands. Safe to re-run — only touches NULL rows.
+// ─── Backfill / correct timezone on port_locations ───────────────────────────
+// Every location's zone comes from lib/timezones.js (the committed data/port-timezones.json,
+// else a coordinate lookup kept to the location's own country). Fills empty zones on every
+// startup; re-checks ALL locations once whenever that data changes (its hash is kept in
+// app_settings.port_timezones_version), which is also what corrected the older guesses — a
+// one-zone-per-country table plus longitude bands that put Chicago on New York time, the
+// Canaries on Madrid time and left India, Chile and Argentina blank. Locations can't have their
+// zone set by hand yet; once they can, that override must be skipped here.
 async function backfillPortTimezones() {
-  const [{ n: nullCountRaw }] = await query(
-    "SELECT COUNT(*) AS n FROM port_locations WHERE timezone IS NULL OR timezone=''"
-  );
-  const nullCount = Number(nullCountRaw);
-  if (nullCount === 0) return;
-
-  const COUNTRY_TZ = {
-    // Europe
-    AD:"Europe/Andorra",  AL:"Europe/Tirane",    AT:"Europe/Vienna",
-    BA:"Europe/Sarajevo", BE:"Europe/Brussels",  BG:"Europe/Sofia",
-    BY:"Europe/Minsk",    CH:"Europe/Zurich",    CZ:"Europe/Prague",
-    DE:"Europe/Berlin",   DK:"Europe/Copenhagen",EE:"Europe/Tallinn",
-    ES:"Europe/Madrid",   FI:"Europe/Helsinki",  FR:"Europe/Paris",
-    GB:"Europe/London",   GI:"Europe/Gibraltar", GR:"Europe/Athens",
-    HR:"Europe/Zagreb",   HU:"Europe/Budapest",  IE:"Europe/Dublin",
-    IS:"Atlantic/Reykjavik",IT:"Europe/Rome",    LI:"Europe/Vaduz",
-    LT:"Europe/Vilnius",  LU:"Europe/Luxembourg",LV:"Europe/Riga",
-    MC:"Europe/Monaco",   MD:"Europe/Chisinau",  ME:"Europe/Podgorica",
-    MK:"Europe/Skopje",   MT:"Europe/Malta",     NL:"Europe/Amsterdam",
-    NO:"Europe/Oslo",     PL:"Europe/Warsaw",    PT:"Europe/Lisbon",
-    RO:"Europe/Bucharest",RS:"Europe/Belgrade",  SE:"Europe/Stockholm",
-    SI:"Europe/Ljubljana",SK:"Europe/Bratislava",SM:"Europe/San_Marino",
-    TR:"Europe/Istanbul", UA:"Europe/Kiev",      XK:"Europe/Belgrade",
-    // Caucasus / Central Asia
-    AM:"Asia/Yerevan",    AZ:"Asia/Baku",        GE:"Asia/Tbilisi",
-    KG:"Asia/Bishkek",    TJ:"Asia/Dushanbe",    TM:"Asia/Ashgabat",
-    UZ:"Asia/Tashkent",   KZ:"Asia/Almaty",
-    // Middle East
-    AE:"Asia/Dubai",      AF:"Asia/Kabul",       BH:"Asia/Bahrain",
-    CY:"Asia/Nicosia",    IQ:"Asia/Baghdad",     IR:"Asia/Tehran",
-    IL:"Asia/Jerusalem",  JO:"Asia/Amman",       KW:"Asia/Kuwait",
-    LB:"Asia/Beirut",     OM:"Asia/Muscat",      QA:"Asia/Qatar",
-    SA:"Asia/Riyadh",     SY:"Asia/Damascus",    YE:"Asia/Aden",
-    // Asia (single-TZ)
-    BD:"Asia/Dhaka",      BN:"Asia/Brunei",      BT:"Asia/Thimphu",
-    CN:"Asia/Shanghai",   HK:"Asia/Hong_Kong",   JP:"Asia/Tokyo",
-    KH:"Asia/Phnom_Penh", KP:"Asia/Pyongyang",   KR:"Asia/Seoul",
-    LA:"Asia/Vientiane",  LK:"Asia/Colombo",     MM:"Asia/Rangoon",
-    MN:"Asia/Ulaanbaatar",MO:"Asia/Macau",       MV:"Indian/Maldives",
-    MY:"Asia/Kuala_Lumpur",NP:"Asia/Kathmandu",  PH:"Asia/Manila",
-    PK:"Asia/Karachi",    SG:"Asia/Singapore",   TH:"Asia/Bangkok",
-    TL:"Asia/Dili",       TW:"Asia/Taipei",      VN:"Asia/Ho_Chi_Minh",
-    // Africa
-    DZ:"Africa/Algiers",  EG:"Africa/Cairo",     ER:"Africa/Asmara",
-    ET:"Africa/Addis_Ababa",GH:"Africa/Accra",   KE:"Africa/Nairobi",
-    LY:"Africa/Tripoli",  MA:"Africa/Casablanca",MG:"Indian/Antananarivo",
-    MU:"Indian/Mauritius",MW:"Africa/Blantyre",  MZ:"Africa/Maputo",
-    NA:"Africa/Windhoek", NE:"Africa/Niamey",    NG:"Africa/Lagos",
-    RE:"Indian/Reunion",  RW:"Africa/Kigali",    SC:"Indian/Mahe",
-    SD:"Africa/Khartoum", SN:"Africa/Dakar",     SO:"Africa/Mogadishu",
-    SS:"Africa/Juba",     SZ:"Africa/Mbabane",   TD:"Africa/Ndjamena",
-    TG:"Africa/Lome",     TN:"Africa/Tunis",     TZ:"Africa/Dar_es_Salaam",
-    UG:"Africa/Kampala",  ZA:"Africa/Johannesburg",ZM:"Africa/Lusaka",
-    ZW:"Africa/Harare",   CI:"Africa/Abidjan",   CM:"Africa/Douala",
-    // Americas – single-TZ
-    AG:"America/Antigua", AW:"America/Aruba",    BB:"America/Barbados",
-    BL:"America/St_Barthelemy",BM:"America/Bermuda",BS:"America/Nassau",
-    BZ:"America/Belize",  BO:"America/La_Paz",   CO:"America/Bogota",
-    CR:"America/Costa_Rica",CU:"America/Havana",  DM:"America/Dominica",
-    DO:"America/Santo_Domingo",EC:"America/Guayaquil",FK:"Atlantic/Stanley",
-    GD:"America/Grenada", GF:"America/Cayenne",  GP:"America/Guadeloupe",
-    GT:"America/Guatemala",GY:"America/Guyana",  HN:"America/Tegucigalpa",
-    HT:"America/Port-au-Prince",JM:"America/Jamaica",KN:"America/St_Kitts",
-    KY:"America/Cayman",  LC:"America/St_Lucia", MQ:"America/Martinique",
-    MS:"America/Montserrat",NI:"America/Managua", PA:"America/Panama",
-    PE:"America/Lima",    PR:"America/Puerto_Rico",PY:"America/Asuncion",
-    SR:"America/Paramaribo",SV:"America/El_Salvador",TC:"America/Grand_Turk",
-    TT:"America/Port_of_Spain",UY:"America/Montevideo",VC:"America/St_Vincent",
-    VE:"America/Caracas", VG:"America/Tortola",  VI:"America/St_Thomas",
-    // Pacific
-    CK:"Pacific/Rarotonga",FJ:"Pacific/Fiji",    GU:"Pacific/Guam",
-    KI:"Pacific/Tarawa",  NC:"Pacific/Noumea",   NF:"Pacific/Norfolk",
-    NR:"Pacific/Nauru",   NU:"Pacific/Niue",     NZ:"Pacific/Auckland",
-    PF:"Pacific/Tahiti",  PG:"Pacific/Port_Moresby",PW:"Pacific/Palau",
-    SB:"Pacific/Guadalcanal",TO:"Pacific/Tongatapu",TV:"Pacific/Funafuti",
-    VU:"Pacific/Efate",   WS:"Pacific/Apia",
-  };
-
-  for (const [cc, tz] of Object.entries(COUNTRY_TZ)) {
-    await query(
-      "UPDATE port_locations SET timezone=$1 WHERE SUBSTR(unlocode,1,2)=$2 AND (timezone IS NULL OR timezone='')",
-      [tz, cc]);
+  const version = timezoneDataVersion();
+  const [stored] = await query("SELECT value FROM app_settings WHERE key='port_timezones_version'");
+  const recheckAll = stored?.value !== version;
+  const rows = await query(`SELECT unlocode, country_code, latitude, longitude, timezone FROM port_locations
+    ${recheckAll ? "" : "WHERE timezone IS NULL OR timezone=''"}`);
+  const changes = {};
+  for (const r of rows) {
+    const tz = timezoneFor({ unlocode: r.unlocode, countryCode: r.country_code, latitude: r.latitude, longitude: r.longitude });
+    if (tz && tz !== r.timezone) changes[r.unlocode] = tz;
   }
-
-  // US – longitude bands (Eastern / Central / Mountain / Pacific / Hawaii)
-  await query(`UPDATE port_locations SET timezone = CASE
-    WHEN longitude <= -140 THEN 'America/Honolulu'
-    WHEN longitude <= -120 THEN 'America/Los_Angeles'
-    WHEN longitude <= -105 THEN 'America/Denver'
-    WHEN longitude <= -90  THEN 'America/Chicago'
-    ELSE 'America/New_York' END
-    WHERE SUBSTR(unlocode,1,2)='US' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`);
-  await query("UPDATE port_locations SET timezone='America/New_York' WHERE SUBSTR(unlocode,1,2)='US' AND (timezone IS NULL OR timezone='')");
-
-  // Canada
-  await query(`UPDATE port_locations SET timezone = CASE
-    WHEN longitude <= -120 THEN 'America/Vancouver'
-    WHEN longitude <= -95  THEN 'America/Winnipeg'
-    WHEN longitude <= -73  THEN 'America/Toronto'
-    ELSE 'America/Halifax' END
-    WHERE SUBSTR(unlocode,1,2)='CA' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`);
-  await query("UPDATE port_locations SET timezone='America/Toronto' WHERE SUBSTR(unlocode,1,2)='CA' AND (timezone IS NULL OR timezone='')");
-
-  // Australia
-  await query(`UPDATE port_locations SET timezone = CASE
-    WHEN longitude < 129 THEN 'Australia/Perth'
-    WHEN longitude < 138 THEN 'Australia/Darwin'
-    WHEN longitude < 141 THEN 'Australia/Adelaide'
-    ELSE 'Australia/Sydney' END
-    WHERE SUBSTR(unlocode,1,2)='AU' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`);
-  await query("UPDATE port_locations SET timezone='Australia/Sydney' WHERE SUBSTR(unlocode,1,2)='AU' AND (timezone IS NULL OR timezone='')");
-
-  // Russia
-  await query(`UPDATE port_locations SET timezone = CASE
-    WHEN longitude < 60  THEN 'Europe/Moscow'
-    WHEN longitude < 73  THEN 'Asia/Yekaterinburg'
-    WHEN longitude < 84  THEN 'Asia/Omsk'
-    WHEN longitude < 98  THEN 'Asia/Krasnoyarsk'
-    WHEN longitude < 114 THEN 'Asia/Irkutsk'
-    WHEN longitude < 130 THEN 'Asia/Yakutsk'
-    WHEN longitude < 143 THEN 'Asia/Vladivostok'
-    ELSE 'Asia/Magadan' END
-    WHERE SUBSTR(unlocode,1,2)='RU' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`);
-  await query("UPDATE port_locations SET timezone='Europe/Moscow' WHERE SUBSTR(unlocode,1,2)='RU' AND (timezone IS NULL OR timezone='')");
-
-  // Brazil
-  await query(`UPDATE port_locations SET timezone = CASE
-    WHEN longitude < -50 THEN 'America/Manaus'
-    ELSE 'America/Sao_Paulo' END
-    WHERE SUBSTR(unlocode,1,2)='BR' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`);
-  await query("UPDATE port_locations SET timezone='America/Sao_Paulo' WHERE SUBSTR(unlocode,1,2)='BR' AND (timezone IS NULL OR timezone='')");
-
-  // Mexico
-  await query(`UPDATE port_locations SET timezone = CASE
-    WHEN longitude < -106 THEN 'America/Tijuana'
-    WHEN longitude < -98  THEN 'America/Mazatlan'
-    ELSE 'America/Mexico_City' END
-    WHERE SUBSTR(unlocode,1,2)='MX' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`);
-  await query("UPDATE port_locations SET timezone='America/Mexico_City' WHERE SUBSTR(unlocode,1,2)='MX' AND (timezone IS NULL OR timezone='')");
-
-  // Indonesia
-  await query(`UPDATE port_locations SET timezone = CASE
-    WHEN longitude < 116 THEN 'Asia/Jakarta'
-    WHEN longitude < 124 THEN 'Asia/Makassar'
-    ELSE 'Asia/Jayapura' END
-    WHERE SUBSTR(unlocode,1,2)='ID' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`);
-  await query("UPDATE port_locations SET timezone='Asia/Jakarta' WHERE SUBSTR(unlocode,1,2)='ID' AND (timezone IS NULL OR timezone='')");
-
-  const [{ n: remainingRaw }] = await query(
-    "SELECT COUNT(*) AS n FROM port_locations WHERE timezone IS NULL OR timezone=''"
-  );
-  const filled = nullCount - Number(remainingRaw);
-  if (filled > 0)
-    console.log(`  ✔ Backfilled timezone on ${filled.toLocaleString()} port rows`);
+  const n = Object.keys(changes).length;
+  if (n) {
+    await query(`UPDATE port_locations p SET timezone = c.value
+      FROM json_each_text($1::json) AS c WHERE p.unlocode = c.key`, [JSON.stringify(changes)]);
+    console.log(`  ✔ Set timezone on ${n.toLocaleString()} port rows`);
+  }
+  if (recheckAll) {
+    await query(`INSERT INTO app_settings (key, value) VALUES ('port_timezones_version', $1)
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [version]);
+  }
 }
 
 // ─── Startup cleanup ──────────────────────────────────────────────────────────

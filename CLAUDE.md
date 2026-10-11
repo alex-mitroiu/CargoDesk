@@ -173,6 +173,16 @@ lib/
                      Used by routes/quotes.js, contracts.js, opportunities.js, customers.js and
                      carrier-invoices.js; routes/shipments.js still carries its own older inline
                      copy of this logic
+  timezones.js       timezoneFor({unlocode, countryCode, latitude, longitude}) / zoneInfo(tz) — a
+                     location's IANA zone: data/port-timezones.json first (every seaports.csv row, built by
+                     scripts/build-port-timezones.js from exact borders via geo-tz — 74 MB, deliberately NOT
+                     a dependency — kept to the country's own zones from tz zone.tab), else a coordinate
+                     lookup (@photostructure/tz-lookup) kept to the country. Never store a DST flag or an
+                     offset: zoneInfo works them out from the zone name. Identical copy in services/mdm/lib/
+                     (+ its data/), checked by tests/timezones.test.js. server.js backfillPortTimezones
+                     re-checks every location when the data files' hash changes (app_settings
+                     port_timezones_version), else only fills empty zones. Replaced a one-zone-per-country
+                     table + longitude bands (Chicago on New York time, Canaries on Madrid, India blank)
 tests/helpers/
   offices.mjs        ensureOffices() for backend tests (v0.91.5) — returns the first active SE/SI
                      office, creating a fixed fixture office (FX-FXFIX-SE / FX-FXFIX-SI) only when a
@@ -633,7 +643,7 @@ are fully validated.
 | allocation_routings | Routing lines a space configuration ticks (allocation_id + routing_id, cascades on delete). A ticked line can't be removed from its contract (409 via `routingsInUse`) |
 | carriers | Carrier MDM |
 | vessels | Vessel MDM (IMO registry). `mmsi`/`ais_verified_at` (v0.55.0) — AIS-observed MMSI (structural link a PositionReport, MMSI-only, needs to resolve back to an IMO) and last-live-confirmed timestamp; blank means MDM-import-only, never seen live |
-| port_locations | 14,269 UN/LOCODE ports (has last_synced_at) |
+| port_locations | 14,269 UN/LOCODE ports (has last_synced_at). `timezone` = IANA zone name only (lib/timezones.js); offset, abbreviation and daylight saving are worked out at read time, never stored |
 | linked_ports | Port equivalence pairs — conflict detection + route matching |
 | trade_lanes | FIATA high-level trade lanes |
 | country_trade_lanes | Country → lane assignments |

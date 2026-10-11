@@ -1,5 +1,7 @@
 "use strict";
 
+const { timezoneFor } = require("../lib/timezones");
+
 module.exports = function mdmRoutes(app, ctx) {
   const { query, transaction, ok, err, uid, isUniqueViolation, requireRole, getSettings, callMdmService, callCustomerService,
           mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent, mapCarrierAgentLocation,
@@ -210,9 +212,10 @@ module.exports = function mdmRoutes(app, ctx) {
     const finalCC = countryCode.trim().toUpperCase() || derivedCC;
     const now = new Date().toISOString();
     try {
-      await query("INSERT INTO port_locations (unlocode,name,latitude,longitude,country_code,zone_code,last_synced_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-        [code, name.trim(), latitude, longitude, finalCC, zoneCode.trim(), now]);
-      ok(res, mapPortLocation({ unlocode: code, name: name.trim(), latitude, longitude, country_code: finalCC, zone_code: zoneCode.trim(), last_synced_at: now }), 201);
+      const timezone = timezoneFor({ unlocode: code, countryCode: finalCC, latitude, longitude });
+      await query("INSERT INTO port_locations (unlocode,name,latitude,longitude,country_code,zone_code,timezone,last_synced_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        [code, name.trim(), latitude, longitude, finalCC, zoneCode.trim(), timezone, now]);
+      ok(res, mapPortLocation({ unlocode: code, name: name.trim(), latitude, longitude, country_code: finalCC, zone_code: zoneCode.trim(), timezone, last_synced_at: now }), 201);
     }
     catch(e) { err(res, isUniqueViolation(e) ? `Port ${unlocode} already exists` : e.message); }
   });
@@ -224,14 +227,17 @@ module.exports = function mdmRoutes(app, ctx) {
       catch (e) { return err(res, e.message, e.status || 502); }
     }
     const cc = countryCode.trim().toUpperCase() || req.params.unlocode.slice(0, 2).toUpperCase();
-    const updated = await query("UPDATE port_locations SET name=$1, latitude=$2, longitude=$3, country_code=$4, zone_code=$5, last_synced_at=$6 WHERE unlocode=$7 RETURNING unlocode",
-      [name, latitude, longitude, cc, zoneCode, new Date().toISOString(), req.params.unlocode.toUpperCase()]);
+    // A UN/LOCODE in data/port-timezones.json keeps that zone; any other location's zone follows
+    // its (possibly edited) coordinates and country.
+    const timezone = timezoneFor({ unlocode: req.params.unlocode, countryCode: cc, latitude, longitude });
+    const updated = await query("UPDATE port_locations SET name=$1, latitude=$2, longitude=$3, country_code=$4, zone_code=$5, timezone=$6, last_synced_at=$7 WHERE unlocode=$8 RETURNING unlocode",
+      [name, latitude, longitude, cc, zoneCode, timezone, new Date().toISOString(), req.params.unlocode.toUpperCase()]);
     if (updated.length===0) return err(res,"Not found",404);
     // country_code: cc, not the raw countryCode.toUpperCase() — cc carries the same
     // derive-from-unlocode-prefix fallback the UPDATE above actually persisted (2026-09-05
     // audit: a blank/omitted countryCode had the response showing '' while the DB row was
     // correctly saved with the derived 2-letter code, confirmed live).
-    ok(res, mapPortLocation({ unlocode: req.params.unlocode.toUpperCase(), name, latitude, longitude, country_code: cc, zone_code: zoneCode }));
+    ok(res, mapPortLocation({ unlocode: req.params.unlocode.toUpperCase(), name, latitude, longitude, country_code: cc, zone_code: zoneCode, timezone }));
   });
   app.delete("/api/port-locations/:unlocode", write, async (req, res) => {
     if (await isRemote()) {

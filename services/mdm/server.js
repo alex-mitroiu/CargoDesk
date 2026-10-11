@@ -4,6 +4,7 @@ const path = require("path");
 const fs = require("fs");
 const { query, transaction } = require("./lib/db");
 const { readSecret } = require("./lib/dockerSecret");
+const { timezoneFor, zoneInfo } = require("./lib/timezones");
 
 const PORT = process.env.MDM_SERVICE_PORT || 3005;
 const SERVICE_SECRET_DEV_DEFAULT = "cargoDesk-dev-mdm-service-secret-do-not-use-in-prod";
@@ -211,13 +212,45 @@ async function seedIfEmpty() {
   console.log(`🗺️  No MDM reference data found — seeded from the bundled mdm.sample-data.json to get started (${Object.entries(counts).map(([k, v]) => `${k}:${v}`).join(", ")})`);
 }
 
+// Same job as the monolith's backfillPortTimezones (server.js): every location's zone comes from
+// lib/timezones.js. This service has no settings table to remember which data version it last
+// applied, so it re-checks every row on each start — map lookups, one UPDATE for what differs.
+async function correctPortTimezones() {
+  const rows = await query("SELECT unlocode, country_code, latitude, longitude, timezone FROM port_locations");
+  const changes = {};
+  for (const r of rows) {
+    const tz = timezoneFor({ unlocode: r.unlocode, countryCode: r.country_code, latitude: r.latitude, longitude: r.longitude });
+    if (tz && tz !== r.timezone) changes[r.unlocode] = tz;
+  }
+  const n = Object.keys(changes).length;
+  if (!n) return;
+  await query(`UPDATE port_locations p SET timezone = c.value FROM json_each_text($1::json) AS c WHERE p.unlocode = c.key`, [JSON.stringify(changes)]);
+  console.log(`🗺️  Set timezone on ${n} port rows`);
+}
+
 // ─── Mappers (duplicated from lib/mappers.js — no shared module between processes) ─────────────
 // agentCustomerName is deliberately absent here (unlike the monolith's own mapCarrierAgent) —
 // this service owns no `customers` table to join against. The monolith's routes/mdm.js remote
 // branch attaches it locally after calling this service — see that file's own comment.
 const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_name || '' });
 const mapVessel       = r => ({ imo: r.imo, name: r.name, assetType: r.asset_type || '', flagIso2: r.flag_iso2 || '', flagName: r.flag_name || '', buildYear: r.build_year, grossTonnage: r.gross_tonnage, mmsi: r.mmsi || '', aisVerifiedAt: r.ais_verified_at || '' });
-const mapPortLocation = r => ({ unlocode: r.unlocode, name: r.name, latitude: r.latitude, longitude: r.longitude, countryCode: r.country_code, zoneCode: r.zone_code, timezone: r.timezone || null, lastSyncedAt: r.last_synced_at || null });
+// Same response shape as the monolith's mapPortLocation (lib/mappers.js), incl. the zone facts
+// worked out at read time; cached per zone for the current hour.
+const zoneInfoCache = new Map();
+const zoneInfoCached = tz => {
+  if (!tz) return null;
+  const hour = Math.floor(Date.now() / 3600000), hit = zoneInfoCache.get(tz);
+  if (hit && hit.hour === hour) return hit.info;
+  const info = zoneInfo(tz);
+  zoneInfoCache.set(tz, { hour, info });
+  return info;
+};
+const mapPortLocation = r => {
+  const tz = zoneInfoCached(r.timezone);
+  return { unlocode: r.unlocode, name: r.name, latitude: r.latitude, longitude: r.longitude, countryCode: r.country_code, zoneCode: r.zone_code,
+    timezone: r.timezone || null, utcOffset: tz?.utcOffset || null, tzAbbreviation: tz?.abbreviation || null,
+    usesDst: tz ? tz.usesDst : null, inDst: tz ? tz.inDst : null, lastSyncedAt: r.last_synced_at || null };
+};
 const mapLinkedPort   = r => ({ id: r.id, primaryUnlocode: r.primary_unlocode, primaryName: r.primary_name || '', linkedUnlocode: r.linked_unlocode, linkedName: r.linked_name || '', note: r.note || '' });
 const mapCarrierAgentLocation = l => ({ id: l.id, type: l.location_type, unlocode: l.unlocode || '', portName: l.port_name || '', countryIso2: l.country_iso2 || '', countryName: l.country_name || '' });
 const mapCarrierAgentScheduleRow = r => ({ id: r.id, days: JSON.parse(r.days || '[]'), startTime: r.start_time, endTime: r.end_time });
@@ -381,17 +414,19 @@ app.post("/internal/port-locations", async (req, res) => {
   const finalCC = countryCode.trim().toUpperCase() || derivedCC;
   const now = new Date().toISOString();
   try {
-    await query("INSERT INTO port_locations (unlocode,name,latitude,longitude,country_code,zone_code,last_synced_at) VALUES ($1,$2,$3,$4,$5,$6,$7)", [code, name.trim(), latitude, longitude, finalCC, zoneCode.trim(), now]);
-    ok(res, mapPortLocation({ unlocode: code, name: name.trim(), latitude, longitude, country_code: finalCC, zone_code: zoneCode.trim(), last_synced_at: now }), 201);
+    const timezone = timezoneFor({ unlocode: code, countryCode: finalCC, latitude, longitude });
+    await query("INSERT INTO port_locations (unlocode,name,latitude,longitude,country_code,zone_code,timezone,last_synced_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", [code, name.trim(), latitude, longitude, finalCC, zoneCode.trim(), timezone, now]);
+    ok(res, mapPortLocation({ unlocode: code, name: name.trim(), latitude, longitude, country_code: finalCC, zone_code: zoneCode.trim(), timezone, last_synced_at: now }), 201);
   } catch (e) { err(res, isUniqueViolation(e) ? `Port ${unlocode} already exists` : e.message); }
 });
 app.put("/internal/port-locations/:unlocode", async (req, res) => {
   const { name, latitude = 0, longitude = 0, countryCode = '', zoneCode = '' } = req.body;
   if (!name) return err(res, "name required");
   const cc = countryCode.toUpperCase() || req.params.unlocode.slice(0, 2).toUpperCase();
-  const result = await query("UPDATE port_locations SET name=$1, latitude=$2, longitude=$3, country_code=$4, zone_code=$5, last_synced_at=$6 WHERE unlocode=$7 RETURNING unlocode", [name, latitude, longitude, cc, zoneCode, new Date().toISOString(), req.params.unlocode.toUpperCase()]);
+  const timezone = timezoneFor({ unlocode: req.params.unlocode, countryCode: cc, latitude, longitude });
+  const result = await query("UPDATE port_locations SET name=$1, latitude=$2, longitude=$3, country_code=$4, zone_code=$5, timezone=$6, last_synced_at=$7 WHERE unlocode=$8 RETURNING unlocode", [name, latitude, longitude, cc, zoneCode, timezone, new Date().toISOString(), req.params.unlocode.toUpperCase()]);
   if (result.length === 0) return err(res, "Not found", 404);
-  ok(res, mapPortLocation({ unlocode: req.params.unlocode.toUpperCase(), name, latitude, longitude, country_code: countryCode.toUpperCase(), zone_code: zoneCode }));
+  ok(res, mapPortLocation({ unlocode: req.params.unlocode.toUpperCase(), name, latitude, longitude, country_code: cc, zone_code: zoneCode, timezone }));
 });
 app.delete("/internal/port-locations/:unlocode", async (req, res) => { const result = await query("DELETE FROM port_locations WHERE unlocode=$1 RETURNING unlocode", [req.params.unlocode.toUpperCase()]); if (result.length === 0) return err(res, "Not found", 404); ok(res, { deleted: req.params.unlocode }); });
 
@@ -1042,6 +1077,7 @@ if (require.main === module) {
   initSchema()
     .then(async () => {
       await seedIfEmpty();
+      await correctPortTimezones();
       app.listen(PORT, () => console.log(`🗺️  MDM Service running on http://localhost:${PORT}`));
     })
     .catch(e => { console.error("Failed to initialize database schema:", e); process.exit(1); });

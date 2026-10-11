@@ -16,6 +16,25 @@ import { useResizableColumns, ColResizer } from "../../components/primitives/use
 
 // ─── MDM: Port Locations Page ─────────────────────────────────────────────────
 
+// The location's IANA zone, with today's offset/abbreviation and whether it observes daylight
+// saving — all three worked out on the server from the zone name (lib/timezones.js), not stored.
+const TimezoneCell = ({ p }) => {
+  if (!p.timezone) return <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>—</span>;
+  const dstTitle = p.usesDst ? (p.inDst ? "Observes daylight saving · on summer time now" : "Observes daylight saving · on standard time now") : "No daylight saving";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+      <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.timezone}>{p.timezone}</span>
+      <span style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>
+        {p.utcOffset}{p.tzAbbreviation ? ` · ${p.tzAbbreviation}` : ""}
+        <span title={dstTitle} style={{ fontFamily: T.body, fontSize: 9.5, fontWeight: 700, letterSpacing: ".04em", padding: "1px 6px", borderRadius: 4,
+          background: p.usesDst ? T.infoBg : T.surfaceHover, color: p.usesDst ? T.info : T.textMuted }}>
+          {p.usesDst ? (p.inDst ? "DST · SUMMER" : "DST") : "NO DST"}
+        </span>
+      </span>
+    </div>
+  );
+};
+
 const MdmPortLocationsPage = () => {
   const { canManageMdm } = useAuth();
   const [search,   setSearch]   = useState("");
@@ -28,8 +47,8 @@ const MdmPortLocationsPage = () => {
   const [modal,    setModal]    = useState(null); // null | "add" | port obj
   const [confirm,  setConfirm]  = useState(null);
   const timer  = useRef(null);
-  const { template, startResize } = useResizableColumns("mdm-ports", [90,200,70,110,110,110,80]);
-  const headers = ["UN/LOCODE","Name","Country","Latitude","Longitude","Zone","Map"];
+  const { template, startResize } = useResizableColumns("mdm-ports", [90,200,70,110,110,110,210,80]);
+  const headers = ["UN/LOCODE","Name","Country","Latitude","Longitude","Zone","Time zone","Map"];
 
   const load = useCallback(async (opts = {}) => {
     setLoading(true);
@@ -148,6 +167,7 @@ const MdmPortLocationsPage = () => {
             <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{p.latitude?.toFixed(4) ?? "—"}</span>
             <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{p.longitude?.toFixed(4) ?? "—"}</span>
             <Badge>{p.zoneCode || "—"}</Badge>
+            <TimezoneCell p={p} />
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
                 ...(p.latitude && p.longitude ? [{ icon: "📍", label: "Open Map", onClick: () => window.open(`https://www.google.com/maps/search/?api=1&query=${p.latitude}%2C${p.longitude}`, "_blank") }] : []),

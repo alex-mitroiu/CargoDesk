@@ -23,6 +23,7 @@ const path = require("path");
 const net  = require("net");
 const fs   = require("fs");
 const { query, transaction, close } = require("../lib/db.js");
+const { timezoneFor } = require("../lib/timezones");
 
 const PORTS_CSV    = path.join(__dirname, "..", "data", "seaports.csv");
 const CARRIERS_CSV = path.join(__dirname, "..", "data", "carriers.csv");
@@ -45,66 +46,8 @@ function isPortInUse(port) {
 
 // ─── Import Seaports ───────────────────────────────────────────────────────────
 
-// Single-TZ countries only; multi-TZ handled by server startup backfill using longitude.
-const COUNTRY_TZ = {
-  AD:"Europe/Andorra",  AL:"Europe/Tirane",    AT:"Europe/Vienna",
-  BA:"Europe/Sarajevo", BE:"Europe/Brussels",  BG:"Europe/Sofia",
-  BY:"Europe/Minsk",    CH:"Europe/Zurich",    CZ:"Europe/Prague",
-  DE:"Europe/Berlin",   DK:"Europe/Copenhagen",EE:"Europe/Tallinn",
-  ES:"Europe/Madrid",   FI:"Europe/Helsinki",  FR:"Europe/Paris",
-  GB:"Europe/London",   GI:"Europe/Gibraltar", GR:"Europe/Athens",
-  HR:"Europe/Zagreb",   HU:"Europe/Budapest",  IE:"Europe/Dublin",
-  IS:"Atlantic/Reykjavik",IT:"Europe/Rome",    LI:"Europe/Vaduz",
-  LT:"Europe/Vilnius",  LU:"Europe/Luxembourg",LV:"Europe/Riga",
-  MC:"Europe/Monaco",   MD:"Europe/Chisinau",  ME:"Europe/Podgorica",
-  MK:"Europe/Skopje",   MT:"Europe/Malta",     NL:"Europe/Amsterdam",
-  NO:"Europe/Oslo",     PL:"Europe/Warsaw",    PT:"Europe/Lisbon",
-  RO:"Europe/Bucharest",RS:"Europe/Belgrade",  SE:"Europe/Stockholm",
-  SI:"Europe/Ljubljana",SK:"Europe/Bratislava",SM:"Europe/San_Marino",
-  TR:"Europe/Istanbul", UA:"Europe/Kiev",      XK:"Europe/Belgrade",
-  AM:"Asia/Yerevan",    AZ:"Asia/Baku",        GE:"Asia/Tbilisi",
-  KG:"Asia/Bishkek",    TJ:"Asia/Dushanbe",    TM:"Asia/Ashgabat",
-  UZ:"Asia/Tashkent",   KZ:"Asia/Almaty",
-  AE:"Asia/Dubai",      AF:"Asia/Kabul",       BH:"Asia/Bahrain",
-  CY:"Asia/Nicosia",    IQ:"Asia/Baghdad",     IR:"Asia/Tehran",
-  IL:"Asia/Jerusalem",  JO:"Asia/Amman",       KW:"Asia/Kuwait",
-  LB:"Asia/Beirut",     OM:"Asia/Muscat",      QA:"Asia/Qatar",
-  SA:"Asia/Riyadh",     SY:"Asia/Damascus",    YE:"Asia/Aden",
-  BD:"Asia/Dhaka",      BN:"Asia/Brunei",      BT:"Asia/Thimphu",
-  CN:"Asia/Shanghai",   HK:"Asia/Hong_Kong",   JP:"Asia/Tokyo",
-  KH:"Asia/Phnom_Penh", KP:"Asia/Pyongyang",   KR:"Asia/Seoul",
-  LA:"Asia/Vientiane",  LK:"Asia/Colombo",     MM:"Asia/Rangoon",
-  MN:"Asia/Ulaanbaatar",MO:"Asia/Macau",       MV:"Indian/Maldives",
-  MY:"Asia/Kuala_Lumpur",NP:"Asia/Kathmandu",  PH:"Asia/Manila",
-  PK:"Asia/Karachi",    SG:"Asia/Singapore",   TH:"Asia/Bangkok",
-  TL:"Asia/Dili",       TW:"Asia/Taipei",      VN:"Asia/Ho_Chi_Minh",
-  DZ:"Africa/Algiers",  EG:"Africa/Cairo",     ER:"Africa/Asmara",
-  ET:"Africa/Addis_Ababa",GH:"Africa/Accra",   KE:"Africa/Nairobi",
-  LY:"Africa/Tripoli",  MA:"Africa/Casablanca",MG:"Indian/Antananarivo",
-  MU:"Indian/Mauritius",MW:"Africa/Blantyre",  MZ:"Africa/Maputo",
-  NA:"Africa/Windhoek", NE:"Africa/Niamey",    NG:"Africa/Lagos",
-  RE:"Indian/Reunion",  RW:"Africa/Kigali",    SC:"Indian/Mahe",
-  SD:"Africa/Khartoum", SN:"Africa/Dakar",     SO:"Africa/Mogadishu",
-  SS:"Africa/Juba",     SZ:"Africa/Mbabane",   TD:"Africa/Ndjamena",
-  TG:"Africa/Lome",     TN:"Africa/Tunis",     TZ:"Africa/Dar_es_Salaam",
-  UG:"Africa/Kampala",  ZA:"Africa/Johannesburg",ZM:"Africa/Lusaka",
-  ZW:"Africa/Harare",   CI:"Africa/Abidjan",   CM:"Africa/Douala",
-  AG:"America/Antigua", AW:"America/Aruba",    BB:"America/Barbados",
-  BS:"America/Nassau",  BZ:"America/Belize",   BO:"America/La_Paz",
-  CO:"America/Bogota",  CR:"America/Costa_Rica",CU:"America/Havana",
-  DM:"America/Dominica",DO:"America/Santo_Domingo",EC:"America/Guayaquil",
-  GD:"America/Grenada", GF:"America/Cayenne",  GT:"America/Guatemala",
-  GY:"America/Guyana",  HN:"America/Tegucigalpa",HT:"America/Port-au-Prince",
-  JM:"America/Jamaica", KN:"America/St_Kitts", KY:"America/Cayman",
-  LC:"America/St_Lucia",MQ:"America/Martinique",NI:"America/Managua",
-  PA:"America/Panama",  PE:"America/Lima",     PR:"America/Puerto_Rico",
-  PY:"America/Asuncion",SR:"America/Paramaribo",SV:"America/El_Salvador",
-  TT:"America/Port_of_Spain",UY:"America/Montevideo",VE:"America/Caracas",
-  BO:"America/La_Paz",  CK:"Pacific/Rarotonga",FJ:"Pacific/Fiji",
-  GU:"Pacific/Guam",    NC:"Pacific/Noumea",   NZ:"Pacific/Auckland",
-  PF:"Pacific/Tahiti",  PG:"Pacific/Port_Moresby",PW:"Pacific/Palau",
-  SB:"Pacific/Guadalcanal",TO:"Pacific/Tongatapu",WS:"Pacific/Apia",
-};
+// Each location's time zone: lib/timezones.js (data/port-timezones.json, kept to the location's
+// own country). The server's startup check (backfillPortTimezones) corrects any row that differs.
 
 async function importPorts() {
   if (!fs.existsSync(PORTS_CSV)) {
@@ -140,7 +83,7 @@ async function importPorts() {
         const country = (parts[4] || '').trim().toUpperCase() || code.slice(0, 2);
         // zone may have trailing ",," — strip it
         const zone    = parts[5] ? parts[5].split(",")[0].trim() : '';
-        const tz      = COUNTRY_TZ[country] || null;
+        const tz      = timezoneFor({ unlocode: code, countryCode: country, latitude: lat, longitude: lon });
         const now     = new Date().toISOString();
 
         if (!code || code.length !== 5 || !name) { skipped++; continue; }
@@ -152,11 +95,12 @@ async function importPorts() {
           RETURNING unlocode
         `, [code, name, lat, lon, country, zone, tz, now]);
         if (rows.length > 0) { inserted++; continue; }
-        // Delta-sync: update if name/coords changed, or country_code was empty
+        // Delta-sync: update if name/coords/zone changed, or country_code was empty
         await tx.query(
-          "UPDATE port_locations SET name=$1, latitude=$2, longitude=$3, country_code=$4, last_synced_at=$5 " +
-          "WHERE unlocode=$6 AND (name!=$7 OR latitude!=$8 OR longitude!=$9 OR country_code='' OR country_code IS NULL)",
-          [name, lat, lon, country, now, code, name, lat, lon]
+          "UPDATE port_locations SET name=$1, latitude=$2, longitude=$3, country_code=$4, timezone=$10, last_synced_at=$5 " +
+          "WHERE unlocode=$6 AND (name!=$7 OR latitude!=$8 OR longitude!=$9 OR country_code='' OR country_code IS NULL " +
+          "OR timezone IS DISTINCT FROM $10)",
+          [name, lat, lon, country, now, code, name, lat, lon, tz]
         );
         skipped++;
       }
