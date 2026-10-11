@@ -5,8 +5,9 @@ import { useAuth } from "../../AuthContext";
 import { canEditShipmentSide } from "../../utils/officeSide";
 import Btn from "../../components/primitives/Btn";
 import Spinner from "../../components/primitives/Spinner";
+import { Modal } from "../../components/primitives/Modal";
 import EdiMessageList from "../../components/shared/EdiMessageList";
-import { IconFileCertificate, IconRefresh } from "../../components/primitives/Icon";
+import { IconFileCertificate, IconRefresh, IconClose } from "../../components/primitives/Icon";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
 
 // ─── Customs Filing — Review ─────────────────────────────────────────────────────
@@ -32,13 +33,14 @@ const FILING_TYPES = [
   { type: "ISF_AMS", label: "ISF/AMS (Import)" },
 ];
 
-const STATUS_COLOR = { Draft: "", Filed: "cyan", Accepted: "good", Rejected: "crit" };
+const STATUS_COLOR = { Draft: "", Filed: "cyan", Accepted: "good", Rejected: "crit", Cancelled: "" };
 
 const ShipmentCustomsFilingReviewPage = ({ shipment }) => {
   const auth = useAuth();
   const [filings,  setFilings]  = useState(null); // null = loading
   const [messages, setMessages] = useState([]);
   const [busy,     setBusy]     = useState(null);
+  const [cancelling, setCancelling] = useState(null); // null | { filing, reason }
 
   const load = () => Promise.all([
     api.customsFilings.list(shipment.id),
@@ -52,6 +54,20 @@ const ShipmentCustomsFilingReviewPage = ({ shipment }) => {
     try {
       await api.customsFilings.reset(shipment.id, filing.id);
       toast.success("Filing reset to Draft");
+      await load();
+    } catch (e) { toast.error(e.message); }
+    setBusy(null);
+  };
+
+  // A submitted filing (Filed or Accepted) can be cancelled, with a reason — a shipment can only be
+  // cancelled once its submitted filings are (2026-10-09).
+  const handleCancel = async () => {
+    const { filing, reason } = cancelling;
+    setBusy(filing.filingType);
+    try {
+      await api.customsFilings.cancel(shipment.id, filing.id, reason.trim());
+      toast.success("Filing cancelled");
+      setCancelling(null);
       await load();
     } catch (e) { toast.error(e.message); }
     setBusy(null);
@@ -117,9 +133,24 @@ const ShipmentCustomsFilingReviewPage = ({ shipment }) => {
                       <div style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.crit }}>{filing.rejectionReason}</div>
                     </div>
                   )}
+                  {filing.status === "Cancelled" && (
+                    <div data-testid={`shpfilingreview-${type}-cancelled`}>
+                      <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginBottom: 3 }}>
+                        Cancelled{filing.cancelledBy ? ` by ${filing.cancelledBy}` : ""}{filing.cancelledAt ? ` · ${filing.cancelledAt.slice(0, 10)}` : ""}
+                      </div>
+                      <div style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.text }}>{filing.cancelReason}</div>
+                    </div>
+                  )}
                 </div>
 
-                {filing.status === "Rejected" && canEdit && (
+                {(filing.status === "Filed" || filing.status === "Accepted") && canEdit && (
+                  <Btn id={`shpfilingreview-${type}-cancel-btn`} size="sm" variant="secondary" disabled={busy === type}
+                    onClick={() => setCancelling({ filing, reason: "" })} style={{ marginBottom: 14 }}>
+                    <IconClose size={12} /> Cancel filing
+                  </Btn>
+                )}
+
+                {(filing.status === "Rejected" || filing.status === "Cancelled") && canEdit && (
                   <Btn id={`shpfilingreview-${type}-reset-btn`} size="sm" variant="secondary" disabled={busy === type}
                     onClick={() => handleReset(filing)} style={{ marginBottom: 14 }}>
                     <IconRefresh size={12} /> {busy === type ? "Resetting…" : "Reset to Draft"}
@@ -136,6 +167,35 @@ const ShipmentCustomsFilingReviewPage = ({ shipment }) => {
           </div>
         );
       })}
+
+      {cancelling && (
+        <Modal title={`Cancel ${cancelling.filing.filingType === "AES_EEI" ? "AES/EEI" : "ISF/AMS"} filing`} onClose={() => !busy && setCancelling(null)} width={440}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <p style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text, margin: 0, lineHeight: 1.5 }}>
+              This records filing {cancelling.filing.filingReference || ""} as cancelled{cancelling.filing.status === "Accepted" ? ", although the authority accepted it" : ", with no answer from the authority yet"}.
+              It can be reset to Draft and submitted again later.
+            </p>
+            <div>
+              <label htmlFor="shpfilingreview-cancel-reason" style={{ display: "block", fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600,
+                color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 }}>
+                Reason
+              </label>
+              <input id="shpfilingreview-cancel-reason" value={cancelling.reason} autoFocus
+                onChange={e => setCancelling(c => ({ ...c, reason: e.target.value }))}
+                placeholder="e.g. Shipment cancelled by the shipper"
+                style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, color: HZ.text,
+                  borderRadius: 6, padding: "8px 12px", width: "100%", boxSizing: "border-box",
+                  fontFamily: HZ_BODY, fontSize: 13 }} />
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <Btn variant="secondary" onClick={() => setCancelling(null)} disabled={!!busy}>Back</Btn>
+              <Btn id="shpfilingreview-cancel-confirm-btn" variant="danger" onClick={handleCancel} disabled={!!busy || !cancelling.reason.trim()}>
+                {busy ? "Cancelling…" : <><IconClose size={13} /> Cancel filing</>}
+              </Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

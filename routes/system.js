@@ -4,7 +4,7 @@ module.exports = function systemRoutes(app, ctx) {
   const { query, transaction, ok, err, auth, requireRole,
           mapSystemMessage, getSettings, scheduleNextOfacSync, scheduleNextCslSync, loadSanctionsIndex, fxCache,
           logAdminEvent, migrationFailures, restartAisListener, rebuildPortLanesMap,
-          getAisListenerStatus, getCarrierAdapter,
+          getAisListenerStatus, getCarrierAdapter, carrierIntegrationFor,
           DISTRIBUTION_SERVICE_URL, PDF_RENDER_SERVICE_URL, CONTRACT_SERVICE_URL, MDM_SERVICE_URL,
           SCREENING_SERVICE_URL, KANBAN_SERVICE_URL, CUSTOMER_SERVICE_URL, BREAK_GLASS_EMAILS } = ctx;
 
@@ -409,23 +409,13 @@ module.exports = function systemRoutes(app, ctx) {
     // No active integration (or no result from it) → today's exact mock fallback, unchanged.
     // Gated by the same api_carrier_integrations_enabled master toggle as the booking-request
     // route (routes/edi.js) — a single safety-net switch for the whole framework.
-    const carrierIntegrationsEnabled = (await getSettings()).api_carrier_integrations_enabled !== 'false';
-    if (sailings.length === 0 && carrierCode && carrierIntegrationsEnabled) {
-      const [integrationRow] = await query(
-        "SELECT * FROM carrier_integrations WHERE carrier_code=$1 AND is_active=TRUE", [carrierCode]
-      );
-      if (integrationRow && JSON.parse(integrationRow.capabilities || "[]").includes("schedules")) {
-        const adapter = getCarrierAdapter(integrationRow.adapter_key);
-        if (adapter) {
-          const config = {
-            baseUrl: integrationRow.base_url, authHeaderName: integrationRow.auth_header_name,
-            credential: integrationRow.credential,
-          };
-          const result = await adapter.searchSchedules(config, { pol, pod, carrierCode });
-          if (result.ok && result.sailings.length > 0) sailings = result.sailings;
-          else if (!result.ok) console.error(`Carrier integration ${carrierCode}/${integrationRow.adapter_key}: searchSchedules failed:`, result.error);
-        }
-      }
+    // DCSA Commercial Schedules point-to-point routes since 2026-10-09 (the adapter's old call
+    // was a guessed path), over the same week window as the catalog.
+    const integ = sailings.length === 0 && carrierCode ? await carrierIntegrationFor(carrierCode, "schedules") : null;
+    if (integ) {
+      const result = await integ.adapter.searchSchedules(integ.config, { pol, pod, carrierCode, weeks });
+      if (result.ok && result.sailings.length > 0) sailings = result.sailings;
+      else if (!result.ok) console.error(`Carrier integration ${carrierCode}/${integ.row.adapter_key}: searchSchedules failed:`, result.error);
     }
 
     const demoEnabled = (await getSettings()).demo_schedules_enabled !== 'false'; // default on

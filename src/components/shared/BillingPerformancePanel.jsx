@@ -408,7 +408,11 @@ const BillingPerformancePanel = () => {
             return (
               <div key={r.docId || r.shipmentId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
                 borderBottom: `1px solid ${T.border}22`, minWidth: 1000 }}>
-                <div style={{ width: 90, flexShrink: 0, fontFamily: T.mono, fontSize: 11.5, color: T.text, fontWeight: 600 }}>{r.shipmentId}</div>
+                <div style={{ width: 90, flexShrink: 0, fontFamily: T.mono, fontSize: 11.5, color: T.text, fontWeight: 600 }}>
+                  {r.statementId || r.shipmentId}
+                  {/* A consolidated statement (TKT-IRH7WX) has no single shipment: its id, and how many it bills. */}
+                  {r.statementId && <div style={{ fontSize: 10, fontWeight: 400, color: T.textMuted, marginTop: 1 }}>Statement · {r.shipmentIds?.length || 0} shipment{r.shipmentIds?.length === 1 ? "" : "s"}</div>}
+                </div>
                 <div style={{ flex: 1, minWidth: 100, fontFamily: T.body, fontSize: 12.5, color: r.customerName ? T.text : T.border,
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.customerName || "—"}</div>
                 <div style={{ width: 90, flexShrink: 0 }}>

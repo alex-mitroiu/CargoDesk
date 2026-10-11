@@ -1,4 +1,5 @@
 "use strict";
+const { STATEMENT_BILLED_SHIPMENTS_SQL } = require("../lib/mappers");
 
 // GP-by-trade-area report — aggregates every shipment's own BUY/SELL cost lines by the
 // shipment's origin (POL) region, country, or carrier, reusing the exact same
@@ -24,7 +25,7 @@
 // one would make "By Region" permanently empty.
 module.exports = function reportsRoutes(app, ctx) {
   const { query, ok, err, auth, requireRole, mapCostLine, mapShipment, roundCents, portCountryMap, getSettings, callCustomerService,
-          callMdmService, docAmountUsd, runDunningSweep, applyShipmentAccessFilter,
+          callMdmService, docAmountUsd, statementAmountUsd, statementMainOffice, runDunningSweep, applyShipmentAccessFilter,
           resolveInvoiceThresholds, runInvoiceCollectionsSweep, businessDaysBetween, mapInvoiceStatusOverride } = ctx;
 
   // Both billing-performance and invoice-collections bulk-read every customer's own
@@ -92,6 +93,22 @@ module.exports = function reportsRoutes(app, ctx) {
 
   // null = unrestricted (admin/canViewFinance sees the whole company); a Set = exactly the
   // shipment ids this trade_manager's own office/scope-item configuration already grants them.
+  // Confirmed consolidated statements are chased like invoices (decided 2026-10-09, TKT-IRH7WX), so
+  // both reports below carry a row per statement. A statement spans shipments: its row has
+  // shipmentId null, statementId, and the shipmentIds it bills. It is in a caller's scope only when
+  // EVERY one of those shipments is — the statement visibility rule of TKT-6T97DY (decided
+  // 2026-09-30, routes/customer-statements.js), so a report never reveals a statement, or the ids
+  // of its out-of-scope shipments, that the Statements page itself hides.
+  async function statementShipmentIds() {
+    const m = new Map();
+    for (const r of await query("SELECT DISTINCT statement_id, shipment_id FROM customer_statement_lines"))
+      (m.get(r.statement_id) || m.set(r.statement_id, []).get(r.statement_id)).push(r.shipment_id);
+    return m;
+  }
+  const inScope = (scopeIds, r) => r.statementId
+    ? (r.shipmentIds || []).length > 0 && r.shipmentIds.every(id => scopeIds.has(id))
+    : scopeIds.has(r.shipmentId);
+
   const scopedShipmentIds = async req => {
     const u = req.user;
     const roles = Array.isArray(u.roles) ? u.roles : [u.role || 'viewer'];
@@ -291,31 +308,36 @@ module.exports = function reportsRoutes(app, ctx) {
     const { countryLane, laneNames, carrierNames } = await loadMdmNameMaps();
     const custById = await getCustTermsMap();
 
+    // One billing document's (invoice or statement) payment figures. paymentState is the single
+    // unified status this report leads with (filter chips + the table's own STATUS column): a
+    // manager cares "is this paid, and if not, how late is it", not the document's own
+    // draft/confirmed/voided lifecycle label first. Draft/voided still resolve to their own
+    // distinct states rather than being folded away, so nothing about the existing
+    // document-status data is lost — they're just no longer the LEADING concept.
+    const paymentFigures = (d, amountUsd, termsDays, todayMs) => {
+      const isLive = d.status === 'confirmed'; // draft/voided never carry a real payment status
+      const outstandingUsd = isLive ? Math.max(0, roundCents(amountUsd - (d.paid_amount || 0))) : null;
+      const paymentStatus = !isLive ? null : outstandingUsd <= 0 ? 'paid' : (d.paid_amount || 0) > 0 ? 'partial' : 'unpaid';
+      let daysOverdue = null;
+      if (isLive && outstandingUsd > 0) {
+        const dueMs = new Date(d.confirmed_at || d.created_at).getTime() + (termsDays || 0) * 86400000;
+        daysOverdue = Math.floor((todayMs - dueMs) / 86400000);
+      }
+      const paymentState = d.status === 'voided' ? 'voided'
+        : !isLive ? 'draft'
+        : paymentStatus === 'paid' ? 'paid'
+        : (daysOverdue != null && daysOverdue > 0) ? 'overdue'
+        : paymentStatus;
+      return { outstandingUsd, paymentStatus, daysOverdue, paymentState };
+    };
+
     const todayMs = Date.now();
     const results = await Promise.all(rows.map(async r => {
       const respId   = r.principal_id || r.consignee_id || null;
       const respName = r.principal_id ? r.principal_name : r.consignee_name;
       const amountUsd = await docAmountUsd(r);
-      const isLive = r.status === 'confirmed'; // draft/voided never carry a real payment status
-      const outstandingUsd = isLive ? Math.max(0, roundCents(amountUsd - (r.paid_amount || 0))) : null;
-      const paymentStatus = !isLive ? null : outstandingUsd <= 0 ? 'paid' : (r.paid_amount || 0) > 0 ? 'partial' : 'unpaid';
-      let daysOverdue = null;
-      if (isLive && outstandingUsd > 0) {
-        const termsDays = respId ? (custById[respId]?.credit_terms_days ?? 0) : 0;
-        const refDate = r.confirmed_at || r.created_at;
-        const dueMs = new Date(refDate).getTime() + (termsDays || 0) * 86400000;
-        daysOverdue = Math.floor((todayMs - dueMs) / 86400000);
-      }
-      // paymentState — the single unified status this report leads with (filter chips + the
-      // table's own STATUS column): a manager cares "is this paid, and if not, how late is it",
-      // not the document's own draft/confirmed/voided lifecycle label first. Draft/voided still
-      // resolve to their own distinct states rather than being folded away, so nothing about the
-      // existing document-status data is lost — they're just no longer the LEADING concept.
-      const paymentState = r.status === 'voided' ? 'voided'
-        : !isLive ? 'draft'
-        : paymentStatus === 'paid' ? 'paid'
-        : (daysOverdue != null && daysOverdue > 0) ? 'overdue'
-        : paymentStatus;
+      const { outstandingUsd, paymentStatus, daysOverdue, paymentState } = paymentFigures(r, amountUsd,
+        respId ? (custById[respId]?.credit_terms_days ?? 0) : 0, todayMs);
       const laneCode = countryLane[portCountryMap[r.pol]] || '';
       return {
         docId: r.id, shipmentId: r.shipment_id, docType: r.doc_type, filename: r.filename,
@@ -339,7 +361,9 @@ module.exports = function reportsRoutes(app, ctx) {
     // report already use — reused here, not reinvented, so all three can never disagree about
     // what "missing" means. Direct bug report: these shipments were invisible to Billing
     // Performance entirely, which defeats the report's own purpose of surfacing collection risk.
-    const invoicedShipmentIds = new Set(rows.map(r => r.shipment_id));
+    // …or a confirmed consolidated statement, which bills the shipment without an FR01/FR02 of its own.
+    const invoicedShipmentIds = new Set([...rows.map(r => r.shipment_id),
+      ...(await query(STATEMENT_BILLED_SHIPMENTS_SQL)).map(r => r.shipment_id)]);
     const deliveredRows = await query(`
       SELECT s.id AS shipment_id, s.carrier_code, s.pol, s.pod, s.emo_office_id,
              s.principal_id, s.principal_name, s.consignee_id, s.consignee_name,
@@ -371,12 +395,32 @@ module.exports = function reportsRoutes(app, ctx) {
         pol: r.pol || null, pod: r.pod || null,
       });
     }
-    const scopedResults = scopeIds ? results.filter(r => scopeIds.has(r.shipmentId)) : results;
+    // Consolidated statements (TKT-IRH7WX): one row each, every status, like the invoices above.
+    // Carrier, lane and ports stay blank — a statement spans shipments; its office is the main
+    // export office the collections sweep uses.
+    const stShipments = await statementShipmentIds();
+    for (const st of await query("SELECT * FROM customer_statements ORDER BY created_at DESC")) {
+      const amountUsd = await statementAmountUsd(st);
+      const figures = paymentFigures(st, amountUsd, custById[st.customer_id]?.credit_terms_days ?? 0, todayMs);
+      const officeId = await statementMainOffice(st.id);
+      results.push({
+        docId: st.id, statementId: st.id, shipmentId: null, shipmentIds: stShipments.get(st.id) || [],
+        docType: "STMT", filename: st.filename || null,
+        status: st.status || 'draft', paymentState: figures.paymentState, createdAt: st.created_at, confirmedAt: st.confirmed_at || null,
+        firstSentAt: null, sent: false, lastReminderSentAt: st.last_reminder_sent_at || null,
+        paidAt: st.paid_at || null, paidAmount: st.paid_amount ?? null, transactionId: '',
+        amountUsd, outstandingUsd: figures.outstandingUsd, paymentStatus: figures.paymentStatus, daysOverdue: figures.daysOverdue,
+        officeId, officeName: officeNames[officeId] || null,
+        customerId: st.customer_id, customerName: st.customer_name || null,
+        carrierCode: null, carrierName: null, laneCode: null, laneName: null, pol: null, pod: null,
+      });
+    }
+    const scopedResults = scopeIds ? results.filter(r => inScope(scopeIds, r)) : results;
     scopedResults.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
     if (format === 'csv') {
       const cols = [
-        ["Shipment", r => r.shipmentId], ["Doc Type", r => r.docType ?? ""], ["Filename", r => r.filename ?? ""],
+        ["Shipment", r => r.shipmentId ?? `${r.statementId} (${(r.shipmentIds || []).length} shipments)`], ["Doc Type", r => r.docType ?? ""], ["Filename", r => r.filename ?? ""],
         ["Status", r => r.status ?? ""], ["Payment State", r => r.paymentState], ["Sent", r => r.sent ? "Yes" : "No"],
         ["Payment Status", r => r.paymentStatus ?? ""], ["Days Overdue", r => r.daysOverdue ?? ""],
         ["Amount (USD)", r => r.amountUsd ?? ""], ["Outstanding (USD)", r => r.outstandingUsd ?? ""],
@@ -396,10 +440,13 @@ module.exports = function reportsRoutes(app, ctx) {
   });
 
   // Invoice Collections report (Epic TKT-G11AHW) — "scan all shipments" + Paid/Not Paid/Overdue/
-  // Missing/Cancelled, per shipment's own MOST RECENT FR01/FR02 (not confirmed-only — a voided-
-  // then-reissued invoice correctly shows the reissued one's real status, not stuck Cancelled).
-  // Status resolution order matters: Cancelled first (the resolved document is voided — the
-  // existing v0.53.0 Reverse/Debit-Credit-Note mechanism, reused not rebuilt), then Missing (no
+  // Missing/Cancelled. One row per CONFIRMED FR01/FR02 — every one the collections sweep chases (a
+  // shipment billed through several live invoices used to show only its most recent, so an older
+  // unpaid one never appeared here although the sweep kept alerting on it; TKT-SQVGJ2 audit). A
+  // shipment with no confirmed invoice shows its most recent one instead, so a voided-then-reissued
+  // invoice still shows the reissued one's real status and a reversal with no reissue shows
+  // Cancelled. Status resolution order matters: Cancelled first (the resolved document is voided —
+  // the existing v0.53.0 Reverse/Debit-Credit-Note mechanism, reused not rebuilt), then Missing (no
   // confirmed invoice at all, reusing GET /api/invoice-deadlines/overdue's own definition), then
   // Paid/Overdue/Not Paid against the resolved per-office/per-country business-day threshold —
   // never a hardcoded 5, so this can never disagree with the collections sweep about what
@@ -408,18 +455,19 @@ module.exports = function reportsRoutes(app, ctx) {
     if (!reportsGate(req, res)) return;
     const scopeIds = await scopedShipmentIds(req);
 
-    const latestDocRows = await query(`
-      SELECT d.* FROM shipment_documents d
-      INNER JOIN (
-        SELECT shipment_id, MAX(created_at) AS max_created
-        FROM shipment_documents WHERE doc_type IN ('FR01','FR02') GROUP BY shipment_id
-      ) latest ON latest.shipment_id = d.shipment_id AND latest.max_created = d.created_at
-      WHERE d.doc_type IN ('FR01','FR02')
+    const invoiceRows = await query(`
+      SELECT * FROM shipment_documents WHERE doc_type IN ('FR01','FR02') ORDER BY created_at
     `);
-    const latestDocByShipment = {};
-    for (const r of latestDocRows) latestDocByShipment[r.shipment_id] = r;
+    const docsByShipment = {};
+    for (const r of invoiceRows) (docsByShipment[r.shipment_id] ||= []).push(r);
+    const reportDocs = Object.values(docsByShipment).flatMap(docs => {
+      const confirmed = docs.filter(d => d.status === "confirmed");
+      return confirmed.length ? confirmed : [docs[docs.length - 1]];
+    });
 
-    const shipmentIds = new Set(Object.keys(latestDocByShipment));
+    // Shipments with an invoice of their own, or billed through a confirmed statement: never "missing".
+    const shipmentIds = new Set([...Object.keys(docsByShipment),
+      ...(await query(STATEMENT_BILLED_SHIPMENTS_SQL)).map(r => r.shipment_id)]);
     const missingRows = await query(`
       SELECT s.id AS shipment_id, s.principal_id, s.principal_name, s.emo_office_id,
              m.completed_at AS delivered_at
@@ -451,7 +499,8 @@ module.exports = function reportsRoutes(app, ctx) {
     `)).forEach(o => { overrideByDoc[o.document_id] = o; });
 
     const results = [];
-    for (const [shipmentId, doc] of Object.entries(latestDocByShipment)) {
+    for (const doc of reportDocs) {
+      const shipmentId = doc.shipment_id;
       const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
       if (!shipment) continue;
       const override = overrideByDoc[doc.id] || null;
@@ -495,7 +544,26 @@ module.exports = function reportsRoutes(app, ctx) {
       });
     }
 
-    const scopedResults = scopeIds ? results.filter(r => scopeIds.has(r.shipmentId)) : results;
+    // Confirmed consolidated statements (TKT-IRH7WX), chased like invoices: the owner is whoever
+    // confirmed it, the thresholds are its main export office's, and an override is keyed by its id.
+    const stShipments = await statementShipmentIds();
+    for (const st of await query("SELECT * FROM customer_statements WHERE status='confirmed'")) {
+      const override = overrideByDoc[st.id] || null;
+      const outstandingUsd = Math.max(0, roundCents((await statementAmountUsd(st)) - (st.paid_amount || 0)));
+      const daysElapsed = businessDaysBetween(st.confirmed_at || st.created_at, todayIso);
+      const { alertBusinessDays } = await resolveInvoiceThresholds(await statementMainOffice(st.id));
+      const status = override ? "overridden" : outstandingUsd <= 0 ? "paid" : daysElapsed >= alertBusinessDays ? "overdue" : "not_paid";
+      results.push({
+        shipmentId: null, statementId: st.id, shipmentIds: stShipments.get(st.id) || [],
+        docId: st.id, docType: "STMT", filename: st.filename || null,
+        principalId: st.customer_id, principalName: st.customer_name || null,
+        status, daysElapsed, alertBusinessDays,
+        invoiceOwnerId: st.owner_id || null, invoiceOwnerName: st.owner_id ? (userNames[st.owner_id] || null) : null,
+        relatedDocId: null, override: override ? mapInvoiceStatusOverride(override) : null,
+      });
+    }
+
+    const scopedResults = scopeIds ? results.filter(r => inScope(scopeIds, r)) : results;
     const STATUS_RANK = { overdue: 0, missing: 1, not_paid: 2, overridden: 3, paid: 4, cancelled: 5 };
     scopedResults.sort((a, b) => (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0));
     ok(res, scopedResults);

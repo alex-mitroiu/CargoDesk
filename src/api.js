@@ -65,7 +65,12 @@ const req = async (method, path, body) => {
     const e = await res.json().catch(() => ({}));
     const msg = e.error || e.message || `HTTP ${res.status}`;
     if (res.status >= 500) toast.error(`Server error: ${msg}`);
-    throw new Error(msg);
+    // The status, the server's error code and its whole body ride along, so a caller can act on a
+    // structured refusal (e.g. code ACTIVE_ITEMS with the list of what blocks a cancellation)
+    // instead of parsing the message. Callers that only read .message are unaffected.
+    const error = new Error(msg);
+    error.status = res.status; error.code = e.code; error.body = e;
+    throw error;
   }
   return res.json();
 };
@@ -96,6 +101,10 @@ export const api = {
     get:     (shipmentId)          => req("GET",   `/shipments/${shipmentId}/carrier-booking`),
     confirm: (shipmentId, data={}) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/confirm`, data),
     cancel:  (shipmentId, data={}) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/cancel`, data),
+    // Sent through a carrier integration (DCSA, TKT-KG4E49): update/amend at the carrier, ask it for the status.
+    sendUpdate:  (shipmentId) => req("POST", `/shipments/${shipmentId}/carrier-booking/send-update`, {}),
+    checkStatus: (shipmentId) => req("POST", `/shipments/${shipmentId}/carrier-booking/check-status`, {}),
+    syncEvents:  (shipmentId) => req("POST", `/shipments/${shipmentId}/carrier-events/sync`, {}),
     listAll: (params={})           => req("GET",   `/carrier-bookings?${new URLSearchParams(params)}`),
     history: (shipmentId)          => req("GET",   `/shipments/${shipmentId}/carrier-booking-history`),
     linkBlDocument: (shipmentId, documentId) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/link-bl-document`, { documentId }),
@@ -112,6 +121,7 @@ export const api = {
     submit:           (shipmentId, filingId)    => req("POST",  `/shipments/${shipmentId}/customs-filings/${filingId}/submit`, {}),
     simulateResponse: (shipmentId, filingId, d) => req("POST",  `/shipments/${shipmentId}/customs-filings/${filingId}/simulate-response`, d),
     reset:            (shipmentId, filingId)    => req("PATCH", `/shipments/${shipmentId}/customs-filings/${filingId}/reset`, {}),
+    cancel:           (shipmentId, filingId, reason) => req("POST", `/shipments/${shipmentId}/customs-filings/${filingId}/cancel`, { reason }),
     listAll:          (params={})               => req("GET",   `/customs-filings?${new URLSearchParams(params)}`),
   },
   shippingInstructions: {
@@ -384,6 +394,8 @@ export const api = {
     confirm:   (id)     => req("POST", `/customer-statements/${id}/confirm`),
     markPaid:  (id, data) => req("POST", `/customer-statements/${id}/mark-paid`, data),
     voidStatement: (id) => req("POST", `/customer-statements/${id}/void`),
+    // Invoice Collections override for a statement — any trade manager of one of its shipments' lanes.
+    statusOverride: (id, data) => req("POST", `/customer-statements/${id}/status-override`, data),
     download: async (id, filename) => {
       const token = localStorage.getItem("cargodesk_token");
       const res = await fetch(`/api/customer-statements/${id}/download`, { headers: { Authorization: `Bearer ${token}` } });

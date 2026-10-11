@@ -63,16 +63,24 @@ describe("Schedule Generator Suite", () => {
       .find("button", { timeout: 8000 }).first().should("be.visible").click();
   };
 
+  // PortCombobox's typeahead dropdown is a sibling of the input's wrapper inside one outer div —
+  // scope the option click to it. A page-wide cy.contains("button", "USNYC") clicked a catalog row
+  // ("NLRTM → USNYC …") on a database whose catalog already lists that lane, before the POD search
+  // had even answered, so Generate then said "Pick POL and POD" (2026-10-10).
+  const pickPort = (placeholder, code) => {
+    cy.get(`input[placeholder="${placeholder}"]`).type(code);
+    cy.get(`input[placeholder="${placeholder}"]`).parent().parent()
+      .contains("button", code, { timeout: 8000 }).click();
+  };
+
   // Fills the main form's Vessel/Carrier/POL/POD pickers with real registry data — shared
   // by both the direct-sailing and TSP happy-path tests below.
   const fillMainForm = ({ vesselQuery = "a", carrier = "MAEU", pol = "NLRTM", pod = "USNYC" } = {}) => {
     pickVessel("Search by name or IMO…", vesselQuery);
     cy.get('input[placeholder="Search carrier code or name…"]').first().type(carrier);
     cy.contains("button", carrier, { timeout: 8000 }).click();
-    cy.get('input[placeholder="Search POL…"]').type(pol);
-    cy.contains("button", pol, { timeout: 8000 }).click();
-    cy.get('input[placeholder="Search POD…"]').type(pod);
-    cy.contains("button", pod, { timeout: 8000 }).click();
+    pickPort("Search POL…", pol);
+    pickPort("Search POD…", pod);
   };
 
   describe("Happy paths", () => {
@@ -198,10 +206,8 @@ describe("Schedule Generator Suite", () => {
     it("blocks Generate with no vessel selected", () => {
       cy.get('input[placeholder="Search carrier code or name…"]').first().type("MAEU");
       cy.contains("button", "MAEU", { timeout: 8000 }).click();
-      cy.get('input[placeholder="Search POL…"]').type("NLRTM");
-      cy.contains("button", "NLRTM", { timeout: 8000 }).click();
-      cy.get('input[placeholder="Search POD…"]').type("USNYC");
-      cy.contains("button", "USNYC", { timeout: 8000 }).click();
+      pickPort("Search POL…", "NLRTM");
+      pickPort("Search POD…", "USNYC");
 
       cy.contains("button", "Generate").click();
       cy.contains("Pick a vessel", { timeout: 8000 }).should("be.visible");
@@ -210,10 +216,8 @@ describe("Schedule Generator Suite", () => {
 
     it("blocks Generate with no carrier selected", () => {
       pickVessel("Search by name or IMO…", "a");
-      cy.get('input[placeholder="Search POL…"]').type("NLRTM");
-      cy.contains("button", "NLRTM", { timeout: 8000 }).click();
-      cy.get('input[placeholder="Search POD…"]').type("USNYC");
-      cy.contains("button", "USNYC", { timeout: 8000 }).click();
+      pickPort("Search POL…", "NLRTM");
+      pickPort("Search POD…", "USNYC");
 
       cy.contains("button", "Generate").click();
       cy.contains("Pick a carrier", { timeout: 8000 }).should("be.visible");

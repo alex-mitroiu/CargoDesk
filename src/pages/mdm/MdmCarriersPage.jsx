@@ -270,7 +270,6 @@ const AllocationForm = ({ init = {}, onSave, onCancel }) => {
         {effectiveDate && endDate && (
           <div style={{ marginTop: 8, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
             {diffDays(effectiveDate, endDate) + 1} day period
-            · max 90 days per configuration
           </div>
         )}
       </div>

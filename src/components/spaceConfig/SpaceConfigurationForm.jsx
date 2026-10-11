@@ -11,7 +11,7 @@ import CustomerCombobox from "../shared/CustomerCombobox";
 import ConsumptionBar from "../shared/ConsumptionBar";
 import LanePill from "../shared/LanePill";
 import { contractLines, loopsOf, lineOnLoop, commodityCodesOf, findClashes, overlappingConfigs, periodProblems, periodDays,
-  nextFreePeriod, MAX_PERIOD_DAYS, FAK_CODE } from "../../utils/spaceConfigRules";
+  nextFreePeriod, FAK_CODE } from "../../utils/spaceConfigRules";
 
 // Space configuration form (approved mockup: https://claude.ai/artifact/MDkX8f7EEG3TNVquYeor3h).
 // Contract first: carrier → contract number → reference → loop → the reference's routing lines
@@ -403,7 +403,7 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
               current={dates ? { from: effectiveDate, to: endDate, label: `${isEdit ? "editing" : "new"} · ${loopCode || "any loop"} · ${customerName || "all"}` } : null}
               bad={periodBad} clashIds={clashes.map(c => c.config.id)} />
           )}
-          <p style={note}>Upper rows: this reference's other configurations. Bottom row: {isEdit ? "the one you are editing" : "this new one"}.{dates ? ` ${periodDays(effectiveDate, endDate)} day period · max ${MAX_PERIOD_DAYS} days per configuration.` : ""}</p>
+          <p style={note}>Upper rows: this reference's other configurations. Bottom row: {isEdit ? "the one you are editing" : "this new one"}.{dates ? ` ${periodDays(effectiveDate, endDate)} day period.` : ""}</p>
           {overlapping.length > 0 && (
             <div style={{ overflowX: "auto" }}>
               <table data-testid="scf-overlapping" style={{ width: "100%", borderCollapse: "collapse", fontFamily: T.body, fontSize: 12 }}>

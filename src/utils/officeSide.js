@@ -12,9 +12,14 @@
 //
 // `auth` is whatever useAuth() returns (or a subset with these same field names); `shipment` is
 // any shipment object carrying the myOfficeSide field GET /api/shipments now computes per row.
+import { isShipmentLocked } from "./shipmentLock";
+
 export function canEditShipmentSide(auth, shipment, side) {
   const { canEditShipments, isAdmin, activeRoles, allOffices } = auth || {};
   if (!canEditShipments) return false;
+  // A Completed or Cancelled shipment is locked on every side (TKT-SPXTGR) — all of this function's
+  // consumers are locked sections, so the check lives here once rather than on each page.
+  if (isShipmentLocked(shipment)) return false;
   if (isAdmin || (activeRoles || []).includes("operator") || allOffices) return true;
   const mySide = shipment?.myOfficeSide;
   return mySide === "unrestricted" || mySide === side;

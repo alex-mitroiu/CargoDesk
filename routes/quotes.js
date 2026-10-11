@@ -20,7 +20,7 @@ module.exports = function quotesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, isUniqueViolation, mapQuote, mapQuoteLine, mapShipment,
           logEvent, logEntityEvent, toUsd, SERVICE_CODE_MAP, importContractRates,
           resolveCarrierAgentCandidates, screenShipmentById, schemaReady, getCustomerRow,
-          recomputeSpaceBadge, applyOfficeScopedAccessFilter , commodityCodeError } = ctx;
+          recomputeSpaceBadge, recomputeSpacePool, applyOfficeScopedAccessFilter , commodityCodeError } = ctx;
 
   // sales (User Management redesign, 2026-09-12) owns the quoting pipeline — deliberately not
   // added to shipments.js/shipment-ops.js/edi.js/etc.'s write guards, which stay booking-authority
@@ -434,7 +434,7 @@ module.exports = function quotesRoutes(app, ctx) {
     // (usually blank) space badge until some unrelated later container edit happened to
     // trigger a recompute. One call after the whole batch, not per-container — recomputeSpaceBadge
     // reads the full current container set fresh each time, so it's correct either way.
-    if (containersCreated > 0) await recomputeSpaceBadge(id);
+    if (containersCreated > 0) await recomputeSpacePool(id);
 
     const silentScreening = await screenShipmentById(id);
 

@@ -49,6 +49,14 @@ describe("Invoice Entry + Reversal Suite", () => {
     })).then(res => {
       expect(res.status).to.eq(201);
       shipmentId = res.body.id;
+      // The first cost-lines read applies any matching Charge Defaults (lib/charge-defaults.js);
+      // a database with a global FCL default would hand this shipment lines before the suite adds
+      // any. Trigger it now and remove what it added, so the suite starts at zero lines whatever
+      // defaults are configured (CI's empty database has none).
+      return api("GET", `/shipments/${shipmentId}/cost-lines`);
+    }).then(res => {
+      expect(res.status).to.eq(200);
+      res.body.forEach(l => api("DELETE", `/shipments/${shipmentId}/cost-lines/${l.id}`).its("status").should("eq", 200));
     });
   });
 

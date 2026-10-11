@@ -591,6 +591,10 @@ function App() {
     };
   }, [selectedId, roleCanEditShipments, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A cancellation refused because the carrier booking or a submitted customs / security filing is
+  // still active (2026-10-09): { shipmentId, items } for the pop-up listing them, else null.
+  const [cancelBlocked, setCancelBlocked] = useState(null);
+
   // Shared by ShipmentDetailPage and its promoted sub-pages (e.g. ShipmentPartiesPage) — same shipment PUT, multiple entry points.
   const handleUpdateShipment = async (id, form) => {
     try {
@@ -610,7 +614,11 @@ function App() {
         toast.warning("Cargo Ready Date is now after ETD — the linked contract and schedule no longer apply and were cleared; shipment flagged Requires Review.");
       }
       return updated;
-    } catch (e) { toast.error(e.message); throw e; }
+    } catch (e) {
+      if (e.code === "ACTIVE_ITEMS") setCancelBlocked({ shipmentId: id, items: e.body?.activeItems || [] });
+      else toast.error(e.message);
+      throw e;
+    }
   };
 
   // Shared by ShipmentDetailPage and ShipmentContainersPage — same container CRUD, two entry points.
@@ -2142,7 +2150,12 @@ function App() {
                     toast.warning("Cargo Ready Date is now after ETD — the linked contract and schedule no longer apply and were cleared; shipment flagged Requires Review.");
                   }
                   navigate("detail", shp.id);
-                } catch (e) { toast.error(e.message); throw e; }
+                } catch (e) {
+                  // Same pop-up as handleUpdateShipment: setting Cancelled here is the usual way to cancel.
+                  if (e.code === "ACTIVE_ITEMS") setCancelBlocked({ shipmentId: shp.id, items: e.body?.activeItems || [] });
+                  else toast.error(e.message);
+                  throw e;
+                }
               }} />
           );
         })()}
@@ -2681,6 +2694,34 @@ function App() {
         </div>
       )}
 
+      {cancelBlocked && (
+        <Modal title={`${cancelBlocked.shipmentId} can't be cancelled yet`} onClose={() => setCancelBlocked(null)} width={520}>
+          <div data-testid="cancel-blocked-modal" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <p style={{ fontFamily: T.body, fontSize: 13, color: T.text, margin: 0, lineHeight: 1.5 }}>
+              A shipment can only be cancelled once its carrier booking and its customs / security filings are cancelled.
+              {cancelBlocked.items.length === 1 ? " This one is" : " These are"} still active:
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {cancelBlocked.items.map(item => (
+                <div key={item.id} data-testid={`cancel-blocked-item-${item.kind}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                  border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", background: T.bg }}>
+                  <div>
+                    <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text }}>{item.label}</div>
+                    <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{item.status}</div>
+                  </div>
+                  <Btn size="sm" variant="secondary" onClick={() => { const sid = cancelBlocked.shipmentId; setCancelBlocked(null);
+                    navigate(item.kind === "booking" ? "shipment-carrier-booking-review" : "shipment-customs-filing-review", sid); }}>
+                    {item.kind === "booking" ? "Open Carrier Booking" : "Open Customs Filing"}
+                  </Btn>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <Btn variant="secondary" onClick={() => setCancelBlocked(null)}>Close</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
       {changePwOpen && (
         <ChangePasswordModal
           forced={changePwForced}

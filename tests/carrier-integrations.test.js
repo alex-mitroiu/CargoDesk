@@ -69,12 +69,15 @@ function testPureFunctions() {
     pol: "NLRTM", pod: "USNYC", carrierCode: "HLCU", etd: "2026-10-01",
     vessel: "TEST VESSEL", voyage: "001W", vesselImo: "9999999",
     service: "AEX", incoTerms: "FOB", equipment: [{ type: "40HC", count: 2 }], commodityCode: "8471",
+    commodityDescription: "Laptop computers", bookingAgentName: "CargoDesk Test Forwarding BV", serviceType: "Port-to-Port", movementType: "FCL",
   };
   const dcsaPayload = dcsaAdapter.buildBookingRequest({ id: "SHP-TEST" }, requestPayload);
   assert("buildBookingRequest sets vessel.vesselIMONumber", dcsaPayload.vessel?.vesselIMONumber === "9999999");
   assert("buildBookingRequest sets carrierServiceCode/carrierExportVoyageNumber", dcsaPayload.carrierServiceCode === "AEX" && dcsaPayload.carrierExportVoyageNumber === "001W");
   assert("shipmentLocations has POL/POD with correct UNLocationCode", dcsaPayload.shipmentLocations.some(l => l.locationTypeCode === "POL" && l.location.UNLocationCode === "NLRTM") && dcsaPayload.shipmentLocations.some(l => l.locationTypeCode === "POD" && l.location.UNLocationCode === "USNYC"));
-  assert("requestedEquipments maps ISOEquipmentCode/units/commodities", dcsaPayload.requestedEquipments[0]?.ISOEquipmentCode === "40HC" && dcsaPayload.requestedEquipments[0]?.units === 2 && dcsaPayload.requestedEquipments[0]?.commodities?.[0]?.commodityType === "8471");
+  assert("requestedEquipments: ISO 6346 code for 40HC (45G1), units, isShipperOwned, commodity description", dcsaPayload.requestedEquipments[0]?.ISOEquipmentCode === "45G1" && dcsaPayload.requestedEquipments[0]?.units === 2 && dcsaPayload.requestedEquipments[0]?.isShipperOwned === false && dcsaPayload.requestedEquipments[0]?.commodities?.[0]?.commodityType === "Laptop computers", JSON.stringify(dcsaPayload.requestedEquipments));
+  // CreateBooking's required set (BKG 2.0): the v0.91.0 builder sent only shipmentLocations + requestedEquipments.
+  assert("every CreateBooking required field is present", ["receiptTypeAtOrigin", "deliveryTypeAtDestination", "cargoMovementTypeAtOrigin", "cargoMovementTypeAtDestination", "isEquipmentSubstitutionAllowed", "shipmentLocations", "requestedEquipments", "documentParties"].every(k => dcsaPayload[k] !== undefined) && dcsaPayload.documentParties.bookingAgent?.partyName === "CargoDesk Test Forwarding BV", JSON.stringify(dcsaPayload));
 
   const minimalPayload = dcsaAdapter.buildBookingRequest({ id: "SHP-TEST" }, { pol: "", pod: "", equipment: [] });
   assert("fields with no source data are omitted, never fabricated", minimalPayload.vessel === undefined && minimalPayload.expectedDepartureDate === undefined && minimalPayload.shipmentLocations.length === 0);
@@ -88,7 +91,9 @@ function testPureFunctions() {
 
   assert("parseCallback maps CONFIRMED -> confirmed", dcsaAdapter.parseCallback({ bookingStatus: "CONFIRMED", carrierBookingReference: "HLCU-REF-1" }).status === "confirmed");
   assert("parseCallback maps REJECTED -> rejected", dcsaAdapter.parseCallback({ bookingStatus: "REJECTED" }).status === "rejected");
-  assert("parseCallback maps an unrecognized/interim status -> confirmed_with_changes (surfaced for review, never silently confirmed)", dcsaAdapter.parseCallback({ bookingStatus: "PENDING_UPDATE" }).status === "confirmed_with_changes");
+  assert("parseCallback labels a carrier request for changes (PENDING_UPDATE) update_requested — never silently confirmed", dcsaAdapter.parseCallback({ bookingStatus: "PENDING_UPDATE" }).status === "update_requested");
+  const cloudEvent = dcsaAdapter.parseCallback({ specversion: "1.0", id: "evt-1", source: "https://carrier.example", type: "org.dcsa.booking.v2", time: "2026-10-09T10:00:00Z", datacontenttype: "application/json", subscriptionReference: "sub-1", data: { bookingStatus: "CONFIRMED", carrierBookingRequestReference: "REQ-9", carrierBookingReference: "BKG-9" } });
+  assert("parseCallback reads a DCSA notification's state from its CloudEvent data", cloudEvent.status === "confirmed" && cloudEvent.state.carrierBookingRequestReference === "REQ-9" && cloudEvent.bookingRef === "BKG-9" && cloudEvent.eventId === "evt-1");
 }
 
 // ─── A tiny local HTTP server stands in for the carrier's real sandbox ─────────
@@ -103,9 +108,9 @@ function startMockCarrier() {
         lastBookingRequestBody = JSON.parse(raw.toString("utf8") || "{}");
         res.writeHead(202, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ carrierBookingRequestReference: "MOCK-REQ-REF-1" }));
-      } else if (req.method === "GET" && req.url.startsWith("/v1/vessel-schedules")) {
+      } else if (req.method === "GET" && req.url.startsWith("/v1/point-to-point-routes")) {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify([{ vesselName: "MOCK CARRIER VESSEL", vesselIMONumber: "9888888", carrierVoyageNumber: "002E", carrierServiceCode: "AEX", departureDateTime: "2026-10-05T00:00:00Z", arrivalDateTime: "2026-10-20T00:00:00Z" }]));
+        res.end(JSON.stringify([{ placeOfReceipt: { facilityTypeCode: "POTE", location: { UNLocationCode: "ZZTS1" }, dateTime: "2026-10-05T00:00:00Z" }, placeOfDelivery: { facilityTypeCode: "POTE", location: { UNLocationCode: "ZZTS2" }, dateTime: "2026-10-19T00:00:00Z" }, transitTime: 14, legs: [{ sequenceNumber: 1, transport: { modeOfTransport: "VESSEL", vessel: { name: "MOCK CARRIER VESSEL", vesselIMONumber: "9888888" }, servicePartners: [{ carrierServiceCode: "AEX", carrierExportVoyageNumber: "002E" }] }, departure: { facilityTypeCode: "POTE", location: { UNLocationCode: "ZZTS1" }, dateTime: "2026-10-05T00:00:00Z" }, arrival: { facilityTypeCode: "POTE", location: { UNLocationCode: "ZZTS2" }, dateTime: "2026-10-19T00:00:00Z" } }] }]));
       } else { res.writeHead(404); res.end("{}"); }
     });
   });

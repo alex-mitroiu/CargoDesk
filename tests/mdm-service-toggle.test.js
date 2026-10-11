@@ -112,7 +112,9 @@ async function setSource(token, value) {
     console.log("\nrebuildPortLanesMap picks up remote MDM data (transit-suggestion resolves through it)");
     const port1 = `TG${stamp % 100000}`.slice(0, 5).toUpperCase().padEnd(5, "A");
     const port2 = `TH${stamp % 100000}`.slice(0, 5).toUpperCase().padEnd(5, "A");
-    const iso2 = "TG";
+    // ISO 3166 user-assigned "XT", never a real country. This was "TG" — Togo, a real seeded country
+    // (2 ports, lane WAF) — which the cleanup below deletes (TKT-SQVGJ2 audit, 2026-10-09).
+    const iso2 = "XT";
     const laneCode = `TGL${stamp % 1000}`;
     await request("POST", "/api/port-locations", { unlocode: port1, name: "Toggle Port One", countryCode: iso2 }, token);
     await request("POST", "/api/port-locations", { unlocode: port2, name: "Toggle Port Two", countryCode: iso2 }, token);

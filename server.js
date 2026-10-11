@@ -1518,6 +1518,26 @@ async function docAmountUsd(doc) {
     : await query("SELECT amount, exchange_rate, vat_rate, vat_treatment FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND container_id=$2", [doc.shipment_id, doc.container_id || '']);
   return roundCents(lines.reduce((s, l) => s + l.amount * l.exchange_rate * vatFactor(l), 0));
 }
+// A consolidated statement's amount: the gross of the cost lines it bills, the same figure
+// computeArExposure counts as its receivable.
+async function statementAmountUsd(st) {
+  const lines = await query(`SELECT scl.amount, scl.exchange_rate, scl.vat_rate, scl.vat_treatment
+    FROM customer_statement_lines csl JOIN shipment_cost_lines scl ON scl.id = csl.cost_line_id WHERE csl.statement_id=$1`, [st.id]);
+  return roundCents(lines.reduce((s, l) => s + l.amount * l.exchange_rate * vatFactor(l), 0));
+}
+// The office that handles a statement's collections (decided 2026-10-09, TKT-IRH7WX): the export
+// office of its shipments, or the one carrying the largest share of its value when they differ.
+// Its mail account sends the reminder, its thresholds apply, its manager gets the escalation —
+// what the shipment's own export office does for an invoice.
+async function statementMainOffice(statementId) {
+  const [row] = await query(`SELECT s.emo_office_id, SUM(scl.amount * scl.exchange_rate) AS value
+    FROM customer_statement_lines csl
+    JOIN shipment_cost_lines scl ON scl.id = csl.cost_line_id
+    JOIN shipments s ON s.id = csl.shipment_id
+    WHERE csl.statement_id=$1 AND COALESCE(s.emo_office_id, '') <> ''
+    GROUP BY s.emo_office_id ORDER BY value DESC, s.emo_office_id LIMIT 1`, [statementId]);
+  return row?.emo_office_id || null;
+}
 
 // ─── Overdue-invoice reminder sweep (Story TKT-4TEYT1, Epic TKT-KR6ZBT) ───────
 // Configurable per-customer, not one fixed schedule — a same-day payer and an end-of-month
@@ -1586,6 +1606,48 @@ async function runDunningSweep() {
       sent.push({ docId: r.id, shipmentId: r.shipment_id, customerId: cust.id, companyName: cust.company_name, daysOverdue, outstandingUsd });
     } catch (e) {
       console.warn(`Dunning reminder failed for ${r.id}:`, e.message);
+    }
+  }
+
+  // Confirmed consolidated statements are chased like invoices (decided 2026-10-09, TKT-IRH7WX):
+  // the same customer opt-in and cadence and the same terms-based due date, sent through the
+  // statement's main export office (statementMainOffice).
+  for (const st of await query("SELECT * FROM customer_statements WHERE status='confirmed'")) {
+    const [cust] = await query("SELECT * FROM customers WHERE id=$1", [st.customer_id]);
+    if (!cust || !cust.reminder_enabled) continue;
+    const outstandingUsd = Math.max(0, roundCents((await statementAmountUsd(st)) - (st.paid_amount || 0)));
+    if (outstandingUsd <= 0) continue;
+    const dueMs = new Date(st.confirmed_at || st.created_at).getTime() + (cust.credit_terms_days || 0) * 86400000;
+    const daysOverdue = Math.floor((nowMs - dueMs) / 86400000);
+    if (daysOverdue <= 0) continue;
+    if (st.last_reminder_sent_at) {
+      if (!cust.reminder_interval_days) continue;
+      if (Math.floor((nowMs - new Date(st.last_reminder_sent_at).getTime()) / 86400000) < cust.reminder_interval_days) continue;
+    }
+    const officeId = await statementMainOffice(st.id);
+    if (!officeId) continue;
+    const [mailSettings] = await query("SELECT * FROM office_mail_settings WHERE office_id=$1 AND is_active=TRUE", [officeId]);
+    if (!mailSettings) continue;
+    const [primaryContact] = await query("SELECT email FROM customer_contacts WHERE customer_id=$1 AND is_primary=TRUE", [cust.id]);
+    const to = (primaryContact?.email || cust.email || '').trim();
+    if (!to) continue;
+    const label = st.filename || st.id;
+    try {
+      const filePath = st.stored_name ? path.join(UPLOADS_DIR, st.stored_name) : null;
+      await sendViaOffice(query, officeId, buildMailOptions({
+        from: mailSettings.from_address, fromName: mailSettings.from_name, to,
+        subject: `Payment reminder — statement ${label} (${daysOverdue}d overdue)`,
+        message: `This is an automated reminder that statement ${label} for ${cust.company_name}, `
+          + `totaling $${outstandingUsd.toFixed(2)} outstanding, is ${daysOverdue} day${daysOverdue === 1 ? '' : 's'} past its due date. `
+          + `Please arrange payment at your earliest convenience, or contact us if this has already been settled.`,
+        ...(filePath && fs.existsSync(filePath) ? { attachmentPath: filePath, attachmentFilename: label } : {}),
+      }));
+      await query("UPDATE customer_statements SET last_reminder_sent_at=$1 WHERE id=$2", [new Date().toISOString(), st.id]);
+      await logEntityEvent('customer_statement', st.id, 'REMINDER_SENT', null, null, null,
+        JSON.stringify({ customerId: cust.id, to, daysOverdue, outstandingUsd, officeId }));
+      sent.push({ statementId: st.id, customerId: cust.id, companyName: cust.company_name, daysOverdue, outstandingUsd });
+    } catch (e) {
+      console.warn(`Dunning reminder failed for ${st.id}:`, e.message);
     }
   }
   return sent;
@@ -1742,6 +1804,56 @@ async function runInvoiceCollectionsSweep() {
         console.warn(`Invoice collections escalation ${r.id} skipped — no branch manager configured for office ${r.emo_office_id || '(none)'}`);
       }
       await query("UPDATE shipment_documents SET collections_escalated_at=$1 WHERE id=$2", [todayIso, r.id]);
+    }
+  }
+
+  // Confirmed consolidated statements are chased like invoices (decided 2026-10-09, TKT-IRH7WX):
+  // the alert goes to the statement's owner (whoever confirmed it), the escalation to the manager
+  // of its main export office, with that office's thresholds and mail account. An override
+  // (keyed by the statement id in invoice_status_overrides) suppresses both, as for an invoice.
+  for (const st of await query("SELECT * FROM customer_statements WHERE status='confirmed'")) {
+    const outstandingUsd = Math.max(0, roundCents((await statementAmountUsd(st)) - (st.paid_amount || 0)));
+    if (outstandingUsd <= 0) continue;
+    const [activeOverride] = await query(
+      "SELECT * FROM invoice_status_overrides WHERE document_id=$1 ORDER BY overridden_at DESC LIMIT 1", [st.id]);
+    if (activeOverride) continue;
+    const officeId = await statementMainOffice(st.id);
+    const { alertBusinessDays, escalationBusinessDays } = await resolveInvoiceThresholds(officeId);
+    const elapsed = businessDaysBetween(st.confirmed_at || st.created_at, todayIso);
+    const [mailSettings] = officeId ? await query("SELECT * FROM office_mail_settings WHERE office_id=$1 AND is_active=TRUE", [officeId]) : [null];
+    const label = st.filename || st.id;
+
+    if (elapsed >= alertBusinessDays && !st.collections_alerted_at) {
+      const [owner] = st.owner_id ? await query("SELECT * FROM users WHERE id=$1", [st.owner_id]) : [null];
+      if (owner?.email && mailSettings) {
+        try {
+          await sendViaOffice(query, officeId, buildMailOptions({
+            from: mailSettings.from_address, fromName: mailSettings.from_name, to: owner.email,
+            subject: `Statement ${label} is now overdue — ${st.customer_name || st.customer_id}`,
+            message: `This statement has passed its ${alertBusinessDays}-business-day collections threshold with no payment recorded. Please follow up with the customer or record an override with a reason.`,
+          }));
+          sent.push({ id: st.id, statementId: st.id, stage: 'alert', to: owner.email });
+        } catch (e) { console.warn(`Statement collections alert ${st.id} failed:`, e.message); }
+      }
+      await query("UPDATE customer_statements SET collections_alerted_at=$1 WHERE id=$2", [todayIso, st.id]);
+    }
+
+    if (elapsed >= escalationBusinessDays && !st.collections_escalated_at) {
+      const [office] = officeId ? await query("SELECT * FROM offices WHERE id=$1", [officeId]) : [null];
+      const [manager] = office?.manager_user_id ? await query("SELECT * FROM users WHERE id=$1", [office.manager_user_id]) : [null];
+      if (manager?.email && mailSettings) {
+        try {
+          await sendViaOffice(query, officeId, buildMailOptions({
+            from: mailSettings.from_address, fromName: mailSettings.from_name, to: manager.email,
+            subject: `Escalation — statement ${label} still unpaid — ${st.customer_name || st.customer_id}`,
+            message: `This statement has now passed its ${escalationBusinessDays}-business-day escalation threshold with no payment recorded and no override on file.`,
+          }));
+          sent.push({ id: st.id, statementId: st.id, stage: 'escalation', to: manager.email });
+        } catch (e) { console.warn(`Statement collections escalation ${st.id} failed:`, e.message); }
+      } else {
+        console.warn(`Statement collections escalation ${st.id} skipped — no branch manager configured for office ${officeId || '(none)'}`);
+      }
+      await query("UPDATE customer_statements SET collections_escalated_at=$1 WHERE id=$2", [todayIso, st.id]);
     }
   }
   return sent;
@@ -1941,7 +2053,29 @@ const BOOKABLE_CARRIERS = new Set(["MAEU", "SAFM", "MCPU"]);
 // not yes" posture this codebase already takes elsewhere (e.g. a blank contractId never matches
 // a contract). The built-in 3 (BOOKABLE_CARRIERS) are deliberately NOT office-scoped — they're a
 // separate, pre-existing, always-simulated concept this pass didn't revisit.
+// The active carrier integration (Epic TKT-KG4E49) for a carrier that offers `capability`
+// ('booking' | 'tracking' | 'schedules'), with its adapter and call config — or null: no
+// integration, inactive, the api_carrier_integrations_enabled master switch off, the capability
+// not ticked, or no adapter registered under its key. The one lookup every carrier-integration
+// path uses (booking request, update, cancel, polling, Track & Trace, schedule search).
+async function carrierIntegrationFor(carrierCode, capability) {
+  if (!carrierCode) return null;
+  if ((await getSettings()).api_carrier_integrations_enabled === 'false') return null;
+  const [row] = await query("SELECT * FROM carrier_integrations WHERE carrier_code=$1 AND is_active=TRUE", [carrierCode]);
+  if (!row) return null;
+  let caps = [];
+  try { caps = JSON.parse(row.capabilities || "[]"); } catch { /* malformed → no capabilities */ }
+  if (!caps.includes(capability)) return null;
+  const adapter = getCarrierAdapter(row.adapter_key);
+  if (!adapter) return null;
+  return { row, adapter, config: { baseUrl: row.base_url, authHeaderName: row.auth_header_name, credential: row.credential, webhookSecret: row.webhook_secret } };
+}
+
 async function isEdiBookable(carrierCode, officeId) {
+  // A carrier with an active booking integration takes booking requests on its own — until
+  // 2026-10-09 it also needed an eAdapter config or a place in BOOKABLE_CARRIERS, so a carrier set
+  // up only under Carrier Integrations was refused with "not supported" before its adapter ran.
+  if (await carrierIntegrationFor(carrierCode, "booking")) return true;
   if ((await getSettings()).api_eadapter_enabled === 'false') return false;
   if (BOOKABLE_CARRIERS.has(carrierCode)) return true;
   if (!officeId) return false;
@@ -2553,6 +2687,48 @@ async function shipmentScopeParamCheck(req, res, next, id) {
 app.param("id", shipmentScopeParamCheck);
 app.param("shipmentId", shipmentScopeParamCheck);
 
+// Completed and Cancelled shipments are locked (TKT-SPXTGR, decided by the user 2026-10-09): nothing
+// about the shipment itself can change any more — header, parties, offices, legs, containers,
+// schedules, carrier booking, shipping instructions, services, customs filings — and neither status
+// can be left (Cancelled is final; Completed is locked the same way). What stays open, by the same
+// decision: finance (cost lines, billing documents, credit overrides — a cancellation fee, or a
+// CN01 reversing an invoice already issued), documents, messages, milestones and container events.
+// The concurrent-editing lock, share links and compliance screening aren't shipment fields, so they
+// stay open too. PUT /api/shipments/:id enforces the lock itself (it also checks what a cancellation
+// needs, see routes/shipments.js); this guard covers every /api/shipments/:id/<section> write, so a
+// new locked section is covered without touching its route. Registered after the scope check, so an
+// out-of-scope shipment still 404s rather than revealing its status.
+const LOCKED_SHIPMENT_STATUSES = ["Completed", "Cancelled"];
+const LOCK_OPEN_SECTIONS = new Set(["cost-lines", "credit-override", "documents", "messages", "milestones", "container-events", "carrier-events",
+  "edit-lock", "share-token", "screen", "screening"]);
+const lockedShipmentMessage = (id, status) =>
+  `${id} is ${status}, so its details are locked. Finance, documents, messages and milestones stay open.`;
+function isOpenOnLockedShipment(path) {
+  const m = path.match(/^\/api\/shipments\/[^/]+\/([^/]+)(\/.*)?$/);
+  if (!m) return true; // /api/shipments/:id itself: PUT checks the lock in its own route; DELETE keeps its own rules
+  const [, section, rest = ""] = m;
+  if (LOCK_OPEN_SECTIONS.has(section)) return true;
+  return section === "containers" && /^\/[^/]+\/events$/.test(rest); // container events, recorded per container
+}
+async function shipmentStatusLock(req, res, next, id) {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method) || typeof id !== "string" || !id.startsWith("SHP-")) return next();
+  if (isOpenOnLockedShipment(req.path)) return next();
+  try {
+    const [row] = await query("SELECT status FROM shipments WHERE id=$1", [id]);
+    if (row && LOCKED_SHIPMENT_STATUSES.includes(row.status))
+      return res.status(409).json({ error: lockedShipmentMessage(id, row.status), code: "SHIPMENT_LOCKED" });
+    next();
+  } catch (e) { next(e); }
+}
+// For routes that name the shipment in the body or reach it through a child id, not the URL.
+async function lockedShipmentError(shipmentId) {
+  if (!shipmentId) return null;
+  const [row] = await query("SELECT status FROM shipments WHERE id=$1", [shipmentId]);
+  return row && LOCKED_SHIPMENT_STATUSES.includes(row.status) ? lockedShipmentMessage(shipmentId, row.status) : null;
+}
+app.param("id", shipmentStatusLock);
+app.param("shipmentId", shipmentStatusLock);
+
 const INVERSE_LINK_LABEL = { "Blocks": "Is blocked by", "Duplicates": "Is duplicated by", "Implements": "Is implemented by", "Relates to": "Relates to" };
 const inverseLinkLabel = t => INVERSE_LINK_LABEL[t] || t;
 // ─── Entity event logger (generic: allocations, contracts, carriers) ─────────
@@ -2745,6 +2921,19 @@ const supersedeIfCarrierChanged = async (shipment, existing) => {
   const now = new Date().toISOString();
   const reason = `Carrier changed to ${shipment.carrier_code || '(none)'}`;
   if (existing.status !== "Cancelled") {
+    // Sent through a carrier integration: withdraw it at that carrier too (best effort — the
+    // carrier change itself goes ahead; a failure is logged and kept on the booking's reason).
+    let carrierNote = "";
+    if (existing.status === "Pending" && existing.carrier_booking_request_reference) {
+      const integ = await carrierIntegrationFor(existing.carrier_code, "booking");
+      if (integ?.adapter.cancelBooking) {
+        const r = await integ.adapter.cancelBooking(integ.config, existing.carrier_booking_request_reference, { reason });
+        if (!r.ok) {
+          carrierNote = ` — ${existing.carrier_code} was not told: ${r.error}`;
+          console.warn(`Carrier integration ${existing.carrier_code}: cancelling superseded booking ${existing.id} failed:`, r.error);
+        }
+      }
+    }
     // Notify the old carrier only if something was actually transmitted for THIS booking —
     // its own carrier_code (who the request actually went to), not the shipment's new one.
     if (existing.correlation_id && await isEdiBookable(existing.carrier_code, shipment.emo_office_id)) {
@@ -2764,7 +2953,7 @@ const supersedeIfCarrierChanged = async (shipment, existing) => {
       }
     }
     await query(`UPDATE carrier_bookings SET status='Cancelled', cancelled_at=$1, cancelled_by=$2, cancel_reason=$3, updated_at=$4 WHERE id=$5`,
-      [now, 'System (Auto)', reason, now, existing.id]);
+      [now, 'System (Auto)', reason + carrierNote, now, existing.id]);
     [existing] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [existing.id]);
   }
   await archiveBooking(existing, `Superseded — ${reason}`);
@@ -3371,11 +3560,22 @@ const recomputeSpaceBadge = async shipmentId => {
         // still Pending/Rejected/never-booked (or Cancelled) was incorrectly counted as consuming
         // real space, capable of flagging this shipment 'exceeded' against capacity nothing had
         // actually confirmed yet. Fixed to the same Confirmed-only rule.
+        //
+        // 2026-10-09 (TKT-4JU8C8, the user's decision): pending bookings count against space here
+        // too, as in the contract picker and the dashboard (allocated − confirmed − pending). A
+        // shipment that isn't confirmed yet is measured against everything else in the pool,
+        // confirmed or pending — the picker's rule when it was booked. One the carrier has
+        // confirmed is measured against the other confirmed bookings only, so a pending booking
+        // added later flags itself, not the shipment that already holds confirmed space.
+        const [ownBooking] = await query("SELECT status FROM carrier_bookings WHERE shipment_id=$1", [shipmentId]);
+        const othersStatus = ownBooking?.status === "Confirmed"
+          ? "cb.status = 'Confirmed'"
+          : "COALESCE(cb.status, '') NOT IN ('Rejected', 'Cancelled')"; // confirmed + pending (incl. not booked yet)
         const [{ other_teu }] = await query(
           `SELECT COALESCE(SUM(${TEU_EXPR("c")}),0) AS other_teu FROM containers c
            JOIN shipments s ON s.id=c.shipment_id
-           JOIN carrier_bookings cb ON cb.shipment_id=s.id
-           WHERE s.allocation_id=$1 AND s.id!=$2 AND cb.status='Confirmed'`,
+           LEFT JOIN carrier_bookings cb ON cb.shipment_id=s.id
+           WHERE s.allocation_id=$1 AND s.id!=$2 AND ${othersStatus} AND s.status <> 'Cancelled'`,
           [shipment.allocation_id, shipmentId]
         );
         const remaining = Math.max(0, alloc.allocated_teu - Number(other_teu));
@@ -3429,6 +3629,7 @@ async function revalidateSpaceLoop(shipmentId, actorId = null) {
   await logEvent(shipmentId, "SPACE_UNLINKED", "allocation_id", a.id, null,
     JSON.stringify({ reason: `Sailing is on loop ${loop}; space configuration ${a.id} is for loop ${a.loop_code}` }), actorId);
   await recomputeSpaceBadge(shipmentId);
+  await recomputeSpaceBadgesForAllocation(a.id); // its former pool-mates got the space back
   return { allocationId: a.id, loop, configLoop: a.loop_code };
 }
 
@@ -3437,6 +3638,16 @@ const recomputeSpaceBadgesForAllocation = async allocationId => {
   try {
     const rows = await query("SELECT id FROM shipments WHERE allocation_id=$1", [allocationId]);
     for (const r of rows) await recomputeSpaceBadge(r.id);
+  } catch { /* non-fatal */ }
+};
+// The whole pool of a shipment's space configuration, or just the shipment when it has none. Since
+// pending bookings count against space (TKT-4JU8C8), a container or booking change on one shipment
+// moves its pool-mates' badges too, so those triggers refresh the pool, not one shipment.
+const recomputeSpacePool = async shipmentId => {
+  try {
+    const [s] = await query("SELECT allocation_id FROM shipments WHERE id=$1", [shipmentId]);
+    if (s?.allocation_id) await recomputeSpaceBadgesForAllocation(s.allocation_id);
+    else await recomputeSpaceBadge(shipmentId);
   } catch { /* non-fatal */ }
 };
 
@@ -3944,13 +4155,14 @@ const ctx = {
   applyShipmentAccessFilter, applyOfficeScopedAccessFilter, resolveOfficeAccess, resolveEffectiveOfficeIds, deriveEffectiveRole,
   officeSideOf, chargeCodeSide, blockIfWrongSide, PARTY_ROLE_SIDE,
   resolveOfficeSideAccess, sideFromAccess,
+  LOCKED_SHIPMENT_STATUSES, lockedShipmentMessage, lockedShipmentError,
   fxCache, getFxRates, toUsd, roundCents, costLineEffectiveUsd, COST_LINE_EFFECTIVE_USD_SQL,
   sanctionsMap, loadSanctionsIndex, syncOfacSdn, scheduleNextOfacSync,
   syncConsolidatedScreeningList, scheduleNextCslSync,
   normSanctionName, EMBARGOED_COUNTRIES,
   getSettings,
   shipmentSubs, broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, shipmentLoopCode, revalidateSpaceLoop,
-  recomputeSpaceBadgesForAllocation, TEU_EXPR,
+  recomputeSpaceBadgesForAllocation, recomputeSpacePool, TEU_EXPR,
   UPLOADS_DIR,
   renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
   createTransporterFromSettings, getTransporterForOffice, invalidateTransporterCache,
@@ -3967,7 +4179,7 @@ const ctx = {
   mapTestItem, mapTestCaseLink,
   mapEdiMessage,
   mapCarrierBooking, BOOKABLE_CARRIERS, isEdiBookable, mapEadapterConfig,
-  mapCarrierIntegration, getCarrierAdapter, listRegisteredAdapterKeys,
+  mapCarrierIntegration, getCarrierAdapter, listRegisteredAdapterKeys, carrierIntegrationFor,
   mapCustomsFiling, CUSTOMS_FILING_TYPES,
   mapShippingInstructions,
   mapKbProject, mapKbVersion, mapKbColumn,
@@ -3997,7 +4209,7 @@ const ctx = {
   linkedPortCodes, findMatchingContractLegs, resolveCarrierAgent, resolveCarrierAgentCandidates,
   checkLineAgentCapabilityGaps,
   screenShipmentById, rescreenActiveShipments, screenCustomer, rescreenShipmentsForCustomer, rescreenAllCustomers, resolveCustomerGroup,
-  computeArExposure, docAmountUsd, vatFactor, runDunningSweep, runScheduledReportsSweep, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
+  computeArExposure, docAmountUsd, statementAmountUsd, statementMainOffice, vatFactor, runDunningSweep, runScheduledReportsSweep, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
   canEditOfficeSide, resolveActiveOffice,
   OVERRIDE_GRACE_MS,
   bcrypt, jwt, JWT_SECRET,
@@ -4023,6 +4235,7 @@ require('./routes/kanban')(app, ctx);
 require('./routes/testcases')(app, ctx);
 require('./routes/edi')(app, ctx);
 require('./routes/carrier-webhooks')(app, ctx);
+require('./routes/carrier-tracking')(app, ctx);
 require('./routes/customs-filing')(app, ctx);
 require('./routes/shipping-instructions')(app, ctx);
 require('./routes/customers')(app, ctx);

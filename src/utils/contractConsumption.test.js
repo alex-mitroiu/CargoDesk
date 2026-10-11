@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildContractRows, buildWeeklyTrend, buildBreakdown, inUnit, bucketOf, MAX_BREAKDOWN_REFS } from "./contractConsumption";
+import { buildContractRows, buildWeeklyTrend, buildBreakdown, inUnit, bucketOf, shipmentBucketOf, MAX_BREAKDOWN_REFS } from "./contractConsumption";
 
 const addDays = (iso, n) => { const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const teuOfShipment = s => s.teu;
@@ -40,6 +40,15 @@ describe("contract consumption rows", () => {
     const eglv = rows.find(r => r.contractNumber === "EGLV-TPAC");
     expect(eglv.totals).toMatchObject({ alloc: 200, conf: 19, pend: 0, rej: 5, rejN: 1 });
     expect(bucketOf("Cancelled")).toBeNull();
+  });
+
+  it("leaves out a Cancelled shipment whatever its booking says — one never booked used to count as pending", () => {
+    expect(shipmentBucketOf({ status: "Cancelled", bookingStatus: undefined })).toBeNull();
+    expect(shipmentBucketOf({ status: "Cancelled", bookingStatus: "Confirmed" })).toBeNull();
+    expect(shipmentBucketOf({ status: "Active", bookingStatus: undefined })).toBe("pend");
+    const withCancelled = buildContractRows({ allocations, contractMap, teuOfShipment,
+      shipments: [...shipments, { ...ship("S11", "AL-E", undefined, 12), status: "Cancelled" }] });
+    expect(withCancelled.find(r => r.contractNumber === "EGLV-TPAC").totals).toMatchObject({ conf: 19, pend: 0, rej: 5 });
   });
 
   it("reports a reference booked past its own allocation, and the contract's net and free space", () => {

@@ -204,8 +204,10 @@ Developer machine
 │  ├─ node services/kanban/server.js                 → :3007
 │  └─ node services/customers/server.js              → :3008
 │         │
-│         └─ Vite proxies /api and /ws → :3001 (monolith only — the browser never talks
-│            directly to any of the seven microservices)
+│         └─ Vite forwards /api and /ws → :3001 (monolith only — the browser never talks
+│            directly to any of the seven microservices). /api is a plain pipe
+│            (vite.config.js "api-passthrough", 2026-10-10): Vite's own proxy hung on
+│            large responses such as the 1.2 MB shipment list; /ws stays on Vite's proxy.
 │
 ├─ pgdata/                             (monolith's own embedded pglite instance — its own
 │                                        directory, DATABASE_URL unset; a real Postgres connection
@@ -529,6 +531,7 @@ routes/ais.js                     85   AIS listener status + manual controls
 routes/scheduled-reports.js       82   Recurring emailed reports (TKT-IXAR9G)
 routes/charge-codes.js            78   Charge code registry
 routes/carrier-webhooks.js        63   Inbound carrier webhook receiver (DCSA async bookings)
+routes/carrier-tracking.js        93   DCSA Track & Trace pull into container events (§8.34)
 routes/gl-account-mappings.js     61   GL Export's Charge Code + Type → GL Account mapping (§8.28)
 routes/container-types.js         58   Container type registry (Equipment section)
 routes/invoice-reason-codes.js    50   Invoice status override reason codes (Epic TKT-G11AHW)
@@ -2718,13 +2721,15 @@ no report said what a legal entity owed.
     shipment and documents don't, so an issued invoice used to lose its charges, drop silently out
     of the VAT report, GL Export and AR, and remain as an orphaned row. On an allowed delete, the
     shipment's remaining documents (drafts, packing lists, photos: rows and files) now go with it
-    instead of being orphaned.
+    instead of being orphaned. Fixed 2026-10-10: a booking with a linked B/L
+    (`carrier_bookings.bl_document_id`) made that delete fail on the foreign key, a 500 that
+    deleted nothing; the link is now cleared first, inside the same transaction.
     - Test side effect: suites whose shipments billed a customer now leave those shipments behind.
       Their scratch office and branch can't be deleted either, so `tests/helpers/offices.mjs`
       `retireOffice` / `retireBranch` deactivate them. Otherwise `ensureOffices()` would pick up a
       leftover active office in every later test. A full run was diffed to confirm no office stays
       active.
-    `tests/receivables-gross.test.js` (26).
+    `tests/receivables-gross.test.js` (29).
 - **Reverse-charge self-assessment** (TKT-MQAXQX). The rate is `branches.standard_vat_rate`, set
   per legal entity under Organization → Branches (0–100, blank = not set). A reverse-charged
   **purchase** adds base × rate to both output and input VAT, as its own `self_assessed` row, so
@@ -3043,8 +3048,9 @@ one TEU pool.
   there is one).
 - **Duplicates.** A configuration is a duplicate when it shares a ticked line with another
   configuration on the same contract, with the same loop, customer and commodity and an
-  overlapping period. There is no QFP special case. The 90-day maximum is checked only in the form,
-  so older rows of 91 days stay editable.
+  overlapping period. There is no QFP special case, and no length limit: the 90-day cap, which
+  only the form ever checked (and which blocked every save on four live 91-day configurations),
+  was dropped on 2026-10-09 (TKT-3WX973). Only the contract's validity bounds a period.
 - **Untick guard.** On PUT, unticking a line that a non-cancelled shipment on this configuration
   travels on is refused (409) before the other rules run. `routingsInUse` in `routes/contracts.js`
   also counts `allocation_routings`, so a contract save can't remove a ticked line.
@@ -3076,6 +3082,61 @@ one TEU pool.
 - **Tests.** `tests/space-config-lines.test.js` (30, new), `allocations-crud` (51, fixtures now
   realistic contracts with legs), `src/utils/spaceConfigRules.test.js` (11), and
   `SpaceConfigurationsPage.test.jsx` (mocks mirror `api.contracts.search`/`api.allocations.list`).
+
+### 8.34 DCSA Carrier Lifecycle: booking update/cancel, polling, Track & Trace, schedules (2026-10-09, unreleased)
+
+Epic `TKT-KG4E49`. The v0.91.0 framework (registry, `carrier_integrations`, the `dcsa-bkg-v2`
+adapter, the webhook receiver, the admin page) only ever created bookings. This round adds the rest
+of the booking lifecycle and the other two DCSA APIs, and rebuilds the adapter against the published
+specs: DCSA's own conformance suite (`dcsaorg/Conformance-Gateway`) — Booking 2.0 (API 2.0.3),
+Track & Trace 2.2, Commercial Schedules 1.0 (API 1.0.1).
+
+- **What was wrong in v0.91.0.** The booking request missed six of CreateBooking's eight required
+  fields (receipt/delivery type, cargo movement types, equipment substitution, document parties)
+  and sent "40HC" where an ISO 6346 code is required — a real carrier would answer 400.
+  Notifications are CloudEvents with the state under `data`; the webhook read a flat body, so a real
+  callback matched no booking. The schedules call used a guessed path. And `isEdiBookable` ignored
+  integrations, so a carrier set up only under Carrier Integrations was refused before its adapter
+  ran. All fixed; the payloads validate against the spec's CreateBooking/UpdateBooking/
+  CancelBookingRequest schemas.
+- **One lookup.** `carrierIntegrationFor(carrierCode, capability)` (server.js) — active integration,
+  master switch on, capability ticked, adapter registered — used by every path.
+- **Carrier state.** `applyCarrierState` (routes/edi.js) takes the DCSA triple (bookingStatus,
+  amendedBookingStatus, bookingCancellationStatus) from a notification or a poll and records only
+  a change (`carrier_bookings.carrier_state`, `carrier_state_at`). CONFIRMED is recorded but, as
+  before, an operator confirms in CargoDesk; REJECTED/DECLINED → Rejected; CANCELLED or
+  CANCELLATION_CONFIRMED → Cancelled. Webhooks match a booking by request reference or carrier
+  booking number.
+- **Cancel (decided by the user).** The carrier is told first; if it refuses the call, nothing
+  changes (502). A booking not yet confirmed is withdrawn (`bookingStatus: CANCELLED`) and cancelled
+  here. A CONFIRMED booking is only asked to cancel (`bookingCancellationStatus:
+  CANCELLATION_RECEIVED`): it stays Confirmed with `last_response_status = cancellation_requested`
+  — which keeps blocking the shipment's own cancellation — until the carrier confirms or declines.
+- **Update / amendment.** "Send update to carrier" (`POST .../carrier-booking/send-update`) rebuilds
+  the booking from the shipment with the same `bookingRequestPayload` Send Booking Request uses and
+  PUTs it: an update while open, an amendment once confirmed.
+- **Polling.** `GET /v2/bookings/{ref}` for bookings sent through an integration and not heard from
+  for 15 minutes (sweep), and "Check status" on the Carrier Booking page.
+- **Track & Trace (decided by the user).** `routes/carrier-tracking.js` pulls `GET /v2/events` by
+  carrier booking number (paged) — "Sync carrier events" on Milestones & Events and a 30-minute
+  sweep. `lib/carrier-integrations/tnt-mapping.js`: actual events only; GTOT/GTIN empty/laden →
+  Empty Pickup / Gate In / Gate Out / Empty Return; LOAD at the POL → Loaded, DISC at the POD →
+  Discharged, either elsewhere is a transshipment move and skipped; DEPA from the POL → Sailed for
+  every container. Recorded through the shared `recordContainerEvent`, so milestones complete as
+  for manual events; `container_events.carrier_event_id` keeps a re-pull from duplicating.
+- **Schedules.** `GET /v1/point-to-point-routes` (placeOfReceipt/placeOfDelivery), each routing
+  mapped to the sailing shape the picker already takes, legs included.
+- **Milestone rail.** "Sync carrier events" completes milestones; the shipment sidebar's progress
+  rail now takes every list MilestonePanel loads (window event `cargodesk:milestones-loaded`), so
+  it no longer shows the old count until the next page switch. The same holds for a manual tick.
+- **Review tab.** The shipment's message thread also carries SI, VGM, customs and now cancellation
+  messages, so Sent vs. Received diffs only the newest outbound message that holds the whole
+  booking (request, update, amendment), and the Carrier Response box reads only booking answers.
+  Before, a cancellation request (or a VGM sent after the booking) blanked the table.
+- **Tests.** `tests/dcsa-lifecycle.test.js` (33, new) against a fake carrier that enforces the
+  spec's required fields and state preconditions; `tests/carrier-integrations.test.js` (32) brought
+  up to the spec. Not yet validated against a real carrier: that needs the Hapag-Lloyd sandbox
+  signup (`TKT-HWCWCI`, the user's).
 
 ## 9. Data Flow Diagrams
 
@@ -3337,6 +3398,8 @@ continues; don't rewrite history once an item's checked.
 | 2026-09-25 | Self-audit of the prior two days' own commits (v0.91.7's release + this session's own uncommitted diff building Charge Defaults, editable Shipment Conditions, and the Carrier Booking contract-ref fix) — `/code-review`, 8 parallel background review agents plus one direct pass, cross-verified before any fix began. First entry in this log since 2026-09-12; unlike every entry above (an exploratory or targeted QA pass against the running app), this one is a static/diff-based code review. | **16 findings, all fixed same day, 384 regression assertions re-run green across 8 suites afterward.** | **Security (2, both real write-side authorization gaps, closed via §8.26's `blockIfWrongSide`)** — cost-line write routes (POST/PUT/PATCH actualize+post/POST adjust/DELETE/POST post-batch, `routes/shipment-ops.js`) and document/invoice write routes (generate/PATCH/reverse/mark-paid, plus BL surrender/release) had **zero** office-side check despite their own GET/list routes already filtering reads by the identical `charge_code_sides`/`DOC_TYPE_SIDE` rule — a wrong-side user could write, or discover-then-delete (guess an id, since the list correctly hides it), a line or document their own list view never showed them. See §8.26's own write-up for the fix. **Correctness (7)** — §8.27's Charge Defaults check-then-act race (closed via an atomic `ON CONFLICT DO NOTHING RETURNING` claim, not a lock); the Parties & Offices "Your Side" badge read `activeOffice.department` (which KIND of office the user is generally in) instead of the server-computed `shipment.myOfficeSide` (whether their office is actually THIS shipment's EMO/IMO) — cosmetically wrong, no write-authority impact since it's display-only; Carrier Booking Review and Customs Filing Review (`ShipmentCarrierBookingReviewPage.jsx`, `ShipmentCustomsFilingReviewPage.jsx`) never got migrated to `canEditShipmentSide` when their Details siblings did back in v0.91.7 — showed an enabled Confirm/Cancel/Reset to a wrong-side user who'd then hit a 403 from the (correctly gated) server, a UX-only gap, not an exploit; `ShipmentCarrierBookingDetailsPage.jsx`'s Reference tile showed `shipment.contractRef` (a copy of the contract's own number, made at assignment time) for a Central booking instead of the contract's own real, independently-populated reference, silently duplicating the Contract Number tile above it; two more module-level colour objects (`officeMiniLabel`, `RECONCILE_HZ_COLOR`) captured `HZ.*` at import time instead of reading the live theme-toggle-mutated object (the same defect class §4/CLAUDE.md's own established rule already names, just two instances that predated the rule being written down); a NaN amount silently passed Charge Defaults' `validateLines()` non-negative check (`Number(NaN) < 0` is `false`); `chargeCodeSide()` (server.js) now normalizes to only ever return `'Export'`/`'Import'`/`null`, so a `charge_code_sides` row with any other value can no longer be read as "ungated" by one caller (the `!side` write-gate check) while being read as "hidden" by another (the read filter's strict-equality check) — a defensive fix for corrupted data that has no actual write path in this codebase today, marked PLAUSIBLE rather than CONFIRMED. **Efficiency (3)** — §8.26's `resolveOfficeSideAccess` duplicate-check removal; the cost-line side filter (`filterCostLinesBySide`) batched its per-row `chargeCodeSide()` lookup into one `IN (...)` query; the Parties & Offices tab's two independent `shipmentParties.list` fetches (`PartiesOfficesPanel` and `AdditionalPartiesPanel`, each fetching the same data for its own purpose) collapsed into one shared fetch owned by the parent `ShipmentPartiesPage.jsx`. **Simplification (2)** — the identical `dashedBtn` style-factory duplicated across the Costs and Invoices Accounting tabs consolidated into one `makeDashedBtn` (`shipmentDetailTheme.js`); 5 pages that reconstructed a `{canEditShipments, isAdmin, activeRoles, allOffices}` object by hand to call `canEditShipmentSide` now pass `useAuth()`'s own result straight through, matching the pattern's simplest existing callers. **Two stale pre-existing test assertions caught and fixed while re-running the regression suite**, not counted among the 16: `tests/office-side-permissions.test.js` had literally asserted the cost-line write gap as "by design" (predated this epic's write-gating fix); `tests/carrier-booking.test.js` asserted the pre-fix contract-ref duplication as correct (predated the v0.91.8 contract-ref fix itself, an unrelated same-release change). |
 | 2026-09-29 | Bugs found while building the unreleased work after v0.91.9: tax handling (§8.29), the reconciliation and auto-import rework (§8.30), the contract picker (§8.31) and the Dashboard consumption rework (§8.32). Found by building and testing, not by a dedicated audit pass. | **7 real bugs, all fixed the same day; uncommitted.** | **(1) HIGH — Overwrite deleted protected lines.** Reconcile Overwrite deleted by *charge code*, which also wiped posted lines and Charge Default (CCD) lines sharing the code. It then regenerated the charge, which duplicated any line that survived. Deletes now go by line id, and a charge with a protected line is `locked` (§8.30). **(2) HIGH — Reset to Contract duplicated and deleted lines.** It skipped *and* regenerated an edited contract line, so the charge appeared twice, and it deleted charges the contract never had. It now runs the same engine with `overwrite`. **(3) MEDIUM — wrong snapshot after a contract swap.** Rate snapshots were looked up by shipment only, so the previous contract's snapshot was replayed. Lookups are now scoped by `contract_id`. **(4) HIGH — GL Export skipped reversed invoices** (v0.91.9 code). It selected `status='confirmed'`, so an invoice reversed before its first export was skipped and its CN01's negative amount stood alone in the GL. It now uses `ISSUED_BILLING_DOC_SQL`, and the VAT report shares the definition. **(5) MEDIUM — invoice regeneration deleted voided invoices.** `replaceDraftIfAny` removed them along with the draft it meant to replace. **(6) MEDIUM — the Dashboard weekly trend used the wrong link.** It was keyed by the shipment's own `contractId` instead of `allocationId`, unlike every other space figure on the page (§8.6 correction). **(7) Design conflict — per-lane overlap check.** `checkOverlap` rejected a second contract's configuration on the same lane and period, although the form treated that case as a warning. The user decided a configuration is unique per contract (§8.6). Test fixtures were updated for the new message. **Also caught before shipping:** a missing `$` in a SQL placeholder in `applyReconciliation`, caught by the tests, and contract bars reshuffling under the pointer while live contract numbers loaded, so a click selected the neighbouring bar (a tie-break sort fix). Suites re-run green: `allocations-crud` 51, `shipment-crud` 35, `contract-auto-import` 27 (new), `rate-reconciliation` 53, `cost-lines-lifecycle` 42, `contract-routings` 34, `contract-service-toggle` 20, `vat-handling` 36 (new); Vitest 239/239. Every feature was also checked live in a browser. |
 | 2026-09-29 | Contract routing ids, checked while planning space configurations that reference routings (§8.31 follow-up). | **Real bug, dormant in current data, fixed same day; uncommitted.** | `saveRoutings` (`routes/contracts.js` and `services/contract-management/server.js`) deleted and re-inserted every `contract_routings` row on each contract save, so every routing got a new id. `shipments.contract_routing_id` then pointed at nothing, and `resolveLiveContractRates` (server.js) fell back to the contract-wide rates only: after any save of a contract with named routings, Update Carrier Costs / Reconcile on its shipments would silently lose the routing's own charges (e.g. its ocean freight). Only one contract has a named routing today (EC-HLCU-NLAMS-USNYC / REF00404, one shipment on it) and it had not been re-saved, so no data was affected. **Fixed**: routings sent back with their id are updated in place, new ones inserted, removed ones deleted; legs/rates may also name their routing by a surviving id. Removing a routing a non-cancelled shipment uses is now refused (409, naming the shipments), in local and remote mode. `tests/contract-routings.test.js` 34 → 50 (ids survive re-save, rename and add; Update Carrier Costs still sees the routing's 2450 OF after a save; in-use removal refused and nothing changed; unused removal clean). Remote mode verified by script, and a real-browser save of REF00404 kept CRTG-6QH95Z. `contract-improvements` 39, `contract-service-toggle` 20, `contracts-gaps` 23, `rate-reconciliation` 53, `contract-auto-import` 27, `allocations-crud` 51, `contract-carrier-mismatch` 33 re-run green. |
+| 2026-10-09 | **TKT-SQVGJ2 audit, everything in v0.91.10**: routing lines, commodity codes, space configurations on lines, the consumption dashboard, the SHP-WIRHFD mismatch fix, reconcile choices, VAT, finance epic TKT-XV4UHD and TKT-1V9GYU. Method: read the code, confirm live by API and browser, file each finding under the epic. | **11 findings, all fixed (4 after the user's decisions the same day); uncommitted. The 11 tickets that were waiting In Testing were re-verified and Released.** | **Sound:** routing-line normalization and stable ids, commodity-code validation, and CI #121 (fully green, Cypress included, on CI's empty database, so the startup migrations hold there). Finance agreed to the cent end to end in one scripted run: a shipment with standard, zero-rated and reverse-charged lines, billed through a USD invoice, an EUR invoice and a statement, then credit status (AR, aging, exposure), VAT Liability (with self-assessment), GL export (balanced, AR = gross) and FX unrealized. **Fixed:** (1) TKT-FQ21BF: a shipment cancelled before it was ever booked kept its TEU as "pending" on its space configuration in every consumption figure; now a Cancelled shipment is left out of `loadTeuBuckets`, the badge's sibling query, `contractConsumption.js` and the Dashboard's `consumedMap`. (2) TKT-4YGFRI: FX Revaluation realized a part-payment against the whole booking (the unpaid rest showed as a loss) and dropped the document from unrealized; the paid share is now realized against its own share and the rest stays unrealized. (3) TKT-D9S6LQ: Invoice Collections showed only each shipment's most recent invoice while the sweep chases every confirmed one; now one row per confirmed invoice. (4) TKT-DLKCTD: a shipment billed through a confirmed statement has no FR01/FR02, so Invoice Collections, Billing Performance and the invoice-deadline overdue list all called it never invoiced; one shared query (`STATEMENT_BILLED_SHIPMENTS_SQL`, lib/mappers.js) now counts it as billed in all three. **Decided by the user and built:** TKT-8RC5E2 (the dashboard counted a configuration's whole TEU but only shipments with ETD in the range, showing 200 TEU free on ALC-70ZFOI for October where the picker showed 170 → now every booking on an active configuration counts; verified live: 170), TKT-4JU8C8 (the Space Exceeded badge ignored pending → counts pending for a not-yet-confirmed shipment, confirmed-only for a confirmed one; pool recompute on container/booking changes; `tests/space-badge.test.js`), TKT-3WX973 (the 90-day cap was form-only and blocked four live 91-day configurations → dropped), TKT-IRH7WX (confirmed statements were AR but never dunned or chased → chased like invoices through their main export office, owned by whoever confirmed them, overridable by a TM of any of their lanes, with rows in Billing Performance and Invoice Collections; `tests/statement-collections.test.js`). **Also fixed:** TKT-XU38KY (master data had no ZA/ZM/ZW, so ZA ports got no trade lane, and no SGSIN port → added, lane SAF, to both sample DBs, the MDM service DB, `data/seaports.csv` and the dev DB; `tests/mdm-reference-data.test.js`), TKT-1QBVF9 (the contract service's startup migration lacked the routing-in-use guard → it now leaves a contract alone when a stored routing would be dropped; `droppedRoutingIds`), TKT-WW88OU (`RoutingLinesEditor` had no test → 13 component tests). Adding ZA/ZM/ZW exposed that `mdm-crud`, `organization` and `mdm-service-toggle` tests used scratch country codes that can be real (Z?/Y?, "TG" = Togo) and delete them — one run deleted Zimbabwe (restored); all now use ISO user-assigned codes and stop if the scratch create is refused. **Re-verified and Released:** the finance epic TKT-XV4UHD and its seven children, TKT-1V9GYU, TKT-NU524E, TKT-198GZH — TKT-2F19XD's one-line-one-document rule probed live in both directions. |
+| 2026-10-09 | Shipment status lock and cancellation rules (TKT-SPXTGR, decided by the user the same day). | **Built; uncommitted.** | Completed and Cancelled shipments are locked (`server.js` `shipmentStatusLock`, an `app.param` guard on every `/api/shipments/:id/<section>` write, plus `PUT /api/shipments/:id`, `POST /api/containers` and `DELETE /api/schedules/:id`, each 409 `SHIPMENT_LOCKED`). Cancelled is final and Completed can't be left either. Still open: cost lines, credit override, documents, messages, milestones, container events, edit lock, share link and screening. Cancelling needs the carrier booking (Pending/Confirmed) and every submitted filing (Filed/Accepted) cancelled first, else 409 `ACTIVE_ITEMS` with the list, which `App.jsx` shows in a pop-up (from the detail pages and the Edit Shipment form). A submitted filing can be cancelled with a reason (`POST .../customs-filings/:filingId/cancel`, `customs_filings.cancelled_at/by/cancel_reason`) and reset to Draft from there. On the way: TKT-LXQNQG's update path still accepted a negative Declared Value (fixed), and every failed Edit Shipment save left an unhandled promise rejection (caught). Tests: `tests/shipment-status-lock.test.js` (52), `tests/shipment-integrity.test.js` (21, pins TKT-HZOAE0/FH5Q94/LXQNQG), `src/utils/shipmentLock.test.js`, `ShipmentHeaderBar.test.jsx`; a real-browser pass 17/17. |
 
 ### Low / Enhancement
 

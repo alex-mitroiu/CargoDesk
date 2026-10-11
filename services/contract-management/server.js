@@ -2,7 +2,7 @@
 const express = require("express");
 const { query, transaction } = require("./lib/db");
 const { readSecret } = require("./lib/dockerSecret");
-const { normalizeRoutingLines } = require("./lib/routingLines");
+const { normalizeRoutingLines, droppedRoutingIds } = require("./lib/routingLines");
 
 const PORT = process.env.CONTRACT_SERVICE_PORT || 3004;
 const SERVICE_SECRET_DEV_DEFAULT = "cargoDesk-dev-contract-service-secret-do-not-use-in-prod";
@@ -397,19 +397,25 @@ async function migrateCommodityTypes() {
 }
 
 async function migrateRoutingLines() {
-  let changed = 0;
+  let changed = 0, skipped = 0;
   for (const { id } of await query("SELECT id FROM contracts ORDER BY created_at")) {
     const stored = await storedRoutingState(id);
     if (!stored.legs.length && !stored.routings.length) continue;
     const rates = (await query("SELECT * FROM contract_rates WHERE contract_id=$1 ORDER BY sort_order", [id])).map(mapRate);
     const norm = normalizeRoutingLines({ routings: stored.routings, legs: stored.legs, rates, storedLegs: stored.legs });
     if (!norm.changed || norm.duplicate) continue;
+    // This service owns no shipments, so it can't tell whether a routing it would remove is still
+    // used by one (the monolith's copy of this migration checks, routingsInUse). Leave any contract
+    // that would lose a stored routing as it is: the next save goes through the monolith's
+    // PUT /api/contracts/:id, which runs that check (TKT-1QBVF9, TKT-SQVGJ2 audit).
+    const dropped = droppedRoutingIds(stored.routings, norm.routings);
+    if (dropped.length) { skipped++; console.warn(`  ⚠ Contract ${id}: routing ${dropped.join(", ")} would be removed — left as is`); continue; }
     const routingIds = await saveRoutings(id, norm.routings);
     await saveLegs(id, norm.legs, routingIds);
     await saveRates(id, norm.rates, routingIds);
     changed++;
   }
-  if (changed) console.log(`  ✔ Contract routing lines: ${changed} contract(s) converted`);
+  if (changed || skipped) console.log(`  ✔ Contract routing lines: ${changed} contract(s) converted${skipped ? `, ${skipped} left as is` : ""}`);
 }
 
 // ─── container_types / imdg_classes (TKT-5YYLNT) — mirrors routes/contracts.js's own

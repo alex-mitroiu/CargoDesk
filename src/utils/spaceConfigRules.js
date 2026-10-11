@@ -11,7 +11,8 @@
 import { lineChain, chainLabel } from "./routingLines";
 
 export const FAK_CODE = "9999";
-export const MAX_PERIOD_DAYS = 90;
+// No length limit on a configuration's period (the user dropped the old 90-day cap on 2026-10-09,
+// TKT-3WX973); only the contract's validity bounds it, the same rule the server enforces.
 
 const up = s => String(s || "").trim().toUpperCase();
 
@@ -63,7 +64,6 @@ export function periodProblems({ from, to, validFrom, validTo }) {
   if (!from || !to) return out;
   if (to < from) out.push("The end date is before the start date.");
   if ((validFrom && from < validFrom) || (validTo && to > validTo)) out.push(`The period must sit inside the contract's validity (${validFrom || "…"} – ${validTo || "…"}).`);
-  if (periodDays(from, to) > MAX_PERIOD_DAYS) out.push(`A configuration covers at most ${MAX_PERIOD_DAYS} days — split the period.`);
   return out;
 }
 

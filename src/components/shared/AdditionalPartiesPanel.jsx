@@ -83,8 +83,10 @@ const LineAgentCandidatesModal = ({ candidates, onResolve, onDismiss }) => {
 // ShipmentPartiesPage, shared with the sibling PartiesOfficesPanel — this panel used to run its
 // own independent shipmentParties.list fetch, a real duplicate request every time this tab loaded
 // (2026-09-25 audit finding).
-const AdditionalPartiesPanel = ({ shipmentId, parties, onChanged }) => {
-  const { canEditShipments: canEdit } = useAuth();
+// `locked`: the shipment is Completed or Cancelled, so its parties can't change (TKT-SPXTGR).
+const AdditionalPartiesPanel = ({ shipmentId, parties, onChanged, locked = false }) => {
+  const { canEditShipments } = useAuth();
+  const canEdit = canEditShipments && !locked;
   const [adding,       setAdding]       = useState(false);
   const [newRole,      setNewRole]      = useState("");
   const [newCustomer,  setNewCustomer]  = useState({ id: "", name: "" });

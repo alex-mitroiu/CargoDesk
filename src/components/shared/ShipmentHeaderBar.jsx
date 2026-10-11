@@ -15,6 +15,7 @@ import { fmtCurr } from "../../utils/invoiceGenerator";
 import { onCargoValueChanged } from "../../cargoValueBus";
 import { onLegsScheduleChanged } from "../../legsScheduleBus";
 import { deriveLoopCode } from "../../utils/scheduleLoop";
+import { isShipmentLocked } from "../../utils/shipmentLock";
 import LoopRouteModal from "./LoopRouteModal";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
 
@@ -463,7 +464,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
           { key: "tickets", icon: "◩", badge: openTicketCount,
             title: openTicketCount > 0 ? `${openTicketCount} open ticket${openTicketCount > 1 ? "s" : ""}` : "Related tickets",
             onClick: () => setTicketsOpen(true) },
-          ...(canEdit ? [{ key: "edit", icon: IconPencil, title: "Edit Shipment", onClick: () => onEdit?.() }] : []),
+          ...(canEdit && !isShipmentLocked(shipment) ? [{ key: "edit", icon: IconPencil, title: "Edit Shipment", onClick: () => onEdit?.() }] : []),
         ]} />
 
         <button id="shphdr-fold-toggle" data-testid="shipment-detail-header-fold-toggle" type="button" onClick={() => setFolded(f => !f)}
@@ -533,6 +534,18 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
             </button>
           );
         })()}
+
+        {isShipmentLocked(shipment) && (
+          <span id="shphdr-status-lock-badge" data-testid="shipment-detail-header-status-lock-badge"
+            title={`${shipment.status}: the shipment's details are locked. Finance, documents, messages and milestones stay open.`}
+            style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, letterSpacing: "0.03em",
+            padding: "3px 9px", borderRadius: 6, background: shipment.status === "Cancelled" ? HZ.critBg : HZ.infoBg,
+            color: shipment.status === "Cancelled" ? HZ.crit : HZ.infoPillText,
+            border: `1px solid ${shipment.status === "Cancelled" ? HZ.crit : HZ.info}44`, whiteSpace: "nowrap",
+            display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <IconLock size={11} />{shipment.status} · locked
+          </span>
+        )}
 
         {shipmentLock?.locked && !shipmentLock?.ownedByMe && (
           <span id="shphdr-lock-badge" data-testid="shipment-detail-header-lock-badge" title={`${shipmentLock.lockedByName} is currently editing this shipment — you have read-only access until they finish (releases automatically after 30 minutes of inactivity)`}

@@ -127,9 +127,13 @@ function waitForClose(ws, timeoutMs = 5000) {
 
     console.log("\nAI chat — rate limiter wired in front of the existing disabled-by-default response");
     {
-      const r = await request("POST", "/api/ai/chat", { messages: [{ role: "user", content: "hi" }] }, token);
-      assert("still returns the normal disabled/unconfigured response (403 or 503), not a 429 or crash",
-        r.status === 403 || r.status === 503, `got ${r.status}: ${JSON.stringify(r.body)}`);
+      // An empty message list stops at the route's own checks whatever the AI settings are: 403
+      // disabled, 503 unconfigured, 400 invalid body once enabled and configured. A real message
+      // would call the configured AI provider on a machine where it's set up (2026-10-10: a dev
+      // database with the agent on gave a 502 from an unreachable endpoint).
+      const r = await request("POST", "/api/ai/chat", { messages: [] }, token);
+      assert("reaches the route's own response (403 disabled / 503 unconfigured / 400 invalid body), not a 429 or crash",
+        [400, 403, 503].includes(r.status), `got ${r.status}: ${JSON.stringify(r.body)}`);
     }
 
     console.log("\nSSO init — rate limiter wired in front of the existing disabled-by-default response");

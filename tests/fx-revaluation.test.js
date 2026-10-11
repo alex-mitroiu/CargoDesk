@@ -139,12 +139,28 @@ async function invoiceEur(shipmentId, token, amount) {
     assert("realized gain/loss is receivedUsd - bookedUsd (a loss of $5)", Math.abs(realizedRow.gainLossUsd - (1075 - 1080)) < 0.01, JSON.stringify(realizedRow));
     assert("the same paid invoice does NOT also appear in unrealized", !summary3.body.unrealized.some(r => r.docId === realizedDoc.id));
 
+    // TKT-SQVGJ2 audit (2026-10-09): a part-payment used to drop the invoice out of unrealized and
+    // book the whole unpaid rest as a realized FX "loss".
+    console.log("\nA part-payment splits the invoice: paid share realized, unpaid share still unrealized");
+    const shipPart = await scratchShipment(token, emoOfficeId, imoOfficeId);
+    const { doc: partDoc } = await invoiceEur(shipPart, token, 1000); // EUR 1000 booked at 1.08 -> $1080
+    await request("POST", `/api/shipments/${shipPart}/documents/${partDoc.id}/mark-paid`,
+      { paidAt: "2026-09-28", paidAmount: 550, paidAmountOriginal: 500, paidCurrency: "EUR", paidExchangeRate: 1.10 }, token);
+    const summary4 = await request("GET", "/api/fx-revaluation/summary", null, token);
+    const partRealized = summary4.body.realized.find(r => r.docId === partDoc.id);
+    const partOpen = summary4.body.unrealized.find(r => r.docId === partDoc.id);
+    assert("realized compares the EUR 500 paid with its own share of the booking ($540): a $10 gain",
+      partRealized && Math.abs(partRealized.bookedUsd - 540) < 0.01 && Math.abs(partRealized.gainLossUsd - 10) < 0.01, JSON.stringify(partRealized));
+    assert("…not the unpaid half as a loss", partRealized?.gainLossUsd > 0);
+    assert("the unpaid EUR 500 stays in unrealized, booked at $540",
+      partOpen && Math.abs(partOpen.foreignAmount - 500) < 0.01 && Math.abs(partOpen.bookedUsd - 540) < 0.01 && partOpen.partlyPaid === true, JSON.stringify(partOpen));
+
     console.log("\nTotals aggregate correctly");
     assert("totals.realizedUsd is a number", typeof summary3.body.totals.realizedUsd === "number");
     assert("totals.unrealizedUsd is a number", typeof summary3.body.totals.unrealizedUsd === "number");
 
     console.log("\nCleanup");
-    for (const id of [shipPlain, shipPartial, shipUnrealized, shipUsd, shipRealized]) {
+    for (const id of [shipPlain, shipPartial, shipUnrealized, shipUsd, shipRealized, shipPart]) {
       await request("DELETE", `/api/shipments/${id}`, null, token);
     }
 

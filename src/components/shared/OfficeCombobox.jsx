@@ -7,7 +7,7 @@ import { IconSearch } from "../primitives/Icon";
 // Searchable office picker — replaces a flat <select> that would otherwise list every
 // candidate office at once (Involved Offices' Reassign modal, direct request: "we should not
 // have a dropdown"). Deliberately NOT modeled on PortCombobox's server-search + browse-modal
-// shape — that exists to tame a genuinely huge 14,269-row port table; an office directory stays
+// shape — that exists to tame a genuinely huge 14,270-row port table; an office directory stays
 // in the dozens/low-hundreds even at real scale, so filtering the already-loaded `offices` array
 // client-side is enough on its own, no API round-trip or separate picker modal needed.
 //

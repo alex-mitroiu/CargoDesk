@@ -536,8 +536,10 @@ export const MatchedShipmentsTable = ({
 // ─── Contract Consumption View (Contract tab) ─────────────────────────────────
 // Grouped by carrier + contract number (a contract number can have several records — number +
 // reference + named account — each one a "reference" in the breakdown). Bars and breakdown cover
-// the space configurations active in the selected period and the period's shipments on them; the
-// weekly trend covers the 6 weeks ending with the period's first week. A shipment counts through
+// the space configurations active in the selected period and EVERY shipment booked on them, whatever
+// its ETD (decided 2026-10-09, TKT-8RC5E2: counting only the period's shipments against a whole
+// multi-month allocation showed more space free than the Space Configurations page and the contract
+// picker); the weekly trend covers the 6 weeks ending with the period's first week. A shipment counts through
 // its space configuration (allocationId), exactly like the Space Configurations page. Logic in
 // src/utils/contractConsumption.js, charts in src/components/dashboard/ContractConsumptionCharts.jsx.
 
@@ -581,8 +583,11 @@ const ContractConsumptionView = ({ shipments, rangeShipments, containers, carrie
     return Object.values(m);
   }, [centralShipments]);
 
-  const rows = useMemo(() => buildContractRows({ allocations, shipments: rangeShipments, contractMap, teuOfShipment }),
-    [allocations, rangeShipments, contractMap, teuOfShipment]);
+  // Every booking on an active configuration, not just the period's (TKT-8RC5E2); a shipment with no
+  // containers yet holds no space, the same as loadTeuBuckets.
+  const bookedShipments = useMemo(() => shipments.filter(s => s.allocationId && teuOfShipment(s) > 0), [shipments, teuOfShipment]);
+  const rows = useMemo(() => buildContractRows({ allocations, shipments: bookedShipments, contractMap, teuOfShipment }),
+    [allocations, bookedShipments, contractMap, teuOfShipment]);
   const trend = useMemo(() => buildWeeklyTrend({
     allocations: allAllocations, shipments, contractMap, teuOfShipment, rangeStart, addDays,
     formatWeek: iso => parseIso(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
@@ -1560,6 +1565,12 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
     carrierFilterSet ? activeAllocations.filter(a => carrierFilterSet.has(a.carrierCode)) : activeAllocations,
     [activeAllocations, carrierFilterSet]);
 
+  // Every shipment (carrier filter applied), for consumption: a configuration active in the period
+  // counts all its bookings, whatever their ETD (TKT-8RC5E2), like the Space Configurations page.
+  const filteredShipments = useMemo(() =>
+    carrierFilterSet ? shipments.filter(s => carrierFilterSet.has(s.carrierCode)) : shipments,
+    [shipments, carrierFilterSet]);
+
   const today = todayIso();
 
   // Split allocations: current (not expired) vs archived (expired)
@@ -1573,9 +1584,9 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
   // page's own per-allocation figures; now it's the same join, just date-range-scoped).
   const consumedMap = useMemo(() => {
     const m = {};
-    filteredRangeShipments.forEach(s => {
+    filteredShipments.forEach(s => {
       const matched = s.allocationId && activeAllocations.find(a => a.id === s.allocationId);
-      if (!matched) return;
+      if (!matched || s.status === "Cancelled") return; // a Cancelled shipment uses no space, booked or not
       const teu = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0);
       const bucket = m[s.carrierCode] || (m[s.carrierCode] = { confirmed: 0, pending: 0, rejected: 0 });
       if (s.bookingStatus === "Confirmed") bucket.confirmed += teu;
@@ -1584,7 +1595,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
       else bucket.pending += teu;
     });
     return m;
-  }, [filteredRangeShipments, containers, activeAllocations, teuDefs]);
+  }, [filteredShipments, containers, activeAllocations, teuDefs]);
 
 
   // Trend data: delta vs previous equivalent period + 6-week sparkline — Confirmed only, matching
@@ -2011,7 +2022,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
               <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 20, backdropFilter: "blur(18px)", padding: "20px 20px 14px" }}>
                 <div style={{ marginBottom: 16 }}>
                   <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 3px" }}>TEU by Carrier</h2>
-                  <p style={{ fontFamily: HZ.fontBody, fontSize: 11, color: HZ.inkMuted, margin: 0 }}>Awarded vs Confirmed/Pending/Rejected for the selected period</p>
+                  <p style={{ fontFamily: HZ.fontBody, fontSize: 11, color: HZ.inkMuted, margin: 0 }}>Awarded vs Confirmed/Pending/Rejected — configurations active in the period, all their bookings</p>
                 </div>
                 <ResponsiveContainer width="100%" height={240}>
                   <BarChart data={chartData} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>

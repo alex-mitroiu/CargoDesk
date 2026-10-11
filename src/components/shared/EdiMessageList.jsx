@@ -6,6 +6,10 @@ export const EDI_STATUS_COLOR = {
   pending: "#6b7280", sent: "#3b82f6", acknowledged: "#3b82f6",
   confirmed: "#22c55e", accepted: "#22c55e", rejected: "#ef4444", error: "#ef4444",
   confirmed_with_changes: "#eab308",
+  // A real carrier's DCSA booking states (TKT-KG4E49, 2026-10-09).
+  received: "#3b82f6", update_sent: "#3b82f6", amendment_requested: "#3b82f6", update_requested: "#eab308",
+  cancellation_requested: "#eab308", cancellation_declined: "#ef4444", amendment_declined: "#ef4444", send_failed: "#ef4444",
+  amendment_confirmed: "#22c55e", completed: "#22c55e", cancelled: "#6b7280", amendment_cancelled: "#6b7280",
 };
 
 const fmtTs = iso => {

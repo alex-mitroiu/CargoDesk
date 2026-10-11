@@ -200,6 +200,13 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
       .catch(() => !cancelled && setMilestones([]));
     return () => { cancelled = true; };
   }, [shipment.id, currentPage]);
+  // MilestonePanel broadcasts every list it loads, including after a change, so the rail doesn't
+  // stay stale until the next page switch.
+  useEffect(() => {
+    const onLoaded = e => { if (e.detail?.shipmentId === shipment.id) setMilestones(e.detail.milestones); };
+    window.addEventListener("cargodesk:milestones-loaded", onLoaded);
+    return () => window.removeEventListener("cargodesk:milestones-loaded", onLoaded);
+  }, [shipment.id]);
   const msList = milestones || [];
   const todayStr = todayIso();
   const msFirstIncompleteIdx = msList.findIndex(m => !m.completedAt);

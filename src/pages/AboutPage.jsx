@@ -93,7 +93,7 @@ import { IconSettings, IconAnchor, IconBaseStation, AnyIcon } from "../component
     },
     {
       table: "port_locations",
-      description: "14,269 UN/LOCODE seaports — seeded from UN data.",
+      description: "14,270 UN/LOCODE seaports — seeded from UN data.",
       columns: [
         { name: "unlocode",     type: "TEXT PK",  note: "5-char UN/LOCODE (e.g. NLRTM, CNSHA)" },
         { name: "name",         type: "TEXT",     note: "Port name" },
@@ -561,7 +561,7 @@ const DATASET_GROUPS = [
   {
     name: "Ports & Vessels",
     color: "#4db3e8",
-    blurb: "Cross-checks and possible enrichment for the 349-vessel IMO registry and the 14,269 UN/LOCODE port table.",
+    blurb: "Cross-checks and possible enrichment for the 349-vessel IMO registry and the 14,270 UN/LOCODE port table.",
     items: [
       {
         name: "Piraeus AIS Dataset",
@@ -775,7 +775,7 @@ const AboutPage = () => {
     { icon: "📜", title: "Shipment History Tracker",  desc: "Full audit trail for every shipment: field changes, container additions/removals/updates, and status transitions logged automatically — rendered as a colour-coded timeline on the detail page. Bridged into the unified entity-events endpoint." },
     { icon: "📦", title: "Commodities MDM",           desc: "294 Maersk freight commodity codes (Grades M/K/E/S/Q) with full-text typeahead search. Mandatory on every shipment booking — determines handling requirements and documentation." },
     { icon: "🚢", title: "Vessel Registry",           desc: "349 vessels from the IMO registry, searchable by name, IMO number, or asset type, linked to country flags and integrated with the shipment form." },
-    { icon: "📍", title: "Port & MDM Directory",      desc: "14,269 UN/LOCODE ports, carrier directory, trade lanes, linked ports, regions, countries, UN location codes, and commodity codes — all editable." },
+    { icon: "📍", title: "Port & MDM Directory",      desc: "14,270 UN/LOCODE ports, carrier directory, trade lanes, linked ports, regions, countries, UN location codes, and commodity codes — all editable." },
     { icon: "📋", title: "Integration Board",         desc: "Kanban board (Ready / In Progress / Done / Released) for tracking development and integration tasks, with priority and section filters. Cards drag within columns with live drop indicators." },
     { icon: "✓",  title: "Test Case Management",      desc: "Test Folders, Plans, Runs, and Cases live in their own dedicated repository, separate from the Integration Board. Test Cases link to Stories via a bidirectional Tests / Is tested by relationship for lightweight requirement traceability." },
     { icon: IconBaseStation, title: "EDI Messaging",              desc: "Send carrier booking requests (MAEU, SAFM, MCPU) and receive confirmations directly from the shipment detail page. Every message — sent and received — is logged with a raw/parsed payload toggle; falls back to demo data without a live carrier key." },

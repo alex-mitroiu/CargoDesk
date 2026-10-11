@@ -405,7 +405,7 @@ CargoDesk/
 │   ├── finance.js             # /api/margin/summary
 │   ├── system.js              # /api/health, system-messages, settings, schedules
 │   └── export.js              # /api/export/shipments.csv, /xlsx, /template
-├── vite.config.js             # Vite config with /api and /ws proxy rules
+├── vite.config.js             # Vite config: /api piped to :3001, /ws proxied
 ├── exports/
 │   └── dashboard-template.xlsx  # Base XLSX template with named ranges (WeeklySummary, ByCarrier, ByLane)
 ├── scripts/

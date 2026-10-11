@@ -242,11 +242,16 @@ async function login() {
     const shpRejected  = await bucketShipment("Rejected");
     const shpCancelled = await bucketShipment("Cancelled");
     const shpNoBooking = await bucketShipment("none");
+    // Cancelled at shipment level before it was ever booked: no carrier_bookings row at all. It used
+    // to count as pending for good (TKT-SQVGJ2 audit) — a cancelled shipment has no demand left.
+    const shpCancelledUnbooked = await bucketShipment("none");
+    const cancelUnbooked = await request("PUT", `/api/shipments/${shpCancelledUnbooked}`, { status: "Cancelled" }, token);
+    assert("a never-booked shipment can be cancelled", cancelUnbooked.status === 200, JSON.stringify(cancelUnbooked.body));
 
     const buckets = await request("GET", "/api/allocations", null, token);
     const bucketAlloc = buckets.body.find(a => a.id === allocId);
     assert("confirmedTEU counts only the Confirmed booking's 1 TEU", bucketAlloc?.confirmedTEU === 1, JSON.stringify(bucketAlloc));
-    assert("pendingTEU counts Pending + no-booking-row (2 TEU) — a Created/unsent booking still counts as demand",
+    assert("pendingTEU counts Pending + no-booking-row (2 TEU) — a Created/unsent booking still counts as demand; a cancelled never-booked shipment doesn't",
       bucketAlloc?.pendingTEU === 2, JSON.stringify(bucketAlloc));
     assert("rejectedTEU is its own segment (1 TEU), not folded into pending", bucketAlloc?.rejectedTEU === 1, JSON.stringify(bucketAlloc));
     assert("Cancelled contributes nothing — excluded entirely, not even to pending",
@@ -307,7 +312,7 @@ async function login() {
       overflowResult?.remainingTEU === 1, JSON.stringify(overflowResult));
 
     console.log("\nBucket-test cleanup");
-    for (const id of [shpConfirmed, shpPending, shpRejected, shpCancelled, shpNoBooking, shpOverflow1, shpOverflow2]) {
+    for (const id of [shpConfirmed, shpPending, shpRejected, shpCancelled, shpNoBooking, shpCancelledUnbooked, shpOverflow1, shpOverflow2]) {
       await request("DELETE", `/api/shipments/${id}`, null, token);
     }
     await request("DELETE", `/api/allocations/${overflowAllocId}`, null, token);

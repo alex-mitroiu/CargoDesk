@@ -52,7 +52,9 @@ const OverrideModal = ({ row, onClose, onSaved }) => {
     if (!reasonCode) return toast.error("Pick a reason code");
     setSaving(true);
     try {
-      await api.documents.statusOverride(row.shipmentId, row.docId, { reasonCode, description, overriddenStatus });
+      const data = { reasonCode, description, overriddenStatus };
+      await (row.statementId ? api.customerStatements.statusOverride(row.statementId, data)
+        : api.documents.statusOverride(row.shipmentId, row.docId, data));
       toast.success("Status overridden");
       onSaved();
     } catch (e) { toast.error(e.message); }
@@ -60,7 +62,7 @@ const OverrideModal = ({ row, onClose, onSaved }) => {
   };
 
   return (
-    <Modal title={`Override — ${row.shipmentId}`} onClose={onClose}>
+    <Modal title={`Override — ${row.shipmentId || row.statementId}`} onClose={onClose}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <Sel label="Displayed As" value={overriddenStatus} onChange={setOverriddenStatus}
           options={[{ value: "not_paid", label: "Not Paid" }, { value: "paid", label: "Paid" }]} />
@@ -168,9 +170,18 @@ const InvoiceCollectionsPanel = () => {
             <div style={{ ...th, width: 90, flexShrink: 0 }} />
           </div>
           {pageItems.map(r => (
-            <div key={r.shipmentId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
+            // One row per confirmed invoice, so a shipment billed through two invoices has two rows —
+            // keyed and labelled by the invoice, not the shipment. A consolidated statement (TKT-IRH7WX)
+            // has no single shipment: it shows its own id and how many shipments it bills.
+            <div key={r.docId || r.shipmentId} data-testid={`invoice-collections-row-${r.docId || r.shipmentId}`}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
               borderBottom: `1px solid ${T.border}22`, minWidth: 780 }}>
-              <div style={{ width: 90, flexShrink: 0, fontFamily: T.mono, fontSize: 11.5, color: T.text, fontWeight: 600 }}>{r.shipmentId}</div>
+              <div style={{ width: 90, flexShrink: 0, fontFamily: T.mono, fontSize: 11.5, color: T.text, fontWeight: 600 }}>
+                {r.statementId || r.shipmentId}
+                {r.statementId
+                  ? <div style={{ fontSize: 10, fontWeight: 400, color: T.textMuted, marginTop: 1 }}>Statement · {r.shipmentIds?.length || 0} shipment{r.shipmentIds?.length === 1 ? "" : "s"}</div>
+                  : r.docId && <div style={{ fontSize: 10, fontWeight: 400, color: T.textMuted, marginTop: 1 }}>{r.docId}</div>}
+              </div>
               <div style={{ flex: 1, minWidth: 140, fontFamily: T.body, fontSize: 12.5, color: r.principalName ? T.text : T.border,
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.principalName || "—"}</div>
               <div style={{ width: 110, flexShrink: 0 }}><Pill status={r.status} /></div>

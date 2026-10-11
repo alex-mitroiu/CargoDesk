@@ -28,6 +28,7 @@ vi.mock("../../api", async () => {
 
 import ShipmentHeaderBar from "./ShipmentHeaderBar";
 import { api } from "../../api";
+import { AuthContext } from "../../AuthContext";
 
 const SHIPMENT = {
   id: "SHP-TEST01", status: "Active", movementType: "FCL", pol: "NLRTM", pod: "USNYC",
@@ -127,5 +128,29 @@ describe("ShipmentHeaderBar — overlays live outside the filtered header card",
     expect(header.style.top).toBe("0px");
     expect(header.style.zIndex).toBe("5");
     expect(header.style.backdropFilter).toContain("blur");     // still there, which is exactly why overlays must not be inside
+  });
+});
+
+// Completed and Cancelled shipments are locked (TKT-SPXTGR): the header drops its Edit action and says why.
+describe("ShipmentHeaderBar — Completed / Cancelled lock", () => {
+  const renderAs = async status => {
+    render(
+      <AuthContext.Provider value={{ canEditShipments: true, isAdmin: true, activeRoles: ["admin"], shipmentLock: null }}>
+        <ShipmentHeaderBar shipment={{ ...SHIPMENT, status }} containers={[]} onEdit={() => {}} />
+      </AuthContext.Provider>
+    );
+    await screen.findByText("SHP-TEST01");
+  };
+
+  it("offers Edit on an open shipment, with no lock badge", async () => {
+    await renderAs("Active");
+    expect(screen.getByTestId("shipment-detail-header-icon-edit")).toBeInTheDocument();
+    expect(screen.queryByTestId("shipment-detail-header-status-lock-badge")).toBeNull();
+  });
+
+  it.each(["Completed", "Cancelled"])("hides Edit and shows the lock badge on a %s shipment", async status => {
+    await renderAs(status);
+    expect(screen.queryByTestId("shipment-detail-header-icon-edit")).toBeNull();
+    expect(screen.getByTestId("shipment-detail-header-status-lock-badge")).toHaveTextContent(`${status} · locked`);
   });
 });

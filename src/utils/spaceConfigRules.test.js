@@ -54,9 +54,10 @@ describe("periods", () => {
   it("counts days inclusively", () => {
     expect(periodDays("2026-10-01", "2026-10-31")).toBe(31);
   });
-  it("flags a period outside the contract's validity and one over 90 days", () => {
+  it("flags a period outside the contract's validity, and sets no length limit (dropped 2026-10-09, TKT-3WX973)", () => {
     expect(periodProblems({ from: "2026-12-15", to: "2027-01-15", validFrom: "2026-10-01", validTo: "2026-12-31" })[0]).toMatch(/inside the contract/);
-    expect(periodProblems({ from: "2026-01-01", to: "2026-06-30" }).some(p => /at most 90 days/.test(p))).toBe(true);
+    expect(periodProblems({ from: "2026-01-01", to: "2026-06-30" })).toEqual([]);
+    expect(periodProblems({ from: "2026-09-01", to: "2026-11-30", validFrom: "2026-01-01", validTo: "2026-12-31" })).toEqual([]); // the four 91-day configs
     expect(periodProblems({ from: "2026-10-01", to: "2026-10-31", validFrom: "2026-10-01", validTo: "2026-12-31" })).toEqual([]);
   });
   it("proposes the month after the last clashing configuration, within the contract", () => {

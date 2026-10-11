@@ -9,7 +9,7 @@ import { Modal } from "../../components/primitives/Modal";
 import EdiMessageList, { EDI_STATUS_COLOR } from "../../components/shared/EdiMessageList";
 import CarrierBookingsTable from "../../components/shared/CarrierBookingsTable";
 import GenerateDocumentModal from "../../components/shared/GenerateDocumentModal";
-import { IconCheck, IconClose, IconAnchor, IconFile } from "../../components/primitives/Icon";
+import { IconCheck, IconClose, IconAnchor, IconFile, IconRefresh, IconUpload } from "../../components/primitives/Icon";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
 
 // Sent vs. Received comparison — same ordered field list the booking-request payload itself
@@ -26,6 +26,12 @@ const BOOKING_COMPARISON_FIELDS = [
 ];
 
 const fmtCompareVal = v => (v == null || v === "" ? "—" : String(v));
+
+// The shipment's message thread also carries SI, VGM and customs traffic and, since TKT-KG4E49,
+// cancellation requests: only an outbound message holding the whole booking can be diffed, and
+// only a booking answer counts as the carrier's response.
+const BOOKING_PAYLOAD_TYPES = new Set(["booking_request", "booking_update", "booking_amendment"]);
+const isBookingAnswer = m => m.direction === "in" && (m.messageType || "").startsWith("booking_");
 
 // Diffs the outbound booking-request payload against the newest inbound carrier response —
 // both already fetched on this page (api.ediMessages.list), so this needs no new endpoint.
@@ -156,11 +162,15 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
 
   const status = booking?.status || "Created";
   const canConfirm = canEdit && status !== "Confirmed" && status !== "Cancelled";
-  const canCancel  = canEdit && status !== "Cancelled";
+  // A confirmed booking whose cancellation is waiting for the carrier's answer can't be cancelled again.
+  const cancelPending = booking?.lastResponseStatus === "cancellation_requested";
+  const canCancel  = canEdit && status !== "Cancelled" && !cancelPending;
+  // Sent through a carrier integration (TKT-KG4E49): changes go to the carrier, and it can be asked for the status.
+  const viaCarrier = !!booking?.carrierBookingRequestReference && (status === "Pending" || status === "Confirmed");
   const willNotifyCarrier = (bookableCarriers || []).includes(shipment.carrierCode) && !!booking?.correlationId;
-  const latestInbound = messages.filter(m => m.direction === "in")
+  const latestInbound = messages.filter(isBookingAnswer)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
-  const outboundMessage = messages.filter(m => m.direction === "out")
+  const outboundMessage = messages.filter(m => m.direction === "out" && BOOKING_PAYLOAD_TYPES.has(m.messageType))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
 
   const openConfirm = () => setConfirmModal({ bookingRef: booking?.bookingRef || "", note: "" });
@@ -183,14 +193,37 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
   const doCancel = async () => {
     setBusy(true);
     try {
-      await api.carrierBooking.cancel(shipment.id, { reason: cancelModal.reason.trim() || undefined });
-      toast.success("Booking cancelled");
+      const after = await api.carrierBooking.cancel(shipment.id, { reason: cancelModal.reason.trim() || undefined });
+      toast.success(after?.lastResponseStatus === "cancellation_requested"
+        ? `Cancellation requested — ${after.carrierCode} still holds the booking until it confirms`
+        : "Booking cancelled");
       setCancelModal(null);
       await load();
       onRefresh?.();
     } catch (e) {
       toast.error(e.message || "Failed to cancel booking");
     } finally { setBusy(false); }
+  };
+
+  const doSendUpdate = async () => {
+    setBusy(true);
+    try {
+      const r = await api.carrierBooking.sendUpdate(shipment.id);
+      toast.success(r.booking?.status === "Confirmed" ? "Amendment sent — waiting for the carrier" : "Update sent to the carrier");
+      await load();
+      onRefresh?.();
+    } catch (e) { toast.error(e.message || "The carrier did not take the update"); }
+    finally { setBusy(false); }
+  };
+  const doCheckStatus = async () => {
+    setBusy(true);
+    try {
+      const r = await api.carrierBooking.checkStatus(shipment.id);
+      toast.success(r.changed ? `Carrier status: ${r.booking?.lastResponseStatus || "updated"}` : "No change from the carrier");
+      await load();
+      onRefresh?.();
+    } catch (e) { toast.error(e.message || "The carrier could not be asked"); }
+    finally { setBusy(false); }
   };
 
   // TKT-LAK8P4 — booking-to-B/L traceability. Only ever acts on the current booking (this
@@ -243,7 +276,19 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
                 <IconFile size={13} /> Generate Confirmation
               </Btn>
             )}
-            <Btn variant="secondary" onClick={openCancel} disabled={!canCancel}>Cancel Booking</Btn>
+            {viaCarrier && (
+              <Btn variant="secondary" onClick={doCheckStatus} disabled={busy} data-testid="carrier-booking-check-status-btn">
+                <IconRefresh size={13} /> Check status
+              </Btn>
+            )}
+            {viaCarrier && (
+              <Btn variant="secondary" onClick={doSendUpdate} disabled={busy} data-testid="carrier-booking-send-update-btn"
+                title="Send the booking as it is now on the shipment to the carrier — an update while it's open, an amendment once confirmed">
+                <IconUpload size={13} /> Send update to carrier
+              </Btn>
+            )}
+            <Btn variant="secondary" onClick={openCancel} disabled={!canCancel}
+              title={cancelPending ? "Cancellation requested — waiting for the carrier's answer" : undefined}>Cancel Booking</Btn>
             <Btn onClick={openConfirm} disabled={!canConfirm}>Confirm Booking</Btn>
           </div>
         )}

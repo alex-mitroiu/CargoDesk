@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isShipmentLocked } from "../../utils/shipmentLock";
 import { INCOTERMS_2020, BL_RELEASE_TYPES, contractVariant } from "../../tokens";
 import { useAuth } from "../../AuthContext";
 import useSaving from "../../hooks/useSaving";
@@ -111,7 +112,8 @@ const Row = ({ id, label, node }) => (
 
 const ShipmentConditionsPage = ({ shipment, onUpdate }) => {
   useHorizonFonts();
-  const { canEditShipments: canEdit } = useAuth();
+  const { canEditShipments } = useAuth();
+  const canEdit = canEditShipments && !isShipmentLocked(shipment); // Completed / Cancelled: locked (TKT-SPXTGR)
   const [editing, setEditing] = useState(false);
   return (
   <div id="shpcond-page" data-testid="shipment-conditions-page" style={{ maxWidth: 640 }}>

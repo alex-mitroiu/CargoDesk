@@ -1809,7 +1809,10 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       eta: derivedEta,
       carrierCode: effectiveCarrierCode,
       declaredValue: (f.declaredValue !== "" && Number(f.declaredValue) >= 0) ? Number(f.declaredValue) : null,
-    }, draftLegs || [], containersToSave, selectedSailing));
+    }, draftLegs || [], containersToSave, selectedSailing))
+      // onSave has already told the user (toast, or the can't-be-cancelled pop-up) and rethrows only
+      // so the form stays open; left uncaught it surfaced as an unhandled rejection on every failed save.
+      .catch(() => {});
   };
 
   const statusColor = { Active: T.success, Completed: T.info, Cancelled: T.danger, "On Hold": T.warning }[f.status] || T.textMuted;

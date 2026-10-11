@@ -18,6 +18,7 @@ module.exports = function customerStatementsRoutes(app, ctx) {
     getCustomerRow, computeArExposure, toUsd,
     renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
     logEntityEvent, UPLOADS_DIR, fs, path,
+    userOwnsLaneForShipment, mapInvoiceStatusOverride,
   } = ctx;
   const write = requireRole(["admin", "operator"]);
   const ph = (n, from = 1) => Array.from({ length: n }, (_, i) => `$${i + from}`).join(",");
@@ -248,13 +249,48 @@ module.exports = function customerStatementsRoutes(app, ctx) {
     }
   });
 
+  // Invoice Collections status override for a statement (decided 2026-10-09, TKT-IRH7WX): the
+  // invoice route's rules, except that a statement spans lanes, so a trade manager responsible
+  // for the lane of ANY of its shipments may override it. Stored in invoice_status_overrides
+  // keyed by the statement id, which is what the collections sweep checks.
+  // The caller must also be able to see the statement (decided 2026-10-10): the TKT-6T97DY rule,
+  // every one of its shipments in scope, as on every other statement route. Before, a trade
+  // manager could override, by id, a statement they could see nowhere.
+  app.post("/api/customer-statements/:id/status-override", async (req, res) => {
+    const st = await loadVisibleStatement(req, req.params.id);
+    if (!st) return err(res, "Not found", 404);
+    if (st.status !== "confirmed") return err(res, "Only a confirmed statement can have its collections status overridden", 409);
+    const shipments = await query(`SELECT DISTINCT s.* FROM customer_statement_lines csl JOIN shipments s ON s.id = csl.shipment_id
+      WHERE csl.statement_id=$1`, [st.id]);
+    let ownsALane = false;
+    for (const s of shipments) if (await userOwnsLaneForShipment(req.user, s)) { ownsALane = true; break; }
+    if (!ownsALane)
+      return err(res, "Only a trade manager responsible for the trade lane of one of this statement's shipments may override its collections status", 403);
+
+    const { reasonCode, description = "", overriddenStatus } = req.body || {};
+    if (!reasonCode) return err(res, "reasonCode is required");
+    if (!overriddenStatus) return err(res, "overriddenStatus is required");
+    const [validCode] = await query("SELECT 1 FROM invoice_status_reason_codes WHERE code=$1 AND is_active=TRUE", [reasonCode]);
+    if (!validCode) return err(res, "reasonCode is not a recognized, active reason code");
+
+    const id = `ISO-${uid()}`, now = new Date().toISOString(), by = req.user.email || req.user.id;
+    await query(`INSERT INTO invoice_status_overrides (id, document_id, reason_code, description, overridden_status, overridden_by, overridden_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)`, [id, st.id, reasonCode, description.trim(), overriddenStatus, by, now]);
+    await logEntityEvent('customer_statement', st.id, 'COLLECTIONS_STATUS_OVERRIDDEN', null, null, null,
+      JSON.stringify({ customerId: st.customer_id, reasonCode, overriddenStatus, overriddenBy: by }));
+    ok(res, mapInvoiceStatusOverride({ id, document_id: st.id, reason_code: reasonCode, description: description.trim(),
+      overridden_status: overriddenStatus, overridden_by: by, overridden_at: now }));
+  });
+
   app.post("/api/customer-statements/:id/confirm", write, async (req, res) => {
     const [row] = await query("SELECT * FROM customer_statements WHERE id=$1", [req.params.id]);
     if (!row) return err(res, "Not found", 404);
     if (row.status !== "draft") return err(res, "Only a draft statement can be confirmed", 409);
     const now = new Date().toISOString();
     const actor = req.user?.name || req.user?.email || "";
-    await query("UPDATE customer_statements SET status='confirmed', confirmed_at=$1, confirmed_by=$2 WHERE id=$3", [now, actor, row.id]);
+    // Whoever confirms it owns it for collections, as for an invoice (TKT-IRH7WX); never overwrites one already set.
+    await query("UPDATE customer_statements SET status='confirmed', confirmed_at=$1, confirmed_by=$2, owner_id=CASE WHEN COALESCE(owner_id, '') = '' THEN $3 ELSE owner_id END WHERE id=$4",
+      [now, actor, req.user?.id || "", row.id]);
     await logEntityEvent('customer_statement', row.id, 'CONFIRMED', null, null, null, JSON.stringify({ customerId: row.customer_id }));
     const [updated] = await query("SELECT * FROM customer_statements WHERE id=$1", [row.id]);
     ok(res, await withLines(updated));

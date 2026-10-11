@@ -196,6 +196,8 @@ async function realVesselImo(token) {
     assert("unknown POL returns 400", badPort.status === 400);
     const noFields = await request("POST", "/api/schedules", {}, token);
     assert("a fully empty body is still accepted (everything optional now)", noFields.status === 201, JSON.stringify(noFields.body));
+    // Removed straight away: every run used to leave one blank entry in the schedule catalog.
+    if (noFields.body?.id) await request("DELETE", `/api/schedules/${noFields.body.id}`, null, token);
 
     console.log("\nGET /api/schedules/search — catalog match takes priority over demo data");
     const searchPol = "AEDXB", searchPod = "BRSSZ"; // an unusual pair, unlikely to collide with other data

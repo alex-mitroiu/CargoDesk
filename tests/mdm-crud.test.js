@@ -179,9 +179,16 @@ async function login() {
     // (whenever those two characters matched), silently deduping the PUT's ON CONFLICT DO
     // NOTHING insert down to one row and failing the two-country comparison below — a genuine,
     // rare, self-inflicted flake, not a bug in the trade-lane routes themselves.
-    const laneCountryA = `Z${rand[1]}`, laneCountryB = `Y${rand[2]}`;
-    await request("POST", "/api/countries", { iso2: laneCountryA, name: "Zedland Lane A" }, token);
-    await request("POST", "/api/countries", { iso2: laneCountryB, name: "Zedland Lane B" }, token);
+    // Codes from ISO 3166's user-assigned QM–QZ, never a real country, in slices that can't meet each
+    // other or the Countries section's code below. They used to be `Z${rand[1]}` / `Y${rand[2]}`, which
+    // can be ZA/ZM/ZW or YE — real countries whose lanes the bulk replace below would wipe and which
+    // the cleanup would DELETE (TKT-SQVGJ2 audit, 2026-10-09).
+    const pick = letters => `Q${letters[Math.floor(Math.random() * letters.length)]}`;
+    const laneCountryA = pick("MNOP"), laneCountryB = pick("QRSTU");
+    const laneA = await request("POST", "/api/countries", { iso2: laneCountryA, name: "Zedland Lane A" }, token);
+    const laneB = await request("POST", "/api/countries", { iso2: laneCountryB, name: "Zedland Lane B" }, token);
+    if (laneA.status !== 201 || laneB.status !== 201)
+      throw new Error(`scratch countries ${laneCountryA}/${laneCountryB} could not be created — stopping before touching an existing country`);
 
     const laneCreate = await request("POST", "/api/trade-lanes", { code: laneCode, name: "Zed Test Lane", transitDays: 21 }, token);
     assert("trade lane created", laneCreate.status === 201, JSON.stringify(laneCreate.body));
@@ -249,9 +256,14 @@ async function login() {
     assert("region delete 404 on second attempt", regDelete404.status === 404);
 
     console.log("\nCountries — create, list w/ search+pagination, locations sub-route, update, delete");
-    const countryCode = `Z${rand[0]}`;
+    // ISO 3166 user-assigned range QM–QZ (this section's slice): never a real country. This used to be `Z${rand[0]}`, which
+    // can land on ZA, ZM or ZW — real countries since 2026-10-09 (TKT-XU38KY) — and when the create
+    // was refused the rest of this section renamed and DELETED that real country.
+    const countryCode = pick("VWXYZ");
     const cCreate = await request("POST", "/api/countries", { iso2: countryCode, name: "Zedland", unMember: 1, regionCode: "" }, token);
     assert("country created", cCreate.status === 201, JSON.stringify(cCreate.body));
+    // Never go on to rename/delete a country this test didn't create.
+    if (cCreate.status !== 201) throw new Error(`scratch country ${countryCode} could not be created — stopping before touching an existing country`);
     const cMissing = await request("POST", "/api/countries", { iso2: "" }, token);
     assert("country missing fields rejected", cMissing.status >= 400);
     const cDup = await request("POST", "/api/countries", { iso2: countryCode, name: "Dup" }, token);
@@ -262,11 +274,9 @@ async function login() {
     assert("country locations returns results/total shape", "results" in cLocations.body && "total" in cLocations.body);
     const cUpdate = await request("PUT", `/api/countries/${countryCode}`, { name: "Zedland Renamed", unMember: 0, regionCode: "" }, token);
     assert("country update returns 200", cUpdate.status === 200 && cUpdate.body.name === "Zedland Renamed");
-    // "XX", not "ZZ" — every scratch code in this file is Z-prefixed (countryCode itself is
-    // `Z${rand[0]}`), so a sentinel meant to guarantee non-existence must never share that
-    // prefix; rand[0] landing on "Z" would otherwise make countryCode literally "ZZ" and this
-    // "unknown code" check would silently find our own still-live scratch row instead — a real,
-    // if rare (1/36), CI failure this exact way already confirmed it live.
+    // "XX" (user-assigned, never a real country) and outside the QM–QZ scratch codes, so this
+    // "unknown code" check can never find our own still-live scratch row. (It was once "ZZ", which a
+    // Z-prefixed random scratch code could equal — a real 1-in-36 CI failure.)
     const cUpdate404 = await request("PUT", "/api/countries/XX", { name: "X" }, token);
     assert("country update 404 for unknown code", cUpdate404.status === 404);
 

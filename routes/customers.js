@@ -1,6 +1,7 @@
 "use strict";
 
 const { applyColumnFilters, filterOptions, applySearch, applySort, paginate, blanksLast } = require("../lib/tableQuery");
+const { STATEMENT_BILLED_SHIPMENTS_SQL } = require("../lib/mappers");
 
 module.exports = function customersRoutes(app, ctx) {
   const { query, ok, err, uid, auth, requireRole,
@@ -461,6 +462,7 @@ module.exports = function customersRoutes(app, ctx) {
     }
 
     const todayMs = Date.now();
+    const statementBilled = new Set((await query(STATEMENT_BILLED_SHIPMENTS_SQL)).map(r => r.shipment_id));
     const results = [];
     for (const r of rows) {
       const respId   = r.principal_id || r.consignee_id || null;
@@ -481,7 +483,7 @@ module.exports = function customersRoutes(app, ctx) {
         "SELECT 1 FROM shipment_documents WHERE shipment_id=$1 AND doc_type IN ('FR01','FR02') AND status='confirmed' LIMIT 1",
         [r.shipment_id]
       );
-      if (hasInvoice) continue;
+      if (hasInvoice || statementBilled.has(r.shipment_id)) continue; // a confirmed statement bills it too
       results.push({
         shipmentId: r.shipment_id, customerId: respId, companyName: respName || '',
         deliveredAt: r.delivered_at, deadlineDays: invoiceDeadlineDays, daysOverdue,

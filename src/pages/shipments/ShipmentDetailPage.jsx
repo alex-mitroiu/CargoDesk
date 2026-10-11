@@ -17,6 +17,7 @@ import { formatLegPoint, isGpsLeg } from "../../utils/legLocation";
 import { countryCodeOf } from "../../utils/countryTag";
 import useResolvedPortName from "../../hooks/useResolvedPortName";
 import { dgPolicyConflict } from "../../utils/dgPolicy";
+import { isShipmentLocked } from "../../utils/shipmentLock";
 import { onLegsScheduleChanged } from "../../legsScheduleBus";
 import Btn from "../../components/primitives/Btn";
 import Spinner from "../../components/primitives/Spinner";
@@ -2013,7 +2014,8 @@ const InactiveOfficesSection = ({ offices, isAdmin, onReactivate }) => {
 };
 
 export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched, parties }) => {
-  const { canEditShipments: canEdit, activeOffice, allOffices, isAdmin, activeRoles } = useAuth();
+  const { canEditShipments: roleCanEdit, activeOffice, allOffices, isAdmin, activeRoles } = useAuth();
+  const canEdit = roleCanEdit && !isShipmentLocked(shipment); // Completed / Cancelled: parties and offices locked (TKT-SPXTGR)
   const [editing, setEditing] = useState(false);
   const [services, setServices] = useState(null);
   useEffect(() => { api.services.list(shipment.id).then(setServices).catch(() => setServices([])); }, [shipment.id]);
@@ -2201,6 +2203,9 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
       .then(m => {
         setMilestones(m);
         onProgress?.({ done: m.filter(x => x.completedAt).length, total: m.length });
+        // The shipment sidebar's progress rail keeps its own copy; hand it the fresh list so a
+        // tick here (or a carrier-event sync) shows there at once (2026-10-10).
+        window.dispatchEvent(new CustomEvent("cargodesk:milestones-loaded", { detail: { shipmentId, milestones: m } }));
       })
       .catch(() => { setMilestones([]); onProgress?.({ done: 0, total: 0 }); })
       .finally(() => setLoading(false));
@@ -4024,6 +4029,18 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           (mounted once in App.jsx above this page), so there's nothing left to render here
           except the scroll target the sidebar's "Overview" link points at. */}
       <div id="shp-overview" />
+
+      {isShipmentLocked(shipment) && (
+        <div id="shpoverview-locked-banner" data-testid="shipment-detail-locked-banner" style={{
+          display: "flex", alignItems: "center", gap: 9, padding: "9px 16px",
+          borderRadius: 8, background: shipment.status === "Cancelled" ? HZ.critBg : HZ.infoBg,
+          border: `1px solid ${shipment.status === "Cancelled" ? HZ.crit : HZ.info}44`,
+          fontFamily: HZ_BODY, fontSize: 12, color: HZ.text, marginBottom: 16,
+        }}>
+          <IconLock size={14} />
+          <span><strong>{shipment.status}</strong> — the shipment's details are locked. Finance, documents, messages and milestones stay open.</span>
+        </div>
+      )}
 
       {!canEdit && (
         <div id="shpoverview-viewonly-banner" data-testid="shipment-detail-viewonly-banner" style={{

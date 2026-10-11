@@ -205,20 +205,40 @@ module.exports = function customsFilingRoutes(app, ctx) {
     ok(res, { filing: await mapWithStaleness(freshFiling, shipment) }, 201);
   });
 
-  // Allows resubmission after a rejection — the next Submit generates a genuinely new
-  // filing_reference rather than reusing the rejected one.
+  // Cancels a submitted filing, answered or not (2026-10-09): a shipment can only be cancelled once
+  // its submitted filings are. The authority side is simulated like Submit, so this records the
+  // cancellation (who, when, why) and logs it; a Draft was never submitted and needs no cancelling.
+  app.post("/api/shipments/:id/customs-filings/:filingId/cancel", write, async (req, res) => {
+    const [filing] = await query("SELECT * FROM customs_filings WHERE id=$1 AND shipment_id=$2", [req.params.filingId, req.params.id]);
+    if (!filing) return err(res, "Filing not found", 404);
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (await blockIfWrongSide(req, res, shipment, FILING_TYPE_SIDE[filing.filing_type])) return;
+    if (filing.status !== "Filed" && filing.status !== "Accepted")
+      return err(res, `Only a submitted filing (Filed or Accepted) can be cancelled; this one is ${filing.status}`, 409);
+    const reason = String(req.body?.reason || "").trim().slice(0, 500);
+    if (!reason) return err(res, "Give a reason for cancelling the filing");
+    const now = new Date().toISOString(), by = req.user?.name || req.user?.email || "";
+    await query(`UPDATE customs_filings SET status='Cancelled', cancelled_at=$1, cancelled_by=$2, cancel_reason=$3, updated_at=$1 WHERE id=$4`,
+      [now, by, reason, filing.id]);
+    await logEntityEvent('customs_filing', filing.id, 'CANCELLED', null, filing.status, 'Cancelled', JSON.stringify({ reason, cancelledBy: by }));
+    const [fresh] = await query("SELECT * FROM customs_filings WHERE id=$1", [filing.id]);
+    ok(res, mapCustomsFiling(fresh));
+  });
+
+  // Allows resubmission after a rejection, or after a cancellation the shipment no longer needs —
+  // the next Submit generates a genuinely new filing_reference rather than reusing the old one.
   app.patch("/api/shipments/:id/customs-filings/:filingId/reset", write, async (req, res) => {
     const [filing] = await query("SELECT * FROM customs_filings WHERE id=$1 AND shipment_id=$2", [req.params.filingId, req.params.id]);
     if (!filing) return err(res, "Filing not found", 404);
     const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (await blockIfWrongSide(req, res, shipment, FILING_TYPE_SIDE[filing.filing_type])) return;
-    if (filing.status !== "Rejected") return err(res, "Only a Rejected filing can be reset to Draft", 409);
+    if (filing.status !== "Rejected" && filing.status !== "Cancelled") return err(res, "Only a Rejected or Cancelled filing can be reset to Draft", 409);
     const now = new Date().toISOString();
-    await query(`UPDATE customs_filings SET status='Draft', filing_reference='', rejection_reason='',
+    await query(`UPDATE customs_filings SET status='Draft', filing_reference='', rejection_reason='', cancelled_at=NULL, cancelled_by='', cancel_reason='',
       filed_at=NULL, filed_by='', responded_at=NULL,
       carrier_code='', vessel_name='', voyage_number='', export_date='', cargo_snapshot='[]',
       updated_at=$1 WHERE id=$2`, [now, filing.id]);
-    await logEntityEvent('customs_filing', filing.id, 'RESET_TO_DRAFT', null, 'Rejected', 'Draft');
+    await logEntityEvent('customs_filing', filing.id, 'RESET_TO_DRAFT', null, filing.status, 'Draft');
     const [fresh] = await query("SELECT * FROM customs_filings WHERE id=$1", [filing.id]);
     ok(res, mapCustomsFiling(fresh));
   });

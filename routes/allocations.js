@@ -108,6 +108,7 @@ module.exports = function allocationsRoutes(app, ctx) {
       JOIN shipments s ON s.id = c.shipment_id
       LEFT JOIN carrier_bookings cb ON cb.shipment_id = s.id
       WHERE s.allocation_id IS NOT NULL AND s.allocation_id != ''
+        AND COALESCE(s.status, '') <> 'Cancelled' -- no demand left, booked or not (a never-booked one used to stay "pending")
       GROUP BY s.allocation_id, cb.status
     `);
     const map = new Map();

@@ -13,7 +13,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           createRateLimiter, getSettings, callContractService, callMdmService, getCustomerRow,
           computeArExposure, toUsd, roundCents, OVERRIDE_GRACE_MS,
           userOwnsLaneForShipment, mapInvoiceStatusOverride, docAmountUsd, canEditOfficeSide,
-          officeSideOf, blockIfWrongSide, chargeCodeSide, mapShipment , revalidateSpaceLoop } = ctx;
+          officeSideOf, blockIfWrongSide, chargeCodeSide, mapShipment , revalidateSpaceLoop, lockedShipmentError } = ctx;
 
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
 
@@ -2083,6 +2083,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   app.delete("/api/schedules/:id", shipmentWrite, async (req, res) => {
     const [sched] = await query("SELECT * FROM shipment_schedules WHERE id=$1", [req.params.id]);
     if (!sched) return err(res, "Not found", 404);
+    // A shipment's own sailing, reached by its schedule id: the status-lock guard only sees shipment ids in the URL (TKT-SPXTGR).
+    const lockedMsg = await lockedShipmentError(sched.shipment_id);
+    if (lockedMsg) return res.status(409).json({ error: lockedMsg, code: "SHIPMENT_LOCKED" });
     await query("DELETE FROM shipment_schedules WHERE id=$1", [req.params.id]);
     await logEntityEvent('schedule', req.params.id, 'REMOVED', null, null, null,
       JSON.stringify({ carrier: sched.carrier, vesselName: sched.vessel_name, vesselImo: sched.vessel_imo,

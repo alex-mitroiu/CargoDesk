@@ -7,12 +7,31 @@ module.exports = function shipmentsRoutes(app, ctx) {
           mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice, canEditOfficeSide,
           officeSideOf, blockIfWrongSide, PARTY_ROLE_SIDE, resolveOfficeSideAccess, sideFromAccess,
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates, autoImportContractCosts,
-          broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, recomputeSpaceBadgesForAllocation, TEU_EXPR, screenShipmentById, resolveCarrierAgent, resolveCarrierAgentCandidates,
+          broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, recomputeSpaceBadgesForAllocation, recomputeSpacePool, TEU_EXPR, screenShipmentById, resolveCarrierAgent, resolveCarrierAgentCandidates,
           checkLineAgentCapabilityGaps,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
           sanctionsMap, autoCompleteMilestone, ensureBookingCreated, toUsd,
           validCoord, GPS_LOC_TYPE, getSettings, callContractService, callMdmService, getCustomerRow,
-          COST_LINE_EFFECTIVE_USD_SQL , commodityCodeError, UPLOADS_DIR, fs, path } = ctx;
+          COST_LINE_EFFECTIVE_USD_SQL , commodityCodeError, UPLOADS_DIR, fs, path,
+          LOCKED_SHIPMENT_STATUSES, lockedShipmentMessage, lockedShipmentError } = ctx;
+
+  // What still runs on a shipment that is about to be cancelled (decided by the user 2026-10-09):
+  // a carrier booking that is requested or confirmed, and a customs / security filing that has been
+  // submitted, answered or not. A booking the carrier rejected, a filing the authority rejected and a
+  // filing never submitted (Draft) aren't live. Each has to be cancelled first, so the cancellation
+  // never leaves a booking or a filing standing at the carrier or the authority.
+  const FILING_LABEL = { AES_EEI: "AES / EEI export filing", ISF_AMS: "ISF / AMS security filing" };
+  async function activeItemsBlockingCancel(shipmentId) {
+    const items = [];
+    for (const b of await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1 AND status IN ('Pending','Confirmed') ORDER BY created_at", [shipmentId]))
+      items.push({ kind: "booking", id: b.id, label: `Carrier booking${b.carrier_code ? ` with ${b.carrier_code}` : ""}${b.booking_ref ? ` · ${b.booking_ref}` : ""}`,
+        status: b.last_response_status === "cancellation_requested" ? "Cancellation requested, waiting for the carrier"
+          : b.status === "Pending" ? "Requested, no answer yet" : "Confirmed by the carrier" });
+    for (const f of await query("SELECT * FROM customs_filings WHERE shipment_id=$1 AND status IN ('Filed','Accepted') ORDER BY created_at", [shipmentId]))
+      items.push({ kind: "filing", id: f.id, filingType: f.filing_type, label: `${FILING_LABEL[f.filing_type] || f.filing_type}${f.filing_reference ? ` · ${f.filing_reference}` : ""}`,
+        status: f.status === "Filed" ? "Submitted, no answer yet" : `Accepted${f.confirmation_number ? ` · ${f.confirmation_number}` : ""}` });
+    return items;
+  }
 
   // trade_manager and viewer are read-only on all shipment write operations
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
@@ -597,6 +616,16 @@ module.exports = function shipmentsRoutes(app, ctx) {
   app.put("/api/shipments/:id", shipmentWrite, async (req, res) => {
     const [existing] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
+    // A Completed or Cancelled shipment is locked, its status included (TKT-SPXTGR).
+    if (LOCKED_SHIPMENT_STATUSES.includes(existing.status))
+      return res.status(409).json({ error: lockedShipmentMessage(existing.id, existing.status), code: "SHIPMENT_LOCKED" });
+    // Cancelling needs the carrier booking and every submitted customs / security filing cancelled first.
+    if (req.body?.status === "Cancelled") {
+      const activeItems = await activeItemsBlockingCancel(existing.id);
+      if (activeItems.length)
+        return res.status(409).json({ error: `${existing.id} can't be cancelled while ${activeItems.length === 1 ? "this is" : "these are"} still active: ${activeItems.map(i => i.label).join("; ")}. Cancel ${activeItems.length === 1 ? "it" : "them"} first.`,
+          code: "ACTIVE_ITEMS", activeItems });
+    }
     // True partial update (2026-09-12 QA finding) — every field below now preserves the existing
     // row's value when omitted from the body, not just pol/pod/carrierCode/contractType/status
     // (which already had this protection, originally only to avoid crashing on an `undefined`
@@ -654,6 +683,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const notifyId = field('notifyId', 'notify_id');
     const notifyName = field('notifyName', 'notify_name');
     const declaredValue = field('declaredValue', 'declared_value');
+    // Same rule as create (TKT-LXQNQG): the update path never checked it, so a negative value saved.
+    if (reqBody.declaredValue !== undefined && reqBody.declaredValue !== null && String(reqBody.declaredValue).trim() !== '' && Number(reqBody.declaredValue) < 0)
+      return err(res, "declaredValue cannot be negative");
     const declaredValueCurrency = field('declaredValueCurrency', 'declared_value_currency');
     const emoOfficeId = field('emoOfficeId', 'emo_office_id');
     const imoOfficeId = field('imoOfficeId', 'imo_office_id');
@@ -881,13 +913,16 @@ module.exports = function shipmentsRoutes(app, ctx) {
       if (existing.allocation_id) await recomputeSpaceBadgesForAllocation(existing.allocation_id);
       if (effAllocationId) await recomputeSpaceBadgesForAllocation(effAllocationId);
     } else if (effAllocationId) {
-      await recomputeSpaceBadge(req.params.id);
+      // The whole pool: a status change (a cancellation frees its space) moves the others' badges too.
+      await recomputeSpaceBadgesForAllocation(effAllocationId);
     }
     // Gap fix (2026-09 Space Configuration spec, gap #4, direct product decision): cancelling a
     // shipment previously left its carrier booking (and the space it was consuming) completely
     // untouched — only an explicit, separate "Cancel Booking" action freed that space. Now
     // cancelling the shipment cancels its live booking too, via the same cancelCarrierBooking
-    // logic the explicit PATCH .../carrier-booking/cancel route itself uses.
+    // logic the explicit PATCH .../carrier-booking/cancel route itself uses. Since 2026-10-09 a
+    // Pending or Confirmed booking blocks the cancellation outright (activeItemsBlockingCancel,
+    // top of this handler), so this only ever closes out a Rejected booking now.
     if (existing.status !== "Cancelled" && effStatus === "Cancelled") {
       const [liveBooking] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [req.params.id]);
       if (liveBooking && liveBooking.status !== "Cancelled") {
@@ -961,6 +996,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // shipment — rows and files — instead of being orphaned as they used to be.
     const docs = await query("SELECT id, stored_name FROM shipment_documents WHERE shipment_id=$1", [req.params.id]);
     await transaction(async tx => {
+      // A booking's linked B/L (carrier_bookings.bl_document_id) references one of these
+      // documents; unlink it first or the delete fails on that key. The booking row itself
+      // cascades with the shipment.
+      await tx.query("UPDATE carrier_bookings SET bl_document_id=NULL WHERE shipment_id=$1", [req.params.id]);
       await tx.query("DELETE FROM shipment_documents WHERE shipment_id=$1", [req.params.id]);
       await tx.query("DELETE FROM shipments WHERE id=$1", [req.params.id]);
     });
@@ -1067,6 +1106,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const [shipmentRowForGate] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
     if (!shipmentRowForGate) return err(res, "Shipment not found", 404);
     if (await blockIfWrongSide(req, res, shipmentRowForGate, 'export')) return;
+    // The shipment comes in the body, not the URL, so the status-lock guard can't see it (TKT-SPXTGR).
+    const lockedMsg = await lockedShipmentError(shipmentId);
+    if (lockedMsg) return res.status(409).json({ error: lockedMsg, code: "SHIPMENT_LOCKED" });
     if (grossWeightKg !== null && grossWeightKg !== undefined && Number(grossWeightKg) < 0) return err(res, "grossWeightKg cannot be negative");
     if (volumeCbm !== null && volumeCbm !== undefined && Number(volumeCbm) < 0) return err(res, "volumeCbm cannot be negative");
     if (!DIRECT_VGM_STATUSES.includes(vgmStatus)) return err(res, "vgmStatus must be Pending or Submitted — Accepted/Rejected only happen via the VGM Simulator");
@@ -1093,7 +1135,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const addedCtr = { ...mapContainer(ctrRow), ...deriveFreeTime(ctrRow, {}, null) };
     await logEvent(shipmentId, 'CONTAINER_ADDED', null, null, cnU,
       JSON.stringify({ size, type, hsCode, cargoDescription }), req.user?.name || req.user?.email || "");
-    await recomputeSpaceBadge(shipmentId);
+    await recomputeSpacePool(shipmentId); // its TEU counts against the pool-mates' space too
     ok(res, addedCtr, 201);
   });
 
@@ -1147,7 +1189,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const [row] = await query("SELECT * FROM containers WHERE id=$1", [req.params.id]);
     const evRows = await query("SELECT container_id, event_type, location, occurred_at FROM container_events WHERE container_id=$1 ORDER BY occurred_at ASC", [req.params.id]);
     const g = groupContainerEvents(evRows)[req.params.id] || { byType: {}, latest: null };
-    await recomputeSpaceBadge(oldCtr.shipment_id);
+    await recomputeSpacePool(oldCtr.shipment_id);
 
     // TKT-OZD4V8: VGM is declared alongside Shipping Instructions in real booking
     // workflows — once every container on the shipment has VGM Submitted, treat that
@@ -1241,7 +1283,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     await query("DELETE FROM containers WHERE id=$1", [req.params.id]);
     await logEvent(ctr.shipment_id, 'CONTAINER_REMOVED', null, ctr.container_number, null,
       JSON.stringify({ size: ctr.size, type: ctr.type }), req.user?.name || req.user?.email || "");
-    await recomputeSpaceBadge(ctr.shipment_id);
+    await recomputeSpacePool(ctr.shipment_id);
     ok(res, { deleted: req.params.id });
   });
 
@@ -1473,7 +1515,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       await logEvent(req.params.id, 'CONTAINER_ADDED', null, null, ev.containerNumber,
         JSON.stringify({ size: ev.size, type: ev.type, hsCode: ev.hsCode, cargoDescription: ev.cargoDescription, source: 'bulk_import' }), req.user?.name || req.user?.email || "");
     }
-    await recomputeSpaceBadge(req.params.id);
+    await recomputeSpacePool(req.params.id);
     ok(res, { created }, 201);
   });
 
@@ -1508,18 +1550,27 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!occurredAt) return err(res, "occurredAt required");
     const [ctr] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!ctr) return err(res, "Container not found", 404);
+    const event = await recordContainerEvent(ctr, { eventType, occurredAt, location, notes, conditionNotes, damageFlag, chassisProvider,
+      recordedBy: req.user?.name || req.user?.email || "" });
+    ok(res, event, 201);
+  });
+
+  // One container event: the row, the History entry and the milestone it may complete. Shared by
+  // the route above and Track & Trace (routes/carrier-tracking.js, TKT-KG4E49), so a carrier-reported
+  // event moves milestones exactly like one typed in. carrierEventId = the carrier's eventID ('' by hand).
+  async function recordContainerEvent(ctr, { eventType, occurredAt, location = "", notes = "", conditionNotes = "", damageFlag = false,
+    chassisProvider = "", recordedBy = "", carrierEventId = "" }) {
     const id = `CEV-${uid()}`;
     const now = new Date().toISOString();
-    const recordedBy = req.user?.name || req.user?.email || "";
     await query(`INSERT INTO container_events
-      (id, container_id, shipment_id, event_type, location, occurred_at, recorded_by, notes, condition_notes, damage_flag, chassis_provider, created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-      [id, req.params.id, ctr.shipment_id, eventType, location, occurredAt, recordedBy, notes,
-           conditionNotes, !!damageFlag, chassisProvider, now]);
+      (id, container_id, shipment_id, event_type, location, occurred_at, recorded_by, notes, condition_notes, damage_flag, chassis_provider, created_at, carrier_event_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [id, ctr.id, ctr.shipment_id, eventType, location, occurredAt, recordedBy, notes,
+           conditionNotes, !!damageFlag, chassisProvider, now, carrierEventId]);
     const [eventRow] = await query("SELECT * FROM container_events WHERE id=$1", [id]);
     const event = mapContainerEvent(eventRow);
     await logEvent(ctr.shipment_id, 'CONTAINER_EVENT_ADDED', null, null, `${eventType} — ${ctr.container_number}`,
-      JSON.stringify({ containerId: req.params.id, eventType, occurredAt }), req.user?.name || req.user?.email || "");
+      JSON.stringify({ containerId: ctr.id, eventType, occurredAt, ...(carrierEventId ? { carrierEventId } : {}) }), recordedBy);
 
     // TKT-OZD4V8: once every container on the shipment has logged the same lifecycle
     // event, that's the real-world signal the corresponding milestone step represents —
@@ -1542,8 +1593,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
           `Auto-completed — all ${allCtrs.length} container(s) logged "${eventType}"`);
       }
     }
-    ok(res, event, 201);
-  });
+    return event;
+  }
+  ctx.recordContainerEvent = recordContainerEvent;
 
   app.delete("/api/shipments/:shipmentId/container-events/:id", shipmentWrite, async (req, res) => {
     const [ev] = await query("SELECT * FROM container_events WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);

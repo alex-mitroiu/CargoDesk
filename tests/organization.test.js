@@ -207,14 +207,17 @@ async function login() {
     // (confirmed live: this exact assumption failed all 9 of this section's assertions in CI).
     // Own the fixture instead of depending on ambient seed data: create a scratch MDM country
     // first, same as mdm-crud.test.js already does for the plain Countries CRUD.
-    const orgCountryCode = `Z${rand[0]}`;
+    // ISO 3166 user-assigned range QM–QZ: never a real country. This used to be `Z${rand[0]}`, which
+    // can be ZA, ZM or ZW — real countries since 2026-10-09 (TKT-XU38KY) — and the cleanup below
+    // DELETES this country.
+    const orgCountryCode = `Q${"MNOPQRSTUVWXYZ"[Math.floor(Math.random() * 14)]}`;
     const scratchCountry = await request("POST", "/api/countries", { iso2: orgCountryCode, name: "Zedland Org Test" }, token);
     assert("scratch MDM country created for this section", scratchCountry.status === 201, JSON.stringify(scratchCountry.body));
+    if (scratchCountry.status !== 201) throw new Error(`scratch country ${orgCountryCode} could not be created — stopping before touching an existing country`);
 
-    // "XX", not "ZZ" — orgCountryCode above is Z-prefixed (`Z${rand[0]}`); if rand[0] ever
-    // landed on "Z" a "ZZ" sentinel here would collide with our own just-created scratch
-    // country instead of testing a genuinely unknown one. Confirmed live: this exact 1/36
-    // collision already broke the equivalent sentinel in tests/mdm-crud.test.js in CI.
+    // "XX" — user-assigned, never a real country, and outside orgCountryCode's QM–QZ range, so it
+    // can't collide with our own just-created scratch country. (A "ZZ" sentinel once did, 1 run in
+    // 36, when the scratch code was Z-prefixed.)
     const orgCountryBad = await request("POST", "/api/org-countries", { countryCode: "XX" }, token);
     assert("unknown country code rejected", orgCountryBad.status >= 400 && /not found/i.test(orgCountryBad.body.error || ""));
 

@@ -126,7 +126,7 @@ const INTERNAL_APIS = [
   },
   {
     id: "ports",     name: "Port Locations",      provider: "Internal",
-    description: "14,269 UN/LOCODE port locations and linked port pairs.",
+    description: "14,270 UN/LOCODE port locations and linked port pairs.",
     testType: "http", testUrl: "/api/port-locations?limit=1",
     hasToggle: true, settingKey: "api_ports_enabled",
   },

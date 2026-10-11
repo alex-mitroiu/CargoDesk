@@ -8,6 +8,9 @@
 // is its own bucket, Cancelled is gone, anything else (Created/Pending/no booking yet) is pending.
 export const bucketOf = bookingStatus =>
   bookingStatus === "Confirmed" ? "conf" : bookingStatus === "Rejected" ? "rej" : bookingStatus === "Cancelled" ? null : "pend";
+// A Cancelled shipment uses no space whatever its booking says — one cancelled before it was ever
+// booked has no booking row and would otherwise count as pending forever (TKT-SQVGJ2 audit).
+export const shipmentBucketOf = s => (s.status === "Cancelled" ? null : bucketOf(s.bookingStatus));
 
 // sel* = how each (non-cancelled) shipment's space configuration was picked in the contract picker:
 // steered there by the same-contract suggestion, picked directly, booked onto it though full, or
@@ -63,7 +66,7 @@ export function buildContractRows({ allocations, shipments, contractMap = {}, te
   allocations.forEach(a => { recFor(a).alloc += Number(a.allocatedTEU) || 0; });
   shipments.forEach(s => {
     const a = s.allocationId && byAlloc.get(s.allocationId);
-    const b = a && bucketOf(s.bookingStatus);
+    const b = a && shipmentBucketOf(s);
     if (!b) return;
     const r = recFor(a);
     r[b] += teuOfShipment(s);
@@ -96,7 +99,7 @@ export function buildWeeklyTrend({ allocations, shipments, contractMap = {}, teu
   });
   const series = new Map();
   for (const s of shipments) {
-    if (s.bookingStatus !== "Confirmed" || !s.etd || !s.allocationId) continue;
+    if (s.bookingStatus !== "Confirmed" || s.status === "Cancelled" || !s.etd || !s.allocationId) continue;
     const rec = keyOfAlloc.get(s.allocationId);
     if (!rec) continue;
     const w = weeks.findIndex(wk => s.etd >= wk.start && s.etd <= wk.end);

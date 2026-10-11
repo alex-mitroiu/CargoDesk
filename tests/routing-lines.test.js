@@ -13,7 +13,7 @@
 
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { normalizeRoutingLines } = require("../lib/routingLines.js");
+const { normalizeRoutingLines, droppedRoutingIds } = require("../lib/routingLines.js");
 
 let passed = 0, failed = 0;
 function assert(label, condition, detail = "") {
@@ -115,6 +115,31 @@ console.log("\nRunning the result through again changes nothing");
   const first = normalizeRoutingLines({ legs: [leg("NLRTM", "USLAX"), leg("DEBRE", "USLAX"), leg("NLRTM", "USNYC", { polCarrierHaulage: true, polHaulageLocations: "DEBER NLAMS" })], rates: [rate("OF", 1)] });
   const again = normalizeRoutingLines({ routings: first.routings, legs: first.legs, rates: first.rates, storedLegs: [] });
   assert("idempotent", again.changed === false && again.routings.length === first.routings.length);
+}
+
+// TKT-1QBVF9 (TKT-SQVGJ2 audit): the Contract Management Service's startup migration owns no
+// shipments, so it skips any contract whose normalization would drop a stored routing.
+console.log("\nWhich stored routings a normalization would drop (the service migration's guard)");
+{
+  const routings = [{ id: "CRTG-KEEP", name: "Line 1" }, { id: "CRTG-EMPTY", name: "Line 2" }];
+  const legs = [{ ...leg("NLRTM", "USNYC"), routingId: "CRTG-KEEP" }];
+  const out = normalizeRoutingLines({ routings, legs, rates: [], storedLegs: legs });
+  assert("a routing left with no legs is reported as dropped", JSON.stringify(droppedRoutingIds(routings, out.routings)) === JSON.stringify(["CRTG-EMPTY"]),
+    JSON.stringify(droppedRoutingIds(routings, out.routings)));
+  const split = normalizeRoutingLines({ routings: [{ id: "CRTG-A", name: "Two lanes" }],
+    legs: [{ ...leg("NLRTM", "USLAX"), routingId: "CRTG-A" }, { ...leg("DEBRE", "USNYC"), routingId: "CRTG-A" }], rates: [] });
+  assert("a split keeps the original routing's id — nothing dropped", droppedRoutingIds([{ id: "CRTG-A" }], split.routings).length === 0,
+    JSON.stringify(split.routings));
+}
+
+console.log("\nThe Contract Management Service's copy behaves the same");
+{
+  const svc = require("../services/contract-management/lib/routingLines.js");
+  const input = () => ({ routings: [{ id: "R1", name: "x" }, { id: "R2", name: "y" }],
+    legs: [{ ...leg("NLRTM", "USLAX"), routingId: "R1" }, { ...leg("DEBRE", "USLAX"), routingId: "R1" }], rates: [rate("OF", 1, { routingId: "R1" })] });
+  const a = normalizeRoutingLines(input()), b = svc.normalizeRoutingLines(input());
+  assert("same normalization", JSON.stringify(a) === JSON.stringify(b));
+  assert("same dropped ids", JSON.stringify(droppedRoutingIds(input().routings, a.routings)) === JSON.stringify(svc.droppedRoutingIds(input().routings, b.routings)));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -42,22 +42,29 @@ module.exports = function carrierWebhooksRoutes(app, ctx) {
     try { parsedBody = JSON.parse(rawBody.toString("utf8")); }
     catch { return err(res, "Malformed webhook body — expected valid JSON", 400); }
 
+    // A DCSA notification is a CloudEvent with the booking state under `data` (parseCallback reads
+    // that, or a flat body). It names the booking by its request reference and/or the carrier's
+    // booking number — after confirmation a carrier may send only the latter — so either matches,
+    // within this integration's carrier.
     const response = adapter.parseCallback(parsedBody);
-    if (!response.carrierBookingRequestReference)
-      return err(res, "Callback carries no carrierBookingRequestReference to correlate against", 400);
+    const { carrierBookingRequestReference: reqRef, carrierBookingReference: carrierRef } = response.state;
+    if (!reqRef && !carrierRef)
+      return err(res, "Callback carries neither a carrierBookingRequestReference nor a carrierBookingReference to correlate against", 400);
 
     const [booking] = await query(
-      "SELECT * FROM carrier_bookings WHERE carrier_booking_request_reference=$1", [response.carrierBookingRequestReference]
+      `SELECT * FROM carrier_bookings WHERE carrier_code=$1 AND COALESCE(carrier_booking_request_reference, '') <> ''
+         AND (carrier_booking_request_reference=$2 OR ($3 <> '' AND booking_ref=$3))
+       ORDER BY updated_at DESC LIMIT 1`,
+      [integration.carrier_code, reqRef || "", carrierRef || ""]
     );
-    if (!booking) return err(res, "No pending booking matches this reference", 404);
+    if (!booking) return err(res, "No booking sent through this integration matches this reference", 404);
 
     const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [booking.shipment_id]);
     if (!shipment) return err(res, "Shipment not found for this booking", 404);
 
-    // Same shared entry point the Test Tools simulator calls (routes/edi.js) — a real carrier
-    // callback and a simulated one update carrier_bookings/edi_messages identically, only isMock
-    // differs.
-    const { message, booking: updatedBooking } = await ctx.applyBookingResponse(shipment, booking, response, false);
-    ok(res, { received: message, booking: updatedBooking }, 201);
+    // routes/edi.js applyCarrierState — the same handling a poll gets; a repeated notification
+    // records nothing new (changed: false).
+    const { message, booking: updatedBooking, changed } = await ctx.applyCarrierState(shipment, booking, response.state, { source: "callback", raw: parsedBody });
+    ok(res, { received: message, booking: updatedBooking, changed }, 201);
   });
 };

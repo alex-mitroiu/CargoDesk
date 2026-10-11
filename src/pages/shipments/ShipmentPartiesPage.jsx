@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { api } from "../../api";
 import { PartiesOfficesPanel } from "./ShipmentDetailPage";
 import AdditionalPartiesPanel from "../../components/shared/AdditionalPartiesPanel";
+import { isShipmentLocked } from "../../utils/shipmentLock";
 
 // ─── Shipment Parties & Offices Page ──────────────────────────────────────
 // Dedicated sub-page for party/office details, promoted out of the
@@ -22,7 +23,7 @@ const ShipmentPartiesPage = ({ shipment, onBack, onUpdate, onShipmentPatched }) 
     <div id="shpparties-page" data-testid="shipment-parties-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
       <PartiesOfficesPanel shipment={shipment} onUpdate={onUpdate} onShipmentPatched={onShipmentPatched} parties={parties} />
       <div data-testid="shipment-parties-additional-section" style={{ marginTop: 28 }}>
-        <AdditionalPartiesPanel shipmentId={shipment.id} parties={parties} onChanged={reloadParties} />
+        <AdditionalPartiesPanel shipmentId={shipment.id} parties={parties} onChanged={reloadParties} locked={isShipmentLocked(shipment)} />
       </div>
     </div>
   );

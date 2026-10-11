@@ -17,6 +17,11 @@
 // tagged source: "invoice" | "statement". Values are GROSS (net + VAT on standard-rated lines):
 // the customer owes and pays the VAT too, so comparing a gross payment against a net booking would
 // report the VAT as an FX gain. (It used to be net; no line carried VAT before 2026-09-29.)
+//
+// A part-paid document is split (TKT-SQVGJ2 audit, 2026-10-09): the paid share is realized against
+// its share of the booking, the unpaid share stays unrealized. It used to drop out of unrealized as
+// soon as any payment was recorded, and realized compared the part paid with the WHOLE booking, so
+// the unpaid rest showed up as an FX loss.
 
 module.exports = function fxRevaluationRoutes(app, ctx) {
   const { query, ok, err, toUsd, costLineEffectiveUsd, vatFactor } = ctx;
@@ -41,9 +46,8 @@ module.exports = function fxRevaluationRoutes(app, ctx) {
   const grossFactor = vatFactor; // server.js — the same gross rule AR and credit exposure use
   const bookedUsdOf = lines => lines.reduce((s, l) => s + costLineEffectiveUsd(l) * grossFactor(l), 0);
 
-  // One unrealized row per currency on the document (a rare mixed-currency invoice still gets a
-  // correct row per currency rather than one computed against an arbitrary line's currency).
-  async function unrealizedRows(ident, lines) {
+  // A document's gross per currency: currency → { amount (in that currency), bookedUsd }.
+  function byCurrencyOf(lines) {
     const byCurrency = new Map();
     for (const l of lines) {
       if (!byCurrency.has(l.currency)) byCurrency.set(l.currency, { amount: 0, bookedUsd: 0 });
@@ -51,14 +55,44 @@ module.exports = function fxRevaluationRoutes(app, ctx) {
       g.amount += l.amount * grossFactor(l);
       g.bookedUsd += costLineEffectiveUsd(l) * grossFactor(l);
     }
+    return byCurrency;
+  }
+  // How much of a document is settled, 0–1, measured in its own currency when Mark as Paid captured
+  // what was received in it. A payment recorded in USD only can't tell a part-payment from an FX
+  // difference, so it still counts as settled, as before. 0 when nothing is paid.
+  function settledShare(doc, byCurrency) {
+    const paidGroup = doc.paid_currency && byCurrency.get(doc.paid_currency);
+    if (doc.paid_amount_original != null && paidGroup && paidGroup.amount > 0) return Math.min(1, doc.paid_amount_original / paidGroup.amount);
+    return doc.paid_at ? 1 : 0;
+  }
+
+  // One unrealized row per currency on the document (a rare mixed-currency invoice still gets a
+  // correct row per currency rather than one computed against an arbitrary line's currency), for
+  // the share not yet paid.
+  async function unrealizedRows(ident, lines, doc) {
+    const byCurrency = byCurrencyOf(lines);
+    const open = 1 - settledShare(doc, byCurrency);
+    if (open < 1e-6) return [];
     const out = [];
     for (const [currency, g] of byCurrency) {
       if (currency === "USD") continue; // no FX exposure
-      const todaysUsd = await toUsd(g.amount, currency);
-      out.push({ ...ident, currency, foreignAmount: round2(g.amount), bookedUsd: round2(g.bookedUsd), todaysUsd: round2(todaysUsd),
-        gainLossUsd: round2(todaysUsd - g.bookedUsd) });
+      const amount = g.amount * open, bookedUsd = g.bookedUsd * open;
+      const todaysUsd = await toUsd(amount, currency);
+      out.push({ ...ident, currency, foreignAmount: round2(amount), bookedUsd: round2(bookedUsd), todaysUsd: round2(todaysUsd),
+        gainLossUsd: round2(todaysUsd - bookedUsd), ...(open < 1 ? { partlyPaid: true } : {}) });
     }
     return out;
+  }
+  // The paid share's booked USD vs what was received for it.
+  function realizedRow(ident, lines, doc) {
+    const share = settledShare(doc, byCurrencyOf(lines));
+    const bookedUsd = bookedUsdOf(lines) * share;
+    return {
+      ...ident, currency: doc.paid_currency,
+      paidAmountOriginal: doc.paid_amount_original, paidExchangeRate: doc.paid_exchange_rate,
+      bookedUsd: round2(bookedUsd), receivedUsd: round2(doc.paid_amount),
+      gainLossUsd: round2(doc.paid_amount - bookedUsd), ...(share < 1 ? { partlyPaid: true } : {}),
+    };
   }
 
   app.get("/api/fx-revaluation/summary", async (req, res) => {
@@ -67,19 +101,20 @@ module.exports = function fxRevaluationRoutes(app, ctx) {
     // A doc's own lines are grouped by currency rather than assumed single-currency — a rare
     // mixed-currency invoice still contributes a correct row per currency instead of either
     // crashing or silently computing garbage against one arbitrary line's currency.
-    const unpaidDocs = await query(
-      "SELECT * FROM shipment_documents WHERE doc_type IN ('FR01','FR02') AND status='confirmed' AND paid_at IS NULL");
+    // Every confirmed document, paid or not — unrealizedRows keeps whatever share is still open.
+    const confirmedDocs = await query(
+      "SELECT * FROM shipment_documents WHERE doc_type IN ('FR01','FR02') AND status='confirmed'");
     const unrealized = [];
-    for (const doc of unpaidDocs) {
+    for (const doc of confirmedDocs) {
       const lines = await docCostLines(doc);
       if (!lines.length) continue;
-      unrealized.push(...await unrealizedRows({ source: "invoice", docId: doc.id, shipmentId: doc.shipment_id, filename: doc.filename }, lines));
+      unrealized.push(...await unrealizedRows({ source: "invoice", docId: doc.id, shipmentId: doc.shipment_id, filename: doc.filename }, lines, doc));
     }
-    const unpaidStatements = await query("SELECT * FROM customer_statements WHERE status='confirmed' AND paid_at IS NULL");
-    for (const st of unpaidStatements) {
+    const confirmedStatements = await query("SELECT * FROM customer_statements WHERE status='confirmed'");
+    for (const st of confirmedStatements) {
       const lines = await statementCostLines(st);
       if (!lines.length) continue;
-      unrealized.push(...await unrealizedRows({ source: "statement", docId: st.id, shipmentId: "", filename: st.filename || st.id }, lines));
+      unrealized.push(...await unrealizedRows({ source: "statement", docId: st.id, shipmentId: "", filename: st.filename || st.id }, lines, st));
     }
 
     const paidDocs = await query(
@@ -93,25 +128,13 @@ module.exports = function fxRevaluationRoutes(app, ctx) {
       // entire received amount as a fabricated "gain," a real bug this feature's own live
       // verification caught.
       if (!lines.length) continue;
-      const bookedUsd = bookedUsdOf(lines);
-      realized.push({
-        source: "invoice", docId: doc.id, shipmentId: doc.shipment_id, filename: doc.filename, currency: doc.paid_currency,
-        paidAmountOriginal: doc.paid_amount_original, paidExchangeRate: doc.paid_exchange_rate,
-        bookedUsd: round2(bookedUsd), receivedUsd: round2(doc.paid_amount),
-        gainLossUsd: round2(doc.paid_amount - bookedUsd),
-      });
+      realized.push(realizedRow({ source: "invoice", docId: doc.id, shipmentId: doc.shipment_id, filename: doc.filename }, lines, doc));
     }
     const paidStatements = await query("SELECT * FROM customer_statements WHERE status='confirmed' AND paid_amount_original IS NOT NULL");
     for (const st of paidStatements) {
       const lines = await statementCostLines(st);
       if (!lines.length) continue; // same skip as invoices: no lines left means no booked value to compare
-      const bookedUsd = bookedUsdOf(lines);
-      realized.push({
-        source: "statement", docId: st.id, shipmentId: "", filename: st.filename || st.id, currency: st.paid_currency,
-        paidAmountOriginal: st.paid_amount_original, paidExchangeRate: st.paid_exchange_rate,
-        bookedUsd: round2(bookedUsd), receivedUsd: round2(st.paid_amount),
-        gainLossUsd: round2(st.paid_amount - bookedUsd),
-      });
+      realized.push(realizedRow({ source: "statement", docId: st.id, shipmentId: "", filename: st.filename || st.id }, lines, st));
     }
 
     ok(res, {

@@ -225,6 +225,20 @@ describe("PUT /api/shipments/:id — status change", () => {
   // (confirmed directly: PUT with "In Transit" 400s with "status must be one of: ..."). Using
   // "Completed" instead — any value other than the shipment's starting "Active" exercises a
   // real transition.
+  // bookingRef first: a Completed shipment is locked (TKT-SPXTGR), so no edit lands after it.
+  it("updates bookingRef field", () => {
+    api("GET", `/shipments/${shipmentId}`).then(res => {
+      const shipment = res.body;
+      return api("PUT", `/shipments/${shipmentId}`, {
+        ...shipment,
+        bookingRef: "BKG-TEST-001",
+      });
+    }).then(res => {
+      expect(res.status).to.eq(200);
+      expect(res.body.bookingRef).to.eq("BKG-TEST-001");
+    });
+  });
+
   it("updates status and returns 200", () => {
     api("GET", `/shipments/${shipmentId}`).then(res => {
       const shipment = res.body;
@@ -245,16 +259,12 @@ describe("PUT /api/shipments/:id — status change", () => {
     });
   });
 
-  it("updates bookingRef field", () => {
+  it("refuses any further edit once Completed (409 SHIPMENT_LOCKED)", () => {
     api("GET", `/shipments/${shipmentId}`).then(res => {
-      const shipment = res.body;
-      return api("PUT", `/shipments/${shipmentId}`, {
-        ...shipment,
-        bookingRef: "BKG-TEST-001",
-      });
+      return api("PUT", `/shipments/${shipmentId}`, { ...res.body, status: "Active" });
     }).then(res => {
-      expect(res.status).to.eq(200);
-      expect(res.body.bookingRef).to.eq("BKG-TEST-001");
+      expect(res.status).to.eq(409);
+      expect(res.body.code).to.eq("SHIPMENT_LOCKED");
     });
   });
 

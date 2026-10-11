@@ -241,6 +241,31 @@ async function confirmDoc(shipmentId, docId, token) {
     assert("shows up as Missing", rowMissing?.status === "missing", JSON.stringify(rowMissing));
     assert("Missing rows have no docId", rowMissing?.docId === null, JSON.stringify(rowMissing));
 
+    // TKT-SQVGJ2 audit (2026-10-09): a shipment billed through a confirmed consolidated statement has
+    // no FR01/FR02 of its own and used to be flagged as never invoiced in all three checks.
+    console.log("\nNot Missing — the same situation, but billed through a confirmed statement");
+    const shipStmt = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: custMissing.body.id, principalName: "Test Missing Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
+    }, token);
+    cleanup.shipments.push(shipStmt.body.id);
+    await request("POST", `/api/shipments/${shipStmt.body.id}/milestones/init`, {}, token);
+    const msStmt = await request("GET", `/api/shipments/${shipStmt.body.id}/milestones`, null, token);
+    await request("PUT", `/api/shipments/${shipStmt.body.id}/milestones/${msStmt.body.find(m => m.milestoneKey === "delivered").id}`, { completedAt: twelveDaysAgo }, token);
+    const stmtLine = await addSellLine(shipStmt.body.id, token, 650, "OFR");
+    const stmt = await request("POST", "/api/customer-statements/generate", { customerId: custMissing.body.id, dateFrom: "2020-01-01", dateTo: "2030-12-31",
+      costLineIds: [stmtLine.id], html: SAMPLE_HTML, filename: "collections-stmt.html" }, token);
+    const stmtConfirm = await request("POST", `/api/customer-statements/${stmt.body.id}/confirm`, {}, token);
+    assert("statement generated and confirmed", stmt.status === 201 && stmtConfirm.status === 200, JSON.stringify(stmt.body).slice(0, 200));
+    const reportStmt = await request("GET", "/api/reports/invoice-collections", null, token);
+    assert("Invoice Collections doesn't call it Missing", !reportStmt.body.some(r => r.shipmentId === shipStmt.body.id && r.status === "missing"));
+    const overdueStmt = await request("GET", "/api/invoice-deadlines/overdue", null, token);
+    assert("…nor does the invoice-deadline overdue list", !overdueStmt.body.some(r => r.shipmentId === shipStmt.body.id), JSON.stringify(overdueStmt.body.map(r => r.shipmentId)));
+    const bpStmt = await request("GET", "/api/reports/billing-performance", null, token);
+    const bpRowsStmt = Array.isArray(bpStmt.body) ? bpStmt.body : bpStmt.body.results || [];
+    assert("…nor Billing Performance", !bpRowsStmt.some(r => r.shipmentId === shipStmt.body.id && r.paymentState === "missing"), JSON.stringify(bpRowsStmt.filter(r => r.shipmentId === shipStmt.body.id)));
+
     console.log("\nPaid — outstanding fully settled");
     const custPaid = await request("POST", "/api/customers", { companyName: "Test Paid Co" }, token);
     cleanup.customers.push(custPaid.body.id);
@@ -275,6 +300,25 @@ async function confirmDoc(shipmentId, docId, token) {
     const reportCancel = await request("GET", "/api/reports/invoice-collections", null, token);
     const rowCancel = reportCancel.body.find(r => r.shipmentId === shipCancel.body.id);
     assert("shows up as Cancelled, no new schema needed — reuses the existing voided status", rowCancel?.status === "cancelled", JSON.stringify(rowCancel));
+
+    // TKT-SQVGJ2 audit (2026-10-09): the report used to show only a shipment's most recent invoice,
+    // while the collections sweep chases every confirmed one — an older unpaid invoice was invisible.
+    console.log("\nReport — a shipment billed through two invoices shows both");
+    const shipTwo = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: custCancel.body.id, principalName: "Test Cancelled Co",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
+    }, token);
+    cleanup.shipments.push(shipTwo.body.id);
+    const docFirst = await generateInvoiceDoc(shipTwo.body.id, token, [(await addSellLine(shipTwo.body.id, token, 400, "OFR")).id]);
+    await confirmDoc(shipTwo.body.id, docFirst.id, token);
+    const docSecond = await generateInvoiceDoc(shipTwo.body.id, token, [(await addSellLine(shipTwo.body.id, token, 120, "OFR")).id]);
+    await confirmDoc(shipTwo.body.id, docSecond.id, token);
+    const reportTwo = await request("GET", "/api/reports/invoice-collections", null, token);
+    const twoRows = reportTwo.body.filter(r => r.shipmentId === shipTwo.body.id);
+    assert("both confirmed invoices have a row", twoRows.length === 2 && [docFirst.id, docSecond.id].every(id => twoRows.some(r => r.docId === id)),
+      JSON.stringify(twoRows.map(r => r.docId)));
+    assert("the reversed shipment above still shows exactly one Cancelled row", reportTwo.body.filter(r => r.shipmentId === shipCancel.body.id).length === 1);
 
     console.log("\nReport — finance gate");
     const reportAsOcc = await request("GET", "/api/reports/invoice-collections", null, occLogin.body.token);
