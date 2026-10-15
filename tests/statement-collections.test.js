@@ -71,8 +71,11 @@ const rand = Math.random().toString(36).slice(2, 7);
     const me = login.body.user;
     console.log("  ✓ Logged in");
     const { emoOfficeId, imoOfficeId } = await ensureOffices(token);
-    // A second export office, so the statement spans two and the bigger one must win.
-    const office2 = await request("POST", "/api/offices", { unlocode: `X${rand.slice(0, 4).toUpperCase()}`, department: "SE", name: `Statement Test Office ${rand}` }, token);
+    // A second export office, so the statement spans two and the bigger one must win. Same branch as
+    // the first: a statement is issued by one legal entity (an office's branch), so two branches would
+    // be refused — and a branchless office would fall back to the import office's branch instead.
+    const branchId = (await request("GET", "/api/offices", null, token)).body.find(o => o.id === emoOfficeId)?.branchId || null;
+    const office2 = await request("POST", "/api/offices", { unlocode: `X${rand.slice(0, 4).toUpperCase()}`, department: "SE", name: `Statement Test Office ${rand}`, branchId }, token);
     cleanup.offices.push(office2.body.id);
     assert("second export office created", !!office2.body.id, JSON.stringify(office2.body));
 

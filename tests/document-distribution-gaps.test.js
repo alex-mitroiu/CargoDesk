@@ -17,7 +17,7 @@
  */
 
 import http from "node:http";
-import { ensureOffices } from "./helpers/offices.mjs";
+import { ensureOffices, retireOffice } from "./helpers/offices.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -136,7 +136,9 @@ async function login() {
 
     console.log("\nCleanup");
     await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
-    await request("DELETE", `/api/offices/${officeId}`, null, token);
+    // Retired, not just a DELETE that may be refused: a leftover ACTIVE scratch office with a test
+    // webhook was being picked as "the" Export office by every later suite (found 2026-10-15).
+    assert("scratch office retired", ["deleted", "deactivated"].includes(await retireOffice(token, officeId)));
 
     console.log(`\n${"─".repeat(50)}`);
     console.log(`Results: ${passed} passed, ${failed} failed`);

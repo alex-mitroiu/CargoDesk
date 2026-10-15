@@ -1371,12 +1371,16 @@ async function screenShipmentById(shipmentId) {
 
   const [prevRow] = await query("SELECT result FROM shipment_screenings WHERE shipment_id=$1", [shipmentId]);
   const result  = hits.length > 0 ? 'HIT' : 'CLEAR';
-  const id      = `SCR-${uid()}`;
   const now     = new Date().toISOString();
-  await query(
+  // A shipment's screening row keeps its id for life (2026-10-15). It used to be rewritten with a
+  // fresh random SCR- id on every re-screen, and a sanctions import re-screens every active
+  // shipment, so a new id now and then hit an existing row's id and failed the whole sweep
+  // ("duplicate key … shipment_screenings_pkey", seen in the screening toggle suite).
+  const [{ id }] = await query(
     `INSERT INTO shipment_screenings (id, shipment_id, screened_at, result, hits) VALUES ($1,$2,$3,$4,$5)
-     ON CONFLICT (shipment_id) DO UPDATE SET id=$1, screened_at=$3, result=$4, hits=$5`,
-    [id, shipmentId, now, result, JSON.stringify(hits)]);
+     ON CONFLICT (shipment_id) DO UPDATE SET screened_at=$3, result=$4, hits=$5
+     RETURNING id`,
+    [`SCR-${uid()}`, shipmentId, now, result, JSON.stringify(hits)]);
 
   if (result === 'HIT' && prevRow?.result !== 'HIT') {
     logEvent(shipmentId, 'COMPLIANCE_HIT', null, null, null, JSON.stringify({ hits }));

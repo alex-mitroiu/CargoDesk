@@ -132,6 +132,10 @@ const CLEAN_NAME = "Test Compliance Clean Co";
     assert("party removed", removeParty.status === 200);
     const afterRemove = await request("GET", `/api/shipments/${shipmentId}/screening`, null, token);
     assert("shipment reverts to CLEAR once the flagged party is removed", afterRemove.body.result === "CLEAR", JSON.stringify(afterRemove.body));
+    // The row keeps its id across re-screens (2026-10-15): it used to get a new random id each time,
+    // which occasionally collided with another row's and failed a whole sanctions re-screen sweep.
+    assert("re-screening keeps the shipment's screening id", runInitial.body.id && afterParty.body.id === runInitial.body.id && afterRemove.body.id === runInitial.body.id,
+      JSON.stringify({ first: runInitial.body.id, afterParty: afterParty.body.id, afterRemove: afterRemove.body.id }));
 
     console.log("\nNotify Party is now screened too (previously entirely invisible to screening)");
     const setNotify = await request("PUT", `/api/shipments/${shipmentId}`, {

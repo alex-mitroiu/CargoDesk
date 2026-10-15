@@ -15,7 +15,7 @@
  */
 
 import http from "node:http";
-import { ensureOffices } from "./helpers/offices.mjs";
+import { ensureOffices, retireOffice } from "./helpers/offices.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -102,32 +102,26 @@ async function scratchShipment(token) {
     const ediEvent = ediHistory.body.find(e => e.eventType === "EDI_SENT");
     assert("EDI_SENT entity_events row exists", !!ediEvent, JSON.stringify(ediHistory.body));
 
-    console.log("\nWebhook — no EMO office assigned yet returns a clean error");
-    const webhookNoEmo = await request("POST", `/api/shipments/${shipId}/documents/${doc.body.id}/send-webhook`, null, token);
-    assert("no EMO office rejected", webhookNoEmo.status === 400, JSON.stringify(webhookNoEmo.body));
-
-    console.log("\nAssign an EMO office, configure its webhook to an unreachable-but-real https host");
-    const offices = await request("GET", "/api/offices", null, token);
-    // Offices are tenant/org-specific data, never MDM-seeded (unlike ports/carriers/vessels) —
-    // a genuinely fresh environment (every CI run) has none at all. Create a scratch one rather
-    // than assuming a pre-existing office, same as every other fixture in this file. Only an
-    // ACTIVE one: suites whose shipments billed a customer deactivate their scratch office
-    // instead of deleting it (tests/helpers/offices.mjs retireOffice), and an inactive office
-    // can't be assigned.
-    let officeId = (offices.body || []).find(o => o.isActive)?.id;
-    let scratchOfficeId = null;
-    if (!officeId) {
-      const newOffice = await request("POST", "/api/offices",
-        { unlocode: "NLRTM", department: "SE", name: "Test Fixture Office — Rotterdam" }, token);
-      officeId = scratchOfficeId = newOffice.body.id;
-    }
-    assert("a real office exists to test with", !!officeId, JSON.stringify(offices.body));
+    // The webhook tests always run against this suite's own scratch Export office, never an existing
+    // one: they configure a webhook to example.com on it, and until 2026-10-15 they did that to
+    // whichever office was listed first — leaving real offices (and other suites' scratch offices)
+    // with a test webhook. An Export Managing Office is mandatory since TKT-FH5Q94, so the old
+    // "no EMO office" case can't happen any more; an office with no webhook is what can.
+    console.log("\nWebhook — an Export office with no webhook configured returns a clean error");
+    const rand = Math.random().toString(36).slice(2, 5).toUpperCase();
+    const scratchOffice = await request("POST", "/api/offices", { unlocode: `NL${rand}`, department: "SE", name: "Dist Webhook Test Office" }, token);
+    assert("scratch Export office created", scratchOffice.status === 201, JSON.stringify(scratchOffice.body));
+    const officeId = scratchOffice.body.id, scratchOfficeId = officeId;
     const shipFull = await request("GET", `/api/shipments/${shipId}`, null, token);
     const putShip = await request("PUT", `/api/shipments/${shipId}`, {
       pol: shipFull.body.pol, pod: shipFull.body.pod, carrierCode: shipFull.body.carrierCode,
       contractType: shipFull.body.contractType, status: shipFull.body.status, emoOfficeId: officeId,
     }, token);
     assert("EMO office assigned", putShip.body.emoOfficeId === officeId, JSON.stringify(putShip.body));
+    const webhookNone = await request("POST", `/api/shipments/${shipId}/documents/${doc.body.id}/send-webhook`, null, token);
+    assert("no webhook configured → clean 400 naming the problem", webhookNone.status === 400 && /No active webhook/.test(webhookNone.body?.error || ""), JSON.stringify(webhookNone.body));
+
+    console.log("\nConfigure the scratch office's webhook to an unreachable-but-real https host");
 
     const webhookConfig = await request("PUT", `/api/offices/${officeId}/webhook-settings`,
       { webhookUrl: "https://example.com/not-a-real-endpoint", secret: "testsecret", isActive: true }, token);
@@ -158,9 +152,9 @@ async function scratchShipment(token) {
 
     console.log("\nCleanup");
     await request("DELETE", `/api/shipments/${shipId}`, null, token);
-    // Office deletion is blocked while any shipment still references it — the shipment above
-    // must go first (it just did).
-    if (scratchOfficeId) await request("DELETE", `/api/offices/${scratchOfficeId}`, null, token);
+    // The shipment goes first (an office can't be deleted while one references it); an office the
+    // delete still refuses is deactivated, so no later suite picks it up as "the" Export office.
+    assert("scratch office retired", ["deleted", "deactivated"].includes(await retireOffice(token, scratchOfficeId)));
 
     console.log(`\n${"─".repeat(50)}`);
     console.log(`Results: ${passed} passed, ${failed} failed`);
