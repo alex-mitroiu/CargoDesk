@@ -22,6 +22,7 @@ import { pathToFileURL } from "node:url";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureOffices } from "./helpers/offices.mjs";
+import { addContainer } from "./helpers/dcsa-sim.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dcsaAdapter = (await import(pathToFileURL(path.join(__dirname, "..", "lib", "carrier-integrations", "dcsa-bkg-v2.js")).href)).default;
@@ -110,7 +111,7 @@ function startMockCarrier() {
         res.end(JSON.stringify({ carrierBookingRequestReference: "MOCK-REQ-REF-1" }));
       } else if (req.method === "GET" && req.url.startsWith("/v1/point-to-point-routes")) {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify([{ placeOfReceipt: { facilityTypeCode: "POTE", location: { UNLocationCode: "ZZTS1" }, dateTime: "2026-10-05T00:00:00Z" }, placeOfDelivery: { facilityTypeCode: "POTE", location: { UNLocationCode: "ZZTS2" }, dateTime: "2026-10-19T00:00:00Z" }, transitTime: 14, legs: [{ sequenceNumber: 1, transport: { modeOfTransport: "VESSEL", vessel: { name: "MOCK CARRIER VESSEL", vesselIMONumber: "9888888" }, servicePartners: [{ carrierServiceCode: "AEX", carrierExportVoyageNumber: "002E" }] }, departure: { facilityTypeCode: "POTE", location: { UNLocationCode: "ZZTS1" }, dateTime: "2026-10-05T00:00:00Z" }, arrival: { facilityTypeCode: "POTE", location: { UNLocationCode: "ZZTS2" }, dateTime: "2026-10-19T00:00:00Z" } }] }]));
+        res.end(JSON.stringify([{ placeOfReceipt: { facilityTypeCode: "POTE", location: { UNLocationCode: "ZZTSA" }, dateTime: "2026-10-05T00:00:00Z" }, placeOfDelivery: { facilityTypeCode: "POTE", location: { UNLocationCode: "ZZTSB" }, dateTime: "2026-10-19T00:00:00Z" }, transitTime: 14, legs: [{ sequenceNumber: 1, transport: { modeOfTransport: "VESSEL", vessel: { name: "MOCK CARRIER VESSEL", vesselIMONumber: "9888888" }, servicePartners: [{ carrierServiceCode: "AEX", carrierExportVoyageNumber: "002E" }] }, departure: { facilityTypeCode: "POTE", location: { UNLocationCode: "ZZTSA" }, dateTime: "2026-10-05T00:00:00Z" }, arrival: { facilityTypeCode: "POTE", location: { UNLocationCode: "ZZTSB" }, dateTime: "2026-10-19T00:00:00Z" } }] }]));
       } else { res.writeHead(404); res.end("{}"); }
     });
   });
@@ -152,9 +153,6 @@ async function main() {
 
     const { imoOfficeId: defaultImoOfficeId } = await ensureOffices(token);
 
-    const eadapterRes = await request("POST", "/api/eadapter/configs", { carrierCode, officeId: officeA.id, transportType: "rest_api", isActive: true }, token);
-    assert("scratch eadapter config created (edi-bookable prerequisite, unrelated to carrier_integrations)", eadapterRes.status === 201, JSON.stringify(eadapterRes.body));
-
     const integrationRes = await request("POST", "/api/carrier-integrations", {
       carrierCode, adapterKey: "dcsa-bkg-v2", isActive: true, capabilities: ["booking", "schedules"],
       baseUrl: `http://127.0.0.1:${mock.port}`, authHeaderName: "Authorization", credential: "mock-bearer-token", webhookSecret,
@@ -169,18 +167,28 @@ async function main() {
     const shipRes = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode, status: "Active", contractType: "SPOT", etd: "2026-10-01", emoOfficeId: officeA.id, imoOfficeId: defaultImoOfficeId }, token);
     shipmentId = shipRes.body?.id;
     assert("scratch shipment created", !!shipmentId, JSON.stringify(shipRes.body));
+    await addContainer(request, token, shipmentId); // a DCSA booking needs requested equipment
 
     const sendRes = await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
     assert("booking-request returns 201 and stays pending (real carrier flow is async)", sendRes.status === 201 && sendRes.body?.pending === true);
     assert("carrier_booking_request_reference stored from the mock carrier's 202 response", sendRes.body?.booking?.carrierBookingRequestReference === "MOCK-REQ-REF-1");
     assert("the real adapter actually called the mock carrier with a DCSA-shaped body", mock.getLastBookingRequestBody()?.shipmentLocations?.some(l => l.locationTypeCode === "POL" && l.location.UNLocationCode === "NLRTM"));
 
-    const callbackBody = { bookingStatus: "CONFIRMED", carrierBookingReference: "HLCU-REAL-REF-1", carrierBookingRequestReference: "MOCK-REQ-REF-1" };
+    // A DCSA Booking 2.0 notification (a CloudEvent) — the receiver refuses anything else.
+    const callbackBody = {
+      specversion: "1.0", id: crypto.randomUUID(), source: "https://mock-carrier.invalid", type: "org.dcsa.booking.v2",
+      time: new Date().toISOString(), datacontenttype: "application/json", subscriptionReference: "cargodesk-test",
+      data: { bookingStatus: "CONFIRMED", carrierBookingReference: "HLCU-REAL-REF-1", carrierBookingRequestReference: "MOCK-REQ-REF-1" },
+    };
     const rawCallback = Buffer.from(JSON.stringify(callbackBody), "utf8");
     const sig = "sha256=" + crypto.createHmac("sha256", webhookSecret).update(rawCallback).digest("hex");
     const goodWebhook = await rawPost(`/api/carrier-webhooks/${integrationId}`, rawCallback, { "x-dcsa-signature": sig });
     assert("correctly signed webhook accepted (201)", goodWebhook.status === 201, JSON.stringify(goodWebhook.body));
-    assert("applyBookingResponse fired — real bookingRef + lastResponseStatus recorded", goodWebhook.body?.booking?.bookingRef === "HLCU-REAL-REF-1" && goodWebhook.body?.booking?.lastResponseStatus === "confirmed");
+    assert("the carrier's CONFIRMED confirms the booking, with its booking number", goodWebhook.body?.booking?.bookingRef === "HLCU-REAL-REF-1"
+      && goodWebhook.body?.booking?.lastResponseStatus === "confirmed" && goodWebhook.body?.booking?.status === "Confirmed", JSON.stringify(goodWebhook.body?.booking));
+    const flat = Buffer.from(JSON.stringify(callbackBody.data), "utf8");
+    const flatWebhook = await rawPost(`/api/carrier-webhooks/${integrationId}`, flat, { "x-dcsa-signature": "sha256=" + crypto.createHmac("sha256", webhookSecret).update(flat).digest("hex") });
+    assert("a correctly signed body that isn't a DCSA notification is refused (400)", flatWebhook.status === 400, JSON.stringify(flatWebhook.body));
 
     const threadRes = await request("GET", `/api/shipments/${shipmentId}/edi-messages`, null, token);
     assert("a real (non-mock) inbound edi_messages row was written", threadRes.body?.some(m => m.direction === "in" && m.isMock === false));
@@ -188,13 +196,16 @@ async function main() {
     const badWebhook = await rawPost(`/api/carrier-webhooks/${integrationId}`, rawCallback, { "x-dcsa-signature": "sha256=deadbeef" });
     assert("incorrectly signed webhook rejected (401)", badWebhook.status === 401);
 
-    const scheduleRes = await request("GET", `/api/schedules/search?pol=ZZTS1&pod=ZZTS2&carrierCode=${carrierCode}&weeks=4`, null, token);
+    const scheduleRes = await request("GET", `/api/schedules/search?pol=ZZTSA&pod=ZZTSB&carrierCode=${carrierCode}&weeks=4`, null, token);
     assert("schedule search uses the active 'schedules' integration ahead of mock fallback", scheduleRes.body?.sailings?.[0]?.vesselName === "MOCK CARRIER VESSEL" && scheduleRes.body?.sailings?.[0]?.source === "live" && scheduleRes.body?.isMock === false);
 
     const unconfiguredShip = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", etd: "2026-10-01", emoOfficeId: officeA.id, imoOfficeId: defaultImoOfficeId }, token);
     unconfiguredShipmentId = unconfiguredShip.body?.id;
+    await addContainer(request, token, unconfiguredShipmentId);
     const unconfiguredSend = await request("POST", `/api/shipments/${unconfiguredShipmentId}/edi-messages/booking-request`, {}, token);
-    assert("a carrier with NO active integration behaves byte-for-byte as before (fallback invisible)", unconfiguredSend.status === 201 && unconfiguredSend.body?.pending === true && !unconfiguredSend.body?.booking?.carrierBookingRequestReference);
+    assert("a carrier with NO integration books through the built-in DCSA simulator (outside production)",
+      unconfiguredSend.status === 201 && unconfiguredSend.body?.pending === true && /^SIM-/.test(unconfiguredSend.body?.booking?.carrierBookingRequestReference || "") && unconfiguredSend.body?.booking?.isMock === true,
+      JSON.stringify(unconfiguredSend.body?.booking));
 
     // ── Master safety-net toggle: off means every active integration is ignored, no exceptions ──
     console.log("\nMaster toggle (api_carrier_integrations_enabled) — a single kill switch, independent of any integration's own Active flag");
@@ -203,11 +214,14 @@ async function main() {
     try {
       const toggleShip = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode, status: "Active", contractType: "SPOT", etd: "2026-10-01", emoOfficeId: officeA.id, imoOfficeId: defaultImoOfficeId }, token);
       toggleShipmentId = toggleShip.body?.id;
+      await addContainer(request, token, toggleShipmentId);
       const sendWhileOff = await request("POST", `/api/shipments/${toggleShipmentId}/edi-messages/booking-request`, {}, token);
-      assert("booking-request still succeeds while toggle is off (falls back to simulator, not blocked)", sendWhileOff.status === 201 && sendWhileOff.body?.pending === true);
-      assert("no carrier_booking_request_reference is stored while the toggle is off, even though the integration itself is still Active", !sendWhileOff.body?.booking?.carrierBookingRequestReference);
+      assert("booking-request still succeeds while toggle is off (falls back to the DCSA simulator, not blocked)", sendWhileOff.status === 201 && sendWhileOff.body?.pending === true);
+      assert("the carrier's own (still Active) integration is bypassed: the simulator issued the reference",
+        /^SIM-/.test(sendWhileOff.body?.booking?.carrierBookingRequestReference || "") && sendWhileOff.body?.booking?.carrierBookingRequestReference !== "MOCK-REQ-REF-1",
+        JSON.stringify(sendWhileOff.body?.booking));
 
-      const scheduleWhileOff = await request("GET", `/api/schedules/search?pol=ZZTS1&pod=ZZTS2&carrierCode=${carrierCode}&weeks=4`, null, token);
+      const scheduleWhileOff = await request("GET", `/api/schedules/search?pol=ZZTSA&pod=ZZTSB&carrierCode=${carrierCode}&weeks=4`, null, token);
       assert("schedule search ignores the active integration while the toggle is off", scheduleWhileOff.body?.sailings?.[0]?.vesselName !== "MOCK CARRIER VESSEL");
 
       const webhookWhileOff = await rawPost(`/api/carrier-webhooks/${integrationId}`, rawCallback, { "x-dcsa-signature": sig });
@@ -228,8 +242,6 @@ async function main() {
       if (shipmentId) await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
       if (unconfiguredShipmentId) await request("DELETE", `/api/shipments/${unconfiguredShipmentId}`, null, token);
       if (integrationId) await request("DELETE", `/api/carrier-integrations/${integrationId}`, null, token);
-      const configs = await request("GET", "/api/eadapter/configs", null, token);
-      for (const c of (configs.body || [])) if (c.carrierCode === carrierCode) await request("DELETE", `/api/eadapter/configs/${c.id}`, null, token);
       if (officeA?.id) await request("DELETE", `/api/offices/${officeA.id}`, null, token);
     } catch (e) { console.error("Cleanup error (non-fatal):", e.message); }
     if (mock?.server) mock.server.close();

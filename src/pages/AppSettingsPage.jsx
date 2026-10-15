@@ -11,8 +11,6 @@ import Pagination from "../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 import UserManagementPanel from "../components/UserManagementPanel";
 import { AiOrb, ORB_STYLES } from "../components/shared/AiOrb";
-import { IconSettings } from "../components/primitives/Icon";
-import EadapterConfigModal from "../components/shared/EadapterConfigModal";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 
 // ─── External API definitions ─────────────────────────────────────────────────
@@ -1668,11 +1666,13 @@ export default function AppSettingsPage() {
   const fileInputRef = useRef(null);
   const saveTimers   = useRef({});
   const [previewOpen, setPreviewOpen] = useState({});
+  const [demoCarrier, setDemoCarrier] = useState(null); // { production, available } — the built-in DCSA carrier simulator
 
   useEffect(() => {
     api.settings.get()
       .then(s => setSettings(s))
       .catch(() => toast.error("Failed to load settings"));
+    api.dcsaSim.status().then(setDemoCarrier).catch(() => setDemoCarrier(null));
     api.sanctions.status()
       .then(s => setSanctionsInfo(s))
       .catch(() => {});
@@ -1825,55 +1825,54 @@ export default function AppSettingsPage() {
     </div>
   );
 
-  // ── eAdapter card — the whole per-carrier EDI-connectivity feature lives behind this one
-  // toggle + gear icon, not the generic ExternalCard/EXTERNAL_APIS shape below (that assumes one
-  // scalar API key; this needs N carrier sub-configs, hence the tabbed modal). Turning the
-  // toggle off gates ALL carriers uniformly — see isEdiBookable() (server.js) — including the
-  // built-in 3 (MAEU/SAFM/MCPU), which don't need a config row here to keep working today.
-  const EadapterCard = () => {
-    const [modalOpen, setModalOpen] = useState(false);
-    const enabled = settings?.api_eadapter_enabled !== 'false';
+  // ── Demo carrier card (DCSA everywhere, 2026-10-11; approved mockup
+  // https://claude.ai/artifact/YWTqiqFffgjxDPq827CdPD) — the built-in DCSA carrier simulator
+  // (lib/dcsa-simulator) for carriers with no DCSA connection of their own. Outside production it is
+  // always on and the card says so instead of offering a switch; in production it follows
+  // dcsa_demo_carrier_enabled, off by default.
+  const DemoCarrierCard = () => {
+    const production = !!demoCarrier?.production;
+    const on = production ? settings?.dcsa_demo_carrier_enabled === 'true' : true;
+    const flip = () => {
+      const next = on ? 'false' : 'true';
+      setSettings(s => ({ ...s, dcsa_demo_carrier_enabled: next }));
+      api.settings.update({ dcsa_demo_carrier_enabled: next })
+        .then(() => { toast.success(`Demo carrier ${next === 'true' ? 'on' : 'off'}`); api.dcsaSim.status().then(setDemoCarrier).catch(() => {}); })
+        .catch(() => { setSettings(s => ({ ...s, dcsa_demo_carrier_enabled: on ? 'true' : 'false' })); toast.error("Save failed"); });
+    };
+    const tag = !production ? { text: "ALWAYS ON OUTSIDE PRODUCTION", color: T.success }
+      : on ? { text: "PRODUCTION · ON", color: T.warning } : { text: "PRODUCTION · OFF", color: T.textMuted };
     return (
-      <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface,
-        overflow: "hidden", opacity: enabled ? 1 : 0.65, transition: "opacity 0.2s" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "16px 20px 14px" }}>
+      <div data-testid="settings-demo-carrier-card" style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface, overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, padding: "16px 20px 14px" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 5 }}>
-              <span style={{ fontFamily: T.body, fontSize: 15, fontWeight: 700, color: T.text }}>Carrier EDI Adapter (eAdapter)</span>
-              {!enabled && (
-                <span style={{ fontFamily: T.mono, fontSize: 10, color: T.warning,
-                  background: `${T.warning}18`, border: `1px solid ${T.warning}44`,
-                  borderRadius: 4, padding: "2px 8px" }}>DISABLED</span>
-              )}
+            <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 5, flexWrap: "wrap" }}>
+              <span style={{ fontFamily: T.body, fontSize: 15, fontWeight: 700, color: T.text }}>Demo carrier</span>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: tag.color, background: `${tag.color}18`,
+                border: `1px solid ${tag.color}44`, borderRadius: 4, padding: "2px 8px" }}>{tag.text}</span>
             </div>
             <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
-              Real per-carrier EDI connectivity for carrier booking communication. MAEU/SAFM/MCPU
-              work out of the box; add more carriers below.
+              Lets a carrier without its own DCSA connection be booked against CargoDesk's built-in DCSA simulator, for
+              demos and training. Everything it touches is marked DEMO CARRIER and no real carrier is ever contacted.
+              Play the carrier from Test Tools → DCSA Carrier.
             </div>
-            {!enabled && (
-              <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.warning, marginTop: 6, lineHeight: 1.5 }}>
-                All carriers fall back to manual booking (no EDI messaging) while this is off.
+            {production && (
+              <div style={{ fontFamily: T.body, fontSize: 11.5, color: on ? T.warning : T.textMuted, marginTop: 6, lineHeight: 1.5 }}>
+                {on ? "Carriers without a Carrier Integration are booked against the demo carrier. Their bookings show DEMO CARRIER everywhere."
+                  : "While off, a carrier needs a Carrier Integration to be booked from CargoDesk."}
               </div>
             )}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-            <button type="button" onClick={() => setModalOpen(true)} title="Configure carriers"
-              style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${T.border}`,
-                background: T.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <IconSettings size={15} color={T.textMuted} />
-            </button>
-            <Toggle on={enabled} onChange={() => toggle({ name: "eAdapter", settingKey: "api_eadapter_enabled" })} />
-          </div>
+          {production && <Toggle on={on} onChange={flip} />}
         </div>
-        {modalOpen && <EadapterConfigModal onClose={() => setModalOpen(false)} />}
       </div>
     );
   };
 
-  // ── Carrier Integrations card — same master-toggle safety-net shape as eAdapter above
-  // (TKT-KG4E49 direct follow-up request): turning this off instantly disables every real
-  // carrier submission app-wide (routes/edi.js, routes/system.js, routes/carrier-webhooks.js),
-  // falling back to Test Tools' simulator regardless of what's configured on the Carrier
+  // ── Carrier Integrations card — a master-toggle safety net (TKT-KG4E49 direct follow-up
+  // request): turning this off instantly disables every real carrier submission app-wide
+  // (routes/edi.js, routes/system.js, routes/carrier-webhooks.js), falling back to the built-in
+  // DCSA carrier simulator (where it's allowed) regardless of what's configured on the Carrier
   // Integrations MDM page — a single kill switch independent of each integration's own is_active
   // flag, so a misbehaving carrier doesn't need to be found and deactivated one row at a time.
   const CarrierIntegrationsCard = () => {
@@ -1897,7 +1896,7 @@ export default function AppSettingsPage() {
             </div>
             {!enabled && (
               <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.warning, marginTop: 6, lineHeight: 1.5 }}>
-                Every configured carrier falls back to Test Tools' simulator while this is off, regardless of its own Active flag.
+                Every configured carrier falls back to the demo carrier (where it's allowed) while this is off, regardless of its own Active flag.
               </div>
             )}
           </div>
@@ -2251,7 +2250,7 @@ export default function AppSettingsPage() {
 
           {activeApiSub === "External APIs" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <EadapterCard />
+              <DemoCarrierCard />
               <CarrierIntegrationsCard />
               {settings && (
                 <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,

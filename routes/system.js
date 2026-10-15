@@ -158,6 +158,10 @@ module.exports = function systemRoutes(app, ctx) {
     const blockedKeys = ADMIN_ONLY_DEDICATED_KEYS.filter(k => k in updates);
     if (blockedKeys.length && !req.user.roles.includes("admin"))
       return err(res, `${blockedKeys.join(", ")} can only be changed by an admin — use the dedicated PUT /api/settings/... route instead`, 403);
+    // The Demo carrier switch decides, in production, whether a carrier with no DCSA connection can be
+    // booked against the built-in simulator (DCSA everywhere, decided 2026-10-11: an admin turns it on).
+    if ("dcsa_demo_carrier_enabled" in updates && !req.user.roles.includes("admin"))
+      return err(res, "Only an admin can turn the Demo carrier on or off", 403);
     // Same empty-break-glass-set lockout guard as the dedicated route above — this generic route
     // is still a valid way for an admin to set this key, so the safety check has to live here too,
     // not just there.

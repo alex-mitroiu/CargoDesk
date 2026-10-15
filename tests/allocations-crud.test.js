@@ -17,6 +17,7 @@
 
 import http from "node:http";
 import { ensureOffices } from "./helpers/offices.mjs";
+import { bookThroughCarrier } from "./helpers/dcsa-sim.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -223,14 +224,14 @@ async function login() {
         emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, token);
       const shipmentId = s.body.id;
-      await request("POST", "/api/containers", { shipmentId, size: "20", type: "GP" }, token);
+      await request("POST", "/api/containers", { shipmentId, size: "20", type: "GP", hsCode: "940360", cargoDescription: "Furniture", grossWeightKg: 8000, volumeCbm: 28 }, token);
+      // The carrier (built-in DCSA simulator) answers; manual Confirm is gone since 2026-10-11.
       if (status === "Confirmed") {
-        await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/confirm`, { bookingRef: "MAEU-BUCKET-TEST" }, token);
+        await bookThroughCarrier(request, token, shipmentId, "confirm");
       } else if (status === "Pending") {
         await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
       } else if (status === "Rejected") {
-        await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
-        await request("POST", `/api/shipments/${shipmentId}/edi-messages/simulate-response`, { outcome: "rejected" }, token);
+        await bookThroughCarrier(request, token, shipmentId, "reject");
       } else if (status === "Cancelled") {
         await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/cancel`, {}, token);
       }

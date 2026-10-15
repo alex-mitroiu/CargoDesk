@@ -1,16 +1,22 @@
 /**
- * v0.35.0 Smoke tests — Carrier Booking (send / simulate / confirm / cancel)
+ * Carrier Booking — send / carrier answers / cancel / supersede
+ *
+ * Since 2026-10-11 (DCSA-everywhere phase 1) a booking is only ever answered by its carrier — over
+ * DCSA Booking 2.0 — and in tests that carrier is the built-in DCSA simulator, played through
+ * tests/helpers/dcsa-sim.mjs. The operator's manual Confirm and the home-made Message Simulator are
+ * gone; a request that doesn't meet DCSA (e.g. no container) is refused before anything is recorded.
  *
  * Usage:
  *   node tests/carrier-booking.test.js
  *
  * Prerequisites:
- *   - Express server running on :3001
+ *   - Express server running on :3001 (not in production, or with the Demo carrier switch on)
  *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  */
 
 import http from "node:http";
 import { ensureOffices } from "./helpers/offices.mjs";
+import { carrierActs, bookThroughCarrier, waitForCarrierReference, addContainer } from "./helpers/dcsa-sim.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -71,19 +77,22 @@ async function getDefaultOffices(token) {
   return _defaultOffices;
 }
 
-async function scratchShipment(token, carrierCode) {
+// A DCSA booking needs requested equipment, so a scratch shipment gets one container unless the
+// test counts containers itself.
+async function scratchShipment(token, carrierCode, { container = true } = {}) {
   const { emoOfficeId, imoOfficeId } = await getDefaultOffices(token);
   const res = await request("POST", "/api/shipments", {
     pol: "NLRTM", pod: "USNYC", carrierCode,
     status: "Active", contractType: "SPOT", etd: "2026-09-01", emoOfficeId, imoOfficeId,
   }, token);
+  if (container && res.body?.id) await addContainer(request, token, res.body.id);
   return res.body.id;
 }
 
-// ─── Confirmed path: Send → simulate confirmed → Confirm ─────────────────────
+// ─── Confirmed path: Send → the carrier confirms ──────────────────────────────
 
 async function testConfirmedPath(token) {
-  console.log("\nCarrier Booking — confirmed path (Send → simulate confirmed → Confirm)");
+  console.log("\nCarrier Booking — confirmed path (Send → carrier confirms over DCSA)");
   const shipmentId = await scratchShipment(token, "MAEU");
   if (!shipmentId) { assert("scratch shipment created", false, "aborting"); return; }
   assert("scratch shipment created", true);
@@ -94,8 +103,9 @@ async function testConfirmedPath(token) {
   assert("carrier-booking is null before any request", initial.body === null);
 
   const send1 = await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
-  assert("booking-request returns 201", send1.status === 201);
-  assert("booking-request response is pending (no fabricated response)", send1.body.pending === true);
+  assert("booking-request returns 201", send1.status === 201, JSON.stringify(send1.body).slice(0, 200));
+  assert("booking-request response is pending (the carrier answers later)", send1.body.pending === true);
+  assert("no carrier error — the simulator accepted the DCSA request", !send1.body.carrierError, send1.body.carrierError);
 
   const afterSend = await request("GET", `/api/shipments/${shipmentId}/carrier-booking`, null, token);
   assert("status is Pending after send", afterSend.body?.status === "Pending");
@@ -103,59 +113,56 @@ async function testConfirmedPath(token) {
   const send2 = await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
   assert("second booking-request while pending returns 409", send2.status === 409);
 
-  const sim = await request("POST", `/api/shipments/${shipmentId}/edi-messages/simulate-response`,
-    { outcome: "confirmed" }, token);
-  assert("simulate-response(confirmed) returns 201", sim.status === 201);
-  assert("simulated response is flagged isMock", sim.body?.received?.isMock === true);
+  const received = await waitForCarrierReference(request, token, shipmentId);
+  assert("the carrier issued a request reference and said RECEIVED", /^SIM-/.test(received?.carrierBookingRequestReference || "") && received?.lastResponseStatus === "received",
+    JSON.stringify({ ref: received?.carrierBookingRequestReference, last: received?.lastResponseStatus }));
+  assert("a booking with the demo carrier is flagged isMock", received?.isMock === true);
 
-  const afterSim = await request("GET", `/api/shipments/${shipmentId}/carrier-booking`, null, token);
-  assert("status is STILL Pending after a confirmed response (not auto-finalized)",
-    afterSim.body?.status === "Pending", `got ${afterSim.body?.status}`);
-  assert("lastResponseStatus is confirmed", afterSim.body?.lastResponseStatus === "confirmed");
-
-  const confirm1 = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/confirm`, {}, token);
-  assert("PATCH confirm returns 200", confirm1.status === 200);
-  assert("status is Confirmed after manual confirm", confirm1.body?.status === "Confirmed");
-  assert("bookingRef was carried over from the simulated response", !!confirm1.body?.bookingRef);
+  const conf = await carrierActs(request, token, shipmentId, "confirm");
+  assert("the carrier's confirmation is accepted (200)", conf.status === 200, JSON.stringify(conf.body).slice(0, 200));
+  const afterConf = await request("GET", `/api/shipments/${shipmentId}/carrier-booking`, null, token);
+  assert("status is Confirmed — the carrier's CONFIRMED confirms it, no manual step", afterConf.body?.status === "Confirmed", `got ${afterConf.body?.status}`);
+  assert("bookingRef is the carrier's booking number", !!afterConf.body?.bookingRef && afterConf.body.bookingRef === conf.body?.simulator?.carrierBookingReference);
+  assert("confirmedAt is set", !!afterConf.body?.confirmedAt);
 
   const shipAfterConfirm = await request("GET", `/api/shipments/${shipmentId}`, null, token);
-  assert("shipments.bookingRef set after confirm", !!shipAfterConfirm.body?.bookingRef);
+  assert("shipments.bookingRef set on confirmation", shipAfterConfirm.body?.bookingRef === afterConf.body?.bookingRef);
 
   const milestones = await request("GET", `/api/shipments/${shipmentId}/milestones`, null, token);
   const bookingMilestone = (milestones.body || []).find(m => m.milestoneKey === "booking_confirmed");
   assert("booking_confirmed milestone completed", !!bookingMilestone?.completedAt);
 
-  const confirm2 = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/confirm`, {}, token);
-  assert("confirming an already-confirmed booking returns 409", confirm2.status === 409);
+  const again = await carrierActs(request, token, shipmentId, "confirm");
+  assert("the carrier can't confirm an already-confirmed booking (409)", again.status === 409);
 
   await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
 }
 
-// ─── Rejected path: Send → simulate rejected (auto) → Cancel ──────────────────
+// ─── Rejected path: Send → the carrier rejects → Cancel ───────────────────────
 
 async function testRejectedPath(token) {
-  console.log("\nCarrier Booking — rejected path (Send → simulate rejected → Cancel)");
+  console.log("\nCarrier Booking — rejected path (Send → carrier rejects → Cancel)");
   const shipmentId = await scratchShipment(token, "SAFM");
   if (!shipmentId) { assert("scratch shipment created", false, "aborting"); return; }
   assert("scratch shipment created", true);
 
-  await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
-  const sim = await request("POST", `/api/shipments/${shipmentId}/edi-messages/simulate-response`,
-    { outcome: "rejected", reason: "No space available" }, token);
-  assert("simulate-response(rejected) returns 201", sim.status === 201);
+  const { act } = await bookThroughCarrier(request, token, shipmentId, "reject", "No space available");
+  assert("the carrier's rejection is accepted (200)", act.status === 200, JSON.stringify(act.body).slice(0, 200));
 
   const afterSim = await request("GET", `/api/shipments/${shipmentId}/carrier-booking`, null, token);
-  assert("status auto-advances to Rejected (no gate needed)", afterSim.body?.status === "Rejected",
-    `got ${afterSim.body?.status}`);
+  assert("status is Rejected", afterSim.body?.status === "Rejected", `got ${afterSim.body?.status}`);
+  const messages = await request("GET", `/api/shipments/${shipmentId}/edi-messages`, null, token);
+  const inbound = (messages.body || []).filter(m => m.direction === "in");
+  assert("the rejection arrived as a DCSA notification with the carrier's feedback",
+    inbound.some(m => JSON.stringify(m.parsedPayload || "").includes("No space available") && /notification/.test(m.messageType)));
 
   const cancel = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/cancel`,
     { reason: "Trying a different carrier" }, token);
   assert("PATCH cancel returns 200", cancel.status === 200);
   assert("status is Cancelled", cancel.body?.status === "Cancelled");
-
-  const messages = await request("GET", `/api/shipments/${shipmentId}/edi-messages`, null, token);
-  const cancelMsg = (messages.body || []).find(m => m.messageType === "booking_cancellation");
-  assert("a booking_cancellation message was sent to the carrier", !!cancelMsg);
+  const after = await request("GET", `/api/shipments/${shipmentId}/edi-messages`, null, token);
+  assert("nothing is sent to the carrier for a booking it already rejected",
+    !(after.body || []).some(m => m.direction === "out" && /cancellation/.test(m.messageType)));
 
   const cancel2 = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/cancel`, {}, token);
   assert("cancelling an already-cancelled booking returns 409", cancel2.status === 409);
@@ -163,70 +170,48 @@ async function testRejectedPath(token) {
   await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
 }
 
-// ─── Confirmed with Changes path: a third genuine outcome, not folded into Pending ─────
+// ─── Confirmed with feedback: the carrier confirms and says what it changed ────────
 
-async function testConfirmedWithChangesPath(token) {
-  console.log("\nCarrier Booking — confirmed-with-changes path (Send → simulate confirmed_with_changes → Confirm)");
+async function testConfirmedWithFeedback(token) {
+  console.log("\nCarrier Booking — the carrier confirms with feedback");
   const shipmentId = await scratchShipment(token, "MAEU");
-  if (!shipmentId) { assert("scratch shipment created", false, "aborting"); return; }
-  assert("scratch shipment created", true);
-
-  const send = await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
-  assert("booking-request returns 201", send.status === 201);
-  const sentPayload = send.body?.sent ? JSON.parse(send.body.sent.rawPayload) : null;
-
-  const badOutcome = await request("POST", `/api/shipments/${shipmentId}/edi-messages/simulate-response`,
-    { outcome: "bogus" }, token);
-  assert("an invalid outcome is rejected", badOutcome.status >= 400);
-
-  const sim = await request("POST", `/api/shipments/${shipmentId}/edi-messages/simulate-response`,
-    { outcome: "confirmed_with_changes", vessel: "MSC BIANCA", voyage: "442W", etd: "2026-09-14" }, token);
-  assert("simulate-response(confirmed_with_changes) returns 201", sim.status === 201);
-  assert("received message status is confirmed_with_changes", sim.body?.received?.status === "confirmed_with_changes");
-
-  const afterSim = await request("GET", `/api/shipments/${shipmentId}/carrier-booking`, null, token);
-  assert("status stays Pending — an operator's own Confirm is still required, same as a plain confirmed reply",
-    afterSim.body?.status === "Pending", `got ${afterSim.body?.status}`);
-  assert("lastResponseStatus is confirmed_with_changes", afterSim.body?.lastResponseStatus === "confirmed_with_changes");
-
+  const { act, booking } = await bookThroughCarrier(request, token, shipmentId, "confirm", "Rolled to MSC BIANCA 442W, ETD 2026-09-14");
+  assert("confirmation with feedback accepted", act.status === 200, JSON.stringify(act.body).slice(0, 200));
+  assert("booking Confirmed", booking?.status === "Confirmed");
   const messages = await request("GET", `/api/shipments/${shipmentId}/edi-messages`, null, token);
-  const inbound = messages.body.find(m => m.direction === "in");
-  assert("inbound message type is booking_confirmation, not booking_reject", inbound?.messageType === "booking_confirmation");
-  const received = JSON.parse(inbound.rawPayload);
-  assert("received payload overrides only the fields the carrier actually changed",
-    received.vessel === "MSC BIANCA" && received.voyage === "442W" && received.etd === "2026-09-14");
-  assert("received payload still carries the rest of the original outbound field set (full comparison, not a thin subset)",
-    received.pol === sentPayload?.pol && received.pod === sentPayload?.pod && received.carrierCode === sentPayload?.carrierCode);
-
-  const confirm = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/confirm`, {}, token);
-  assert("confirming after confirmed-with-changes still works via the normal Confirm action", confirm.status === 200);
-  assert("status is Confirmed", confirm.body?.status === "Confirmed");
-
+  const last = (messages.body || []).filter(m => m.direction === "in").sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  assert("the carrier's feedback is kept on its notification", JSON.stringify(last?.parsedPayload || "").includes("MSC BIANCA 442W"));
   const shipAfter = await request("GET", `/api/shipments/${shipmentId}`, null, token);
-  assert("confirming does not auto-rewrite the shipment's own vessel with the carrier's proposed one — the existing carrier_bookings/shipment_schedules decoupling (v0.35.0) is preserved",
-    shipAfter.body?.vessel !== "MSC BIANCA");
+  assert("a carrier's feedback does not rewrite the shipment's own vessel (v0.35.0 decoupling)", shipAfter.body?.vessel !== "MSC BIANCA");
+
+  const bad = await carrierActs(request, token, shipmentId, "bogus");
+  assert("an unknown carrier action is refused (400)", bad.status === 400);
 
   await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
 }
 
-// ─── Manual path: non-bookable carrier, no EDI involved at all ────────────────
+// ─── No manual confirmation, no booking without DCSA ──────────────────────────────
 
-async function testManualPath(token) {
-  console.log("\nCarrier Booking — manual path (non-bookable carrier, no EDI)");
+async function testNoManualConfirmation(token) {
+  console.log("\nCarrier Booking — no manual confirmation; every carrier goes through DCSA");
   const shipmentId = await scratchShipment(token, "ZZZZ");
   if (!shipmentId) { assert("scratch shipment created", false, "aborting"); return; }
-  assert("scratch shipment created", true);
 
-  const send = await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
-  assert("booking-request for a non-bookable carrier returns 400", send.status === 400);
+  const confirm = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/confirm`, { bookingRef: "MANUAL123" }, token);
+  assert("the manual confirm route is gone (404)", confirm.status === 404);
 
-  const confirm = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/confirm`,
-    { bookingRef: "MANUAL123" }, token);
-  assert("manual confirm with no prior request returns 200", confirm.status === 200);
-  assert("status is Confirmed via the manual path", confirm.body?.status === "Confirmed");
-  assert("bookingRef is the manually-entered value", confirm.body?.bookingRef === "MANUAL123");
+  const conn = await request("GET", "/api/carrier-connections/ZZZZ", null, token);
+  assert("a carrier with no integration is reached through the simulator outside production",
+    conn.body?.capabilities?.booking?.via === "simulator" && conn.body.capabilities.booking.demo === true, JSON.stringify(conn.body));
+
+  const bare = await scratchShipment(token, "MAEU", { container: false });
+  const noEq = await request("POST", `/api/shipments/${bare}/edi-messages/booking-request`, {}, token);
+  assert("a booking request with no container is refused (400) — DCSA needs the equipment", noEq.status === 400 && /container/.test(noEq.body?.error || ""), JSON.stringify(noEq.body));
+  const nothing = await request("GET", `/api/shipments/${bare}/edi-messages`, null, token);
+  assert("…and nothing was recorded as sent", Array.isArray(nothing.body) && nothing.body.length === 0);
 
   await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
+  await request("DELETE", `/api/shipments/${bare}`, null, token);
 }
 
 // ─── Auto-creation: booking appears once contract + schedule both exist (v0.38.0) ────
@@ -309,7 +294,7 @@ async function testAutoCreate(token) {
 
 async function testEquipmentSummary(token) {
   console.log("\nBooking-request payload includes an equipment summary");
-  const shipmentId = await scratchShipment(token, "MAEU");
+  const shipmentId = await scratchShipment(token, "MAEU", { container: false });
 
   await request("POST", "/api/containers", {
     shipmentId, size: "40", type: "HC", grossWeightKg: 8000, volumeCbm: 76,
@@ -365,10 +350,8 @@ async function testSupersedeOnCarrierChange(token) {
   const originalId = booking.body?.id;
   assert("original booking has a BKG- id", originalId?.startsWith("BKG-"));
 
-  await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
-  const sim = await request("POST", `/api/shipments/${shipmentId}/edi-messages/simulate-response`,
-    { outcome: "rejected", reason: "No space available" }, token);
-  assert("simulate-response(rejected) returns 201", sim.status === 201);
+  const sim = (await bookThroughCarrier(request, token, shipmentId, "reject", "No space available")).act;
+  assert("the carrier rejects (200)", sim.status === 200, JSON.stringify(sim.body).slice(0, 200));
   booking = await request("GET", `/api/shipments/${shipmentId}/carrier-booking`, null, token);
   assert("booking status is Rejected", booking.body?.status === "Rejected");
   assert("still the same booking id (no supersede yet — carrier unchanged)", booking.body?.id === originalId);
@@ -400,9 +383,7 @@ async function testSupersedeOnCarrierChange(token) {
   assert("archived entry's reason mentions the carrier change", /carrier/i.test(old1?.archivedReason || ""));
 
   // Repeat once more: reject the second booking, then change carrier again -> a third booking.
-  await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
-  await request("POST", `/api/shipments/${shipmentId}/edi-messages/simulate-response`,
-    { outcome: "rejected", reason: "Vessel full" }, token);
+  await bookThroughCarrier(request, token, shipmentId, "reject", "Vessel full");
 
   const legUpdate2 = await request("PUT", `/api/shipments/${shipmentId}/legs/${legId}`, {
     legType: "SEA", movementType: "SEA", pol: "NLRTM", pod: "USNYC", etd: "2026-09-01", carrierCode: "MCPU",
@@ -427,12 +408,10 @@ async function testSupersedeOnCarrierChange(token) {
     legType: "SEA", movementType: "SEA", pol: "NLRTM", pod: "USNYC", etd: "2026-09-01", carrierCode: "MAEU",
   }, token);
   const cLegId = cLeg.body?.id;
-  await request("POST", `/api/shipments/${confirmedShipmentId}/edi-messages/booking-request`, {}, token);
-  await request("POST", `/api/shipments/${confirmedShipmentId}/edi-messages/simulate-response`, { outcome: "confirmed" }, token);
-  const confirmRes = await request("PATCH", `/api/shipments/${confirmedShipmentId}/carrier-booking/confirm`, {}, token);
-  assert("manual Confirm action succeeds", confirmRes.status === 200);
-  const confirmedBookingId = confirmRes.body?.id;
-  assert("booking is Confirmed", confirmRes.body?.status === "Confirmed");
+  const { act: confirmAct, booking: confirmedBooking } = await bookThroughCarrier(request, token, confirmedShipmentId, "confirm");
+  assert("the carrier confirms (200)", confirmAct.status === 200, JSON.stringify(confirmAct.body).slice(0, 200));
+  const confirmedBookingId = confirmedBooking?.id;
+  assert("booking is Confirmed", confirmedBooking?.status === "Confirmed");
 
   await request("PUT", `/api/shipments/${confirmedShipmentId}/legs/${cLegId}`, {
     legType: "SEA", movementType: "SEA", pol: "NLRTM", pod: "USNYC", etd: "2026-09-01", carrierCode: "SAFM",
@@ -458,11 +437,10 @@ async function testSupersedeOnCarrierChange(token) {
 // so a Rejected/Cancelled booking's own carrier_code can go stale with no supersede check
 // ever running. upsertPendingBooking (the Send Booking Request handler) used to just UPDATE
 // that stale row in place on the next Send, silently overwriting its carrier — this is what
-// let the original bug resurface even after the ensureBookingCreated fix shipped. Covers the
-// same gap in the manual Confirm route too.
+// let the original bug resurface even after the ensureBookingCreated fix shipped.
 
 async function testSupersedeViaSendBypass(token) {
-  console.log("\nCarrier Booking — supersede via Send/Confirm (not just ensureBookingCreated)");
+  console.log("\nCarrier Booking — supersede via Send (not just ensureBookingCreated)");
   const shipmentId = await scratchShipment(token, "MAEU");
   const shipRow = await request("GET", `/api/shipments/${shipmentId}`, null, token);
   await request("PUT", `/api/shipments/${shipmentId}`, { ...shipRow.body, contractRef: "REF-SEND-BYPASS" }, token);
@@ -470,10 +448,8 @@ async function testSupersedeViaSendBypass(token) {
     legType: "SEA", movementType: "SEA", pol: "NLRTM", pod: "USNYC", etd: "2026-09-01", carrierCode: "MAEU",
   }, token);
 
-  await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
-  const sim = await request("POST", `/api/shipments/${shipmentId}/edi-messages/simulate-response`,
-    { outcome: "rejected", reason: "No space" }, token);
-  assert("simulate-response(rejected) returns 201", sim.status === 201);
+  const sim = (await bookThroughCarrier(request, token, shipmentId, "reject", "No space")).act;
+  assert("the carrier rejects (200)", sim.status === 200, JSON.stringify(sim.body).slice(0, 200));
 
   let booking = await request("GET", `/api/shipments/${shipmentId}/carrier-booking`, null, token);
   assert("booking is Rejected under MAEU", booking.body?.status === "Rejected" && booking.body?.carrierCode === "MAEU");
@@ -504,35 +480,7 @@ async function testSupersedeViaSendBypass(token) {
 
   await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
 
-  // Same bypass, but through the manual Confirm route instead of Send.
-  const shipmentId2 = await scratchShipment(token, "MAEU");
-  const shipRow3 = await request("GET", `/api/shipments/${shipmentId2}`, null, token);
-  await request("PUT", `/api/shipments/${shipmentId2}`, { ...shipRow3.body, contractRef: "REF-CONFIRM-BYPASS" }, token);
-  await request("POST", `/api/shipments/${shipmentId2}/legs`, {
-    legType: "SEA", movementType: "SEA", pol: "NLRTM", pod: "USNYC", etd: "2026-09-01", carrierCode: "MAEU",
-  }, token);
-  await request("POST", `/api/shipments/${shipmentId2}/edi-messages/booking-request`, {}, token);
-  await request("POST", `/api/shipments/${shipmentId2}/edi-messages/simulate-response`,
-    { outcome: "rejected", reason: "No space" }, token);
-  const rejectedBooking = await request("GET", `/api/shipments/${shipmentId2}/carrier-booking`, null, token);
-  const originalId2 = rejectedBooking.body?.id;
-
-  const shipRow4 = await request("GET", `/api/shipments/${shipmentId2}`, null, token);
-  await request("PUT", `/api/shipments/${shipmentId2}`, { ...shipRow4.body, carrierCode: "MCPU" }, token);
-
-  const confirmRes = await request("PATCH", `/api/shipments/${shipmentId2}/carrier-booking/confirm`,
-    { bookingRef: "MCPU-MANUAL-1" }, token);
-  assert("manual Confirm after a carrier-only edit succeeds", confirmRes.status === 200);
-  assert("confirm creates a NEW booking id (not the stale Rejected/MAEU row)",
-    confirmRes.body?.id !== originalId2);
-  assert("new confirmed booking carries the new carrier (MCPU)", confirmRes.body?.carrierCode === "MCPU");
-
-  const history2 = await request("GET", `/api/shipments/${shipmentId2}/carrier-booking-history`, null, token);
-  assert("history has exactly 1 entry", Array.isArray(history2.body) && history2.body.length === 1);
-  assert("archived entry keeps its ORIGINAL id and carrier (MAEU), status forced to Cancelled",
-    history2.body[0]?.id === originalId2 && history2.body[0]?.status === "Cancelled" && history2.body[0]?.carrierCode === "MAEU");
-
-  await request("DELETE", `/api/shipments/${shipmentId2}`, null, token);
+  // (The same bypass through the manual Confirm route went with that route, 2026-10-11.)
 }
 
 // ─── Supersede while still Pending — broadened scope + auto-cancellation EDI message ──
@@ -613,9 +561,7 @@ async function testSameCarrierPersistsId(token) {
   const originalId = booking.body?.id;
   assert("booking auto-created with a BKG- id", originalId?.startsWith("BKG-"));
 
-  await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
-  await request("POST", `/api/shipments/${shipmentId}/edi-messages/simulate-response`,
-    { outcome: "rejected", reason: "No space" }, token);
+  await bookThroughCarrier(request, token, shipmentId, "reject", "No space");
   booking = await request("GET", `/api/shipments/${shipmentId}/carrier-booking`, null, token);
   assert("booking is Rejected", booking.body?.status === "Rejected");
   assert("still the original id", booking.body?.id === originalId);
@@ -682,6 +628,7 @@ async function testPayloadContractAndRateSnapshot(token) {
   }, token);
   assert("Central shipment created (201)", centralCreate.status === 201);
   const centralId = centralCreate.body?.id;
+  await addContainer(request, token, centralId);
 
   try {
     const centralSend = await request("POST", `/api/shipments/${centralId}/edi-messages/booking-request`, {}, token);
@@ -731,6 +678,7 @@ async function testExtendedPayloadFields(token) {
     emoOfficeId: fullEmoOfficeId, imoOfficeId: fullImoOfficeId,
   }, token);
   const fullId = fullCreate.body.id;
+  await addContainer(request, token, fullId);
   const fullSend = await request("POST", `/api/shipments/${fullId}/edi-messages/booking-request`, {}, token);
   assert("full booking-request returns 201", fullSend.status === 201);
   const fullMessages = await request("GET", `/api/shipments/${fullId}/edi-messages`, null, token);
@@ -751,7 +699,7 @@ async function testExtendedPayloadFields(token) {
 async function testDgCargoSummary(token) {
   console.log("\nBooking-request payload includes a DG cargo declaration");
 
-  const shipmentId = await scratchShipment(token, "MAEU");
+  const shipmentId = await scratchShipment(token, "MAEU", { container: false });
   await request("POST", "/api/containers", { shipmentId, size: "40", type: "HC", isDg: true, dgClass: "3" }, token);
   await request("POST", "/api/containers", { shipmentId, size: "40", type: "HC", isDg: true, dgClass: "3" }, token);
   await request("POST", "/api/containers", { shipmentId, size: "20", type: "GP" }, token); // not DG
@@ -828,8 +776,8 @@ async function testBookingsList(token) {
 
     await testConfirmedPath(token);
     await testRejectedPath(token);
-    await testConfirmedWithChangesPath(token);
-    await testManualPath(token);
+    await testConfirmedWithFeedback(token);
+    await testNoManualConfirmation(token);
     await testAutoCreate(token);
     await testEquipmentSummary(token);
     await testSupersedeOnCarrierChange(token);

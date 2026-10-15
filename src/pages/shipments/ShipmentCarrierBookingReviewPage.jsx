@@ -10,6 +10,7 @@ import EdiMessageList, { EDI_STATUS_COLOR } from "../../components/shared/EdiMes
 import CarrierBookingsTable from "../../components/shared/CarrierBookingsTable";
 import GenerateDocumentModal from "../../components/shared/GenerateDocumentModal";
 import { IconCheck, IconClose, IconAnchor, IconFile, IconRefresh, IconUpload } from "../../components/primitives/Icon";
+import { dcsaLabel } from "../../utils/dcsaCodes";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
 
 // Sent vs. Received comparison — same ordered field list the booking-request payload itself
@@ -89,12 +90,11 @@ const BookingComparisonTable = ({ outboundMessage, inboundMessage }) => {
 };
 
 // ─── Carrier Booking — Review ─────────────────────────────────────────────────
-// The inbound half: the carrier's response (real or Test-Tools-simulated) plus the
-// full bidirectional message thread, and the Confirm/Cancel actions. A confirmed
-// carrier response does NOT finalize the booking by itself — Confirm is a deliberate,
-// separate operator action (see the migration comment on carrier_bookings in server.js
-// for why: it's what lets "simulate confirmed, then click Confirm" be two real,
-// independently-testable steps instead of the same thing twice).
+// The inbound half: the carrier's response plus the full bidirectional message thread, and the
+// actions that go to the carrier (check status, send an update, cancel). Since 2026-10-11 (DCSA
+// everywhere) only the carrier confirms a booking — its DCSA CONFIRMED does it; the operator's
+// Confirm button is gone. A booking answered by the built-in DCSA simulator is badged DEMO CARRIER,
+// and a banner says what CargoDesk is waiting for (approved mockup https://claude.ai/artifact/YWTqiqFffgjxDPq827CdPD).
 //
 // Trade Horizon "New Style" pass — styling only; the live WebSocket subscription below
 // (booking_status_changed / new_edi_message) is untouched. EdiMessageList/
@@ -108,22 +108,12 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
   const [booking,  setBooking]  = useState(null);
   const [messages, setMessages] = useState([]);
   const [loading,  setLoading]  = useState(true);
-  const [confirmModal, setConfirmModal] = useState(null); // null | { bookingRef, note }
   const [cancelModal,  setCancelModal]  = useState(null); // null | { reason }
   const [linkModal,    setLinkModal]    = useState(false);
   const [genDocOpen,   setGenDocOpen]   = useState(false);
   const [blDocs,       setBlDocs]       = useState([]);
   const [busy, setBusy] = useState(false);
-  const [bookableCarriers, setBookableCarriers] = useState(null); // eAdapter — live effective bookable set, replaces the static BOOKABLE_CARRIERS Set
   const loadRef = useRef(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    api.eadapter.bookableCarriers(shipment.emoOfficeId)
-      .then(r => !cancelled && setBookableCarriers(r.carriers))
-      .catch(() => !cancelled && setBookableCarriers([]));
-    return () => { cancelled = true; };
-  }, [shipment.emoOfficeId]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -161,34 +151,27 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
   }, [shipment.id]);
 
   const status = booking?.status || "Created";
-  const canConfirm = canEdit && status !== "Confirmed" && status !== "Cancelled";
   // A confirmed booking whose cancellation is waiting for the carrier's answer can't be cancelled again.
   const cancelPending = booking?.lastResponseStatus === "cancellation_requested";
   const canCancel  = canEdit && status !== "Cancelled" && !cancelPending;
   // Sent through a carrier integration (TKT-KG4E49): changes go to the carrier, and it can be asked for the status.
   const viaCarrier = !!booking?.carrierBookingRequestReference && (status === "Pending" || status === "Confirmed");
-  const willNotifyCarrier = (bookableCarriers || []).includes(shipment.carrierCode) && !!booking?.correlationId;
+  const demoCarrier = !!booking?.isMock && !!booking?.carrierBookingRequestReference;
+  const carrierName = booking?.carrierCode || "the carrier";
+  const dcsaState = booking?.carrierState?.bookingStatus || "";
+  // What CargoDesk is waiting for, if anything — one line, in the carrier's terms.
+  const banner = !booking?.carrierBookingRequestReference ? null
+    : cancelPending ? { tone: "wait", title: `Waiting for ${carrierName}.`, text: `The cancellation was requested (DCSA CANCELLATION_RECEIVED). The booking stays confirmed until ${carrierName} agrees.` }
+    : status === "Pending" && booking?.lastResponseStatus === "send_failed" ? { tone: "bad", title: `${carrierName} didn't receive the request.`, text: "Send it again from the Details tab." }
+    : status === "Pending" ? { tone: "wait", title: `Waiting for ${carrierName}.`, text: `The booking request was ${dcsaState ? `answered ${dcsaState} (${dcsaLabel(dcsaState).toLowerCase()})` : "sent"}. ${carrierName} confirms or rejects it; nothing is needed from you.` }
+    : status === "Confirmed" ? { tone: "good", title: `Confirmed by ${carrierName}${booking.bookingRef ? `, booking ${booking.bookingRef}` : ""}.`, text: "" }
+    : null;
   const latestInbound = messages.filter(isBookingAnswer)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
   const outboundMessage = messages.filter(m => m.direction === "out" && BOOKING_PAYLOAD_TYPES.has(m.messageType))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
 
-  const openConfirm = () => setConfirmModal({ bookingRef: booking?.bookingRef || "", note: "" });
   const openCancel  = () => setCancelModal({ reason: "" });
-
-  const doConfirm = async () => {
-    if (!confirmModal?.bookingRef?.trim()) { toast.error("A booking reference is required"); return; }
-    setBusy(true);
-    try {
-      await api.carrierBooking.confirm(shipment.id, { bookingRef: confirmModal.bookingRef.trim(), note: confirmModal.note.trim() || undefined });
-      toast.success("Booking confirmed");
-      setConfirmModal(null);
-      await load();
-      onRefresh?.();
-    } catch (e) {
-      toast.error(e.message || "Failed to confirm booking");
-    } finally { setBusy(false); }
-  };
 
   const doCancel = async () => {
     setBusy(true);
@@ -263,6 +246,11 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
             display: "flex", alignItems: "center", gap: 8 }}>
             <IconAnchor size={14} />Carrier Booking — Review
           </h2>
+          {demoCarrier && (
+            <span data-testid="carrier-booking-demo-badge" title="Answered by CargoDesk's built-in DCSA carrier simulator — no real carrier is contacted"
+              style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: ".08em", padding: "2px 7px", borderRadius: 4,
+                color: HZ.violet, background: HZ.violetBg, border: `1px solid ${HZ.violet}` }}>DEMO CARRIER</span>
+          )}
         </div>
         {canEdit && (
           <div style={{ display: "flex", gap: 8 }}>
@@ -289,10 +277,21 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
             )}
             <Btn variant="secondary" onClick={openCancel} disabled={!canCancel}
               title={cancelPending ? "Cancellation requested — waiting for the carrier's answer" : undefined}>Cancel Booking</Btn>
-            <Btn onClick={openConfirm} disabled={!canConfirm}>Confirm Booking</Btn>
           </div>
         )}
       </div>
+
+      {banner && (
+        <div data-testid="carrier-booking-banner" style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 16, borderRadius: 8,
+          padding: "10px 14px", fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, border: `1px solid ${HZ.border}`,
+          background: banner.tone === "good" ? `${HZ.good}18` : banner.tone === "bad" ? `${HZ.crit}18` : HZ.cyanBg }}>
+          <span>
+            <strong style={{ color: banner.tone === "good" ? HZ.good : banner.tone === "bad" ? HZ.crit : HZ.cyan }}>{banner.title}</strong>
+            {banner.text && <> {banner.text}</>}
+            {demoCarrier && banner.tone === "wait" && <> This carrier is played by the built-in DCSA simulator: answer it from Test Tools → DCSA Carrier.</>}
+          </span>
+        </div>
+      )}
 
       {genDocOpen && (
         <GenerateDocumentModal shipment={shipment} defaultCode="BC01"
@@ -314,7 +313,7 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
             <span style={{ fontFamily: HZ_MONO, fontSize: 12, fontWeight: 700,
               color: EDI_STATUS_COLOR[booking.lastResponseStatus] || HZ.text,
               textTransform: "uppercase" }}>
-              {booking.lastResponseStatus}{booking.isMock ? " · demo" : ""}
+              {booking.lastResponseStatus}
             </span>
             {booking.bookingRef && (
               <span style={{ fontFamily: HZ_MONO, fontSize: 12, color: HZ.text }}>Ref: {booking.bookingRef}</span>
@@ -338,47 +337,15 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
       </h3>
       <EdiMessageList messages={messages} emptyText="No EDI messages for this shipment yet." />
 
-      {confirmModal && (
-        <Modal title="Confirm Booking" onClose={() => !busy && setConfirmModal(null)} width={420}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div>
-              <label style={{ display: "block", fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600,
-                color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 }}>
-                Booking Reference
-              </label>
-              <input value={confirmModal.bookingRef}
-                onChange={e => setConfirmModal(m => ({ ...m, bookingRef: e.target.value }))}
-                style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, color: HZ.text,
-                  borderRadius: 6, padding: "8px 12px", width: "100%", boxSizing: "border-box",
-                  fontFamily: HZ_MONO, fontSize: 13 }} />
-            </div>
-            <div>
-              <label style={{ display: "block", fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600,
-                color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 }}>
-                Note (optional)
-              </label>
-              <input value={confirmModal.note}
-                onChange={e => setConfirmModal(m => ({ ...m, note: e.target.value }))}
-                style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, color: HZ.text,
-                  borderRadius: 6, padding: "8px 12px", width: "100%", boxSizing: "border-box",
-                  fontFamily: HZ_BODY, fontSize: 13 }} />
-            </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <Btn variant="secondary" onClick={() => setConfirmModal(null)} disabled={busy}>Cancel</Btn>
-              <Btn onClick={doConfirm} disabled={busy}>
-                {busy ? "Confirming…" : <><IconCheck size={13} /> Confirm</>}
-              </Btn>
-            </div>
-          </div>
-        </Modal>
-      )}
-
       {cancelModal && (
         <Modal title="Cancel Booking" onClose={() => !busy && setCancelModal(null)} width={420}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <p style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text, margin: 0, lineHeight: 1.5 }}>
-              {willNotifyCarrier
-                ? "This marks the booking as cancelled and sends a cancellation message to the carrier."
+              {/* Only the carrier confirms a booking (DCSA, 2026-10-11); a cancellation is told to it first. */}
+              {viaCarrier && status === "Confirmed"
+                ? `This asks ${booking?.carrierCode || "the carrier"} to cancel. The booking stays confirmed until the carrier agrees.`
+                : viaCarrier
+                ? `This withdraws the booking request at ${booking?.carrierCode || "the carrier"} and cancels it here.`
                 : "This marks the booking as cancelled."}
             </p>
             <div>

@@ -94,6 +94,11 @@ describe("Carrier Booking — Negative / Gated Paths Suite", () => {
       })).then(res => {
         expect(res.status).to.eq(201);
         shipmentId = res.body.id;
+      // A DCSA booking needs requested equipment (2026-10-11).
+      return api("POST", "/containers", { shipmentId, containerNumber: `CYPU${String(Date.now()).slice(-7)}`, size: "40", type: "HC",
+        hsCode: "940360", cargoDescription: "Furniture", grossWeightKg: 9000, volumeCbm: 60 });
+      }).then(res => {
+        expect(res.status).to.eq(201);
         return api("POST", `/shipments/${shipmentId}/legs`, {
           legType: "SEA", movementType: "SEA", pol: "CNSHA", pod: "USNYC",
           etd: "2026-10-01", eta: "2026-10-25", carrierCode: "MAEU",
@@ -144,10 +149,11 @@ describe("Carrier Booking — Negative / Gated Paths Suite", () => {
       cy.contains("Pending", { timeout: 8000 }).should("be.visible");
 
       visitHash("test-tools");
-      cy.contains("Simulate a carrier response", { timeout: 15000 }).should("be.visible");
-      cy.contains("button", shipmentId, { timeout: 8000 }).click();
-      cy.contains("button", "Simulate Rejected").click();
-      cy.contains("Simulated rejected response", { timeout: 8000 }).should("be.visible");
+      cy.get('[data-testid="dcsa-carrier-panel"]', { timeout: 15000 }).should("be.visible");
+      cy.get(`[data-testid="dcsa-carrier-row-${shipmentId}"]`, { timeout: 8000 }).click();
+      cy.get('[data-testid="dcsa-carrier-feedback"]').type("No space on DM777W");
+      cy.get('[data-testid="dcsa-carrier-action-reject"]').click();
+      cy.contains("Reject: sent to CargoDesk", { timeout: 8000 }).should("be.visible");
 
       cy.then(() => api("GET", `/shipments/${shipmentId}/carrier-booking`)).then(res => {
         expect(res.body.status).to.eq("Rejected");

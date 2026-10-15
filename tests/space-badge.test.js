@@ -18,6 +18,7 @@
 
 import http from "node:http";
 import { ensureOffices } from "./helpers/offices.mjs";
+import { bookThroughCarrier } from "./helpers/dcsa-sim.mjs";
 
 let passed = 0;
 let failed = 0;
@@ -101,7 +102,8 @@ async function login(email, password) {
       return s.body.id;
     };
     const badge = async id => (await request("GET", `/api/shipments/${id}`, null, token)).body.spaceBadge || "";
-    const confirm = (id, ref) => request("PATCH", `/api/shipments/${id}/carrier-booking/confirm`, { bookingRef: ref }, token);
+    // Confirmed by its carrier (the built-in DCSA simulator) — the only way since 2026-10-11.
+    const confirm = async id => { const r = await bookThroughCarrier(request, token, id, "confirm"); if (r.booking?.status !== "Confirmed") throw new Error(`${id} not confirmed: ${JSON.stringify(r.act?.body)}`); };
 
     console.log("\nA confirmed, B pending: 4 TEU used, no badge");
     const A = await newShipment("A");

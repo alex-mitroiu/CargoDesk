@@ -24,6 +24,7 @@
 
 import http from "node:http";
 import { ensureOffices } from "./helpers/offices.mjs";
+import { bookThroughCarrier } from "./helpers/dcsa-sim.mjs";
 
 let passed = 0;
 let failed = 0;
@@ -83,8 +84,8 @@ async function main() {
     const ctr = await request("POST", "/api/containers", { shipmentId, size: "40", type: "GP" }, token); // 2 TEU
     assert("scratch container created", ctr.status === 201, JSON.stringify(ctr.body));
 
-    const confirm = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/confirm`, { bookingRef: "CONSISTENCY-TEST-1" }, token);
-    assert("carrier booking confirmed", confirm.status === 200 && confirm.body?.status === "Confirmed", JSON.stringify(confirm.body));
+    const confirm = await bookThroughCarrier(request, token, shipmentId, "confirm");
+    assert("carrier booking confirmed by the carrier", confirm.booking?.status === "Confirmed", JSON.stringify(confirm.act?.body));
 
     const buyLine = await request("POST", `/api/shipments/${shipmentId}/cost-lines`, { type: "BUY", chargeCode: "Ocean Freight", amount: 500 }, token);
     assert("BUY cost line created", buyLine.status === 201, JSON.stringify(buyLine.body));

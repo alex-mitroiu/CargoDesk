@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import DcsaCarrierPanel from "./DcsaCarrierPanel";
 import { T } from "../tokens";
 import { api } from "../api";
 import { toast } from "../toast";
@@ -15,10 +16,9 @@ import { servicePageKey } from "../shipmentServicePages";
 // ─── Test Tools ────────────────────────────────────────────────────────────────
 // Reached both from Integration Board's sidebar and a header shortcut icon (App.jsx).
 // Three tools so far:
-//  - Message Simulator: emulates a carrier's response to a pending booking request
-//    (routes/edi.js's booking-request endpoint no longer fabricates one automatically —
-//    see the v0.35.0 changelog) so rejections and other non-happy-path outcomes can
-//    actually be exercised without a live carrier account.
+//  - DCSA Carrier (DcsaCarrierPanel.jsx, 2026-10-11): plays the carrier for bookings held by the
+//    built-in DCSA simulator — confirm, reject, amendments, cancellations — each sent back as a
+//    real DCSA notification. Replaced the old booking Message Simulator.
 //  - Schedule Generator: authors realistic sea schedules — including genuine multi-leg/TSP
 //    sailings via the "Configure Legs" modal — from the real Vessels/Ports/Carriers MDM data
 //    (instead of mockSailings()'s synthetic "DEMO ALLEGRO" placeholders). A generated schedule
@@ -32,12 +32,7 @@ import { servicePageKey } from "../shipmentServicePages";
 //    precedent as the Message Simulator, mirroring its exact shape (pick a pending item,
 //    Accept/Reject with an optional ref/reason, refresh three things in parallel).
 
-const STATUS_COLOR = {
-  Created: "#6b7280", Pending: "#3b82f6", Confirmed: "#22c55e",
-  Rejected: "#ef4444", Cancelled: "#6b7280",
-};
-
-// Distinct key set from STATUS_COLOR above (customs_filings has its own status vocabulary —
+// Distinct status colours per simulator (customs_filings has its own status vocabulary —
 // Draft/Filed/Accepted/Rejected, not Created/Pending/Confirmed/Cancelled) — not merged in.
 const FILING_STATUS_COLOR = {
   Draft: "#6b7280", Filed: "#3b82f6", Accepted: "#22c55e", Rejected: "#ef4444",
@@ -62,71 +57,7 @@ const inputStyle = {
 const label = { display: "block", fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 5 };
 
 const TestToolsPage = ({ navigate }) => {
-  const [activeTab, setActiveTab] = useState("simulator"); // "simulator" | "generator"
-
-  // ─── Message Simulator state (unchanged) ──────────────────────────────────
-  const [bookings, setBookings] = useState([]);
-  const [loading,  setLoading]  = useState(true);
-  const [showAll,  setShowAll]  = useState(false); // false = Pending only (the realistic case)
-  const [selected, setSelected] = useState(null);  // booking row, includes .shipment
-  const [messages, setMessages] = useState([]);
-  const [messagesLoading, setMessagesLoading] = useState(false);
-  const [bookingRefInput, setBookingRefInput] = useState("");
-  const [reasonInput,     setReasonInput]     = useState("");
-  const [changeVesselInput, setChangeVesselInput] = useState("");
-  const [changeVoyageInput, setChangeVoyageInput] = useState("");
-  const [changeEtdInput,    setChangeEtdInput]    = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const load = useCallback(() => {
-    setLoading(true);
-    return api.carrierBooking.listAll(showAll ? {} : { status: "Pending" })
-      .then(setBookings).catch(() => setBookings([])).finally(() => setLoading(false));
-  }, [showAll]);
-
-  useEffect(() => { load(); }, [load]);
-
-  const loadThread = (shipmentId) => {
-    setMessagesLoading(true);
-    return api.ediMessages.list(shipmentId)
-      .then(setMessages).catch(() => setMessages([])).finally(() => setMessagesLoading(false));
-  };
-
-  const selectBooking = (row) => {
-    setSelected(row);
-    setBookingRefInput("");
-    setReasonInput("");
-    setChangeVesselInput("");
-    setChangeVoyageInput("");
-    setChangeEtdInput("");
-    loadThread(row.shipmentId);
-  };
-
-  const simulate = async (outcome) => {
-    if (!selected || busy) return;
-    setBusy(true);
-    try {
-      await api.ediMessages.simulateResponse(selected.shipmentId, {
-        outcome,
-        bookingRef: outcome === "confirmed" ? (bookingRefInput.trim() || undefined) : undefined,
-        reason:     outcome === "rejected"  ? (reasonInput.trim()     || undefined) : undefined,
-        vessel:     outcome === "confirmed_with_changes" ? (changeVesselInput.trim() || undefined) : undefined,
-        voyage:     outcome === "confirmed_with_changes" ? (changeVoyageInput.trim() || undefined) : undefined,
-        etd:        outcome === "confirmed_with_changes" ? (changeEtdInput.trim()    || undefined) : undefined,
-      });
-      toast.success(`Simulated ${outcome} response`);
-      const [freshBooking] = await Promise.all([
-        api.carrierBooking.get(selected.shipmentId),
-        load(),
-        loadThread(selected.shipmentId),
-      ]);
-      setSelected(prev => prev ? { ...prev, ...freshBooking } : prev);
-    } catch (e) {
-      toast.error(e.message || "Failed to simulate response");
-    } finally {
-      setBusy(false);
-    }
-  };
+  const [activeTab, setActiveTab] = useState("carrier"); // "carrier" | "generator" | …
 
   // ─── Schedule Generator state ─────────────────────────────────────────────
   const [vessel,       setVessel]       = useState(null); // {imo, name, ...} | null
@@ -491,7 +422,7 @@ const TestToolsPage = ({ navigate }) => {
   const clearReceived = async () => { await api.webhookSimulator.clear(); loadWebhookReceived(); };
 
   const TABS = [
-    { key: "simulator", label: "Message Simulator", icon: IconBaseStation },
+    { key: "carrier",   label: "DCSA Carrier", icon: IconBaseStation },
     { key: "generator",  label: "Schedule Generator", icon: IconAnchor },
     { key: "filings",    label: "Filing Simulator", icon: IconFileCertificate },
     { key: "vgm",        label: "VGM Simulator", icon: IconPackage },
@@ -519,132 +450,7 @@ const TestToolsPage = ({ navigate }) => {
         ))}
       </div>
 
-      {activeTab === "simulator" && (
-        <div style={{ display: "flex", gap: 24, height: "100%" }}>
-          {/* Left: booking picker */}
-          <div style={{ width: 340, flexShrink: 0, display: "flex", flexDirection: "column" }}>
-            <h2 style={{ fontFamily: T.head, fontSize: 16, fontWeight: 800, color: T.text, margin: "0 0 14px" }}>
-              Simulate a carrier response
-            </h2>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14,
-              fontFamily: T.body, fontSize: 12.5, color: T.textMuted, cursor: "pointer" }}>
-              <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)}
-                style={{ accentColor: T.accent }} />
-              Show all bookings, not just Pending
-            </label>
-            {loading ? <Spinner size="sm" /> : bookings.length === 0 ? (
-              <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
-                {showAll ? "No carrier bookings yet." : "No pending booking requests right now."}
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, overflowY: "auto" }}>
-                {bookings.map(b => {
-                  const color = STATUS_COLOR[b.status] || T.textMuted;
-                  const active = selected?.id === b.id;
-                  return (
-                    <button key={b.id} onClick={() => selectBooking(b)}
-                      style={{ textAlign: "left", background: active ? T.accentBg : T.surface,
-                        border: `1px solid ${active ? T.accent : T.border}`, borderRadius: 8,
-                        padding: "10px 12px", cursor: "pointer" }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
-                        <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>
-                          {b.shipment?.id}
-                        </span>
-                        <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color,
-                          textTransform: "uppercase" }}>{b.status}</span>
-                      </div>
-                      <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>
-                        {b.carrierCode} · {b.shipment?.pol} → {b.shipment?.pod}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Right: selected booking's thread + simulate actions */}
-          <div style={{ flex: 1, overflowY: "auto" }}>
-            {!selected ? (
-              <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic",
-                textAlign: "center", marginTop: 60 }}>
-                Select a booking on the left to view its message thread and simulate a response.
-              </div>
-            ) : (
-              <>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-                  <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>
-                    {selected.shipment?.id} — {selected.carrierCode}
-                  </h3>
-                  <Btn variant="secondary" size="sm"
-                    onClick={() => navigate?.("shipment-carrier-booking-review", selected.shipmentId)}>
-                    Open Review Page
-                  </Btn>
-                </div>
-
-                {selected.status === "Pending" ? (
-                  <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
-                    padding: "16px 20px", marginBottom: 20, display: "flex", flexDirection: "column", gap: 14 }}>
-                    <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
-                      textTransform: "uppercase", letterSpacing: ".06em" }}>Simulate Carrier Response</div>
-                    <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-                      <div style={{ flex: 1, minWidth: 220 }}>
-                        <label style={label}>
-                          Booking ref (optional — auto-generated if blank)
-                        </label>
-                        <input value={bookingRefInput} onChange={e => setBookingRefInput(e.target.value)}
-                          style={{ ...inputStyle, fontFamily: T.mono, marginBottom: 8 }} />
-                        <Btn size="sm" onClick={() => simulate("confirmed")} disabled={busy}>
-                          <IconCheck size={12} /> Simulate Confirmed
-                        </Btn>
-                      </div>
-                      <div style={{ flex: 1, minWidth: 220 }}>
-                        <label style={label}>
-                          Proposed Vessel / Voyage / ETD (optional — carrier confirms with different details)
-                        </label>
-                        <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                          <input value={changeVesselInput} onChange={e => setChangeVesselInput(e.target.value)}
-                            placeholder="Vessel" style={{ ...inputStyle, fontFamily: T.mono }} />
-                          <input value={changeVoyageInput} onChange={e => setChangeVoyageInput(e.target.value)}
-                            placeholder="Voyage" style={{ ...inputStyle, fontFamily: T.mono }} />
-                          <input value={changeEtdInput} onChange={e => setChangeEtdInput(e.target.value)}
-                            placeholder="ETD" style={{ ...inputStyle, fontFamily: T.mono }} />
-                        </div>
-                        <Btn size="sm" variant="secondary" onClick={() => simulate("confirmed_with_changes")} disabled={busy}>
-                          <IconCheck size={12} /> Simulate Confirmed (Changes)
-                        </Btn>
-                      </div>
-                      <div style={{ flex: 1, minWidth: 220 }}>
-                        <label style={label}>
-                          Rejection reason (optional)
-                        </label>
-                        <input value={reasonInput} onChange={e => setReasonInput(e.target.value)}
-                          placeholder="No space available…"
-                          style={{ ...inputStyle, marginBottom: 8 }} />
-                        <Btn size="sm" variant="danger" onClick={() => simulate("rejected")} disabled={busy}>
-                          <IconClose size={12} /> Simulate Rejected
-                        </Btn>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, marginBottom: 20,
-                    background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 14px" }}>
-                    This booking is {selected.status.toLowerCase()} — nothing pending to respond to.
-                  </div>
-                )}
-
-                <h4 style={{ fontFamily: T.head, fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 10 }}>
-                  Message Thread
-                </h4>
-                {messagesLoading ? <Spinner size="sm" /> : (
-                  <EdiMessageList messages={messages} emptyText="No messages for this shipment yet." />
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      {activeTab === "carrier" && <DcsaCarrierPanel navigate={navigate} />}
 
       {activeTab === "generator" && (
         <div style={{ display: "flex", gap: 24 }}>

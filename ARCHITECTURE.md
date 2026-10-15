@@ -520,7 +520,6 @@ routes/offices.js                148   Office CRUD + referencing-table delete gu
 routes/shipping-instructions.js  144   Shipping Instructions lifecycle (simulated SI/EDI)
 routes/charge-default-setups.js  142   Charge Defaults setups (§8.27)
 routes/hs-codes.js               116   HS Codes registry + typeahead + live EU lookup (§8.24)
-routes/eadapter.js               101   Per-carrier, per-office EDI connectivity config (§8.12)
 routes/share.js                   99   Public read-only shipment-tracking share links
 routes/admin-reset.js             97   Admin "Reset Demo Data" (§8.21)
 routes/office-mail.js             96   Per-office SMTP settings
@@ -532,6 +531,7 @@ routes/scheduled-reports.js       82   Recurring emailed reports (TKT-IXAR9G)
 routes/charge-codes.js            78   Charge code registry
 routes/carrier-webhooks.js        63   Inbound carrier webhook receiver (DCSA async bookings)
 routes/carrier-tracking.js        93   DCSA Track & Trace pull into container events (§8.34)
+routes/dcsa-simulator.js          61   Carrier connection lookup + Test Tools → DCSA Carrier (§8.35)
 routes/gl-account-mappings.js     61   GL Export's Charge Code + Type → GL Account mapping (§8.28)
 routes/container-types.js         58   Container type registry (Equipment section)
 routes/invoice-reason-codes.js    50   Invoice status override reason codes (Epic TKT-G11AHW)
@@ -1320,6 +1320,10 @@ Carrier Booking, Customs Filing, History) is a real, independently-routed page u
 imported by both files instead of hand-duplicated.
 
 ### 8.12 EDI Messaging & Carrier Booking Lifecycle (deepened v0.79.0 — eAdapter; office-scoped v0.83.0; third outcome v0.85.0)
+
+> **Superseded in part (2026-10-15, §8.35):** eAdapter, the Message Simulator's response builders and
+> the operator's Confirm Booking described below are retired. Bookings go to a DCSA carrier (real or the
+> built-in simulator), and the carrier's CONFIRMED confirms them. Kept as history.
 
 **A genuine third simulated carrier-response outcome, "Confirmed with Changes" (v0.85.0).** Until
 this pass, a simulated reply (Test Tools → Message Simulator) was strictly binary — `confirmed`
@@ -3137,6 +3141,62 @@ Track & Trace 2.2, Commercial Schedules 1.0 (API 1.0.1).
   spec's required fields and state preconditions; `tests/carrier-integrations.test.js` (32) brought
   up to the spec. Not yet validated against a real carrier: that needs the Hapag-Lloyd sandbox
   signup (`TKT-HWCWCI`, the user's).
+
+### 8.35 DCSA everywhere, phases 0–1: spec validation, built-in DCSA carrier, manual confirm and eAdapter retired (2026-10-15, unreleased)
+
+Epic `TKT-G2J60Z` (decided by the user 2026-10-11). Every carrier data exchange, and in later phases
+the internal model, follows the DCSA standards (reference.dcsa.org). It ships phase by phase:
+phase 0 is the foundation and phase 1 is the booking path. Phases 2–9 (booking internal model;
+parties and equipment; SI and transport documents; VGM; T&T v3 and OVS; House B/L as eBL; Arrival
+Notice and Port Call; Commercial Schedules re-check) follow.
+
+- **Specs and validation (`lib/dcsa/`).** `specs/` vendors the public OpenAPI files from
+  `dcsaorg/Conformance-Gateway` (branch `dev`; the newest patch releases need DCSA membership):
+  Booking 2.0.4, eBL / Issuance / Surrender 3.0.3, PINT beta, VGM 1.0.1, T&T 3.0.0, Commercial
+  Schedules 1.0.3, OVS 3.0.2, Arrival Notice 1.0.1 and Port Call 2.0.0, with each file's source
+  recorded in `specs/README.md`. `validate.js` (ajv) checks a body against an operation
+  (`validateRequest`) or a named schema (`validateSchema`). `codes.js` holds every DCSA state and
+  code list. The specs give status values as prose, not `enum`s, so `tests/dcsa-standards.test.js`
+  re-extracts them and fails on drift.
+- **Booking requests are validated before anything is recorded.** Send Booking Request resolves
+  the carrier's integration first, builds the DCSA CreateBooking body and refuses it if it fails the
+  spec. A shipment with no containers or ports gets a plain message saying what is missing, not an
+  ajv dump.
+- **Built-in DCSA carrier (`lib/dcsa-simulator/`, `routes/dcsa-simulator.js`).** The carrier side of
+  Booking 2.0 runs inside the monolith under `/dcsa-sim/v2/bookings`, with its state in
+  `dcsa_sim_bookings`. `carrierIntegrationFor(carrierCode, capability)` returns a carrier's own
+  active integration first; otherwise it returns the simulator, when the simulator is allowed and
+  supports the capability. CargoDesk therefore uses the same adapter (`dcsa-bkg-v2`), HTTP calls,
+  validation and webhook receiver for the simulator as for a real carrier. Request references are
+  `SIM-…`.
+  - **Answers.** The carrier's decisions come from Test Tools → DCSA Carrier, which offers only the
+    actions valid for the booking's DCSA state. Each decision (confirm, ask for an update, reject,
+    amendment and cancellation answers) sends a CloudEvent notification, signed with a per-process
+    secret, to `/api/carrier-webhooks/dcsa-simulator`. Nothing is answered automatically.
+  - **Where it runs.** Always outside production. In production it runs only when an admin sets
+    App Settings → Demo carrier (`dcsa_demo_carrier_enabled`, admin-only on `PUT /api/settings`).
+    Its bookings are flagged `carrier_bookings.is_mock` and badged DEMO CARRIER on the Carrier
+    Booking pages.
+- **Confirmation comes from the carrier.** `applyCarrierState` (routes/edi.js) turns a CONFIRMED
+  notification or poll into Confirmed. It records `confirmed_at`, the carrier's booking number on
+  the shipment, and the `booking_confirmed` milestone. That is now what deducts space. The
+  operator's Confirm Booking (`PATCH …/carrier-booking/confirm`), the old in-process response
+  simulator and `edi-messages/simulate-response` are removed.
+  - **Consequence (stated in the plan).** In production, a carrier with no DCSA connection can't
+    be booked unless the demo switch is on. The Details page says "No DCSA connection for <carrier>".
+- **eAdapter retired.** Removed: `routes/eadapter.js`, `EadapterConfigModal`, its App Settings card,
+  `mapEadapterConfig`, `BOOKABLE_CARRIERS` and the eAdapter branch of `isEdiBookable`.
+  `isEdiBookable` is now just `!!carrierIntegrationFor(code, 'booking')`. `carrier_eadapter_configs`
+  is dropped at startup after its row count is logged. Customs filings (AES/ISF) are kept, since
+  DCSA doesn't cover them.
+- **Superseding a booking** records the cancel message only after the carrier accepted the DCSA
+  cancel.
+- **Tests.** `dcsa-standards` (54), `dcsa-simulator` (23) and Cypress `dcsa-demo-carrier` (5) are
+  new; `tests/helpers/dcsa-sim.mjs` books a shipment through the simulated carrier. The
+  booking-dependent suites (`carrier-booking`, `carrier-integrations`, `dcsa-lifecycle`,
+  `allocations-crud`, `space-badge`, `shipment-status-lock`, `office-side-permissions`,
+  `customer-credit-control`, `shipment-detail-consistency`) now confirm through the carrier instead
+  of the removed Confirm route. `eadapter.test.js` is deleted.
 
 ## 9. Data Flow Diagrams
 

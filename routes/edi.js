@@ -1,5 +1,7 @@
 "use strict";
 
+const { validateRequest, errorsText, specVersion } = require("../lib/dcsa/validate");
+
 module.exports = function ediRoutes(app, ctx) {
   const { query, ok, err, uid, auth, requireRole, shipmentSubs,
           mapEdiMessage, mapCarrierBooking, mapShipment, applyShipmentAccessFilter,
@@ -18,125 +20,17 @@ module.exports = function ediRoutes(app, ctx) {
     for (const ws of subs) { if (ws.readyState === ws.OPEN) ws.send(json); }
   }
 
-  // The full outbound booking-request payload — same source the Review tab's Sent-vs-Received
-  // comparison table diffs against on the "received" side, so every simulated response below
-  // starts from it rather than synthesizing its own thin subset of fields.
-  async function getLastOutboundPayload(shipmentId) {
-    const [row] = await query(
-      "SELECT raw_payload FROM edi_messages WHERE shipment_id=$1 AND direction='out' ORDER BY created_at DESC LIMIT 1", [shipmentId]
-    );
-    if (!row) return {};
-    try { return JSON.parse(row.raw_payload) || {}; } catch { return {}; }
-  }
-
-  // Synthetic responses used ONLY by the Test Tools Message Simulator (routes below) —
-  // booking-request itself never auto-fabricates a response (this was always simulated;
-  // the live Maersk Booking API integration this used to attempt first has been removed,
-  // v0.72.0 — Maersk's developer-tools portal it depended on is obsolete). Deliberately three
-  // separate outcomes here, not one: the old always-"confirmed" fallback this replaced meant a
-  // rejection could never be tested at all, and a real carrier routinely confirms with a
-  // different vessel/voyage/ETD than what was actually requested — a third genuine outcome,
-  // not something to fold into a plain confirmation or into Pending.
-  async function simulatedConfirmedResponse(shipment, bookingRefOverride) {
-    const ref = bookingRefOverride || `MAEU${uid()}`;
-    return {
-      status: "confirmed",
-      bookingRef: ref,
-      raw: {
-        ...(await getLastOutboundPayload(shipment.id)),
-        bookingStatus: "CONFIRMED",
-        carrierBookingReference: ref,
-        note: "Simulated via Test Tools → Message Simulator.",
-      },
-    };
-  }
-  // Carries whatever the carrier actually changed — falls back to the originally requested
-  // value for anything not explicitly overridden, so the Review tab's comparison table only
-  // highlights fields that genuinely differ.
-  async function simulatedConfirmedWithChangesResponse(shipment, bookingRefOverride, overrides = {}) {
-    const ref = bookingRefOverride || `MAEU${uid()}`;
-    const sent = await getLastOutboundPayload(shipment.id);
-    const changed = {};
-    for (const key of ["vessel", "voyage", "etd", "vesselImo"]) {
-      const v = overrides[key];
-      if (v != null && String(v).trim() !== "") changed[key] = v;
-    }
-    return {
-      status: "confirmed_with_changes",
-      bookingRef: ref,
-      raw: {
-        ...sent,
-        ...changed,
-        bookingStatus: "CONFIRMED_WITH_CHANGES",
-        carrierBookingReference: ref,
-        note: "Simulated via Test Tools → Message Simulator — carrier confirmed with different details.",
-      },
-    };
-  }
-  async function simulatedRejectedResponse(shipment, reason) {
-    return {
-      status: "rejected",
-      bookingRef: null,
-      raw: {
-        ...(await getLastOutboundPayload(shipment.id)),
-        bookingStatus: "REJECTED",
-        reason: reason || "No space available on requested sailing.",
-        note: "Simulated via Test Tools → Message Simulator.",
-      },
-    };
-  }
-
-  // Shared by the real-API-success path and the simulator — records the inbound message
-  // and updates the carrier_bookings projection identically either way (only `is_mock`
-  // differs). A confirmed response deliberately does NOT finalize the booking — see the
-  // status vs last_response_status split in the carrier_bookings migration comment
-  // (server.js) for why. A rejected response has nothing to lock in, so it does.
-  async function applyBookingResponse(shipment, booking, response, isMock) {
-    const inId = `EDI-${uid()}`;
-    const inType = response.status === "rejected" ? "booking_reject" : "booking_confirmation";
-    const processedAt = new Date().toISOString();
-    await query(`
-      INSERT INTO edi_messages
-        (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, parsed_payload,
-         status, correlation_id, is_mock, created_at, processed_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-    `, [inId, shipment.id, shipment.carrier_code, "in", inType, "JSON",
-           JSON.stringify(response.raw), JSON.stringify({ bookingRef: response.bookingRef, status: response.status }),
-           response.status, booking.correlation_id, !!isMock, processedAt, processedAt]);
-
-    const newStatus = response.status === "rejected" ? "Rejected" : booking.status;
-    await query(`
-      UPDATE carrier_bookings SET last_response_status=$1, booking_ref=$2, status=$3,
-        responded_at=$4, is_mock=$5, updated_at=$6 WHERE id=$7
-    `, [response.status, response.bookingRef || booking.booking_ref, newStatus,
-           processedAt, !!isMock, processedAt, booking.id]);
-
-    const [msgRow] = await query("SELECT * FROM edi_messages WHERE id=$1", [inId]);
-    const message = mapEdiMessage(msgRow);
-    broadcast(shipment.id, { type: "new_edi_message", message });
-    const [bookingRow] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [booking.id]);
-    const updatedBooking = mapCarrierBooking(bookingRow);
-    broadcast(shipment.id, { type: "booking_status_changed", booking: updatedBooking });
-    // A rejected booking stops counting as pending space, so the pool-mates' badges move (TKT-4JU8C8).
-    await recomputeSpacePool(shipment.id);
-    return { message, booking: updatedBooking };
-  }
-  // Handed back onto ctx (not defined in server.js, since this closure needs getLastOutboundPayload/
-  // uid/query/broadcast, all local to this file) so routes/carrier-webhooks.js — required after this
-  // file in server.js — can call the exact same "apply the response" logic the Test Tools simulator
-  // above uses, rather than a second copy of it. Safe: route registration runs synchronously at
-  // boot, well before any real HTTP request could reach the webhook route.
-  ctx.applyBookingResponse = applyBookingResponse;
-
   // ─── A real carrier's booking state (DCSA, TKT-KG4E49, 2026-10-09) ─────────────────────────
   // What a carrier reports — by notification (routes/carrier-webhooks.js) or when polled — is the
   // DCSA state triple { bookingStatus, amendedBookingStatus, bookingCancellationStatus }. Only a
   // CHANGE is recorded (an inbound message + the booking updated); a repeated callback or an
   // unchanged poll just stamps carrier_state_at. Of several fields changing at once the most
   // specific one leads: cancellation, then amendment, then the booking status.
-  //   booking CONFIRMED            → last response "confirmed" + the carrier's booking number; the
-  //                                  booking stays as it is until someone confirms it in CargoDesk
-  //                                  (the same rule as before — see applyBookingResponse)
+  //   booking CONFIRMED            → Confirmed, with the carrier's booking number: the shipment's
+  //                                  booking ref is set and "Booking Confirmed" completes. Since
+  //                                  2026-10-11 (DCSA-everywhere, decided by the user) this is the
+  //                                  only way a booking is confirmed — the operator's Confirm click
+  //                                  is gone — so it is also what deducts space.
   //   booking REJECTED / DECLINED  → Rejected
   //   booking CANCELLED, or CANCELLATION_CONFIRMED → Cancelled (frees its space)
   //   CANCELLATION_DECLINED        → stays Confirmed, last response "cancellation_declined"
@@ -151,7 +45,7 @@ module.exports = function ediRoutes(app, ctx) {
     PENDING_AMENDMENT: "update_requested", CONFIRMED: "confirmed", REJECTED: "rejected", DECLINED: "rejected",
     CANCELLED: "cancelled", COMPLETED: "completed" };
 
-  async function applyCarrierState(shipment, booking, state, { source = "callback", raw = null } = {}) {
+  async function applyCarrierState(shipment, booking, state, { source = "callback", raw = null, simulated = false } = {}) {
     const now = new Date().toISOString();
     let prev = {};
     try { prev = booking.carrier_state ? JSON.parse(booking.carrier_state) : {}; } catch { prev = {}; }
@@ -172,6 +66,7 @@ module.exports = function ediRoutes(app, ctx) {
       label = BOOKING_LABEL[next.bookingStatus] || (next.bookingStatus || "update").toLowerCase();
       if (next.bookingStatus === "REJECTED" || next.bookingStatus === "DECLINED") status = "Rejected";
       if (next.bookingStatus === "CANCELLED") status = "Cancelled";
+      if (next.bookingStatus === "CONFIRMED" && ["Created", "Pending"].includes(booking.status)) status = "Confirmed";
     }
     const bookingRef = state.carrierBookingReference || booking.booking_ref || "";
     const inId = `EDI-${uid()}`;
@@ -184,14 +79,22 @@ module.exports = function ediRoutes(app, ctx) {
         JSON.stringify(raw ?? state), JSON.stringify({ ...next, carrierBookingReference: state.carrierBookingReference || null, feedbacks: state.feedbacks || [] }),
         label, booking.correlation_id, now]);
     const cancelledNow = status === "Cancelled" && booking.status !== "Cancelled";
+    const confirmedNow = status === "Confirmed" && booking.status !== "Confirmed";
     await query(`
-      UPDATE carrier_bookings SET last_response_status=$1, booking_ref=$2, status=$3, responded_at=$4, is_mock=FALSE,
+      UPDATE carrier_bookings SET last_response_status=$1, booking_ref=$2, status=$3, responded_at=$4, is_mock=$8,
+        confirmed_at=CASE WHEN $9 THEN $4 ELSE confirmed_at END,
+        confirmed_by=CASE WHEN $9 THEN $10 ELSE confirmed_by END,
         carrier_state=$5, carrier_state_at=$4, updated_at=$4,
         cancelled_at=CASE WHEN $6 THEN $4 ELSE cancelled_at END,
         cancelled_by=CASE WHEN $6 THEN 'Carrier' ELSE cancelled_by END,
         cancel_reason=CASE WHEN $6 AND COALESCE(cancel_reason,'')='' THEN 'Cancelled by the carrier' ELSE cancel_reason END
       WHERE id=$7`,
-      [label, bookingRef, status, now, JSON.stringify(next), cancelledNow, booking.id]);
+      [label, bookingRef, status, now, JSON.stringify(next), cancelledNow, booking.id, !!(simulated || booking.is_mock), confirmedNow, booking.carrier_code || "Carrier"]);
+    if (confirmedNow && bookingRef) {
+      await query("UPDATE shipments SET booking_ref=$1 WHERE id=$2", [bookingRef, shipment.id]);
+      await autoCompleteMilestone(shipment.id, "booking_confirmed",
+        `Confirmed by ${booking.carrier_code || "the carrier"}${simulated ? " (demo carrier)" : ""} (ref ${bookingRef})`);
+    }
     await logEntityEvent('carrier_booking', booking.id, 'CARRIER_STATE', null, booking.status, status,
       JSON.stringify({ ...next, source, label }));
     const [msgRow] = await query("SELECT * FROM edi_messages WHERE id=$1", [inId]);
@@ -418,7 +321,7 @@ module.exports = function ediRoutes(app, ctx) {
     ok(res, rows.map(mapCarrierBooking));
   });
 
-  // Cross-shipment list for Test Tools' Message Simulator picker — the one route in this
+  // Cross-shipment list of carrier bookings — the one route in this
   // file that needs office-access scoping, since it lets a user browse shipments they
   // haven't specifically navigated to (the single-shipment routes above don't bother,
   // matching this file's existing precedent).
@@ -444,8 +347,10 @@ module.exports = function ediRoutes(app, ctx) {
     const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
     if (await blockIfWrongSide(req, res, shipment, 'export')) return;
-    if (!(await isEdiBookable(shipment.carrier_code, shipment.emo_office_id)))
-      return err(res, `Booking requests are not supported for carrier ${shipment.carrier_code} at this shipment's office`, 400);
+    // DCSA only (2026-10-11): the carrier's own integration, or the built-in simulator where allowed.
+    const integ = await carrierIntegrationFor(shipment.carrier_code, "booking");
+    if (!integ)
+      return err(res, `No DCSA connection for ${shipment.carrier_code}: set one up under Carrier Integrations (or, for a demo, turn on App Settings → Demo carrier)`, 400);
 
     const [existingBooking] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
     if (existingBooking && existingBooking.status === "Pending")
@@ -473,6 +378,18 @@ module.exports = function ediRoutes(app, ctx) {
     const correlationId = `EDI-${uid()}`;
 
     const requestPayload = await bookingRequestPayload(shipment, req.body);
+    // Built and checked against DCSA Booking 2.0 before anything is recorded: a request the carrier
+    // would answer 400 is refused here, with the reasons, instead of becoming a "sent" message and a
+    // Pending booking that was never sent.
+    const dcsaPayload = integ.adapter.buildBookingRequest(shipment, { ...requestPayload, ...(await dcsaBookingExtras(shipment)) });
+    const check = validateRequest("bkg", "post", "/v2/bookings", dcsaPayload);
+    if (!check.ok) {
+      // The two gaps people actually hit, said plainly; anything else names the spec's own reasons.
+      const missing = [check.errors.some(e => e.path.startsWith("/requestedEquipments")) && "at least one container",
+        check.errors.some(e => e.path.startsWith("/shipmentLocations")) && "the port of loading and port of discharge"].filter(Boolean);
+      return err(res, missing.length ? `Can't send the booking request: add ${missing.join(" and ")} first (a DCSA booking needs them)`
+        : `Can't send the booking request: it doesn't meet DCSA Booking ${specVersion("bkg")} (${errorsText(check.errors, 3)})`, 400);
+    }
 
     // Outbound message, recorded and broadcast immediately.
     const outId = `EDI-${uid()}`;
@@ -490,24 +407,14 @@ module.exports = function ediRoutes(app, ctx) {
     const requestedBy = req.user?.name || req.user?.email || "";
     let booking = await upsertPendingBooking(shipment, correlationId, requestedBy);
 
-    // Multi-Carrier Integration Framework (TKT-KG4E49, story 2) — an active carrier_integrations
-    // row with 'booking' capability for this carrier gets a real submission attempt; anything
-    // else (the overwhelming majority of carriers, today) falls through to exactly the prior
-    // behavior below, byte-for-byte — zero risk to any unconfigured carrier. Never surfaces a
-    // 500 to the caller on failure: a real carrier's own async flow means "not yet confirmed" is
-    // the normal case either way, identical to what this route has always returned.
-    // Master safety-net toggle (api_carrier_integrations_enabled, mirrors api_eadapter_enabled's
-    // own precedent) — off means every carrier falls back to the simulator regardless of any
-    // individual integration's own is_active flag, a single kill switch independent of having to
-    // find and deactivate each configured carrier one at a time.
+    // Sent to the carrier (TKT-KG4E49) — or the simulator. Never a 500 on failure: the carrier
+    // answers asynchronously anyway, and a failed send is marked on the booking and returned.
     let carrierError = null;
-    const integ = await carrierIntegrationFor(shipment.carrier_code, "booking");
-    if (integ) {
-      const dcsaPayload = integ.adapter.buildBookingRequest(shipment, { ...requestPayload, ...(await dcsaBookingExtras(shipment)) });
+    {
       const result = await integ.adapter.createBooking(integ.config, dcsaPayload);
       if (result.ok) {
-        await query("UPDATE carrier_bookings SET carrier_booking_request_reference=$1, carrier_state_at=$2 WHERE id=$3",
-          [result.carrierBookingRequestReference, new Date().toISOString(), booking.id]);
+        await query("UPDATE carrier_bookings SET carrier_booking_request_reference=$1, carrier_state_at=$2, is_mock=$3 WHERE id=$4",
+          [result.carrierBookingRequestReference, new Date().toISOString(), !!integ.row.is_simulator, booking.id]);
       } else {
         // The carrier never got it: say so on the booking and to the caller, instead of leaving a
         // Pending booking that will never be answered (2026-10-09).
@@ -527,89 +434,9 @@ module.exports = function ediRoutes(app, ctx) {
     // ever called directly. Non-blocking either way.
     const capabilityGaps = await checkLineAgentCapabilityGaps(shipment.id);
 
-    // Always pending — a real carrier's booking is confirmed asynchronously (webhook or poll,
-    // see routes/carrier-webhooks.js); one with no active integration is still simulated only,
-    // via Test Tools → Message Simulator (see simulatedConfirmedResponse/simulatedRejectedResponse
-    // above).
+    // Always pending — the carrier (a real one, or the built-in DCSA simulator) confirms
+    // asynchronously, by notification (routes/carrier-webhooks.js) or when polled.
     ok(res, { sent: sentMsg, booking: mapCarrierBooking(booking), pending: true, capabilityGaps, ...(carrierError ? { carrierError } : {}) }, 201);
-  });
-
-  // Test Tools → Message Simulator: emulate a carrier's response to a pending booking
-  // request without a live carrier account. Ties every simulated response to a real
-  // outstanding request (409 if none) so the data model can't end up with a response that
-  // was never actually requested.
-  app.post("/api/shipments/:id/edi-messages/simulate-response", write, async (req, res) => {
-    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
-    if (!shipment) return err(res, "Shipment not found", 404);
-    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
-    const { outcome, bookingRef, reason, vessel, voyage, etd, vesselImo } = req.body || {};
-    if (!["confirmed", "rejected", "confirmed_with_changes"].includes(outcome))
-      return err(res, 'outcome must be "confirmed", "rejected", or "confirmed_with_changes"');
-
-    const [booking] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
-    if (!booking || booking.status !== "Pending")
-      return err(res, "This shipment has no pending booking request to respond to", 409);
-
-    const response = outcome === "confirmed"
-      ? await simulatedConfirmedResponse(shipment, bookingRef)
-      : outcome === "confirmed_with_changes"
-      ? await simulatedConfirmedWithChangesResponse(shipment, bookingRef, { vessel, voyage, etd, vesselImo })
-      : await simulatedRejectedResponse(shipment, reason);
-
-    const { message, booking: updatedBooking } = await applyBookingResponse(shipment, booking, response, true);
-    ok(res, { received: message, booking: updatedBooking }, 201);
-  });
-
-  app.patch("/api/shipments/:id/carrier-booking/confirm", write, async (req, res) => {
-    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
-    if (!shipment) return err(res, "Shipment not found", 404);
-    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
-    const { bookingRef, note } = req.body || {};
-
-    let [existing] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
-    // Same supersede rule as Send (upsertPendingBooking above) — any not-yet-Confirmed booking
-    // under a since-changed carrier is auto-cancelled and archived rather than resurrected as
-    // "Confirmed" under a carrier it was never actually requested/rejected/cancelled for.
-    existing = await supersedeIfCarrierChanged(shipment, existing);
-    if (existing && (existing.status === "Confirmed" || existing.status === "Cancelled"))
-      return err(res, `Booking is already ${existing.status.toLowerCase()}`, 409);
-
-    const ref = bookingRef || existing?.booking_ref || "";
-    if (!ref) return err(res, "A booking reference is required to confirm");
-
-    const now = new Date().toISOString();
-    const confirmedBy = req.user?.name || req.user?.email || "";
-    let booking;
-    if (existing) {
-      await query(`
-        UPDATE carrier_bookings SET status='Confirmed', booking_ref=$1, confirmed_at=$2,
-          confirmed_by=$3, carrier_code=$4, updated_at=$5 WHERE id=$6
-      `, [ref, now, confirmedBy, shipment.carrier_code, now, existing.id]);
-      [booking] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [existing.id]);
-    } else {
-      // Manual confirmation with no prior request at all — gives non-EDI-bookable carriers
-      // (everything outside MAEU/SAFM/MCPU) a full booking lifecycle too.
-      const bookingId = `BKG-${uid()}`;
-      await query(`
-        INSERT INTO carrier_bookings (id, shipment_id, carrier_code, status, booking_ref, confirmed_at, confirmed_by, created_at, updated_at)
-        VALUES ($1,$2,$3,'Confirmed',$4,$5,$6,$7,$8)
-      `, [bookingId, shipment.id, shipment.carrier_code, ref, now, confirmedBy, now, now]);
-      [booking] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [bookingId]);
-    }
-
-    // This is now the trigger point for booking_ref/milestone completion — moved from
-    // firing automatically on any confirmed carrier response (the old behavior) to firing
-    // only on this explicit operator action.
-    await query("UPDATE shipments SET booking_ref=$1 WHERE id=$2", [ref, shipment.id]);
-    await autoCompleteMilestone(shipment.id, 'booking_confirmed',
-      note || `Confirmed by ${confirmedBy || 'operator'} (ref ${ref})`);
-    await logEntityEvent('carrier_booking', booking.id, 'CONFIRMED', null, null, null,
-      JSON.stringify({ bookingRef: ref, confirmedBy }));
-
-    const mapped = mapCarrierBooking(booking);
-    broadcast(shipment.id, { type: "booking_status_changed", booking: mapped });
-    await recomputeSpacePool(shipment.id); // confirmed now: its badge and its pool-mates' change (TKT-4JU8C8)
-    ok(res, mapped);
   });
 
   // Shared by the explicit PATCH route below and, since 2026-09 (Space Configuration spec, gap
@@ -652,20 +479,7 @@ module.exports = function ediRoutes(app, ctx) {
       }
     }
 
-    // Notify the carrier only if something was actually transmitted for this booking.
-    if (existing?.correlation_id && await isEdiBookable(shipment.carrier_code, shipment.emo_office_id)) {
-      const cancelId = `EDI-${uid()}`;
-      await query(`
-        INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, status, correlation_id, is_mock, created_at)
-        VALUES ($1,$2,$3,'out','booking_cancellation','JSON',$4,'sent',$5,FALSE,$6)
-      `, [cancelId, shipment.id, shipment.carrier_code, JSON.stringify({ reason: reason || "" }), existing.correlation_id, now]);
-      const [cancelRow] = await query("SELECT * FROM edi_messages WHERE id=$1", [cancelId]);
-      broadcast(shipment.id, {
-        type: "new_edi_message",
-        message: mapEdiMessage(cancelRow),
-      });
-    }
-
+    // A booking that never went through DCSA (made before 2026-10-11) is cancelled here only.
     let booking;
     if (existing) {
       await query(`
@@ -767,7 +581,7 @@ module.exports = function ediRoutes(app, ctx) {
     if (!integ?.adapter.getBookingStatus) return { ok: false, status: 409, error: `No active booking integration for ${booking.carrier_code}` };
     const result = await integ.adapter.getBookingStatus(integ.config, booking.carrier_booking_request_reference);
     if (!result.ok) return { ok: false, status: 502, error: `${booking.carrier_code} could not be asked (${result.error})` };
-    return { ok: true, ...(await applyCarrierState(shipment, booking, result.state, { source: "poll", raw: result.raw })) };
+    return { ok: true, ...(await applyCarrierState(shipment, booking, result.state, { source: "poll", raw: result.raw, simulated: !!integ.row.is_simulator })) };
   }
 
   app.post("/api/shipments/:id/carrier-booking/check-status", write, async (req, res) => {

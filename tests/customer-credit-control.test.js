@@ -27,6 +27,7 @@
 
 import http from "node:http";
 import { ensureOffices } from "./helpers/offices.mjs";
+import { addContainer } from "./helpers/dcsa-sim.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -345,6 +346,7 @@ async function confirmDoc(shipmentId, docId, token) {
     await request("DELETE", `/api/shipments/${cleanShip.body.id}`, null, token);
 
     console.log("\nEarlier trigger point — carrier-booking send is a real, server-enforced block");
+    await addContainer(request, token, heldShip.body.id); // a DCSA booking needs requested equipment
     const sendBlocked = await request("POST", `/api/shipments/${heldShip.body.id}/edi-messages/booking-request`, {}, token);
     assert("sending a booking request is blocked (409) while the principal is on hold", sendBlocked.status === 409, JSON.stringify(sendBlocked.body));
     assert("the block names the held party", /Test Credit Held Co/.test(sendBlocked.body.error || ""), JSON.stringify(sendBlocked.body));

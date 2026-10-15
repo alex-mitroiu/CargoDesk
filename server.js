@@ -661,7 +661,8 @@ const SETTING_DEFAULTS = {
   api_ais_enabled:        'false',
   ais_provider:           'aisstream',
   ais_api_key:            '',
-  api_eadapter_enabled:   'true',
+  // The built-in DCSA carrier simulator in production (lib/dcsa-simulator; always on elsewhere).
+  dcsa_demo_carrier_enabled: 'false',
   // GL Export's 3 standing control accounts — a charge code with no gl_account_mappings row
   // falls into gl_control_account_unmapped instead of silently dropping. 3 fixed keys don't earn
   // a whole dedicated table; they ride the existing generic settings GET/PUT.
@@ -2026,65 +2027,44 @@ schemaReadyPromise = schemaReadyPromise
 // in a fresh Postgres install can have either legacy shape.
 // ─── Map functions ────────────────────────────────────────────────────────────
 
-// Carriers a booking request can be sent to. Single source of truth on ctx — routes/edi.js
-// used to hand-copy this same Set locally (matching an equivalent copy on the frontend);
-// centralized here so the two can't silently drift apart. This gates EDI booking eligibility
-// only — the booking request/response itself is fully simulated (v0.35.0), not a real
-// carrier integration; the once-separate "carriers you can search live schedules for" concept
-// (routes/system.js's old MAERSK_CODES) is gone entirely (v0.72.0) along with the live Maersk
-// developer-tools schedule/booking API it gated — schedule search is catalog-then-demo-only now.
-const BOOKABLE_CARRIERS = new Set(["MAEU", "SAFM", "MCPU"]);
+// Carrier connectivity is DCSA only (DCSA-everywhere program, Epic TKT-G2J60Z; decided by the user
+// 2026-10-11). A carrier is reached through its active Carrier Integration (a real DCSA API), or —
+// when it has none, and outside production or with App Settings → "Demo carrier" on — through the
+// built-in DCSA carrier simulator (lib/dcsa-simulator), which CargoDesk talks to exactly like a real
+// carrier. Otherwise it can't be booked from CargoDesk: there is no manual confirmation, no eAdapter
+// and no hard-coded list of bookable carriers any more (all retired 2026-10-11).
+const createDcsaSimulator = require("./lib/dcsa-simulator");
+const dcsaSimulator = createDcsaSimulator({ query, uid, getSettings, port: () => PORT });
 
-// eAdapter (carrier-EDI epic, story 1) — generalizes BOOKABLE_CARRIERS from a fixed 3-carrier
-// set into "the built-in 3 OR any carrier with an active eAdapter config," gated behind one
-// master toggle. Turning api_eadapter_enabled off blocks EVERY carrier, including the built-in
-// 3 — a deliberate choice so the toggle governs the whole EDI-carrier-communication surface
-// uniformly, with no special-casing; a carrier that isn't bookable already has a complete
-// fallback lifecycle (manual Confirm with a hand-entered bookingRef, no EDI message ever sent),
-// so "off" just means every carrier uses that same path.
-//
-// v0.83.0 — per-office scoping. A real carrier EDI relationship is negotiated per-country/
-// per-branch, not once globally: a low-volume office is exactly the one a carrier is least
-// inclined to bother configuring EDI for. carrier_eadapter_configs rows are now scoped to a
-// specific office_id (see its own table comment); officeId is the shipment's own emo_office_id
-// (Export Managing Office — the office actually handling the carrier relationship for this
-// shipment, same field resolveInvoiceThresholds/sendViaOffice already key off). A shipment with
-// no EMO office assigned yet can never match a scoped config — same "incomplete data means no,
-// not yes" posture this codebase already takes elsewhere (e.g. a blank contractId never matches
-// a contract). The built-in 3 (BOOKABLE_CARRIERS) are deliberately NOT office-scoped — they're a
-// separate, pre-existing, always-simulated concept this pass didn't revisit.
-// The active carrier integration (Epic TKT-KG4E49) for a carrier that offers `capability`
-// ('booking' | 'tracking' | 'schedules'), with its adapter and call config — or null: no
-// integration, inactive, the api_carrier_integrations_enabled master switch off, the capability
-// not ticked, or no adapter registered under its key. The one lookup every carrier-integration
-// path uses (booking request, update, cancel, polling, Track & Trace, schedule search).
+// The connection for a carrier that offers `capability` ('booking' | 'tracking' | 'schedules' | …),
+// with its adapter and call config — or null. A real integration needs to be active, have the
+// capability ticked and an adapter registered, and the api_carrier_integrations_enabled master switch
+// on; failing that, the simulator stands in for the capabilities it implements. The one lookup every
+// carrier path uses (booking request, update, cancel, polling, Track & Trace, schedule search).
+// `row.is_simulator` tells the two apart.
 async function carrierIntegrationFor(carrierCode, capability) {
   if (!carrierCode) return null;
-  if ((await getSettings()).api_carrier_integrations_enabled === 'false') return null;
-  const [row] = await query("SELECT * FROM carrier_integrations WHERE carrier_code=$1 AND is_active=TRUE", [carrierCode]);
-  if (!row) return null;
-  let caps = [];
-  try { caps = JSON.parse(row.capabilities || "[]"); } catch { /* malformed → no capabilities */ }
-  if (!caps.includes(capability)) return null;
-  const adapter = getCarrierAdapter(row.adapter_key);
-  if (!adapter) return null;
-  return { row, adapter, config: { baseUrl: row.base_url, authHeaderName: row.auth_header_name, credential: row.credential, webhookSecret: row.webhook_secret } };
+  if ((await getSettings()).api_carrier_integrations_enabled !== 'false') {
+    const [row] = await query("SELECT * FROM carrier_integrations WHERE carrier_code=$1 AND is_active=TRUE", [carrierCode]);
+    let caps = [];
+    try { caps = JSON.parse(row?.capabilities || "[]"); } catch { /* malformed → no capabilities */ }
+    const adapter = row && caps.includes(capability) ? getCarrierAdapter(row.adapter_key) : null;
+    if (adapter) return { row, adapter, config: { baseUrl: row.base_url, authHeaderName: row.auth_header_name, credential: row.credential, webhookSecret: row.webhook_secret } };
+  }
+  if (!(await dcsaSimulator.allowed())) return null;
+  const sim = dcsaSimulator.integration(carrierCode, capability);
+  const adapter = sim ? getCarrierAdapter(sim.row.adapter_key) : null;
+  return adapter ? { ...sim, adapter } : null;
 }
 
-async function isEdiBookable(carrierCode, officeId) {
-  // A carrier with an active booking integration takes booking requests on its own — until
-  // 2026-10-09 it also needed an eAdapter config or a place in BOOKABLE_CARRIERS, so a carrier set
-  // up only under Carrier Integrations was refused with "not supported" before its adapter ran.
-  if (await carrierIntegrationFor(carrierCode, "booking")) return true;
-  if ((await getSettings()).api_eadapter_enabled === 'false') return false;
-  if (BOOKABLE_CARRIERS.has(carrierCode)) return true;
-  if (!officeId) return false;
-  const [cfg] = await query("SELECT is_active FROM carrier_eadapter_configs WHERE carrier_code=$1 AND office_id=$2", [carrierCode, officeId]);
-  return !!cfg?.is_active;
+// Can a booking request be sent for this carrier? (officeId is no longer used: eAdapter's per-office
+// configs are gone; kept in the signature for its callers.)
+async function isEdiBookable(carrierCode, officeId) { // eslint-disable-line no-unused-vars
+  return !!(await carrierIntegrationFor(carrierCode, "booking"));
 }
 // Fixed, curated additional party roles (Epic TKT-5XFCAP) — alongside the 4 hardcoded
 // shipper/consignee/notify/principal roles on shipments. Frontend keeps its own copy in
-// src/tokens.js (same split as BOOKABLE_CARRIERS — frontend/backend don't share a module).
+// src/tokens.js (frontend/backend don't share a module).
 // Customs Broker is split Export/Import (not a single role) since each shipment can only
 // hold one party per role and the two are routinely handled by different brokers — also a
 // deliberate setup for the later Customs & Regulatory Filing epic (TKT-XW6TQK). "Agent" (bare)
@@ -2245,7 +2225,6 @@ const {
   mapGlAccountMapping, mapGlExportBatch, mapCustomerStatement, mapCustomerStatementLine,
   mapQuote, mapQuoteLine, mapOpportunity,
   mapInvoiceReasonCode, mapInvoiceStatusOverride,
-  mapEadapterConfig,
   mapLoopCode, mapLoopCodePort,
 } = createMappers({ portLanesMap, CUTOFF_WARNING_DAYS });
 
@@ -2923,25 +2902,27 @@ const supersedeIfCarrierChanged = async (shipment, existing) => {
   if (existing.status !== "Cancelled") {
     // Sent through a carrier integration: withdraw it at that carrier too (best effort — the
     // carrier change itself goes ahead; a failure is logged and kept on the booking's reason).
-    let carrierNote = "";
+    // The cancellation is recorded on the thread only when it actually reached the old carrier
+    // (DCSA bookingStatus CANCELLED) — its own carrier_code, who the request went to, not the
+    // shipment's new one. A booking that never went through DCSA is only cancelled here.
+    let carrierNote = "", sentBody = null;
     if (existing.status === "Pending" && existing.carrier_booking_request_reference) {
       const integ = await carrierIntegrationFor(existing.carrier_code, "booking");
       if (integ?.adapter.cancelBooking) {
         const r = await integ.adapter.cancelBooking(integ.config, existing.carrier_booking_request_reference, { reason });
-        if (!r.ok) {
+        if (r.ok) sentBody = { bookingStatus: "CANCELLED", reason };
+        else {
           carrierNote = ` — ${existing.carrier_code} was not told: ${r.error}`;
           console.warn(`Carrier integration ${existing.carrier_code}: cancelling superseded booking ${existing.id} failed:`, r.error);
         }
       }
     }
-    // Notify the old carrier only if something was actually transmitted for THIS booking —
-    // its own carrier_code (who the request actually went to), not the shipment's new one.
-    if (existing.correlation_id && await isEdiBookable(existing.carrier_code, shipment.emo_office_id)) {
+    if (sentBody) {
       const cancelId = `EDI-${uid()}`;
       await query(`
         INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, status, correlation_id, is_mock, created_at)
-        VALUES ($1,$2,$3,'out','booking_cancellation','JSON',$4,'sent',$5,FALSE,$6)
-      `, [cancelId, shipment.id, existing.carrier_code, JSON.stringify({ reason }), existing.correlation_id, now]);
+        VALUES ($1,$2,$3,'out','booking_cancellation','JSON',$4,'sent',$5,$6,$7)
+      `, [cancelId, shipment.id, existing.carrier_code, JSON.stringify(sentBody), existing.correlation_id, !!existing.is_mock, now]);
       const subs = shipmentSubs.get(shipment.id);
       if (subs) {
         const [cancelRow] = await query("SELECT * FROM edi_messages WHERE id=$1", [cancelId]);
@@ -3026,7 +3007,7 @@ schemaReadyPromise = schemaReadyPromise.then(() => backfillCarrierBookings());
 // with no single write event that would ever trigger them.
 //
 // Mirrors App.jsx's own STALE_BOOKING_HOURS=48 (frontend/backend don't share a module, same
-// split as CONTRACT_TYPES/BOOKABLE_CARRIERS elsewhere in this app) — a Pending booking with no
+// split as CONTRACT_TYPES elsewhere in this app) — a Pending booking with no
 // carrier response past this age is exactly what the notification bell already flags.
 const STALE_BOOKING_HOURS = 48;
 
@@ -4178,7 +4159,7 @@ const ctx = {
   mapScopeItem, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
   mapEdiMessage,
-  mapCarrierBooking, BOOKABLE_CARRIERS, isEdiBookable, mapEadapterConfig,
+  mapCarrierBooking, isEdiBookable, dcsaSimulator,
   mapCarrierIntegration, getCarrierAdapter, listRegisteredAdapterKeys, carrierIntegrationFor,
   mapCustomsFiling, CUSTOMS_FILING_TYPES,
   mapShippingInstructions,
@@ -4235,6 +4216,7 @@ require('./routes/kanban')(app, ctx);
 require('./routes/testcases')(app, ctx);
 require('./routes/edi')(app, ctx);
 require('./routes/carrier-webhooks')(app, ctx);
+require('./routes/dcsa-simulator')(app, ctx);
 require('./routes/carrier-tracking')(app, ctx);
 require('./routes/customs-filing')(app, ctx);
 require('./routes/shipping-instructions')(app, ctx);
@@ -4260,7 +4242,6 @@ require('./routes/ai')(app, ctx);
 require('./routes/share')(app, ctx);
 require('./routes/offices')(app, ctx);
 require('./routes/office-mail')(app, ctx);
-require('./routes/eadapter')(app, ctx);
 require('./routes/carrier-integrations')(app, ctx);
 require('./routes/document-distribution')(app, ctx);
 require('./routes/organization')(app, ctx);

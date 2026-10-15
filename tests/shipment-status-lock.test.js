@@ -23,6 +23,7 @@
 
 import http from "node:http";
 import { ensureOffices } from "./helpers/offices.mjs";
+import { bookThroughCarrier, carrierActs } from "./helpers/dcsa-sim.mjs";
 
 let passed = 0;
 let failed = 0;
@@ -114,8 +115,8 @@ const notLocked = res => res.status < 400;
     // ── Cancelling needs the booking and the filings cancelled first ──────────────────────────
     console.log("\nShipment A: a Confirmed booking and a Filed AES/EEI filing block the cancellation");
     const A = await scratchShipment();
-    const confirm = await request("PATCH", `/api/shipments/${A.id}/carrier-booking/confirm`, { bookingRef: "MAEU-LOCK-0001" }, token);
-    assert("booking confirmed", confirm.status === 200 && confirm.body.status === "Confirmed", JSON.stringify(confirm.body));
+    const confirm = await bookThroughCarrier(request, token, A.id, "confirm");
+    assert("booking confirmed by the carrier", confirm.booking?.status === "Confirmed", JSON.stringify(confirm.act?.body));
     const draft = await request("POST", `/api/shipments/${A.id}/customs-filings`, { filingType: "AES_EEI" }, token);
     assert("AES/EEI filing created", draft.status === 201, JSON.stringify(draft.body));
     const filingId = draft.body.id;
@@ -126,7 +127,7 @@ const notLocked = res => res.status < 400;
     const items1 = blocked1.body?.activeItems || [];
     assert("cancel is refused with 409 ACTIVE_ITEMS", blocked1.status === 409 && blocked1.body.code === "ACTIVE_ITEMS", JSON.stringify(blocked1.body));
     assert("…listing the booking and the filing", items1.length === 2
-      && items1.some(i => i.kind === "booking" && i.status === "Confirmed by the carrier" && /MAEU-LOCK-0001/.test(i.label))
+      && items1.some(i => i.kind === "booking" && i.status === "Confirmed by the carrier" && i.label.includes(confirm.booking?.bookingRef || "?"))
       && items1.some(i => i.kind === "filing" && i.id === filingId && i.filingType === "AES_EEI" && i.status === "Submitted, no answer yet"),
       JSON.stringify(items1));
     assert("…and the message names them", /Carrier booking/.test(blocked1.body.error) && /AES \/ EEI/.test(blocked1.body.error), blocked1.body.error);
@@ -165,8 +166,17 @@ const notLocked = res => res.status < 400;
     assert("with the filing cancelled, only the booking still blocks",
       blocked3.status === 409 && blocked3.body.activeItems?.length === 1 && blocked3.body.activeItems[0].kind === "booking",
       JSON.stringify(blocked3.body));
+    // A carrier-confirmed booking is only asked to cancel (decided 2026-10-09); it keeps blocking
+    // until the carrier confirms the cancellation.
     const cancelBooking = await request("PATCH", `/api/shipments/${A.id}/carrier-booking/cancel`, { reason: "Shipper cancelled the order" }, token);
-    assert("booking cancelled", cancelBooking.status === 200 && cancelBooking.body.status === "Cancelled", JSON.stringify(cancelBooking.body));
+    assert("cancellation requested; the booking stays Confirmed until the carrier agrees",
+      cancelBooking.status === 200 && cancelBooking.body.status === "Confirmed" && cancelBooking.body.lastResponseStatus === "cancellation_requested", JSON.stringify(cancelBooking.body));
+    const stillBlocked = await cancel(A.id);
+    assert("…and still blocks the shipment's cancellation", stillBlocked.status === 409
+      && stillBlocked.body.activeItems?.[0]?.status === "Cancellation requested, waiting for the carrier", JSON.stringify(stillBlocked.body));
+    const carrierOk = await carrierActs(request, token, A.id, "confirmCancellation");
+    const afterCarrier = await request("GET", `/api/shipments/${A.id}/carrier-booking`, null, token);
+    assert("booking cancelled once the carrier confirms", carrierOk.status === 200 && afterCarrier.body?.status === "Cancelled", JSON.stringify(afterCarrier.body));
     const done = await cancel(A.id);
     assert("now the shipment cancels (200)", done.status === 200 && done.body.status === "Cancelled", JSON.stringify(done.body));
 
@@ -177,7 +187,7 @@ const notLocked = res => res.status < 400;
     const blockedB = await cancel(B.id);
     assert("cancel is refused while the booking awaits an answer",
       blockedB.status === 409 && blockedB.body.activeItems?.[0]?.status === "Requested, no answer yet", JSON.stringify(blockedB.body));
-    await request("POST", `/api/shipments/${B.id}/edi-messages/simulate-response`, { outcome: "rejected" }, token);
+    await carrierActs(request, token, B.id, "reject");
     const bookingB = await request("GET", `/api/shipments/${B.id}/carrier-booking`, null, token);
     assert("booking now Rejected", bookingB.body?.status === "Rejected", JSON.stringify(bookingB.body));
     const doneB = await cancel(B.id);
@@ -208,7 +218,6 @@ const notLocked = res => res.status < 400;
       "editing shipping instructions": ["PUT", `/api/shipments/${A.id}/shipping-instructions`, { specialInstructions: "Keep dry" }],
       "adding a service":         ["POST", `/api/shipments/${A.id}/services`, { side: "Export", serviceType: "Trucking" }],
       "resetting a customs filing": ["PATCH", `/api/shipments/${A.id}/customs-filings/${filingId}/reset`, {}],
-      "confirming a booking":     ["PATCH", `/api/shipments/${A.id}/carrier-booking/confirm`, { bookingRef: "MAEU-LOCK-0002" }],
       "requesting a booking":     ["POST", `/api/shipments/${A.id}/edi-messages/booking-request`, {}],
       "reassigning an office":    ["POST", `/api/shipments/${A.id}/reassign-office`, { field: "emoOfficeId", officeId: emoOfficeId, reason: "test" }],
     };

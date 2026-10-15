@@ -61,7 +61,10 @@ describe("Carrier Booking Lifecycle Suite", () => {
     }).then(res => {
       expect(res.status).to.eq(201);
       shipmentId = res.body.id;
-    });
+      // A DCSA booking needs requested equipment (2026-10-11).
+      return api("POST", "/containers", { shipmentId, containerNumber: `CYPU${String(Date.now()).slice(-7)}`, size: "40", type: "HC",
+        hsCode: "940360", cargoDescription: "Furniture", grossWeightKg: 9000, volumeCbm: 60 });
+    }).then(res => expect(res.status).to.eq(201));
   });
 
   before(() => {
@@ -125,18 +128,20 @@ describe("Carrier Booking Lifecycle Suite", () => {
     cy.contains("Pending").should("be.visible");
   });
 
-  it("Test Tools Message Simulator confirms the pending booking", () => {
+  it("Test Tools plays the carrier (built-in DCSA simulator) and confirms the pending booking", () => {
     cy.window().then(win => { win.location.hash = "test-tools"; });
     cy.dismissStartupGates();
-    cy.contains("Simulate a carrier response", { timeout: 15000 }).should("be.visible");
-    cy.contains("button", shipmentId, { timeout: 8000 }).click();
-    cy.contains("button", "Simulate Confirmed").click();
-    // The left booking-picker list and selected-booking panel don't live-refresh after the
-    // mutation (still shows the Simulate form/PENDING tag) — assert on what does reliably
-    // reflect success instead: the toast, and the message thread's new inbound entry.
-    cy.contains("Simulated confirmed response", { timeout: 8000 }).should("be.visible");
-    cy.contains("Message Thread").should("be.visible");
-    cy.contains("booking confirmation").should("be.visible");
+    // Test Tools → DCSA Carrier (2026-10-11): pick the shipment's booking, decide as the carrier.
+    cy.get('[data-testid="dcsa-carrier-panel"]', { timeout: 15000 }).should("be.visible");
+    cy.get(`[data-testid="dcsa-carrier-row-${shipmentId}"]`, { timeout: 8000 }).click();
+    cy.get('[data-testid="dcsa-carrier-action-confirm"]').click();
+    cy.contains("Confirm: sent to CargoDesk", { timeout: 8000 }).should("be.visible");
+    // The confirmation came back as a DCSA notification and the decisions moved on.
+    cy.get('[data-testid="dcsa-carrier-detail"]').should("contain", "CONFIRMED");
+    cy.get('[data-testid="dcsa-carrier-action-confirm"]').should("not.exist");
+    cy.then(() => api("GET", `/shipments/${shipmentId}/carrier-booking`)).then(res => {
+      expect(res.body.status, "confirmed by the carrier, no manual step").to.eq("Confirmed");
+    });
 
     gotoBookingReview();
     // NOTE: the "Carrier Booking — Review" card's own "Carrier Response" section (asserted

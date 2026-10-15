@@ -5,7 +5,6 @@ import { toast } from "../../toast";
 import EdiMessageList from "../../components/shared/EdiMessageList";
 import CarrierBookingsTable from "../../components/shared/CarrierBookingsTable";
 import CreditHoldModal from "../../components/shared/CreditHoldModal";
-import GenerateDocumentModal from "../../components/shared/GenerateDocumentModal";
 import Spinner from "../../components/primitives/Spinner";
 import { CommodityDisplay } from "./ShipmentDetailPage";
 import { IconSendPlane, IconAnchor, IconWarning } from "../../components/primitives/Icon";
@@ -53,16 +52,17 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
   const [sending,    setSending]    = useState(false);
   const [savingFreightTerms, setSavingFreightTerms] = useState(false);
   const [creditHoldModal, setCreditHoldModal] = useState(null); // { holds } — Credit Control Depth / TKT-Q00WHF
-  const [bookableCarriers, setBookableCarriers] = useState(null); // eAdapter — live effective bookable set, replaces the static BOOKABLE_CARRIERS Set
-  const [genDocOpen, setGenDocOpen] = useState(false); // Generate Booking Request Document — the manual/no-EDI path
+  // How CargoDesk reaches this carrier for bookings — its DCSA integration, the built-in DCSA simulator,
+  // or not at all (DCSA only since 2026-10-11; eAdapter and the manual booking path are retired).
+  const [connection, setConnection] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
-    api.eadapter.bookableCarriers(shipment.emoOfficeId)
-      .then(r => !cancelled && setBookableCarriers(r.carriers))
-      .catch(() => !cancelled && setBookableCarriers([]));
+    api.carrierConnections.get(shipment.carrierCode)
+      .then(r => !cancelled && setConnection(r))
+      .catch(() => !cancelled && setConnection({ capabilities: {} }));
     return () => { cancelled = true; };
-  }, [shipment.emoOfficeId]);
+  }, [shipment.carrierCode]);
 
   // Freight Terms already exists on the shipment (set on the Shipment Form) but wasn't
   // editable from the one place it's operationally most relevant — here, while actually
@@ -171,7 +171,7 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
 
   useEffect(() => { load(); }, [load]);
 
-  const bookable = (bookableCarriers || []).includes(shipment.carrierCode);
+  const bookable = !!connection?.capabilities?.booking;
   const status = booking?.status || "Created";
   const canSend = canEdit && bookable && status !== "Pending" && status !== "Confirmed";
   const outboundMessages = messages.filter(m => m.direction === "out");
@@ -416,25 +416,11 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
           background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8, padding: "10px 14px",
           display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <span>
-            {!shipment.emoOfficeId
-              ? "Booking requests aren't supported yet — this shipment has no Export Managing Office assigned, and eAdapter configs are scoped per office."
-              : `Booking requests aren't supported for carrier ${shipment.carrierCode || "—"} at ${shipment.emoOfficeCode || "this office"} yet.`}
-            {" "}Generate a booking request document to send the carrier manually instead.
+            {connection
+              ? `No DCSA connection for ${shipment.carrierCode || "this carrier"}, so it can't be booked from CargoDesk. Set one up under Carrier Integrations${connection.simulatorAvailable === false ? ", or turn on App Settings → Demo carrier for a demo" : ""}.`
+              : "Checking the carrier's DCSA connection…"}
           </span>
-          {canEdit && (
-            <button onClick={() => setGenDocOpen(true)}
-              style={{ background: HZ.surface2, border: `1px solid ${HZ.border}`, borderRadius: 6,
-                color: HZ.text, cursor: "pointer", padding: "6px 12px", fontFamily: HZ_BODY,
-                fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
-              Generate Booking Request Document
-            </button>
-          )}
         </div>
-      )}
-      {genDocOpen && (
-        <GenerateDocumentModal shipment={shipment} defaultCode="BR01"
-          onClose={() => setGenDocOpen(false)}
-          onSaved={() => setGenDocOpen(false)} />
       )}
       {status === "Pending" && (
         <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, marginBottom: 16,

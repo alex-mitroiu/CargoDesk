@@ -95,11 +95,9 @@ export const api = {
   ediMessages: {
     list:               (shipmentId)       => req("GET",  `/shipments/${shipmentId}/edi-messages`),
     sendBookingRequest: (shipmentId, data) => req("POST", `/shipments/${shipmentId}/edi-messages/booking-request`, data),
-    simulateResponse:   (shipmentId, data) => req("POST", `/shipments/${shipmentId}/edi-messages/simulate-response`, data),
   },
   carrierBooking: {
     get:     (shipmentId)          => req("GET",   `/shipments/${shipmentId}/carrier-booking`),
-    confirm: (shipmentId, data={}) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/confirm`, data),
     cancel:  (shipmentId, data={}) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/cancel`, data),
     // Sent through a carrier integration (DCSA, TKT-KG4E49): update/amend at the carrier, ask it for the status.
     sendUpdate:  (shipmentId) => req("POST", `/shipments/${shipmentId}/carrier-booking/send-update`, {}),
@@ -494,14 +492,16 @@ export const api = {
       (officeId ? `&officeId=${encodeURIComponent(officeId)}` : "") +
       (carrierCode ? `&carrierCode=${encodeURIComponent(carrierCode)}` : "")),
   },
-  eadapter: {
-    configs: {
-      list:   ()      => req("GET",    "/eadapter/configs"),
-      create: (d)     => req("POST",   "/eadapter/configs", d),
-      update: (id, d) => req("PUT",    `/eadapter/configs/${id}`, d),
-      remove: (id)    => req("DELETE", `/eadapter/configs/${id}`),
-    },
-    bookableCarriers: (officeId = "") => req("GET", `/eadapter/bookable-carriers${officeId ? `?officeId=${officeId}` : ""}`),
+  // How CargoDesk reaches a carrier per capability — its DCSA integration or the built-in simulator
+  // (routes/dcsa-simulator.js). Replaced eAdapter's bookable-carriers list (retired 2026-10-11).
+  carrierConnections: {
+    get: (carrierCode) => req("GET", `/carrier-connections/${encodeURIComponent(carrierCode || "")}`),
+  },
+  // Test Tools: play the built-in DCSA carrier (its bookings, and its decisions on them).
+  dcsaSim: {
+    status:   ()                     => req("GET",  "/dcsa-simulator/status"),
+    bookings: ()                     => req("GET",  "/test-tools/dcsa-sim/bookings"),
+    act:      (ref, action, message) => req("POST", `/test-tools/dcsa-sim/bookings/${encodeURIComponent(ref)}/${action}`, message ? { message } : {}),
   },
   carrierIntegrations: {
     list:     ()      => req("GET",    "/carrier-integrations"),

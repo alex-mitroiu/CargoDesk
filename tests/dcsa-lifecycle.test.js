@@ -201,11 +201,11 @@ function startFakeCarrier() {
     const bA = await booking(A);
     assert("the poll sweep picks up the confirmation", sweep.status === 200 && sweep.body.changed >= 1 && bA.lastResponseStatus === "confirmed" && bA.bookingRef === `ZQBKG${stamp}`,
       JSON.stringify({ sweep: sweep.body, last: bA.lastResponseStatus, ref: bA.bookingRef }));
-    assert("…recorded but not yet confirmed in CargoDesk (an operator confirms)", bA.status === "Pending", bA.status);
+    // Since 2026-10-11 the carrier's CONFIRMED is the confirmation — there is no operator step.
+    assert("…and confirms the booking in CargoDesk", bA.status === "Confirmed" && !!bA.confirmedAt, bA.status);
     const check = await request("POST", `/api/shipments/${A}/carrier-booking/check-status`, {}, token);
     assert("Check status now: nothing changed", check.status === 200 && check.body.changed === false, JSON.stringify(check.body).slice(0, 200));
-    const conf = await request("PATCH", `/api/shipments/${A}/carrier-booking/confirm`, { bookingRef: `ZQBKG${stamp}` }, token);
-    assert("operator confirms", conf.status === 200 && conf.body.status === "Confirmed", JSON.stringify(conf.body).slice(0, 200));
+    assert("the manual confirm route is gone (404)", (await request("PATCH", `/api/shipments/${A}/carrier-booking/confirm`, { bookingRef: "X" }, token)).status === 404);
 
     console.log("\nSend update to carrier — an amendment once confirmed");
     const upd = await request("POST", `/api/shipments/${A}/carrier-booking/send-update`, {}, token);

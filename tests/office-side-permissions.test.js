@@ -143,10 +143,13 @@ async function login(email, password) {
     }
 
     console.log("\nCarrier Booking — fixed export-edit");
-    const confirmBlocked = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/confirm`, { bookingRef: "OSP-BOOKING" }, importToken, H_B);
-    assert("import user blocked from confirming a carrier booking (403)", confirmBlocked.status === 403, JSON.stringify(confirmBlocked.body));
-    const confirmAllowed = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/confirm`, { bookingRef: "OSP-BOOKING" }, exportToken, H_A);
-    assert("export user can confirm a carrier booking (200)", confirmAllowed.status === 200, JSON.stringify(confirmAllowed.body));
+    // Manual confirmation is gone (2026-10-11) — the export-side rule is checked on sending the request.
+    // The leg test above removed the only leg (which clears POL/POD); a DCSA booking needs its ports.
+    await request("POST", `/api/shipments/${shipmentId}/legs`, { legType: "SEA", movementType: "SEA", pol: "NLRTM", pod: "USNYC", etd: "2026-06-01", eta: "2026-06-25", carrierCode: "MAEU" }, exportToken, H_A);
+    const sendBlocked = await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, importToken, H_B);
+    assert("import user blocked from sending a carrier booking request (403)", sendBlocked.status === 403, JSON.stringify(sendBlocked.body));
+    const sendAllowed = await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, exportToken, H_A);
+    assert("export user can send a carrier booking request (201)", sendAllowed.status === 201, JSON.stringify(sendAllowed.body));
 
     console.log("\nShipping Instructions — fixed export-edit");
     const siBlocked = await request("PUT", `/api/shipments/${shipmentId}/shipping-instructions`, { specialInstructions: "x" }, importToken, H_B);
