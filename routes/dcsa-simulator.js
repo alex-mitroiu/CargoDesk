@@ -32,7 +32,10 @@ module.exports = function dcsaSimulatorRoutes(app, ctx) {
 
   // ─── Test Tools: play the carrier ───────────────────────────────────────────
   // The simulator's bookings, newest first, each with the CargoDesk shipment it belongs to and the
-  // decisions the carrier can take from its current state.
+  // decisions the carrier can take from its current state. Only bookings CargoDesk still holds:
+  // deleting a shipment deletes its booking here, but the carrier keeps its copy (as a real one
+  // would), and a decision on it would match nothing — the panel used to fill up with
+  // "(shipment deleted)" rows (2026-10-15).
   app.get("/api/test-tools/dcsa-sim/bookings", write, async (req, res) => {
     if (!(await dcsaSimulator.allowed())) return err(res, "The DCSA carrier simulator is off (App Settings → Demo carrier)", 409);
     const sims = await dcsaSimulator.list();
@@ -41,10 +44,9 @@ module.exports = function dcsaSimulatorRoutes(app, ctx) {
     const rows = await query(`SELECT cb.*, s.pol, s.pod FROM carrier_bookings cb JOIN shipments s ON s.id = cb.shipment_id
       WHERE cb.carrier_booking_request_reference IN (${refs.map((_, i) => `$${i + 1}`).join(",")})`, refs);
     const byRef = new Map(rows.map(r => [r.carrier_booking_request_reference, r]));
-    ok(res, sims.map(s => {
+    ok(res, sims.filter(s => byRef.has(s.carrierBookingRequestReference)).map(s => {
       const r = byRef.get(s.carrierBookingRequestReference);
-      return { ...s, shipmentId: r?.shipment_id || null, pol: r?.pol || null, pod: r?.pod || null,
-        cargoDeskBooking: r ? mapCarrierBooking(r) : null };
+      return { ...s, shipmentId: r.shipment_id, pol: r.pol || null, pod: r.pod || null, cargoDeskBooking: mapCarrierBooking(r) };
     }));
   });
 

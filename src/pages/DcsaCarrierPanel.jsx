@@ -121,7 +121,7 @@ export default function DcsaCarrierPanel({ navigate }) {
                   <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent, background: T.accentBg, borderRadius: 4, padding: "2px 6px" }}>{b.carrierCode || "—"}</span>
                   <span style={{ minWidth: 0 }}>
                     <span style={{ display: "block", fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {b.shipmentId || "(shipment deleted)"}
+                      {b.shipmentId}
                     </span>
                     <span style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>{b.pol || "?"} → {b.pod || "?"}</span>
                   </span>
@@ -136,7 +136,7 @@ export default function DcsaCarrierPanel({ navigate }) {
             <div data-testid="dcsa-carrier-detail" style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                 <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>
-                  {selected.shipmentId || "—"} · {selected.carrierCode}
+                  {selected.shipmentId} · {selected.carrierCode}
                   <span style={{ fontWeight: 400, color: T.textMuted }}> {selected.pol} → {selected.pod}</span>
                 </h3>
                 {selected.shipmentId && (

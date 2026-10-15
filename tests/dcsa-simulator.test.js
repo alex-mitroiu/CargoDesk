@@ -135,6 +135,14 @@ const rand = Math.random().toString(36).slice(2, 7).toUpperCase();
     const inbound = (await request("GET", `/api/shipments/${C}/edi-messages`, null, token)).body.filter(m => m.direction === "in");
     assert("its feedback is on the notification CargoDesk received", inbound.some(m => JSON.stringify(m.parsedPayload || "").includes("No space on 045W")));
 
+    console.log("\nA deleted shipment's booking leaves Test Tools");
+    const refC = (await booking(C)).carrierBookingRequestReference;
+    const delC = await request("DELETE", `/api/shipments/${C}`, null, token);
+    const after = (await request("GET", "/api/test-tools/dcsa-sim/bookings", null, token)).body;
+    assert("the carrier keeps its copy, but Test Tools no longer lists it (nothing left to answer)",
+      delC.status === 200 && (await request("GET", `/dcsa-sim/v2/bookings/${refC}`)).status === 200
+      && Array.isArray(after) && !after.some(x => x.carrierBookingRequestReference === refC) && after.every(x => !!x.shipmentId), JSON.stringify({ del: delC.status, refC }));
+
     console.log("\nThe Demo carrier switch is admin-only");
     const opEmail = `op-sim-${rand.toLowerCase()}@example.com`;
     await request("POST", "/api/users", { email: opEmail, name: "Operator Sim Test", roles: ["operator"], password: "OpFixture!2026Zq" }, token);

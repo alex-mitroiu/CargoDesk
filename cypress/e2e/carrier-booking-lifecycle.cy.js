@@ -1,10 +1,10 @@
 /**
  * Carrier Booking Lifecycle Suite
  *
- * Covers the real UI path through a carrier booking's lifecycle — Send → simulated
- * carrier Confirm (via Test Tools' Message Simulator, the only real mechanism for a
- * carrier response; there's no direct "confirm" affordance driven by the carrier side
- * anywhere else) → B/L document linking (TKT-LAK8P4, shipped v0.52.0). Previously only
+ * Covers the real UI path through a carrier booking's lifecycle — Send → the carrier's
+ * Confirm (Test Tools → DCSA Carrier, which plays a carrier with no DCSA connection of its
+ * own; there is no manual confirm in CargoDesk since 2026-10-11) → B/L document linking
+ * (TKT-LAK8P4, shipped v0.52.0). Previously only
  * covered at the API level (tests/carrier-booking.test.js) with zero UI regression
  * protection.
  *
@@ -122,8 +122,15 @@ describe("Carrier Booking Lifecycle Suite", () => {
   };
 
   it("sends a booking request and shows it Pending in the bookings table", () => {
+    // Wait for the send itself, not just "Pending" text: the next test plays the carrier on the
+    // booking this request creates, so it must have reached the (simulated) carrier first.
+    cy.intercept("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`).as("bookingRequest");
     gotoBookingDetails();
     cy.contains("button", "Send Booking Request", { timeout: 15000 }).click();
+    cy.wait("@bookingRequest").then(({ response }) => {
+      expect(response.statusCode, JSON.stringify(response.body)).to.eq(201);
+      expect(response.body.carrierError, "the DCSA carrier accepted the request").to.be.undefined;
+    });
     cy.contains("Bookings on this Shipment", { timeout: 8000 }).should("be.visible");
     cy.contains("Pending").should("be.visible");
   });
@@ -133,9 +140,9 @@ describe("Carrier Booking Lifecycle Suite", () => {
     cy.dismissStartupGates();
     // Test Tools → DCSA Carrier (2026-10-11): pick the shipment's booking, decide as the carrier.
     cy.get('[data-testid="dcsa-carrier-panel"]', { timeout: 15000 }).should("be.visible");
-    cy.get(`[data-testid="dcsa-carrier-row-${shipmentId}"]`, { timeout: 8000 }).click();
+    cy.get(`[data-testid="dcsa-carrier-row-${shipmentId}"]`, { timeout: 15000 }).click();
     cy.get('[data-testid="dcsa-carrier-action-confirm"]').click();
-    cy.contains("Confirm: sent to CargoDesk", { timeout: 8000 }).should("be.visible");
+    cy.contains("Confirm: sent to CargoDesk", { timeout: 15000 }).should("be.visible");
     // The confirmation came back as a DCSA notification and the decisions moved on.
     cy.get('[data-testid="dcsa-carrier-detail"]').should("contain", "CONFIRMED");
     cy.get('[data-testid="dcsa-carrier-action-confirm"]').should("not.exist");

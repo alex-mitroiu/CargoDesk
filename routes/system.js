@@ -309,7 +309,11 @@ module.exports = function systemRoutes(app, ctx) {
     return Array.from({ length: count }, (_, i) => {
       const etd = new Date(today);
       etd.setDate(etd.getDate() + 4 + i * Math.round(7 / 1.5));
-      const transit = 14 + Math.floor(Math.random() * 22);
+      // Same sailing, same transit time on every search (2026-10-15). It used to be Math.random()
+      // per call, so one demo sailing showed a different ETA each time it was searched — and the
+      // dev-mode double search in SailingPickerModal could apply a different ETA than the one shown.
+      const transit = 14 + [...`${pol}|${pod}|${carrierCode}|${etd.toISOString().slice(0, 10)}`]
+        .reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % 22;
       const eta = new Date(etd);
       eta.setDate(eta.getDate() + transit);
       const etdStr = etd.toISOString().slice(0, 10);

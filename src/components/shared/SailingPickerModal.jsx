@@ -1,5 +1,5 @@
 import { deriveLoopCode } from "../../utils/scheduleLoop";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { T } from "../../tokens";
 import { api } from "../../api";
 import { Modal } from "../primitives/Modal";
@@ -76,14 +76,19 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
   const fitsRequirement = s => (!requiredService || deriveLoopCode(s).toUpperCase() === String(requiredService).toUpperCase())
     && (!requiredHub || !!(s.legs && s.legs.some(l => l.pod === requiredHub)));
 
+  // Only the newest search may fill the list (2026-10-15): StrictMode runs the mount effect twice in
+  // dev, and a quick change of weeks overlaps searches too; a slower, older answer used to replace the
+  // rows the user was about to click.
+  const searchSeq = useRef(0);
   const search = async (w) => {
+    const seq = ++searchSeq.current;
     setLoading(true); setError(null);
     try {
       const data = await api.schedules.search({ pol, pod, carrierCode, weeks: w });
-      setSailings(data);
+      if (seq === searchSeq.current) setSailings(data);
     } catch (e) {
-      setError(e.message);
-    } finally { setLoading(false); }
+      if (seq === searchSeq.current) setError(e.message);
+    } finally { if (seq === searchSeq.current) setLoading(false); }
   };
 
   useEffect(() => { search(weeks); }, []); // eslint-disable-line react-hooks/exhaustive-deps

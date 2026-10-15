@@ -8,8 +8,8 @@
  * Prerequisites:
  *   - npm run dev  (Express :3001, Vite :5173)
  *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
- *   - At least one Central contract seeded with per_container rates
- *     (npm run seed:contracts provides CMDU-CH-EUN-NAM)
+ *   - At least one active contract (npm run seed:contracts provides some); without one the
+ *     Central-contract block skips
  */
 
 import { ensureOffices } from "../support/offices";
@@ -74,8 +74,11 @@ describe("Containers Suite", () => {
     }).then(res => {
       // contracts may be plain array or paginated {results:[]}
       const list = Array.isArray(res.body) ? res.body : (res.body.results ?? []);
-      const central = list.find(c => c.contractType === "Central" && c.status === "Active");
-      if (!central) return; // no Central contract — skip those tests
+      // Contracts carry no type of their own any more — "Central" is the shipment's contractType,
+      // set when it books against a contract. Looking for c.contractType === "Central" matched
+      // nothing, so this whole block skipped on every database (found 2026-10-15).
+      const central = list.find(c => c.status === "Active");
+      if (!central) return; // no active contract at all — skip those tests
 
       cy.request({
         method: "POST", url: "/api/shipments",

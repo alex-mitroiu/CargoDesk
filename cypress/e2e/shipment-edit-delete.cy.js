@@ -121,9 +121,14 @@ describe("Shipment Edit + Delete Suite", () => {
     });
 
     const openRowMenu = () => {
+      // The new shipment is already on the unfiltered first page, so its row shows before the
+      // debounced search lands; the search result then re-renders the list and the open menu's
+      // Delete button vanishes mid-click (seen 2026-10-11 and 2026-10-15). Wait for the search.
+      cy.intercept({ method: "GET", pathname: "/api/shipments", query: { search: shipmentId } }).as("shipmentSearch");
       visitHash("shipments");
       cy.contains("h1", "Shipments", { timeout: 20000 }).should("be.visible");
       cy.get('input[placeholder="Search ID, POL, POD, booking ref…"]').type(shipmentId);
+      cy.wait("@shipmentSearch");
       cy.contains("span", shipmentId, { timeout: 10000 }).should("be.visible")
         .parent().within(() => {
           cy.get("button").last().click(); // ActionMenu's gear trigger — last button in the row
