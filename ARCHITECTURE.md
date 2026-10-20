@@ -1,10 +1,13 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.91.9 "Reckoning" + unreleased work (uncommitted as of this pass) · **Date:** 2026-09-29
+**Version:** 0.91.10 "Plimsoll" · **Date:** 2026-10-16
 **Audience:** Software architects, senior engineers, technical reviewers
 **See also:** [`DFS.md`](DFS.md) — the Design & Functional Specification (data flow diagrams,
 per-domain functional scope, roles) covers *what* the system does and *how data moves through it*;
 this document covers *how it's built*.
 
+> **2026-10-16 (v0.91.10 "Plimsoll") — release, no new documentation pass.** The work this document marked "unreleased" (§6, §8.5, §8.29–§8.35, §14)
+> shipped in v0.91.10; those markers now say so; dated history rows keep their wording. Nothing else was re-verified for this note.
+>
 > **2026-09-29 pass (v0.91.9 "Reckoning" + the unreleased work after it) — incremental.** v0.91.9
 > shipped with no architectural documentation, and a further batch of work has landed since without
 > a version number yet (the version bump is held for the next batch push). Adds **§8.28 (GL Export,
@@ -567,7 +570,7 @@ and 25 indexes now exist beyond primary keys (§11 — this resolves the old "no
 **106 tables** in the monolith's own database (remeasured directly on 2026-09-29 via
 `grep -c "CREATE TABLE IF NOT EXISTS" lib/schema.js`; +4 since v0.91.8, all from v0.91.9, §8.28:
 `gl_account_mappings`, `gl_export_batches`, `customer_statements`, `customer_statement_lines`.
-The unreleased work after v0.91.9 added columns only: `branches.tax_registration_number`,
+v0.91.10 added columns only: `branches.tax_registration_number`,
 `shipment_cost_lines.vat_treatment` (§8.29) and `shipments.space_selection` (§8.31); v0.91.9 itself
 also added `gl_exported_at`/`gl_export_batch_id` to `shipment_documents` and `shipment_cost_lines`
 and `paid_amount_original`/`paid_currency`/`paid_exchange_rate` to `shipment_documents`. The
@@ -706,7 +709,7 @@ customer_statements ──── customer_statement_lines
                                           customer; lines are soft-referenced snapshots —
                                           shipment_id / cost_line_id plain TEXT, no FK)
 
-COLUMNS ADDED AFTER v0.91.9 (unreleased — §8.29, §8.31)
+COLUMNS ADDED IN v0.91.10 (§8.29, §8.31)
 ─────────────────────────────────────────────────────────
 branches.tax_registration_number        (the supplier's VAT number per legal entity; the
                                           customer's lives in customer_identifiers, type VAT)
@@ -1147,7 +1150,7 @@ last review: `'quote'` (§8.2) and `'carrier_invoice'` (§8.3). New states beyon
 posted line is locked; corrections are new adjusting lines, never rewrites) with a computed
 variance (`actual - accrued`) once a line is actualized.
 
-**Updated 2026-09-29 (unreleased).** The "`contract` lines are replaced, `manual` lines preserved"
+**Updated 2026-09-29 (v0.91.10).** The "`contract` lines are replaced, `manual` lines preserved"
 rule above is no longer how contract costs are applied. Every import, reset and carrier-rate update
 now goes through one reconciliation engine that decides per charge code what may be replaced, and
 leaves posted, actualized, invoiced and non-contract lines alone; a Central contract's costs are also
@@ -1211,7 +1214,7 @@ still-independent figure — `DashboardPage.jsx`'s Carrier Volumes tab — is ex
 bucketed this way: it's a raw all-status freight-volume metric by design, unrelated to allocated
 space, and was confirmed out of scope for this pass.
 
-**Two rules changed 2026-09-29 (unreleased):**
+**Two rules changed 2026-09-29 (v0.91.10):**
 
 - **A space configuration is unique per contract record, not per lane.** `checkOverlap()`
   (server.js) used to reject any second configuration for the same carrier + POL + POD + overlapping
@@ -2641,7 +2644,7 @@ generated statement says it billed.
 `tests/fx-revaluation.test.js` (22), `tests/customer-statements.test.js` (51),
 `src/utils/invoiceGenerator.billing.test.js` (8).
 
-### 8.29 Tax / VAT Handling (added after v0.91.9, unreleased)
+### 8.29 Tax / VAT Handling (added v0.91.10)
 
 Before this, VAT existed only as a per-line rate on SELL lines. BUY lines had their rate forced to 0
 server-side, so input VAT could not be recorded. Invoices showed neither party's VAT number, and
@@ -2752,7 +2755,7 @@ no report said what a legal entity owed.
 `tests/vat-handling.test.js` (43), `tests/gl-export.test.js` (33), `tests/customer-statements.test.js`
 (73), `src/utils/invoiceGenerator.test.js` (15).
 
-### 8.30 Contract Rate Reconciliation & Auto-Import (reworked after v0.91.9, unreleased)
+### 8.30 Contract Rate Reconciliation & Auto-Import (reworked v0.91.10)
 
 This replaces the original §8.5 rule ("`contract` lines are replaced on recalculate, `manual`
 preserved") and extends the v0.91.x Rate Reconciliation feature (`TKT-NU524E`). All of it lives in
@@ -2836,7 +2839,7 @@ is" records the snapshot, so the modal does not keep coming back. CCD lines show
 `tests/rate-reconciliation.test.js` (53), `tests/contract-auto-import.test.js` (27),
 `src/utils/reconcileChoices.test.js`.
 
-### 8.31 Contract Picker: Space Suggestions, Overbooking & `space_selection` (added after v0.91.9, unreleased)
+### 8.31 Contract Picker: Space Suggestions, Overbooking & `space_selection` (added v0.91.10)
 
 In `ContractPickerModal` (`ShipmentFormPage.jsx`), a space configuration that cannot fit the
 shipment used to be a dead end. The picker now:
@@ -2877,7 +2880,7 @@ breakdown (§8.32) can show, per contract and reference, how many bookings follo
 suggestion. The user asked for that explicitly. `src/utils/spaceSuggestions.test.js`,
 `tests/allocations-crud.test.js` (51), `tests/shipment-crud.test.js` (35).
 
-### 8.32 Dashboard Contract Consumption by Contract Number (added after v0.91.9, unreleased)
+### 8.32 Dashboard Contract Consumption by Contract Number (added v0.91.10)
 
 The Contract Consumption tab was a table keyed per contract *record*. One contract number can hold
 several records (number + reference + named account), so it is now grouped by **carrier + contract
@@ -2940,7 +2943,7 @@ Schedule Search's own "Via Origin / Via Destination" fields were renamed **Pick-
 (`SchedulesPage.jsx`). They mean carrier-haulage pick-up and delivery points, and the old names
 would have clashed with the transshipment meaning above.
 
-### 8.33 Contract Routing Lines (after v0.91.9, unreleased)
+### 8.33 Contract Routing Lines (added v0.91.10)
 
 Every leg of a contract now belongs to a routing (`contract_routings` row), and each routing is one
 **line**: one connected run of legs, with at most one pick-up location on its first leg and one
@@ -3087,7 +3090,7 @@ one TEU pool.
   realistic contracts with legs), `src/utils/spaceConfigRules.test.js` (11), and
   `SpaceConfigurationsPage.test.jsx` (mocks mirror `api.contracts.search`/`api.allocations.list`).
 
-### 8.34 DCSA Carrier Lifecycle: booking update/cancel, polling, Track & Trace, schedules (2026-10-09, unreleased)
+### 8.34 DCSA Carrier Lifecycle: booking update/cancel, polling, Track & Trace, schedules (2026-10-09, v0.91.10)
 
 Epic `TKT-KG4E49`. The v0.91.0 framework (registry, `carrier_integrations`, the `dcsa-bkg-v2`
 adapter, the webhook receiver, the admin page) only ever created bookings. This round adds the rest
@@ -3142,7 +3145,7 @@ Track & Trace 2.2, Commercial Schedules 1.0 (API 1.0.1).
   up to the spec. Not yet validated against a real carrier: that needs the Hapag-Lloyd sandbox
   signup (`TKT-HWCWCI`, the user's).
 
-### 8.35 DCSA everywhere, phases 0–1: spec validation, built-in DCSA carrier, manual confirm and eAdapter retired (2026-10-15, unreleased)
+### 8.35 DCSA everywhere, phases 0–1: spec validation, built-in DCSA carrier, manual confirm and eAdapter retired (2026-10-15, v0.91.10)
 
 Epic `TKT-G2J60Z` (decided by the user 2026-10-11). Every carrier data exchange, and in later phases
 the internal model, follows the DCSA standards (reference.dcsa.org). It ships phase by phase:
@@ -3838,7 +3841,7 @@ here:
 - **`applyChargeDefaults(shipmentId)`** (v0.91.8, §8.27). Triggered by
   `GET /api/shipments/:id/cost-lines`. Idempotent through an atomic claim on
   `shipment_charge_defaults_applied`.
-- **`autoImportContractCosts(shipmentId)`** (server.js, unreleased, §8.30). Imports a Central
+- **`autoImportContractCosts(shipmentId)`** (server.js, v0.91.10, §8.30). Imports a Central
   contract's costs once per contract. It has two triggers:
   1. `GET /api/shipments/:id/cost-lines` (`routes/shipment-ops.js`), which runs it before
      `applyChargeDefaults` so a contract line wins over a CCD for the same charge;

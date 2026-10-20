@@ -6,7 +6,7 @@ Full-stack freight management app. React 18 + Vite frontend, Express + dual-back
 `lib/db.js`) backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.91.9 "Reckoning"**
+- Version: **v0.91.10 "Plimsoll"**
 - First-time setup: `npm run setup` (`scripts/setup.js`) — boots the server once to create its
   schema, shuts it down cleanly, then seeds MDM reference data, in the correct order. NOT
   zero-script — a genuinely fresh `pgdata/` has no ports/carriers/vessels/commodities until this
@@ -781,6 +781,41 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.91.10 "Plimsoll")
+Bundled release of everything pushed since v0.91.9 without a version (d127c72, 8c7f625, 476485e, be90890, 4c4040f,
+0815581, 35b3b7a). The pre-release audit for it (TKT-SQVGJ2, 2026-10-09) found 11 issues, all fixed below.
+- **Contract routing lines** (`lib/routingLines.js`, mirrored in `services/contract-management`) — one unique line per
+  routing, ids stable across saves (upsert), 409 when removing a line a live shipment uses; a startup migration splits
+  connected leg runs into lines. Option 1 legs editor (`RoutingLinesEditor.jsx`). ARCHITECTURE.md §8.33.
+- **Space configurations on routing lines** (`allocation_routings`) with loop, customer and commodity; duplicate = same
+  line + loop + customer + commodity + overlapping period; a loop swap drops only the space link
+  (`revalidateSpaceLoop`); the sailing picker filters by loop and first origin TSP.
+- **Contract consumption dashboard** — stacked bars per contract number, Sankey, weekly trend; pending counts against
+  space; steering marker (`shipments.space_selection`), same-contract suggestion, overbook confirmation. §8.31–§8.32.
+- **MDM commodity codes** (FAK = 9999) on contracts, shipments, quotes, opportunities (`commodityCodeError`).
+- **Finance** (Epic TKT-XV4UHD + TKT-1V9GYU) — VAT per charge line, reverse-charge self-assessment, VAT liability panel
+  (§8.29); statements snapshot VAT, carry one legal entity (`lib/legal-entities.js`) and count as issued everywhere; one
+  SELL line per live billing document (`lib/billing-holds.js`); atomic GL Export claim, AR/AP at gross; gross
+  receivables incl. confirmed statements; FR01/FR02/CN01 deletable only while draft; a shipment that billed its customer
+  can't be deleted. Statements show Gross, VAT, Net.
+- **Audit TKT-SQVGJ2 fixes** — consumption buckets, FX part-payments, Invoice Collections per invoice, statement-billed
+  shipments, space badge counts pending, 90-day cap dropped, statements chased like invoices (TKT-IRH7WX), ZA/ZM/ZW +
+  SGSIN master data, contract-service routing guard. Shipment status lock (Completed/Cancelled) and the cancel rule
+  (carrier booking and submitted filings first), TKT-SPXTGR.
+- **Time zones** (476485e) — `lib/timezones.js` + `data/port-timezones.json`; every location has a correct IANA zone;
+  Port Locations shows zone, UTC offset and DST.
+- **DCSA carrier lifecycle** (Epic TKT-KG4E49, §8.34) — Booking 2.0 adapter rebuilt to the published spec; update,
+  amendment and cancel at the carrier; polling; Track & Trace 2.2 and Commercial Schedules pulls.
+- **DCSA everywhere, phases 0–1** (Epic TKT-G2J60Z, §8.35) — vendored specs + `lib/dcsa/validate.js` + `codes.js`; the
+  built-in DCSA carrier (`lib/dcsa-simulator/`, Test Tools → DCSA Carrier, App Settings → Demo carrier); the carrier's
+  CONFIRMED confirms and deducts space; manual Confirm Booking, the old message simulator and eAdapter removed.
+- **Fixes** — stable screening id on re-screen; shipment delete with a linked B/L; `SailingPickerModal` applies only its
+  newest search and `mockSailings()` has a fixed transit per sailing; Test Tools lists only bookings CargoDesk still
+  holds; `vite.config.js` pipes `/api` itself; tests independent of dev-database data (statement entity, offices,
+  Charge Defaults), and `containers.cy.js`'s Central-contract block runs again.
+- **Verification** — backend 95/95 files, services 19/19, Vitest 311/311, build, Cypress 250/250 (none skipped)
+  locally; CI green on each pushed commit.
 
 ## Recent changes (v0.91.9 "Reckoning")
 Bundled release — three new financial-integration features, none replacing an existing workflow.

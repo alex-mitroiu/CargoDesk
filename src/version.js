@@ -2,12 +2,18 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.91.9";
-export const BUILD     = "2026-09-27";
-export const CODENAME  = "Reckoning";
-export const BUILD_FINGERPRINT = "31b3476f";
+export const VERSION   = "0.91.10";
+export const BUILD     = "2026-10-16";
+export const CODENAME  = "Plimsoll";
+export const BUILD_FINGERPRINT = "0e839c40";
 
 export const CHANGELOG = [
+  {
+    version:  "0.91.10",
+    date:     "2026-10-16",
+    codename: "Plimsoll",
+    summary:  "Bundled release — contracts are built from unique routing lines that space configurations tick and a new consumption dashboard tracks; VAT is handled per charge line and seven finance-integration gaps are closed; the audit run before this release (TKT-SQVGJ2) found 11 issues, all fixed; every location has its correct time zone; and the DCSA-everywhere program begins: bookings go only to a DCSA carrier, and the carrier confirms them.\n\n**Contracts and space** — each contract routing is one unique line, with ids that stay stable across saves; removing a line a live shipment uses is refused. Space configurations tick routing lines and carry loop, customer and commodity. The Dashboard's contract consumption shows stacked bars per contract number, a Sankey breakdown and a weekly trend; pending shipments count against space, and a steering marker, same-contract suggestions and an overbooking confirmation guide the pick. MDM commodity codes (FAK = 9999) on contracts, shipments, quotes and opportunities.\n\n**Finance** (Epic TKT-XV4UHD, TKT-1V9GYU) — VAT treatment per charge line, reverse-charge self-assessment and a VAT liability panel. Statements snapshot their VAT, carry one legal entity and count as issued in GL Export, the VAT report, FX Revaluation and reports, and show Gross, VAT, Net. One SELL line per live billing document; the GL Export claim is atomic and posts AR/AP at gross; receivables are gross and include confirmed statements; FR01/FR02/CN01 can be deleted only while draft; a shipment that billed its customer can't be deleted (cancel it instead).\n\n**Audit fixes (TKT-SQVGJ2)** — space consumption buckets, FX part-payments, Invoice Collections per invoice, statement-billed shipments no longer reported as never invoiced, the space badge counts pending, the 90-day cap dropped, statements chased like invoices, the ZA/ZM/ZW countries and the SGSIN port, a contract-service routing guard. Completed and Cancelled shipments are locked, and a shipment can be cancelled only once its carrier booking and submitted filings are.\n\n**Time zones** — all 14,270 locations have a correct IANA zone (3,447 had none, 90 had the wrong offset); Port Locations shows each zone with its UTC offset and daylight saving.\n\n**DCSA everywhere, phases 0–1** (Epic TKT-G2J60Z) — the public DCSA specs are vendored, and every message sent or received is checked against them. A carrier with no DCSA integration of its own is played by a built-in DCSA carrier (always on outside production; in production only with App Settings → Demo carrier), answered from Test Tools → DCSA Carrier and badged DEMO CARRIER. The carrier's CONFIRMED confirms a booking and deducts space; the manual Confirm Booking, the old message simulator and eAdapter are retired. The booking adapter follows Booking 2.0: update, amendment and cancellation at the carrier, status polling, plus Track & Trace and Commercial Schedules pulls.\n\n**Fixes** — re-screening a shipment no longer fails on a duplicate id; a shipment whose booking has a linked B/L can be deleted; the sailing picker shows only its newest search, and a demo sailing keeps one ETA; Test Tools no longer lists bookings of deleted shipments; tests no longer depend on dev-database data.\n\n**Verification** — backend 95/95 files, services 19/19, Vitest 311/311, build, and Cypress 250/250 with none skipped, locally; CI green on every pushed commit.",
+  },
   {
     version:  "0.91.9",
     date:     "2026-09-27",
