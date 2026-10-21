@@ -793,4 +793,20 @@ from the card's corner. `DatePicker` now renders its calendar on `<body>` (as `C
 | New `src/components/primitives/DatePicker.test.jsx` | **3/3**. Each of the two halves of the fix was removed in turn, and the matching test failed |
 | Frontend unit tests (Vitest) | **339/339** in 29 files |
 | Real browser, SHP-K0D3U6's Shipping Instructions page | The calendar opens 6px under SI Cutoff, on its left edge; clicking the 15th sets "15 Oct 2026 · 09:00"; a click outside closes it. Nothing was saved |
-| Cypress | Not re-run: no spec opens a calendar (checked by searching the specs) |
+| Cypress | Not re-run, on a wrong claim that no spec opens a calendar: `lane-steering.cy.js` does (`#ls-to`). See the CI #126 follow-up below |
+
+### Follow-up, 2026-10-21: CI #126 (v0.91.11, 0d4aa12) failed in Cypress
+
+CI's Cypress job exited with code 3: three failures, all in `lane-steering.cy.js`. Reproduced on a
+local CI replica (a clean clone, empty database, `npm run seed`, `LOGIN_RATE_MAX=200`).
+
+- **Cause.** The date picker fix above moved the calendar to `<body>`. The spec opened the Lane
+  Steering pop-up's Valid To calendar and looked for its buttons inside the field (`#ls-to`), so it
+  found nothing. Tests 2 and 3 build on the lane test 1 creates, so they failed with it. The empty
+  database played no part. The earlier spec search had matched `#ls-to` and wrongly set it aside.
+- **Fix.** The calendar carries `id="<field id>-calendar"`, and the spec finds `#ls-to-calendar` with
+  `withinSubject: null`, since the calendar sits outside the pop-up's `within()` scope.
+  `DatePicker.test.jsx` checks the id.
+- **Search redone properly.** All 44 `<DatePicker>` uses were parsed (multi-line), and every id was
+  matched against every spec, along with the calendar's own button texts. Only `lane-steering.cy.js`
+  opens a calendar.

@@ -252,7 +252,7 @@ const DatePicker = ({
 
         {/* Popover */}
         {open && !disabled && createPortal(
-          <div ref={dropRef} style={{ ...popover, ...dropStyle }}>
+          <div ref={dropRef} id={id ? `${id}-calendar` : undefined} style={{ ...popover, ...dropStyle }}>
 
             {withTime && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12,

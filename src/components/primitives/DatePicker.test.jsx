@@ -20,6 +20,8 @@ describe("DatePicker", () => {
     const day = screen.getByRole("button", { name: "15" });
     expect(screen.getByTestId("glass").contains(day)).toBe(false);
     expect(document.body.contains(day)).toBe(true);
+    // Tests reach the calendar as #<id>-calendar (lane-steering.cy.js), since it's outside the field.
+    expect(document.getElementById("dp-calendar").contains(day)).toBe(true);
   });
 
   it("a click inside the portaled calendar picks the day rather than closing it as an outside click", () => {

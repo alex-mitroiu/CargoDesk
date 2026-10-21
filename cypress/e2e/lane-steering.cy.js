@@ -128,9 +128,11 @@ describe("Lane steering", () => {
       cy.get("#ls-origin").select("EU-N");
       cy.get("#ls-dest").select("NAM");
       cy.get("#ls-to > button").click();
-      cy.get("#ls-to").contains("button", "›").click().click();
-      cy.get("#ls-to").contains("button", /^December$/).should("be.visible");
-      cy.get("#ls-to").contains("button", /^31$/).click();
+      // The calendar is portaled to <body> (DatePicker.jsx), outside this within() scope.
+      const calendar = () => cy.get("#ls-to-calendar", { withinSubject: null });
+      calendar().contains("button", "›").click().click();
+      calendar().contains("button", /^December$/).should("be.visible");
+      calendar().contains("button", /^31$/).click();
       cy.get('[data-testid="lane-steering-switch"]').should("have.attr", "aria-checked", "false").click().should("have.attr", "aria-checked", "true");
       cy.contains("No options yet").should("be.visible");
       cy.get('[data-testid="lane-steering-save"]').should("be.disabled");
