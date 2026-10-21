@@ -63,6 +63,15 @@ describe("buildSpaceRows", () => {
     expect(build([alloc()])[0].belowMinimum).toBe(false);          // no minimum set: nothing to fall below
   });
 
+  it("shows weekly space for its week, but measures its minimum on the whole period (Epic TKT-KFGL81)", () => {
+    const row = build([alloc({ spaceBasis: "week", allocatedTEU: 15, weekNumber: 38, confirmedTEU: 4, minimumTEU: 40,
+      periodTotals: { confirmedTEU: 44, pendingTEU: 0, rejectedTEU: 0 } })])[0];
+    expect([row.weekly, row.weekNumber, row.confirmed, row.allocated]).toEqual([true, 38, 4, 15]);
+    expect([row.mqcConfirmed, row.belowMinimum]).toEqual([44, false]);
+    const period = build([alloc({ confirmedTEU: 4, minimumTEU: 40 })])[0];
+    expect([period.weekly, period.mqcConfirmed, period.belowMinimum]).toEqual([false, 4, true]);
+  });
+
   describe("trade lanes", () => {
     const info = { lanes: { NLRTM: "EU-N", USLAX: "NAM" }, names: {} };
     it("uses the stored lane, marked as not derived", () => {

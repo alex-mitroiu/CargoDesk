@@ -744,6 +744,131 @@ function DgComplianceSettingsPanel({ settings, onChange }) {
   );
 }
 
+// ─── Bookings → Escalations (Epic TKT-ASIYFL, Story 7; approved mockup
+// https://claude.ai/artifact/FXrT7utJNRgPabknbKyPmR, "App Settings" artboard) ─────────────────────
+// Company policy for booking escalations, admin-only on the server too (routes/system.js). Unlike the
+// rest of App Settings, changes here are a draft until Save, and Discard drops them (user, 2026-10-20).
+// "ETD or ETA": departure is compared with the DCSA request, arrival with the shipment's ETA when the
+// request was sent (carrier_bookings.requested_eta), since the request carries no arrival date.
+const BOOKING_CHANGE_DEFAULTS = { vessel: true, dates: true, toleranceDays: 1, equipment: true, ports: true };
+const bookingDraftOf = st => {
+  let rules = BOOKING_CHANGE_DEFAULTS;
+  try { rules = { ...BOOKING_CHANGE_DEFAULTS, ...JSON.parse(st.booking_change_rules || "{}") }; } catch { /* the defaults */ }
+  return {
+    booking_escalation_default_group: st.booking_escalation_default_group === "ccl_co" ? "ccl_co" : "occ_ay",
+    booking_no_answer_hours: String(st.booking_no_answer_hours ?? "2"),
+    booking_escalation_trade_level: st.booking_escalation_trade_level === "false" ? "false" : "true",
+    booking_change_rules: JSON.stringify(rules),
+  };
+};
+function BookingSettingsPanel({ settings, onSaved }) {
+  const saved = bookingDraftOf(settings);
+  const [draft, setDraft] = useState(saved);
+  const [tolerance, setTolerance] = useState(() => String(JSON.parse(saved.booking_change_rules).toleranceDays));
+  const [busy, setBusy] = useState(false);
+  const rules = JSON.parse(draft.booking_change_rules);
+  const set = (k, v) => setDraft(d => ({ ...d, [k]: v }));
+  const setRule = (k, v) => set("booking_change_rules", JSON.stringify({ ...rules, [k]: v }));
+  const hours = Number(draft.booking_no_answer_hours);
+  const hoursOk = draft.booking_no_answer_hours.trim() !== "" && hours > 0 && hours <= 168;
+  const toleranceOk = /^\d+$/.test(tolerance) && Number(tolerance) <= 30;
+  const dirty = Object.keys(saved).some(k => saved[k] !== draft[k]) || tolerance !== String(rules.toleranceDays);
+  const save = async () => {
+    const next = { ...draft, booking_no_answer_hours: String(hours), booking_change_rules: JSON.stringify({ ...rules, toleranceDays: Number(tolerance) }) };
+    setBusy(true);
+    try {
+      await api.settings.update(next);
+      onSaved(next);
+      setDraft(next);
+      toast.success("Escalation settings saved");
+    } catch (e) { toast.error(e?.message || "The escalation settings weren't saved"); }
+    finally { setBusy(false); }
+  };
+  const discard = () => { setDraft(saved); setTolerance(String(JSON.parse(saved.booking_change_rules).toleranceDays)); };
+
+  const card = { background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "18px 22px",
+    display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 20 };
+  const title = { fontFamily: T.body, fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 4 };
+  const desc = { fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.6 };
+  const keyLine = key => (
+    <div style={{ marginTop: 8, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>Setting key: <span style={{ color: T.accent }}>{key}</span></div>
+  );
+  const check = { display: "flex", alignItems: "center", gap: 8, fontFamily: T.body, fontSize: 13, color: T.text, cursor: "pointer" };
+  const num = ok => ({ width: 64, padding: "7px 10px", borderRadius: 6, border: `1px solid ${ok ? T.border : T.danger}`, background: T.bg, color: T.text, fontFamily: T.mono, fontSize: 13, textAlign: "right" });
+  const btn = primary => ({ padding: "8px 18px", borderRadius: 7, fontFamily: T.body, fontSize: 13, fontWeight: 700, cursor: "pointer",
+    border: primary ? "none" : `1px solid ${T.border}`, background: primary ? T.accent : "transparent", color: primary ? "#07111e" : T.textMuted });
+  return (
+    <div data-testid="settings-bookings" style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 680 }}>
+      <div style={card}>
+        <div>
+          <div style={title}>Default escalation group</div>
+          <div style={desc}>Pre-selected in OCC/BK's Escalate pop-up, and where automatic escalations go. OCC/AY works the export office's side, CCL/CO the import office's.</div>
+          {keyLine("booking_escalation_default_group")}
+        </div>
+        <select id="bk-default-group" aria-label="Default escalation group" data-testid="settings-booking-default-group"
+          value={draft.booking_escalation_default_group} onChange={e => set("booking_escalation_default_group", e.target.value)}
+          style={{ ...inp(), width: 220, flexShrink: 0 }}>
+          <option value="occ_ay">OCC/AY (export office)</option>
+          <option value="ccl_co">CCL/CO (import office)</option>
+        </select>
+      </div>
+
+      <div style={card}>
+        <div>
+          <div style={title}>No-answer time</div>
+          <div style={desc}>From sending the booking request to the carrier's first decision: confirmed, rejected or update requested. The automatic RECEIVED doesn't count. After this time the lane's steering switches carrier, or the booking escalates.</div>
+          {keyLine("booking_no_answer_hours")}
+          {!hoursOk && <div style={{ marginTop: 6, fontFamily: T.body, fontSize: 12, color: T.danger }}>Enter a number of hours above 0, at most 168.</div>}
+        </div>
+        <span style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
+          <input id="bk-no-answer" type="number" min="0.5" max="168" step="0.5" aria-label="No-answer time in hours" data-testid="settings-booking-no-answer"
+            value={draft.booking_no_answer_hours} onChange={e => set("booking_no_answer_hours", e.target.value)} style={num(hoursOk)} />
+          <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>hours</span>
+        </span>
+      </div>
+
+      <div style={{ ...card, flexDirection: "column", gap: 12 }}>
+        <div>
+          <div style={title}>Counts as “accepted with changes”</div>
+          <div style={desc}>The carrier confirmed, but its confirmation differs from the request in one of these. The Booking column shows it as changed, and OCC/BK decides whether to escalate. The ETA is checked against the shipment's ETA when the request was sent.</div>
+          {keyLine("booking_change_rules")}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+          <label htmlFor="bk-chg-vessel" style={check}><input id="bk-chg-vessel" type="checkbox" checked={rules.vessel} onChange={e => setRule("vessel", e.target.checked)} />Vessel or voyage</label>
+          <label htmlFor="bk-chg-dates" style={check}>
+            <input id="bk-chg-dates" type="checkbox" checked={rules.dates} onChange={e => setRule("dates", e.target.checked)} />
+            ETD or ETA by more than
+            <input type="number" min="0" max="30" step="1" aria-label="Days of tolerance" data-testid="settings-booking-tolerance" value={tolerance}
+              onChange={e => setTolerance(e.target.value)} style={{ ...num(toleranceOk), width: 52, padding: "4px 8px" }} />
+            day{tolerance === "1" ? "" : "s"}
+          </label>
+          <label htmlFor="bk-chg-equipment" style={check}><input id="bk-chg-equipment" type="checkbox" checked={rules.equipment} onChange={e => setRule("equipment", e.target.checked)} />Equipment</label>
+          <label htmlFor="bk-chg-ports" style={check}><input id="bk-chg-ports" type="checkbox" checked={rules.ports} onChange={e => setRule("ports", e.target.checked)} />Ports</label>
+        </div>
+        {!toleranceOk && <div style={{ fontFamily: T.body, fontSize: 12, color: T.danger }}>The tolerance is a whole number of days, 0 to 30.</div>}
+      </div>
+
+      <div style={card}>
+        <div>
+          <div style={title}>Trade level above Trade/AY</div>
+          <div style={desc}>Trade/AY can escalate to the Trade Managers of the lane. They can add messages, but can't pick sailings or change the shipment, and they send it back to Trade/AY.</div>
+          {keyLine("booking_escalation_trade_level")}
+        </div>
+        <Toggle on={draft.booking_escalation_trade_level !== "false"}
+          onChange={() => set("booking_escalation_trade_level", draft.booking_escalation_trade_level === "false" ? "true" : "false")} />
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10 }}>
+        {dirty && <span data-testid="settings-bookings-unsaved" style={{ fontFamily: T.body, fontSize: 12.5, color: T.warning, marginRight: "auto" }}>Unsaved changes</span>}
+        <button type="button" onClick={discard} disabled={!dirty || busy} data-testid="settings-bookings-discard"
+          style={{ ...btn(false), opacity: !dirty || busy ? .45 : 1, cursor: !dirty || busy ? "not-allowed" : "pointer" }}>Discard</button>
+        <button type="button" onClick={save} disabled={!dirty || busy || !hoursOk || !toleranceOk} data-testid="settings-bookings-save"
+          style={{ ...btn(true), opacity: !dirty || busy || !hoursOk || !toleranceOk ? .45 : 1, cursor: !dirty || busy || !hoursOk || !toleranceOk ? "not-allowed" : "pointer" }}>{busy ? "Saving…" : "Save"}</button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Admin Activity Log ───────────────────────────────────────────────────────
 
 const ACTION_LABELS = {
@@ -1650,7 +1775,8 @@ function OfficesPanel() {
 
 export default function AppSettingsPage() {
   const { isAdmin } = useAuth();
-  const tabs = isAdmin ? [...TABS_BASE, "Milestones", "Users", "Offices", "Activity Log", "Danger Zone"] : TABS_BASE;
+  // Bookings (booking escalation policy) sits after Compliance, for admins only (its settings are admin-only).
+  const tabs = isAdmin ? ["API Controls", "Finance", "Compliance", "Bookings", "Developer", "Milestones", "Users", "Offices", "Activity Log", "Danger Zone"] : TABS_BASE;
   const [activeTab,      setActiveTab]      = useState("API Controls");
   const [activeApiSub,   setActiveApiSub]   = useState("External APIs");
   const [settings,       setSettings]       = useState(null);
@@ -1681,7 +1807,7 @@ export default function AppSettingsPage() {
   const saveSetting = useCallback((key, value) => {
     clearTimeout(saveTimers.current[key]);
     saveTimers.current[key] = setTimeout(() => {
-      api.settings.update({ [key]: value }).catch(() => toast.error("Failed to save"));
+      api.settings.update({ [key]: value }).catch(e => toast.error(e?.message || "Failed to save"));
     }, 400);
   }, []);
 
@@ -2220,6 +2346,13 @@ export default function AppSettingsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {activeTab === "Bookings" && isAdmin && settings && (
+        <>
+          <SubTabBar tabs={["Escalations"]} active="Escalations" onChange={() => {}} />
+          <BookingSettingsPanel settings={settings} onSaved={next => setSettings(s => ({ ...s, ...next }))} />
+        </>
       )}
 
       {activeTab === "Compliance" && settings && (

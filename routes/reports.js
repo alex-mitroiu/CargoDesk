@@ -83,6 +83,75 @@ module.exports = function reportsRoutes(app, ctx) {
   // everywhere else in the app (their own office + trade-lane/pol/country scope items) — the
   // same "profile configuration" the shipment list itself already respects, not a parallel rule.
   // Anyone else (occ_bk, viewer) is still turned away outright.
+  // ─── Carrier Responses (Epic TKT-ASIYFL, Story 7; approved mockup
+  // https://claude.ai/artifact/FXrT7utJNRgPabknbKyPmR, "Carrier responses" artboard) ─────────────────
+  // How carriers answer booking requests, per carrier: every booking request sent (an outbound
+  // booking_request on the shipment's thread) in the period, and the carrier's decisions on it (inbound
+  // messages with the same correlation id: confirmed, confirmed with changes, rejected, update requested
+  // — the automatic RECEIVED isn't a decision). "No answer" is a request without a decision after the
+  // no-answer time; one still inside it is "waiting". The median time runs to the first decision; the
+  // outcome is the latest one. Counted by the date each request was sent. Same gate and trade-manager
+  // scope as the other reports.
+  const DECISIONS = ["confirmed", "confirmed_with_changes", "rejected", "update_requested"];
+  app.get("/api/reports/carrier-responses", auth(), async (req, res) => {
+    if (!reportsGate(req, res)) return;
+    const day = /^\d{4}-\d{2}-\d{2}$/;
+    const from = day.test(req.query.from || "") ? req.query.from : null;
+    const to = day.test(req.query.to || "") ? req.query.to : null;
+    const lane = String(req.query.lane || "");
+    const params = [], p = v => { params.push(v); return `$${params.length}`; };
+    const rows = await query(`
+      WITH sent AS (
+        SELECT o.id, o.shipment_id, o.carrier_code, o.correlation_id, o.created_at AS sent_at, s.pol, s.pod
+        FROM edi_messages o JOIN shipments s ON s.id = o.shipment_id
+        WHERE o.direction='out' AND o.message_type='booking_request'
+          ${from ? `AND o.created_at >= ${p(from)}` : ""} ${to ? `AND o.created_at < ${p(`${to}T23:59:59.999Z`)}` : ""}),
+      decided AS (
+        SELECT i.correlation_id, MIN(i.created_at) AS first_at, (ARRAY_AGG(i.status ORDER BY i.created_at DESC))[1] AS outcome
+        FROM edi_messages i
+        WHERE i.direction='in' AND i.status IN (${DECISIONS.map(d => p(d)).join(",")}) AND COALESCE(i.correlation_id,'') <> ''
+          AND i.correlation_id IN (SELECT correlation_id FROM sent)
+        GROUP BY i.correlation_id)
+      SELECT sent.*, decided.first_at, decided.outcome FROM sent LEFT JOIN decided ON decided.correlation_id = sent.correlation_id`, params);
+    const scope = await scopedShipmentIds(req);
+    const laneOf = r => { const o = ctx.longestLane(r.pol), d = ctx.longestLane(r.pod); return o && d ? `${o} → ${d}` : ""; };
+    const hours = Number((await getSettings()).booking_no_answer_hours);
+    const cutoff = Date.now() - (Number.isFinite(hours) && hours > 0 ? hours : 2) * 3600e3;
+    const lanes = new Set(), by = new Map();
+    const blank = code => ({ carrierCode: code, sent: 0, decided: 0, noAnswer: 0, waiting: 0, confirmed: 0, changed: 0, rejected: 0, updateRequested: 0, times: [] });
+    for (const r of rows) {
+      if (scope && !scope.has(r.shipment_id)) continue;
+      const l = laneOf(r);
+      if (l) lanes.add(l);
+      if (lane && l !== lane) continue;
+      const code = r.carrier_code || "—";
+      for (const key of [code, "*"]) {
+        if (!by.has(key)) by.set(key, blank(key));
+        const t = by.get(key);
+        t.sent++;
+        if (r.first_at) {
+          t.decided++;
+          t.times.push((Date.parse(r.first_at) - Date.parse(r.sent_at)) / 1000);
+          if (r.outcome === "confirmed") t.confirmed++;
+          else if (r.outcome === "confirmed_with_changes") { t.confirmed++; t.changed++; }
+          else if (r.outcome === "rejected") t.rejected++;
+          else t.updateRequested++;
+        } else if (Date.parse(r.sent_at) <= cutoff) t.noAnswer++;
+        else t.waiting++;
+      }
+    }
+    const median = list => {
+      if (!list.length) return null;
+      const v = [...list].sort((a, b) => a - b), m = Math.floor(v.length / 2);
+      return Math.round(v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2);
+    };
+    const names = new Map((await query("SELECT code, name FROM carriers")).map(c => [c.code, c.name]));
+    const shape = t => { const { times, ...rest } = t; return { ...rest, carrierName: names.get(t.carrierCode) || "", medianSeconds: median(times) }; };
+    const carriers = [...by.values()].filter(t => t.carrierCode !== "*").sort((a, b) => b.sent - a.sent || a.carrierCode.localeCompare(b.carrierCode)).map(shape);
+    ok(res, { from, to, lane, lanes: [...lanes].sort(), noAnswerHours: Number.isFinite(hours) && hours > 0 ? hours : 2,
+      carriers, total: by.has("*") ? { ...shape(by.get("*")), carrierCode: "", carrierName: "All carriers" } : null });
+  });
+
   const reportsGate = (req, res) => {
     const u = req.user;
     const roles = Array.isArray(u.roles) ? u.roles : [u.role || 'viewer'];

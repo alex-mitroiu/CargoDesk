@@ -4,6 +4,7 @@ import { T } from "../../tokens";
 import { api } from "../../api";
 import { Modal } from "../primitives/Modal";
 import Spinner from "../primitives/Spinner";
+import { LegRoleChip, SailingLegs, viaText, MAIN_COLOR } from "./LegRoles";
 
 // Render the journey breadcrumb in the correct door-to-port order
 const JourneyBreadcrumb = ({ pol, pod, routingTerm }) => {
@@ -51,7 +52,7 @@ const JourneyBreadcrumb = ({ pol, pod, routingTerm }) => {
 
 const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing, onSelect, onClose,
   selectLabel = "Select →", expectedHub = null, expectedService = null,
-  requiredService = null, requiredHub = null }) => {
+  requiredService = null, requiredHub = null, spotPricing = null, onSelectWithOffer = null }) => {
   const [sailings, setSailings] = useState(null);
   const [showAll,  setShowAll]  = useState(false);
   const [loading,  setLoading]  = useState(true);
@@ -92,6 +93,21 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
   };
 
   useEffect(() => { search(weeks); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // SPOT rates, phase 2 (2026-10-21): on a SPOT shipment each departure can show the carrier's spot
+  // price (its own connection, or the demo carrier), matched to the sailing by main vessel and ETD.
+  // spotPricing = { carrierCode, pol, pod, equipment:[{containerType, quantity}], from }.
+  const [spotOn, setSpotOn] = useState(!!spotPricing);
+  const [spot, setSpot] = useState(null);
+  useEffect(() => {
+    if (!spotPricing || !spotOn || !spotPricing.equipment?.length) return;
+    let cancelled = false;
+    api.spotOffers.fromCarrier({ carrierCode: spotPricing.carrierCode, pol: spotPricing.pol, pod: spotPricing.pod,
+      equipment: spotPricing.equipment.map(e => `${e.containerType}:${e.quantity}`).join(","), from: spotPricing.from || "", weeks: String(weeks) })
+      .then(r => !cancelled && setSpot(r)).catch(e => !cancelled && setSpot({ available: false, offers: [], message: e.message }));
+    return () => { cancelled = true; };
+  }, [spotOn, weeks]); // eslint-disable-line react-hooks/exhaustive-deps
+  const spotFor = s => (spot?.offers || []).find(o => o.vessel === s.vesselName && o.etd === String(s.etd || "").slice(0, 10));
 
   const SOURCE_BADGE = {
     catalog: { label: "Catalog", color: T.success },
@@ -139,6 +155,15 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
           <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
             color: T.accent, marginLeft: "auto" }}>{carrierCode}</span>
         </div>
+        {spotPricing && (
+          <label data-testid="sailing-spot-toggle" style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: T.body, fontSize: 12.5, color: T.text, cursor: "pointer" }}>
+            <input type="checkbox" checked={spotOn} onChange={e => setSpotOn(e.target.checked)} />
+            {spotPricing.carrierCode} spot prices
+            <span style={{ color: T.textMuted }}>
+              {spotOn && spot && !spot.available ? `— ${spot.message}` : spotOn && spot?.demo ? "— from the demo carrier (generated prices)" : "(a SPOT shipment: each departure priced by the carrier)"}
+            </span>
+          </label>
+        )}
 
         {loading && (
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "20px 0",
@@ -202,10 +227,12 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
                     activeSailing.voyageNumber === s.voyageNumber ||
                     (activeSailing.vesselName === s.vesselName && activeSailing.etd === s.etd)
                   );
-                  const baseBorder = isActive ? T.success + "88" : isTSP ? T.warning + "55" : T.border;
+                  const baseBorder = isActive ? T.success + "88" : isTSP ? MAIN_COLOR + "55" : T.border;
                   const baseBg    = isActive ? T.success + "0f" : T.bg;
+                  const offer = spotPricing && spotOn ? spotFor(s) : null;
                   return (
-                    <button key={i} type="button" onClick={() => onSelect(s)}
+                    <div key={i} style={{ display: "flex", flexDirection: "column" }}>
+                    <button type="button" onClick={() => onSelect(s)}
                       style={{ display: "flex", flexDirection: "column", gap: 6,
                         padding: "12px 14px", textAlign: "left",
                         background: baseBg, border: `1px solid ${baseBorder}`,
@@ -219,13 +246,16 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
                         gap: 12, alignItems: "center", width: "100%" }}>
 
                         <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-                          <div style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text,
-                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {s.vesselName}
-                            <span style={{ marginLeft: 6 }}>{sourceBadge(s.source || (s.isMock ? "mock" : "live"))}</span>
+                          {/* A transshipment is headlined by its main vessel (the leg with the longest transit;
+                              the server's withMainVessel), marked MAIN, with its hubs and feeders beneath. */}
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text,
+                            overflow: "hidden", whiteSpace: "nowrap" }}>
+                            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{s.vesselName}</span>
+                            {isTSP && <LegRoleChip role="MAIN" />}
+                            <span>{sourceBadge(s.source || (s.isMock ? "mock" : "live"))}</span>
                           </div>
                           <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                            {s.service} · Voy {s.voyageNumber}
+                            {isTSP ? `Voy ${s.voyageNumber} · ${viaText(s)}` : `${s.service} · Voy ${s.voyageNumber}`}
                           </div>
                         </div>
 
@@ -259,15 +289,6 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
                               ✓ Matches contract
                             </span>
                           )}
-                          {isTSP && (
-                            <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700,
-                              background: T.warning + "18", color: T.warning,
-                              border: `1px solid ${T.warning}44`,
-                              borderRadius: 4, padding: "1px 6px", textTransform: "uppercase",
-                              whiteSpace: "nowrap" }}>
-                              TSP · {s.legs.length} legs
-                            </span>
-                          )}
                           {isActive
                             ? <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
                                 color: T.success, background: T.success + "18",
@@ -284,44 +305,30 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
                         </div>
                       </div>
 
-                      {/* TSP leg breakdown */}
+                      {/* Every leg in sailing order: feeder, main, feeder */}
                       {isTSP && (
-                        <div style={{ display: "flex", alignItems: "center", gap: 6,
-                          padding: "6px 8px", background: T.warning + "08",
-                          borderRadius: 5, border: `1px solid ${T.warning}22` }}>
-                          <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted,
-                            textTransform: "uppercase", letterSpacing: ".06em", flexShrink: 0 }}>
-                            Route:
-                          </span>
-                          {s.legs.map((leg, li) => (
-                            <span key={li} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                              <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
-                                color: T.text }}>{leg.pol}</span>
-                              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>→</span>
-                              {li === s.legs.length - 1 && (
-                                <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
-                                  color: T.text }}>{leg.pod}</span>
-                              )}
-                              {li < s.legs.length - 1 && (
-                                <span style={{ fontFamily: T.mono, fontSize: 11,
-                                  color: T.warning, fontWeight: 700,
-                                  background: T.warning + "18", borderRadius: 3,
-                                  padding: "0 5px" }}>{leg.pod}</span>
-                              )}
-                              {li < s.legs.length - 1 && (
-                                <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>
-                                  ({leg.vesselName}) →
-                                </span>
-                              )}
-                            </span>
-                          ))}
-                          <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted,
-                            marginLeft: "auto", flexShrink: 0 }}>
-                            Will create {s.legs.length} sea legs
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, borderTop: `1px solid ${T.border}`, paddingTop: 8 }}>
+                          <SailingLegs sailing={s} testId={`sailing-legs-${i}`} />
+                          <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                            Creates {s.legs.length} sea legs in this order. The shipment's vessel becomes <b style={{ color: T.text }}>{s.vesselName}</b> (main).
                           </span>
                         </div>
                       )}
                     </button>
+                    {offer && (
+                      <div data-testid={`sailing-spot-${i}`} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginTop: -1, padding: "8px 14px",
+                        border: `1px solid ${baseBorder}`, borderTop: `1px dashed ${T.border}`, borderRadius: "0 0 8px 8px", background: T.surface, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+                        <span>Spot</span>
+                        <b style={{ fontFamily: T.mono, fontSize: 13.5, color: T.text }}>USD {Math.round(offer.totalUsd).toLocaleString("en-US")}</b>
+                        <span style={{ fontFamily: T.mono }}>{offer.offerRef}</span>
+                        <span>valid until {new Date(offer.validUntil).toISOString().slice(0, 16).replace("T", " ")} UTC</span>
+                        <span style={{ flex: 1 }} />
+                        <button type="button" data-testid={`sailing-spot-take-${i}`} onClick={() => onSelectWithOffer?.(s, offer)}
+                          style={{ padding: "5px 10px", borderRadius: 6, border: "none", background: T.accent, color: "#06111f", fontFamily: T.body, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                          Sailing + offer</button>
+                      </div>
+                    )}
+                    </div>
                   );
                 })}
               </div>

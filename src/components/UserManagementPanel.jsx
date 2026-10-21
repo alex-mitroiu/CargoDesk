@@ -13,21 +13,27 @@ import { IconPencil, IconUnlock, IconLock, IconClose, IconRefresh } from "./prim
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const ALL_ROLES = ["admin", "operator", "occ_bk", "trade_manager", "sales", "viewer"];
-const ROLE_RANK = { viewer: 0, occ_bk: 1, trade_manager: 1, sales: 1, operator: 2, admin: 3 };
+const ALL_ROLES = ["admin", "operator", "occ_bk", "occ_ay", "ccl_co", "trade_ay", "trade_manager", "sales", "viewer"];
+const ROLE_RANK = { viewer: 0, occ_bk: 1, occ_ay: 1, ccl_co: 1, trade_ay: 1, trade_manager: 1, sales: 1, operator: 2, admin: 3 };
 const ROLE_COLORS = {
   admin:         { bg: "#3b82f618", text: "#3b82f6",  border: "#3b82f644" },
   operator:      { bg: "#10b98118", text: "#10b981",  border: "#10b98144" },
   occ_bk:        { bg: "#f59e0b18", text: "#f59e0b",  border: "#f59e0b44" },
+  occ_ay:        { bg: "#14b8a618", text: "#14b8a6",  border: "#14b8a644" },
+  ccl_co:        { bg: "#84cc1618", text: "#84cc16",  border: "#84cc1644" },
+  trade_ay:      { bg: "#f9731618", text: "#f97316",  border: "#f9731644" },
   trade_manager: { bg: "#8b5cf618", text: "#8b5cf6",  border: "#8b5cf644" },
   sales:         { bg: "#ec489918", text: "#ec4899",  border: "#ec489944" },
   viewer:        { bg: T.border + "30", text: T.textMuted, border: T.border },
 };
-const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", trade_manager: "Trade Manager", sales: "Sales", viewer: "Viewer" };
+const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", occ_ay: "OCC/AY", ccl_co: "CCL/CO", trade_ay: "Trade/AY", trade_manager: "Trade Manager", sales: "Sales", viewer: "Viewer" };
 const ROLE_DESCRIPTIONS = {
   admin:         "Full system access including user management",
   operator:      "Manage shipments, configs & MDM",
   occ_bk:        "Place bookings and manage customers",
+  occ_ay:        "Booking escalations for its export offices: finds alternatives, hands over or escalates; read-only shipments",
+  ccl_co:        "Booking escalations for its import offices: finds alternatives, hands back or escalates; read-only shipments",
+  trade_ay:      "Booking escalations on its trade lanes: alternatives, impossible or send back; read-only shipments",
   trade_manager: "Manage space configurations and contracts; read-only shipments",
   sales:         "Owns the sales pipeline — Opportunities and Quotes; no booking authority",
   viewer:        "Read-only access to all data",
@@ -39,7 +45,9 @@ const ROLE_DESCRIPTIONS = {
 // scope row for that role could only ever be created via raw API calls (TKT-DF92V5).
 // sales (User Management redesign, 2026-09-12) gets the same Branch/Country office-visibility
 // grant sections as everyone else here — that's the whole point of giving it its own role.
-const SCOPED_ROLES = ["occ_bk", "operator", "trade_manager", "sales"];
+// The escalation roles (TKT-ASIYFL) are routed by exactly these scopes: OCC/AY and CCL/CO by their
+// offices, Trade/AY by its trade lanes.
+const SCOPED_ROLES = ["occ_bk", "occ_ay", "ccl_co", "trade_ay", "operator", "trade_manager", "sales"];
 
 const primaryRole = (roles) =>
   [...(roles || [])].sort((a, b) => ROLE_RANK[b] - ROLE_RANK[a])[0] || "viewer";

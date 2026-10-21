@@ -1,5 +1,7 @@
 "use strict";
 
+const { withMainVessel } = require("../lib/mainLeg");
+
 module.exports = function systemRoutes(app, ctx) {
   const { query, transaction, ok, err, auth, requireRole,
           mapSystemMessage, getSettings, scheduleNextOfacSync, scheduleNextCslSync, loadSanctionsIndex, fxCache,
@@ -162,6 +164,26 @@ module.exports = function systemRoutes(app, ctx) {
     // booked against the built-in simulator (DCSA everywhere, decided 2026-10-11: an admin turns it on).
     if ("dcsa_demo_carrier_enabled" in updates && !req.user.roles.includes("admin"))
       return err(res, "Only an admin can turn the Demo carrier on or off", 403);
+    // Booking escalations (App Settings → Bookings, Epic TKT-ASIYFL): company policy, so admin-only —
+    // OCC/BK, who may use this route, is the one raising escalations. Each value is checked.
+    const BOOKING_KEYS = ["booking_escalation_default_group", "booking_no_answer_hours", "booking_escalation_trade_level", "booking_change_rules"];
+    if (BOOKING_KEYS.some(k => k in updates)) {
+      if (!req.user.roles.includes("admin")) return err(res, "Only an admin can change the booking escalation settings", 403);
+      if ("booking_escalation_default_group" in updates && !["occ_ay", "ccl_co"].includes(updates.booking_escalation_default_group))
+        return err(res, "The default escalation group is OCC/AY (occ_ay) or CCL/CO (ccl_co)");
+      if ("booking_no_answer_hours" in updates && !(Number(updates.booking_no_answer_hours) > 0 && Number(updates.booking_no_answer_hours) <= 168))
+        return err(res, "The no-answer time is a number of hours above 0, at most 168 (a week)");
+      if ("booking_escalation_trade_level" in updates && !["true", "false"].includes(String(updates.booking_escalation_trade_level)))
+        return err(res, "The Trade level is on (true) or off (false)");
+      if ("booking_change_rules" in updates) {
+        let rules = null;
+        try { rules = JSON.parse(updates.booking_change_rules); } catch { rules = null; }
+        const days = Number(rules?.toleranceDays);
+        if (!rules || typeof rules !== "object" || Array.isArray(rules) || !["vessel", "dates", "equipment", "ports"].every(k => typeof rules[k] === "boolean")
+          || !(Number.isInteger(days) && days >= 0 && days <= 30))
+          return err(res, "The change rules are { vessel, dates, equipment, ports } on or off, and toleranceDays 0–30");
+      }
+    }
     // Same empty-break-glass-set lockout guard as the dedicated route above — this generic route
     // is still a valid way for an admin to set this key, so the safety check has to live here too,
     // not just there.
@@ -299,8 +321,26 @@ module.exports = function systemRoutes(app, ctx) {
 
   // ─── Schedules ────────────────────────────────────────────────────────────
 
-  // Common TSP hubs used in mock data
-  const MOCK_TSP_HUBS = ["SGSIN", "AEDXB", "GBFXT", "DEHAM", "MAPTM"];
+  // Demo transshipment sailings (rebuilt 2026-10-21 for the main vessel, the leg with the longest
+  // transit): a short feeder from the port of loading to a hub near it, the main vessel across, and on
+  // some sailings a second short feeder from a hub near the port of discharge — feeder, main, feeder,
+  // the way real transshipments run. Hubs are picked by the region the port is in.
+  const DEMO_HUBS = {
+    europe: ["BEANR", "GBLGP", "DEHAM"], med: ["ESALG", "MAPTM", "GRPIR"], asia: ["SGSIN", "HKHKG", "KRPUS"],
+    middleEast: ["AEJEA", "OMSLL", "LKCMB"], americas: ["BSFPO", "JMKIN", "PAMIT"], africa: ["ZADUR", "TGLFW", "MAPTM"],
+    oceania: ["AUSYD", "NZAKL", "SGSIN"],
+  };
+  const DEMO_REGION = {};
+  for (const [region, codes] of Object.entries({
+    europe: "NL BE DE GB FR DK SE NO FI PL IE IS EE LV LT", med: "ES PT IT GR TR MT HR SI CY MA EG TN DZ IL LB",
+    asia: "CN HK TW KR JP SG MY TH VN ID PH KH MM BD", middleEast: "AE SA OM QA KW BH IR IQ IN PK LK",
+    americas: "US CA MX BR AR CL CO PE EC PA CR GT BS JM DO", africa: "ZA NG GH CI TG KE TZ MZ AO SN", oceania: "AU NZ PG FJ",
+  })) for (const c of codes.split(" ")) DEMO_REGION[c] = region;
+  const demoHub = (port, avoid, h) => {
+    const hubs = (DEMO_HUBS[DEMO_REGION[String(port).slice(0, 2).toUpperCase()]] || ["SGSIN", "AEJEA", "BEANR"]).filter(x => !avoid.includes(x));
+    return hubs[h % hubs.length];
+  };
+  const isoPlus = (iso, days) => { const d = new Date(`${iso}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
 
   function mockSailings(pol, pod, carrierCode, weeks) {
     const NAMES = ["ALLEGRO","BRAVURA","CADENZA","DULCIMER","ENSEMBLE","FANFARE","GRANDEUR","HARMONY"];
@@ -309,35 +349,40 @@ module.exports = function systemRoutes(app, ctx) {
     return Array.from({ length: count }, (_, i) => {
       const etd = new Date(today);
       etd.setDate(etd.getDate() + 4 + i * Math.round(7 / 1.5));
+      const etdStr = etd.toISOString().slice(0, 10);
       // Same sailing, same transit time on every search (2026-10-15). It used to be Math.random()
       // per call, so one demo sailing showed a different ETA each time it was searched — and the
       // dev-mode double search in SailingPickerModal could apply a different ETA than the one shown.
-      const transit = 14 + [...`${pol}|${pod}|${carrierCode}|${etd.toISOString().slice(0, 10)}`]
-        .reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % 22;
-      const eta = new Date(etd);
-      eta.setDate(eta.getDate() + transit);
-      const etdStr = etd.toISOString().slice(0, 10);
-      const etaStr = eta.toISOString().slice(0, 10);
+      const h = [...`${pol}|${pod}|${carrierCode}|${etdStr}`].reduce((acc, c) => (acc * 31 + c.charCodeAt(0)) >>> 0, 7);
+      const transit = 14 + h % 22;
+      const etaStr = isoPlus(etdStr, transit);
+      const voyage = n => `DM${String(n).padStart(3, "0")}`;
 
-      // Every 3rd sailing is a TSP (transshipment) sailing with two sea legs
-      const isTSP = (i % 3 === 2);
-      const tspHub = isTSP ? MOCK_TSP_HUBS[i % MOCK_TSP_HUBS.length] : null;
-      const leg1Transit = isTSP ? Math.round(transit * 0.55) : transit;
-      const tspEta     = isTSP ? (() => { const d = new Date(etd); d.setDate(d.getDate() + leg1Transit); return d.toISOString().slice(0, 10); })() : null;
-
-      const legs = isTSP ? [
-        { pol, pod: tspHub, etd: etdStr, eta: tspEta,
-          vesselName: `DEMO ${NAMES[i % NAMES.length]}`,
-          voyageNumber: `DM${String(i + 1).padStart(3, "0")}W`, service: "DEMO SERVICE" },
-        { pol: tspHub, pod, etd: tspEta, eta: etaStr,
-          vesselName: `DEMO ${NAMES[(i + 1) % NAMES.length]}`,
-          voyageNumber: `DM${String(i + 2).padStart(3, "0")}E`, service: "DEMO SERVICE" },
-      ] : null;
+      // Every 3rd sailing is a transshipment: two legs (feeder, main), every 6th three (feeder, main, feeder).
+      const tsp = i % 3 === 2, threeLegs = i % 6 === 5;
+      let legs = null;
+      if (tsp) {
+        const feeder1 = 1 + (h >>> 3) % 2, dwell1 = 1 + (h >>> 4) % 2;
+        const feeder2 = threeLegs ? 1 + (h >>> 5) % 2 : 0, dwell2 = threeLegs ? 1 : 0;
+        const hubOut = demoHub(pol, [pol, pod], h);
+        // Unsigned shifts: h is an unsigned 32-bit hash, and a signed shift could go negative (an undefined
+        // hub, a 0-day feeder — seen on Change Sailing as "via BEANR, , feeders …", 2026-10-21).
+        const hubIn = threeLegs ? demoHub(pod, [pol, pod, hubOut], h >>> 2) : pod;
+        const mainFrom = isoPlus(etdStr, feeder1 + dwell1), mainTo = isoPlus(etdStr, transit - feeder2 - dwell2);
+        legs = [
+          { pol, pod: hubOut, etd: etdStr, eta: isoPlus(etdStr, feeder1),
+            vesselName: `DEMO ${NAMES[(i + 3) % NAMES.length]}`, voyageNumber: `${voyage(i + 1)}F`, service: "DEMO FEEDER" },
+          { pol: hubOut, pod: hubIn, etd: mainFrom, eta: mainTo,
+            vesselName: `DEMO ${NAMES[i % NAMES.length]}`, voyageNumber: `${voyage(i + 1)}W`, service: "DEMO SERVICE" },
+          ...(threeLegs ? [{ pol: hubIn, pod, etd: isoPlus(mainTo, dwell2), eta: etaStr,
+            vesselName: `DEMO ${NAMES[(i + 5) % NAMES.length]}`, voyageNumber: `${voyage(i + 1)}N`, service: "DEMO FEEDER" }] : []),
+        ];
+      }
 
       return {
         carrier: carrierCode || "—",
         vesselName: `DEMO ${NAMES[i % NAMES.length]}`,
-        voyageNumber: `DM${String(i + 1).padStart(3, "0")}W`,
+        voyageNumber: `${voyage(i + 1)}W`,
         service: "DEMO SERVICE",
         pol, pod,
         etd: etdStr,
@@ -402,10 +447,33 @@ module.exports = function systemRoutes(app, ctx) {
     }));
   };
 
+  // One carrier's sailings: its own catalog sailings, else its schedules integration, else the demo
+  // sailings (when they're on). What booking-escalation alternatives and the no-answer switch offer
+  // (Epic TKT-ASIYFL) — the plain search below returns every carrier's catalog sailings first.
+  async function carrierSailings({ pol, pod, carrierCode, weeks = 4 }) {
+    let sailings = (await catalogSailings(pol, pod, weeks)).filter(s => s.carrier === carrierCode);
+    if (!sailings.length) {
+      const integ = await carrierIntegrationFor(carrierCode, "schedules");
+      if (integ) {
+        const result = await integ.adapter.searchSchedules(integ.config, { pol, pod, carrierCode, weeks });
+        if (result.ok) sailings = result.sailings;
+        else console.error(`Carrier integration ${carrierCode}/${integ.row.adapter_key}: searchSchedules failed:`, result.error);
+      }
+    }
+    if (!sailings.length && (await getSettings()).demo_schedules_enabled !== 'false')
+      sailings = mockSailings(pol, pod, carrierCode, weeks).map(s => ({ ...s, source: "mock" }));
+    return sailings.map(withMainVessel);
+  }
+  ctx.carrierSailings = carrierSailings;
+
   app.get("/api/schedules/search", auth(), async (req, res) => {
-    const { pol, pod, carrierCode, weeks: w = "4" } = req.query;
+    const { pol, pod, carrierCode, weeks: w = "4", onlyCarrier = "" } = req.query;
     if (!pol || !pod) return res.status(400).json({ error: "pol and pod are required" });
     const weeks = Math.min(Math.max(parseInt(w) || 4, 1), 12);
+    if (onlyCarrier === "1" && carrierCode) {
+      const only = await carrierSailings({ pol, pod, carrierCode, weeks });
+      return ok(res, { sailings: only, pol, pod, carrierCode, isMock: only.some(s => s.isMock), catalogCount: only.filter(s => s.source === "catalog").length });
+    }
 
     const catalog = await catalogSailings(pol, pod, weeks);
 
@@ -433,6 +501,7 @@ module.exports = function systemRoutes(app, ctx) {
       usedDemo = true;
     }
     const isMock = usedDemo; // kept for the frontend's existing isMock check
-    ok(res, { sailings, pol, pod, carrierCode, isMock, catalogCount: catalog.length });
+    // A transshipment sailing is headlined by its main vessel (lib/mainLeg.js), whatever its source.
+    ok(res, { sailings: sailings.map(withMainVessel), pol, pod, carrierCode, isMock, catalogCount: catalog.length });
   });
 };

@@ -17,6 +17,7 @@ import { onLegsScheduleChanged } from "../../legsScheduleBus";
 import { deriveLoopCode } from "../../utils/scheduleLoop";
 import { isShipmentLocked } from "../../utils/shipmentLock";
 import LoopRouteModal from "./LoopRouteModal";
+import { LegRoleChip, viaText } from "./LegRoles";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
 
 // ─── Persistent Shipment Header ────────────────────────────────────────────
@@ -126,12 +127,17 @@ const ChipRow = ({ shipment, ctrs, cargoValueUsd, openTicketCount }) => {
   const containerSummary = ctrs.length === 0 ? null
     : ctrTypeKeys.length === 1 ? `${ctrs.length}×${ctrTypeKeys[0]}`
     : `${ctrs.length} container${ctrs.length !== 1 ? "s" : ""}`;
+  // The vessel is the main sea leg's (syncShipmentFromLegs); a transshipment marks it MAIN and says
+  // which hub and feeder it goes via (agreed 2026-10-21).
+  const ts = shipment.transshipment;
   const carrierSeg = shipment.carrierCode
-    ? `${shipment.carrierCode}${shipment.vessel ? ` · ${shipment.vessel}${shipment.voyage ? ` / ${shipment.voyage}` : ""}` : ""}`
+    ? <>{`${shipment.carrierCode}${shipment.vessel ? ` · ${shipment.vessel}${shipment.voyage ? ` / ${shipment.voyage}` : ""}` : ""}`}{ts && shipment.vessel && <> <LegRoleChip role="MAIN" muted={HZ.textMuted} /></>}</>
     : null;
+  const via = ts ? viaText({ legs: ts.legs, mainLegIndex: ts.mainIndex }).replace(/^via /, "") : "";
   const chips = [
     shipment.incoterm && { label: "Incoterm", value: shipment.incoterm },
     carrierSeg && { label: null, value: carrierSeg, accent: true },
+    via && { label: "via", value: via },
     shipment.contractRef && { label: "Contract", value: shipment.contractRef },
     containerSummary && { label: "Cargo", value: containerSummary },
     cargoValueUsd != null && { label: "Cargo Value", value: fmtCurr(cargoValueUsd, "USD") },

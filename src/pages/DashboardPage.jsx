@@ -10,9 +10,11 @@ import Pagination from "../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
-import { IconWarning, IconRefresh, IconArrowDown, IconDashboard, IconFileCertificate, IconShip, IconCoin } from "../components/primitives/Icon";
+import { IconWarning, IconRefresh, IconArrowDown, IconDashboard, IconFileCertificate, IconShip, IconCoin, IconRoute } from "../components/primitives/Icon";
 import { buildContractRows, buildWeeklyTrend } from "../utils/contractConsumption";
+import { teuOverRange, spaceTeuLabel } from "../utils/isoWeek";
 import { UnitSwitch, ChartCard, StatusLegend, ContractBarsChart, ContractTrendChart, ContractBreakdown } from "../components/dashboard/ContractConsumptionCharts";
+import SteeringReport from "../components/dashboard/SteeringReport";
 import InfoHint from "../components/primitives/InfoHint";
 import { inputBase } from "../components/primitives/Form";
 import ColumnFilter from "../components/shared/ColumnFilter";
@@ -312,7 +314,7 @@ const PerfRow = ({ rank, carrier, rate }) => (
 // ─── Tab button (Dashboard tab bar) ────────────────────────────────────────────
 const TAB_ICONS = {
   overview: IconDashboard, contracts: IconFileCertificate, carriers: IconShip,
-  margin: IconCoin, compliance: IconWarning,
+  margin: IconCoin, steering: IconRoute, compliance: IconWarning,
 };
 
 const TabButton = ({ tab, active, onClick }) => {
@@ -510,7 +512,7 @@ export const MatchedShipmentsTable = ({
                 <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
                   <span style={{ fontFamily: T.body, fontSize: 10, color: T.success, fontWeight: 600 }}>● Matched</span>
                   <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
-                    {s.alloc.pol} › {s.alloc.pod} · {s.alloc.allocatedTEU} TEU
+                    {s.alloc.pol} › {s.alloc.pod} · {spaceTeuLabel(s.alloc)}
                   </span>
                 </div>
               ) : (
@@ -545,7 +547,7 @@ export const MatchedShipmentsTable = ({
 
 const CONSUMPTION_UNIT_KEY = "cd_dashboard_consumption_unit";
 
-const ContractConsumptionView = ({ shipments, rangeShipments, containers, carriers, allocations = [], allAllocations = [], rangeStart, teuDefs }) => {
+const ContractConsumptionView = ({ shipments, rangeShipments, containers, carriers, allocations = [], allAllocations = [], rangeStart, rangeEnd, teuDefs }) => {
   const [contractMap, setContractMap] = useState({});
   const [loading,     setLoading]     = useState(false);
   // Display-layer filter for "Shipments by Contract" below — applied once, per contract
@@ -586,8 +588,8 @@ const ContractConsumptionView = ({ shipments, rangeShipments, containers, carrie
   // Every booking on an active configuration, not just the period's (TKT-8RC5E2); a shipment with no
   // containers yet holds no space, the same as loadTeuBuckets.
   const bookedShipments = useMemo(() => shipments.filter(s => s.allocationId && teuOfShipment(s) > 0), [shipments, teuOfShipment]);
-  const rows = useMemo(() => buildContractRows({ allocations, shipments: bookedShipments, contractMap, teuOfShipment }),
-    [allocations, bookedShipments, contractMap, teuOfShipment]);
+  const rows = useMemo(() => buildContractRows({ allocations, shipments: bookedShipments, contractMap, teuOfShipment, rangeStart, rangeEnd }),
+    [allocations, bookedShipments, contractMap, teuOfShipment, rangeStart, rangeEnd]);
   const trend = useMemo(() => buildWeeklyTrend({
     allocations: allAllocations, shipments, contractMap, teuOfShipment, rangeStart, addDays,
     formatWeek: iso => parseIso(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
@@ -1687,7 +1689,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
     const byCarrier = {};
     filteredActiveAllocations.forEach(a => {
       if (!byCarrier[a.carrierCode]) byCarrier[a.carrierCode] = { allocated: 0 };
-      byCarrier[a.carrierCode].allocated += a.allocatedTEU;
+      byCarrier[a.carrierCode].allocated += teuOverRange(a, rangeStart, rangeEnd);
       byCarrier[a.carrierCode].bucket = consumedMap[a.carrierCode] || { confirmed: 0, pending: 0, rejected: 0 };
     });
     return Object.entries(byCarrier).map(([code, d]) => ({
@@ -1699,7 +1701,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
       remaining: Math.max(0, d.allocated - d.bucket.confirmed),
       total: d.allocated,
     }));
-  }, [filteredActiveAllocations, consumedMap, carriers]);
+  }, [filteredActiveAllocations, consumedMap, carriers, rangeStart, rangeEnd]);
 
   // Confirmation-rate ranking (Total Allocated card, Overview) — Confirmed ÷ (Confirmed+Pending+
   // Rejected) per carrier, off the same chartData buckets the bar chart/badge grid already use.
@@ -1721,7 +1723,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
     return { mode: "split", top: ranked.slice(0, 3), bottom: ranked.slice(-3) };
   }, [chartData]);
 
-  const totalAlloc    = filteredActiveAllocations.reduce((s, a) => s + a.allocatedTEU, 0);
+  const totalAlloc    = filteredActiveAllocations.reduce((s, a) => s + teuOverRange(a, rangeStart, rangeEnd), 0);
 
   // Trend chart data: reshape sparkData arrays into recharts [{week, MAEU, HLCU, ...}]
   const trendChartData = useMemo(() => {
@@ -1850,6 +1852,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
           { key: "contracts",  label: "Contract Consumption" },
           { key: "carriers",   label: "Carrier Volumes" },
           { key: "margin",     label: "Margin" },
+          { key: "steering",   label: "Steering" },
           { key: "compliance", label: "Compliance Review", count: Array.isArray(compHits) ? compHits.length : null },
         ].map(tab => (
           <TabButton key={tab.key} tab={tab} active={view === tab.key} onClick={() => handleTabChange(tab.key)} />
@@ -2092,6 +2095,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
             allocations={activeAllocations}
             allAllocations={allocations}
             rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
             teuDefs={teuDefs}
           />
         </div>
@@ -2113,6 +2117,13 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
       {/* ── Margin tab ── */}
       {view === "margin" && (
         <div data-testid="dashboard-panel-margin"><MarginView financeEnabled={financeEnabled} /></div>
+      )}
+
+      {/* ── Steering tab (Epic TKT-KFGL81, Story 4): did shipments follow the Lane Steering? ── */}
+      {view === "steering" && (
+        <div data-testid="dashboard-panel-steering">
+          <SteeringReport hz={HZ} rangeStart={rangeStart} rangeEnd={rangeEnd} carriers={carrierFilterSet ? [...carrierFilterSet] : null} />
+        </div>
       )}
 
       {/* ── Compliance Review tab ── */}

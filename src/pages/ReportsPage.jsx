@@ -9,6 +9,7 @@ import ScheduledReportsPanel from "../components/shared/ScheduledReportsPanel";
 import InvoiceCollectionsPanel from "../components/shared/InvoiceCollectionsPanel";
 import FxRevaluationPanel from "../components/shared/FxRevaluationPanel";
 import VatLiabilityPanel from "../components/shared/VatLiabilityPanel";
+import CarrierResponsesPanel from "../components/shared/CarrierResponsesPanel";
 import DatePicker from "../components/primitives/DatePicker";
 import Btn from "../components/primitives/Btn";
 
@@ -44,7 +45,7 @@ const ReportsPage = () => {
   // TKT-B4VBDH — Billing Performance joins GP by Trade Area as a second top-level tab on this
   // page rather than its own nav item, mirroring DashboardPage.jsx's own tab-bar pattern for
   // "several distinct reports under one nav entry."
-  const [tab, setTab] = useState("gp"); // "gp" | "billing" | "collections" | "fx" | "vat" | "scheduled"
+  const [tab, setTab] = useState("gp"); // "gp" | "billing" | "collections" | "fx" | "vat" | "carriers" | "scheduled"
   const [groupBy, setGroupBy] = useState("region"); // "region" | "country" | "carrier"
   // Default window is today -> today+30 (a forward-looking "what's coming up" slice) rather
   // than all-time — "" still means no bound at all, reachable via Clear below, since an
@@ -112,6 +113,7 @@ const ReportsPage = () => {
     { key: "collections",label: "Invoice Collections",  financeOnly: false },
     { key: "fx",         label: "FX Revaluation",       financeOnly: true },
     { key: "vat",        label: "VAT Liability",        financeOnly: true },
+    { key: "carriers",   label: "Carrier Responses",    financeOnly: false },
     { key: "scheduled",  label: "Scheduled Reports",    financeOnly: true },
   ].filter(t => hasFinanceAccess || !t.financeOnly);
 
@@ -130,14 +132,17 @@ const ReportsPage = () => {
             ? "Unrealized gain/loss on open foreign-currency invoices, and realized gain/loss on paid ones"
             : tab === "vat"
             ? "Output VAT on sales minus input VAT on purchases, per legal entity — the figure a VAT return needs"
+            : tab === "carriers"
+            ? "How carriers answer booking requests: missing answers, time to a decision, confirmed, changed or rejected"
             : "Reports that generate and email themselves automatically, on their own recurring cadence"}
         </p>
       </div>
 
-      <div id="reports-tab-bar" style={{ display: "flex", borderBottom: `1px solid ${T.border}`, marginBottom: 20 }}>
+      {/* Seven tabs fit one line from a 1280px screen up; narrower, they wrap to a second row whole. */}
+      <div id="reports-tab-bar" style={{ display: "flex", flexWrap: "wrap", borderBottom: `1px solid ${T.border}`, marginBottom: 20 }}>
         {TAB_DEFS.map(t => (
           <button key={t.key} type="button" onClick={() => setTab(t.key)} style={{
-            padding: "10px 20px", background: "none", border: "none",
+            padding: "10px 12px", background: "none", border: "none", whiteSpace: "nowrap",
             borderBottom: tab === t.key ? `2px solid ${T.accent}` : "2px solid transparent",
             color: tab === t.key ? T.accent : T.textMuted,
             fontFamily: T.body, fontSize: 13, fontWeight: 600,
@@ -154,6 +159,8 @@ const ReportsPage = () => {
         <FxRevaluationPanel />
       ) : tab === "vat" ? (
         <VatLiabilityPanel />
+      ) : tab === "carriers" ? (
+        <CarrierResponsesPanel />
       ) : tab === "scheduled" ? (
         <ScheduledReportsPanel />
       ) : (

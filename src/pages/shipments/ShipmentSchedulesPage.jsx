@@ -15,12 +15,14 @@ import { LegsTable, deriveHaulageNeeds } from "./ShipmentFormPage";
 import { IconWarning, IconPackage, IconAnchor } from "../../components/primitives/Icon";
 import useContractMismatch from "../../hooks/useContractMismatch";
 import ConsumptionBar from "../../components/shared/ConsumptionBar";
+import { steeringChipOf } from "../../components/shared/WhereToBook";
 import { deriveLoopCode } from "../../utils/scheduleLoop";
 import { canEditShipmentSide } from "../../utils/officeSide";
 import { emitLegsScheduleChanged } from "../../legsScheduleBus";
 import useSaving from "../../hooks/useSaving";
 import { setNavigationGuard, clearNavigationGuard } from "../../navigationGuard";
 import { HZ, HZ_MONO, HZ_BODY, HZ_LEGACY_THEME, useHorizonFonts } from "./shipmentDetailTheme";
+import { SpotOfferCard, AddSpotOfferModal, useShipmentSpotOffer, equipmentOfContainers, removeSpotOffer } from "../../components/shared/SpotOffers";
 
 // ─── Shipment Schedules Page ──────────────────────────────────────────────
 // Dedicated sub-page for carrier schedule/booking management, promoted out
@@ -238,6 +240,12 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
   // per-shipment-relative (shipment.myOfficeSide), NOT the department-wide check just above
   // (that one's scope is narrower: only who may reassign the Line Agent fields specifically).
   const canEditExportSide = canEditShipmentSide(auth, shipment, "export");
+  // SPOT rates (2026-10-21): the carrier's spot offer this SPOT shipment is priced on.
+  const spot = useShipmentSpotOffer(shipment);
+  const [spotModal, setSpotModal] = useState(null);
+  const spotLocked = ["Pending", "Confirmed"].includes(spot.booking?.status);
+  // "Sailing + offer" in the picker: the carrier's offer for that departure, taken when the route is saved.
+  const [pendingSpotOffer, setPendingSpotOffer] = useState(null);
 
   const handleAssignLineAgent = async (role, existingId, customerId, customerName) => {
     try {
@@ -435,11 +443,13 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
     }
     // The configuration this shipment is already on, looked up by id — /match would filter it by
     // loop, customer and commodity, which is right for choosing space but not for showing it.
-    api.allocations.list()
+    // Weekly space shows this shipment's week (its ETD's, else its cargo-ready date's).
+    const date = String(shipment.etd || shipment.cargoReadyDate || "").slice(0, 10);
+    api.allocations.list(date ? { date } : undefined)
       .then(all => { if (live) setLinkedAlloc(all.find(a => a.id === shipment.allocationId) || null); })
       .catch(() => { if (live) setLinkedAlloc(null); });
     return () => { live = false; };
-  }, [shipment.contractType, shipment.allocationId]);
+  }, [shipment.contractType, shipment.allocationId, shipment.etd, shipment.cargoReadyDate]);
 
   // A shipment on a space configuration searches sailings by that configuration's routing
   // (decided 2026-09-30): its loop, and the routing line's first transshipment port when it has
@@ -566,6 +576,17 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
     await onRefresh?.();
     emitLegsScheduleChanged(shipment.id);
     toast.success("Saved");
+    if (pendingSpotOffer) {
+      const p = pendingSpotOffer;
+      setPendingSpotOffer(null);
+      try {
+        const offer = await api.spotOffers.takeFromCarrier(p.carrierCode, p.offerRef);
+        const r = await api.spotOffers.attachToShipment(shipment.id, offer.id);
+        toast.success(`Spot offer ${offer.offerRef} attached — ${r.buyLines} BUY line${r.buyLines === 1 ? "" : "s"}`);
+        await onRefresh?.();
+        spot.reload();
+      } catch (e) { toast.error(`The sailing is saved, but spot offer ${p.offerRef} wasn't attached: ${e.message}`); }
+    }
     if (spaceUnlinked) {
       toast.warning(`This sailing is on loop ${spaceUnlinked.loop}, but space configuration ${spaceUnlinked.allocationId} is for loop ${spaceUnlinked.configLoop}, so the shipment is no longer on that space. Pick space again from the contract.`);
     }
@@ -594,6 +615,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
   const handleDiscard = () => {
     setDraftLegs(originalLegsSnapshot);
     setDraftSailing(null);
+    setPendingSpotOffer(null);
     setValidationErrors(null);
   };
 
@@ -730,6 +752,10 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {shipment.contractRef || "No contract assigned"}
               </span>
+              {shipment.spotOfferId && shipment.contractType === "SPOT" && (
+                <span data-testid="shipment-schedules-contract-spot-chip" style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, background: HZ.surface2, color: HZ.text,
+                  borderRadius: 4, padding: "2px 8px", flexShrink: 0 }}>Spot offer</span>
+              )}
               {shipment.allocationId && (
                 <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, background: HZ.goodBg, color: HZ.good,
                   border: `1px solid ${HZ.good}44`, borderRadius: 4, padding: "2px 8px", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}><IconPackage size={10} /> Space config</span>
@@ -791,6 +817,20 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
                     </div>
                   ))}
                 </div>
+                {/* Whether it followed the Lane Steering, as saved when the contract was (Epic TKT-KFGL81, Story 3). */}
+                {(() => {
+                  const chip = steeringChipOf(shipment);
+                  if (!chip) return null;
+                  const c = chip.tone === "good" ? HZ.good : chip.tone === "warn" ? HZ.warn : HZ.textMuted;
+                  return (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderTop: `1px solid ${HZ.border}` }}>
+                      <span style={{ fontFamily: HZ_BODY, fontSize: 10.5, fontWeight: 600, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>Steering</span>
+                      <span data-testid="shipment-schedules-steering-chip" title={chip.title}
+                        style={{ fontFamily: HZ_MONO, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, color: c, background: c + "1f" }}>{chip.label}</span>
+                      {chip.tone === "warn" && <span style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{chip.title}</span>}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
@@ -813,6 +853,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
                 </div>
                 <div style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted, marginBottom: 8 }}>
                   Valid {linkedAlloc.effectiveDate} → {linkedAlloc.endDate}
+                  {linkedAlloc.spaceBasis === "week" && <> · <span data-testid="schedules-space-week" style={{ color: HZ.text }}>Week {linkedAlloc.weekNumber}, {linkedAlloc.allocatedTEU} TEU a week</span></>}
                 </div>
                 <ConsumptionBar allocated={linkedAlloc.allocatedTEU} confirmed={linkedAlloc.confirmedTEU}
                   pending={linkedAlloc.pendingTEU} rejected={linkedAlloc.rejectedTEU} height={6} width="100%" />
@@ -832,6 +873,38 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
           </div>
         )}
       </div>
+
+      {shipment.contractType !== "Central" && spot.offer !== undefined && (
+        <div id="shpsched-spot-offer-section" data-testid="shipment-schedules-spot-offer-section" style={{ marginBottom: 22 }}>
+          <div style={sectionLabel}>Spot offer</div>
+          {pendingSpotOffer && (
+            <div data-testid="spot-offer-pending" style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, background: HZ.cyanBg, border: `1px solid ${HZ.cyan}55`, borderRadius: 8, padding: "9px 12px", marginBottom: 10 }}>
+              On Save: {shipment.carrierCode}'s offer <b style={{ fontFamily: HZ_MONO }}>{pendingSpotOffer.offerRef}</b> (USD {Math.round(pendingSpotOffer.totalUsd).toLocaleString("en-US")}) for the new sailing{spot.offer ? " replaces the current one" : ""}.
+            </div>
+          )}
+          <SpotOfferCard offer={spot.offer} carrierCode={shipment.carrierCode} canEdit={canEditExportSide && !isDirty}
+            locked={spotLocked}
+            lockedText={spotLocked ? `The booking is with ${shipment.carrierCode} (${spot.booking.status}): cancel or amend it before changing its spot offer.` : ""}
+            onAdd={tab => setSpotModal(tab)}
+            onRemove={async () => {
+              if (!window.confirm(`Remove spot offer ${spot.offer.offerRef}? Its BUY lines go with it.`)) return;
+              try { await removeSpotOffer(shipment.id); await onRefresh?.(); spot.reload(); }
+              catch (e) { toast.error(e.message || "The offer wasn't removed"); }
+            }} />
+        </div>
+      )}
+      {spotModal && (
+        <AddSpotOfferModal targetLabel={shipment.id} initialTab={spotModal}
+          ctx={{ carrierCode: shipment.carrierCode, pol: shipment.pol, pod: shipment.pod, equipment: equipmentOfContainers(containers), from: String(shipment.cargoReadyDate || "").slice(0, 10) }}
+          onClose={() => setSpotModal(null)}
+          onAttach={async offer => {
+            const r = await api.spotOffers.attachToShipment(shipment.id, offer.id);
+            toast.success(`Spot offer ${offer.offerRef} attached — ${r.buyLines} BUY line${r.buyLines === 1 ? "" : "s"}`);
+            if (r.warning) toast.warning(r.warning);
+            await onRefresh?.();
+            spot.reload();
+          }} />
+      )}
 
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
         <Btn id="shpsched-history-btn" data-testid="shipment-schedules-history-btn" size="sm" variant="secondary" onClick={() => setHistOpen(true)}>⏱ History</Btn>
@@ -885,7 +958,10 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
           expectedHub={routeOverride?.hub || null} expectedService={routeOverride?.service || null}
           requiredService={spaceSailingFilter?.loop || null} requiredHub={spaceSailingFilter?.hub || null}
           activeSailing={draftSailing || scheduleList[0] || null}
-          onSelect={handleSelectSailing}
+          onSelect={s => { setPendingSpotOffer(null); handleSelectSailing(s); }}
+          spotPricing={shipment.contractType === "SPOT" && carrier === shipment.carrierCode && !spotLocked
+            ? { carrierCode: shipment.carrierCode, pol: shipment.pol, pod: shipment.pod, equipment: equipmentOfContainers(containers), from: String(shipment.cargoReadyDate || "").slice(0, 10) } : null}
+          onSelectWithOffer={(s, offer) => { setPendingSpotOffer({ carrierCode: shipment.carrierCode, offerRef: offer.offerRef, totalUsd: offer.totalUsd }); handleSelectSailing(s); }}
           onClose={() => {
             // A contract was just committed as part of this chained flow — closing without
             // picking a sailing leaves that partial state, so confirm instead of discarding

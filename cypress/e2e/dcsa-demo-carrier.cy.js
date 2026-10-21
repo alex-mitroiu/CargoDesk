@@ -106,7 +106,7 @@ describe("DCSA demo carrier", () => {
     cy.get('[data-testid="dcsa-carrier-detail"]').should("contain", "RECEIVED");
     cy.get('[data-testid^="dcsa-carrier-action-"]').then($b => {
       const actions = [...$b].map(b => b.dataset.testid.replace("dcsa-carrier-action-", "")).sort();
-      expect(actions).to.deep.eq(["confirm", "reject", "requestUpdate"]);
+      expect(actions).to.deep.eq(["confirm", "confirmWithChanges", "reject", "requestUpdate"]);
     });
     cy.get('[data-testid="dcsa-carrier-action-confirm"]').click();
     cy.contains("Confirm: sent to CargoDesk", { timeout: 8000 }).should("be.visible");

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { Fragment, useState, useEffect, useRef } from "react";
 import useSaving from "../../hooks/useSaving";
 import { T, IMDG_CLASSES, CONTAINER_OPTIONS as CONTAINER_OPTION_DEFS } from "../../tokens";
 import { api } from "../../api";
@@ -15,6 +15,8 @@ import DataTable, { TableToolbar } from "../../components/shared/DataTable";
 import useTableQuery from "../../hooks/useTableQuery";
 import EntityHistoryModal from "../../components/shared/EntityHistoryModal";
 import PortCombobox from "../../components/shared/PortCombobox";
+import { LegRoleChip, MAIN_COLOR } from "../../components/shared/LegRoles";
+import { legRoles } from "../../utils/mainLeg";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
 import { CommodityCombobox } from "../../components/shared/CommodityCombobox";
 import RoutingLinesEditor from "../../components/contracts/RoutingLinesEditor";
@@ -825,24 +827,40 @@ const SchedulesModal = ({ contract, onClose }) => {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    {["Vessel","Voyage","Service","ETD","ETA","Transit"].map(h => (
+                    {["Vessel (main)","Voyage","Routing","ETD","ETA","Transit"].map(h => (
                       <th key={h} style={colHead}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {result.sailings.map((s, i) => (
-                    <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : `${T.border}10` }}>
-                      <td style={{ ...cell, fontWeight: 600 }}>{s.vesselName}</td>
-                      <td style={cell}>{s.voyageNumber}</td>
-                      <td style={cell}>{s.service}</td>
-                      <td style={{ ...cell, color: T.accent }}>{s.etd || "—"}</td>
-                      <td style={{ ...cell, color: T.accent }}>{s.eta || "—"}</td>
-                      <td style={{ ...cell, color: T.textMuted }}>
-                        {s.transitDays ? `${s.transitDays}d` : "—"}
-                      </td>
-                    </tr>
-                  ))}
+                  {/* The main vessel leads a transshipment sailing, its legs beneath in sailing order (2026-10-21). */}
+                  {result.sailings.map((s, i) => {
+                    const legs = legRoles(s);
+                    return (
+                      <Fragment key={i}>
+                        <tr style={{ background: i % 2 === 0 ? "transparent" : `${T.border}10` }}>
+                          <td style={{ ...cell, fontWeight: 600 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>{s.vesselName}{legs.length > 0 && <LegRoleChip role="MAIN" />}</span></td>
+                          <td style={cell}>{s.voyageNumber}</td>
+                          <td style={cell}>{legs.length ? `Via ${legs.slice(0, -1).map(l => l.pod).join(", ")} · ${legs.length} legs` : "Direct"}</td>
+                          <td style={{ ...cell, color: T.accent }}>{s.etd || "—"}</td>
+                          <td style={{ ...cell, color: T.accent }}>{s.eta || "—"}</td>
+                          <td style={{ ...cell, color: T.textMuted }}>
+                            {s.transitDays ? `${s.transitDays}d` : "—"}
+                          </td>
+                        </tr>
+                        {legs.map((l, li) => (
+                          <tr key={`${i}-${li}`} style={{ background: l.role === "MAIN" ? `${MAIN_COLOR}12` : "transparent" }}>
+                            <td style={{ ...cell, fontSize: 11 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><LegRoleChip role={l.role} />{l.vesselName}</span></td>
+                            <td style={{ ...cell, fontSize: 11, color: T.textMuted }}>{l.voyageNumber}</td>
+                            <td style={{ ...cell, fontSize: 11, fontWeight: 700 }}>{l.pol} → {l.pod}</td>
+                            <td style={{ ...cell, fontSize: 11, color: T.textMuted }}>{l.etd || "—"}</td>
+                            <td style={{ ...cell, fontSize: 11, color: T.textMuted }}>{l.eta || "—"}</td>
+                            <td style={{ ...cell, fontSize: 11, color: T.textMuted }}>{l.days ? `${l.days}d` : "—"}</td>
+                          </tr>
+                        ))}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

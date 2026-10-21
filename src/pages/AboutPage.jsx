@@ -385,6 +385,9 @@ const BACKEND_DOMAINS = [
   { name: "loop-codes.js / hs-codes.js", items: "loop rotations (Eastbound/Westbound), HS-6 registry + live EU lookup" },
   { name: "kanban.js / testcases.js", items: "tickets, test items" },
   { name: "edi.js", items: "carrier EDI log" },
+  { name: "booking-escalations.js / lane-steering.js", items: "booking escalations, carrier order per trade lane" },
+  { name: "where-to-book.js", items: "where to book (steering with space), steering report" },
+  { name: "spot-offers.js / margin-rules.js", items: "carrier spot offers, margin rules" },
   { name: "auth.js / offices.js / organization.js", items: "users, offices, branches" },
   { name: "system.js", items: "health, settings, schedule search" },
   { name: "ai.js", items: "AI agent chat proxy" },
@@ -400,6 +403,7 @@ const DB_DOMAINS = [
   { name: "MDM Reference Data", color: "#a855f7", tables: "carriers · vessels · port_locations · linked_ports · trade_lanes · country_trade_lanes · regions · countries · commodities · loop_codes · loop_code_ports · hs_codes" },
   { name: "Kanban & Testing", color: "#4db3e8", tables: "tickets · ticket_links · test_items · test_case_links · kb_projects · kb_columns · kb_versions" },
   { name: "EDI Messaging", color: "#4db3e8", tables: "edi_messages" },
+  { name: "Booking & Spot Rates", color: "#4db3e8", tables: "carrier_bookings · booking_escalations · booking_escalation_steps · lane_steerings · lane_steering_options · spot_offers · spot_offer_lines · margin_rules · dcsa_sim_bookings · dcsa_sim_spot_offers" },
   { name: "Auth & Organization", color: "#f5b84c", tables: "users · user_offices · user_scope_items · offices · branches · org_countries" },
   { name: "System & Admin", color: "#f5b84c", tables: "app_settings · system_messages · admin_events" },
 ];

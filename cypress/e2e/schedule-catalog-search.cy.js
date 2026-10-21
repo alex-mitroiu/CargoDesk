@@ -115,8 +115,9 @@ describe("Add Sailing — Catalog-First Search Suite", () => {
         visitSchedulesPage(shipmentId);
         cy.contains("button", "Add Sailing", { timeout: 20000 }).should("not.be.disabled").click();
         cy.contains("TSP HAPPY LEG1", { timeout: 15000 }).should("be.visible");
-        cy.contains("TSP · 2 legs").should("be.visible");
-        cy.contains("Will create 2 sea legs", { timeout: 5000 }).should("be.visible");
+        // Headlined by the main vessel (LEG1: the longest transit), every leg listed in order (2026-10-21).
+        cy.get('[data-testid^="sailing-legs-"]').first().should("contain", "TSP HAPPY LEG2").and("contain", "MAIN").and("contain", "FEEDER");
+        cy.contains("Creates 2 sea legs in this order", { timeout: 5000 }).should("be.visible");
 
         // Picking a sailing only stages it now (Contracts & Schedules' staged-draft model) —
         // it must be explicitly Saved before either SEA leg reaches the server.

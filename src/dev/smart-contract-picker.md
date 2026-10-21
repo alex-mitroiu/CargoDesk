@@ -1,5 +1,20 @@
 # Smart Contract Picker — Decision Tree & Implementation Plan
 
+> **Status update, 2026-10-21.** This is the original plan, kept as written; it was built. The
+> picker (`ContractPickerModal`, src/pages/shipments/ShipmentFormPage.jsx) now works like this:
+> 1. **Where to book comes first** when the shipment's trade lane is steered. It shows the Lane
+>    Steering line, each option as the pick, available, full or skipped, and its free space in the
+>    ETD's week. The pick is pre-selected but still needs Confirm Selection. Choosing a lower option,
+>    a contract off the line, or SPOT while a better option has space asks for a reason first, and
+>    the server saves the verdict on the shipment (ARCHITECTURE.md §8.39).
+> 2. **Space configurations** follow: customer-specific first, each per period or per ISO week.
+>    A full one offers another reference under the same contract number, or "Book here anyway"
+>    with an overage reason (§8.31).
+> 3. **Contracts** come last, locked until a skip reason is chosen.
+>
+> Free space everywhere is allocated − confirmed − pending, and only the carrier's DCSA
+> confirmation confirms a booking.
+
 ## Overview
 
 When a user links a contract to a Central-type shipment, the system should first check

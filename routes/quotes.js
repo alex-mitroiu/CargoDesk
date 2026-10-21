@@ -252,14 +252,24 @@ module.exports = function quotesRoutes(app, ctx) {
     if (commodityError) return err(res, commodityError);
     const invalidLine = findInvalidLine(lines);
     if (invalidLine) return err(res, `Each line's quantity must be a positive number (got "${invalidLine.quantity}")`);
+    // A quote priced on a spot offer (routes/spot-offers.js) keeps the offer's carrier, route and
+    // reference; changing those means taking the offer off first.
+    let effCarrierCode = carrierCode, effContractId = contractId, effContractRef = contractRef;
+    const spotOffer = existing.spot_offer_id ? await ctx.spotOffers.load(existing.spot_offer_id) : null;
+    if (spotOffer) {
+      const o = spotOffer.row;
+      if ((carrierCode && carrierCode.toUpperCase() !== o.carrier_code) || pol.toUpperCase() !== o.pol || pod.toUpperCase() !== o.pod || contractId)
+        return err(res, `This quote is priced on spot offer ${o.offer_ref} (${o.carrier_code}, ${o.pol} → ${o.pod}): remove the offer before changing the carrier, route or contract`, 409);
+      effCarrierCode = o.carrier_code; effContractId = ""; effContractRef = o.offer_ref;
+    }
     await query(`UPDATE quotes SET customer_id=$1, customer_name=$2, consignee_id=$3, consignee_name=$4,
       principal_id=$5, principal_name=$6, notify_id=$7, notify_name=$8, pol=$9, pod=$10, carrier_code=$11,
       contract_id=$12, contract_ref=$13, commodity_code=$14, movement_type=$15, service_type=$16, incoterm=$17,
       cargo_ready_date=$18, valid_until=$19, notes=$20, currency=$21, declared_value=$22,
       declared_value_currency=$23, freight_terms=$24, office_id=$25 WHERE id=$26`,
       [customerId, customerName, consigneeId, consigneeName, principalId, principalName,
-           notifyId, notifyName, pol.toUpperCase(), pod.toUpperCase(), carrierCode.toUpperCase(),
-           contractId, contractRef, commodityCode, movementType, serviceType, incoterm, cargoReadyDate,
+           notifyId, notifyName, pol.toUpperCase(), pod.toUpperCase(), effCarrierCode.toUpperCase(),
+           effContractId, effContractRef, commodityCode, movementType, serviceType, incoterm, cargoReadyDate,
            validUntil, notes, currency.toUpperCase(),
            declaredValue !== null && declaredValue !== "" ? Number(declaredValue) : null,
            declaredValueCurrency.toUpperCase(), freightTerms, officeId || null, req.params.id]);
@@ -277,6 +287,8 @@ module.exports = function quotesRoutes(app, ctx) {
     const [q] = await query("SELECT * FROM quotes WHERE id=$1", [req.params.id]);
     if (!q) return err(res, "Not found", 404);
     if (q.status === "Converted") return err(res, "This quote has already converted to a shipment — it stays as a historical record instead of being deleted");
+    // Its spot offer goes back to the pool of offers, free to price another quote or shipment.
+    if (q.spot_offer_id) await query("UPDATE spot_offers SET status='Offered', quote_id='' WHERE id=$1 AND quote_id=$2", [q.spot_offer_id, q.id]);
     await query("DELETE FROM quotes WHERE id=$1", [req.params.id]);
     await logEntityEvent("quote", req.params.id, "DELETED", null, null, null,
       JSON.stringify({ customerName: q.customer_name, status: q.status }));
@@ -297,8 +309,14 @@ module.exports = function quotesRoutes(app, ctx) {
     const now = new Date().toISOString();
     await query("UPDATE quotes SET status='Sent', sent_at=$1 WHERE id=$2", [now, req.params.id]);
     await logEntityEvent("quote", req.params.id, "UPDATED", "status", "Draft", "Sent", JSON.stringify({ customerName: q.customer_name }));
+    // Priced on a spot offer under the margin rule's minimum (routes/margin-rules.js): it still goes, and
+    // the History says so — a rule never blocks a quote.
+    const margin = ctx.quoteMargin ? await ctx.quoteMargin(q).catch(() => null) : null;
+    if (margin?.belowMinimum)
+      await logEntityEvent("quote", req.params.id, "SENT_BELOW_MINIMUM_MARGIN", "margin_pct", String(margin.rule.minMarginPct), String(margin.marginPct),
+        JSON.stringify({ marginUsd: margin.marginUsd, buyUsd: margin.buyUsd, sellUsd: margin.sellUsd, ruleId: margin.rule.id }));
     const [fresh] = await query("SELECT * FROM quotes WHERE id=$1", [req.params.id]);
-    ok(res, mapQuote(fresh));
+    ok(res, { ...mapQuote(fresh), ...(margin?.belowMinimum ? { marginWarning: `Margin ${margin.marginPct}% is below the ${margin.rule.minMarginPct}% minimum` } : {}) });
   });
 
   app.post("/api/quotes/:id/accept", quoteWrite, async (req, res) => {
@@ -380,6 +398,9 @@ module.exports = function quotesRoutes(app, ctx) {
       JSON.stringify({ pol: q.pol, pod: q.pod, carrier: q.carrier_code, status: 'Active', contractType, source: 'quote', quoteId: req.params.id }), req.user?.name || req.user?.email || "");
     await maybeAssignLineAgents(id, q.carrier_code, q.pol, q.pod, req.user?.name || req.user?.email || "");
     if (contractType === 'Central' && q.contract_id) await importContractRates(id);
+    // The steering verdict for the contract the quote was bought on (Epic TKT-KFGL81, Story 3).
+    try { await ctx.whereToBook?.recordVerdict(id, { actor: req.user?.name || req.user?.email || "" }); }
+    catch (e) { console.error(`Steering verdict ${id}:`, e.message); }
 
     for (const l of lines) {
       const chargeCode = SERVICE_CODE_MAP[(l.service_code || "").toUpperCase()] || "Other";
@@ -391,6 +412,9 @@ module.exports = function quotesRoutes(app, ctx) {
       await logEntityEvent('cost_line', lineId, 'IMPORTED', null, null, null,
         JSON.stringify({ shipmentId: id, chargeCode, source: 'quote', quoteId: req.params.id }));
     }
+    // Priced on a spot offer: the offer moves onto the shipment and its charges become the BUY side,
+    // the way a Central contract's rates do through importContractRates above.
+    if (q.spot_offer_id) await ctx.spotOffers.attachOnConversion(id, q, req.user);
 
     // Real containers from the quote's own per-container line items (2026-09 gap-closing pass) —
     // previously nothing here ever created a `containers` row, even though a quote line already

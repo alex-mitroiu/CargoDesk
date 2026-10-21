@@ -16,7 +16,7 @@ module.exports = function dcsaSimulatorRoutes(app, ctx) {
   app.get("/api/carrier-connections/:carrierCode", auth(), async (req, res) => {
     const carrierCode = String(req.params.carrierCode || "").toUpperCase();
     const capabilities = {};
-    for (const cap of ["booking", "tracking", "schedules"]) {
+    for (const cap of ["booking", "tracking", "schedules", "spot-rates"]) {
       const c = await carrierIntegrationFor(carrierCode, cap);
       capabilities[cap] = c ? { via: c.row.is_simulator ? "simulator" : "integration", demo: !!c.row.is_simulator } : null;
     }

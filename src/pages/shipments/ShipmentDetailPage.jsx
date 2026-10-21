@@ -642,6 +642,11 @@ export const EVENT_CONFIG = {
   CONTRACT_DROPPED:    { icon: IconWarning, label: "Contract dropped",    color: () => HZ.crit   },
   SPACE_SKIPPED:       { icon: IconWarning, label: "Space match skipped", color: () => HZ.warn  },
   SPACE_OVERAGE:       { icon: IconWarning, label: "Space overage",       color: () => HZ.warn  },
+  SPOT_OFFER_ATTACHED: { icon: "＋",  label: "Spot offer attached", color: () => HZ.good  },
+  SPOT_OFFER_DETACHED: { icon: IconClose,   label: "Spot offer removed",  color: () => HZ.crit  },
+  SPOT_PENALTY_ACCRUED: { icon: IconWarning, label: "Spot offer fee accrued", color: () => HZ.warn },
+  BOOKED_OUT_OF_ORDER: { icon: IconWarning, label: "Booked out of order", color: () => HZ.warn },
+  BOOKED_OFF_STEERING: { icon: IconWarning, label: "Booked off the steering", color: () => HZ.warn },
   SCHEDULE_ASSIGNED:   { icon: IconAnchor,  label: "Schedule assigned",   color: () => HZ.good  },
   SCHEDULE_UPDATED:    { icon: IconAnchor,  label: "Schedule updated",    color: () => HZ.info     },
   SCHEDULE_REMOVED:    { icon: IconAnchor,  label: "Schedule removed",    color: () => HZ.crit   },
@@ -655,14 +660,21 @@ export const EVENT_CONFIG = {
 
 export const FIELD_LABELS = {
   pol: "Port of Loading", pod: "Port of Discharge", status: "Status",
+  steering_verdict: "Steering", steering_reason: "Steering reason",
   etd: "Estimated Departure", eta: "Estimated Arrival", carrier_code: "Carrier",
   vessel: "Vessel", vessel_imo: "Vessel IMO", voyage: "Voyage/Loop", incoterm: "Incoterm",
   commodity_code: "Commodity", booking_ref: "Booking Reference", bl_number: "B/L Number",
-  contract_type: "Contract Type", contract_id: "Contract ID",
+  contract_type: "Contract Type", contract_id: "Contract ID", contract_ref: "Contract Reference",
   container_number: "Container Number", size: "Size", type: "Equipment Type",
   hs_code: "HS Code", cargo_description: "Cargo Description",
   gross_weight_kg: "Gross Weight (kg)", volume_cbm: "Volume (CBM)",
   is_dg: "Dangerous Goods", dg_class: "DG Class",
+};
+
+// Booked against the Lane Steering (Epic TKT-KFGL81, Story 3): what it was, what it would have been, why.
+const steeringSummary = m => {
+  const b = m.better ? `would have been #${m.better.rank} ${m.better.carrierCode} ${m.better.contractNumber}` : "";
+  return [m.contract, m.bookedRank ? `option #${m.bookedRank}` : "", b, m.reason ? `reason: ${m.reason}` : "no reason given"].filter(Boolean).join("  ·  ");
 };
 
 const EventRow = ({ ev }) => {
@@ -703,6 +715,8 @@ const EventRow = ({ ev }) => {
   } else if (ev.eventType === "SERVICE_ORDERED" || ev.eventType === "SERVICE_REMOVED") {
     const m = ev.meta || {};
     summary = [m.side, m.serviceType, m.vendorName].filter(Boolean).join("  ·  ");
+  } else if (ev.eventType === "BOOKED_OUT_OF_ORDER" || ev.eventType === "BOOKED_OFF_STEERING") {
+    summary = steeringSummary(ev.meta || {});
   } else {
     summary = field ? `${field}: ` : "";
     summary += ev.oldValue ? `${ev.oldValue} → ` : "";
@@ -810,6 +824,7 @@ export const getEventSummary = ev => {
     if (m.pol || m.pod) s += `  ·  ${[m.pol, m.pod].filter(Boolean).join(" → ")}`;
     return s;
   }
+  if (ev.eventType === "BOOKED_OUT_OF_ORDER" || ev.eventType === "BOOKED_OFF_STEERING") return steeringSummary(ev.meta || {});
   if (ev.eventType === "SERVICE_ORDERED" || ev.eventType === "SERVICE_REMOVED") {
     const m = ev.meta || {};
     return [m.side, m.serviceType, m.vendorName].filter(Boolean).join("  ·  ");

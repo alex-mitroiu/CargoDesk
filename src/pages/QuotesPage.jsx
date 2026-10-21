@@ -18,6 +18,7 @@ import PortField from "../components/shared/PortField";
 import { CommodityCombobox } from "../components/shared/CommodityCombobox";
 import { IconReceipt, IconClose, IconEye } from "../components/primitives/Icon";
 import ActionMenu from "../components/primitives/ActionMenu";
+import { AddSpotOfferModal, QuoteSpotOffer, equipmentOfQuoteLines, sellLinesFromRule } from "../components/shared/SpotOffers";
 
 // ─── Quoting / RFQ pre-booking stage ────────────────────────────────────────
 // A quote is a distinct object that precedes and converts into a shipment — Draft (freely
@@ -101,6 +102,28 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
   const [saving, setSaving] = useState(false);
   const [matching, setMatching] = useState(false);
   const [matches, setMatches] = useState(null);
+  // SPOT rates (2026-10-21): the carrier spot offer this quote is bought on. On an existing quote it's
+  // attached at once; on a new one it's held and attached right after the quote is created.
+  const [spotOffer, setSpotOffer] = useState(null);
+  const [spotOpen, setSpotOpen] = useState(false);
+  const [fxRates, setFxRates] = useState({});
+  useEffect(() => { api.fx.rates().then(r => setFxRates(r?.rates || {})).catch(() => setFxRates({})); }, []);
+  useEffect(() => {
+    if (!quote?.id || !quote.spotOfferId) return;
+    api.spotOffers.forQuote(quote.id).then(o => setSpotOffer(o || null)).catch(() => setSpotOffer(null));
+  }, [quote?.id, quote?.spotOfferId]);
+  // The margin rule for this customer, lane and the offer's container (routes/margin-rules.js).
+  const [marginRule, setMarginRule] = useState(null);
+  const offerType = spotOffer?.equipment?.length === 1 ? spotOffer.equipment[0].containerType : "";
+  useEffect(() => {
+    if (!spotOffer || !pol?.unlocode || !pod?.unlocode) { setMarginRule(null); return; }
+    api.marginRules.resolve({ customerId: customer?.id || "", pol: pol.unlocode, pod: pod.unlocode, containerType: offerType, date: cargoReadyDate || "" })
+      .then(r => setMarginRule(r || null)).catch(() => setMarginRule(null));
+  }, [spotOffer?.id, customer?.id, pol?.unlocode, pod?.unlocode, offerType, cargoReadyDate]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sellUsd = lines.reduce((sum, l) => {
+    const amount = (Number(l.rate) || 0) * (Number(l.quantity) || 0);
+    return sum + (l.currency === "USD" || !fxRates[l.currency] ? amount : amount / fxRates[l.currency]);
+  }, 0);
 
   const setLine = (i, patch) => setLines(prev => prev.map((l, idx) => idx === i ? { ...l, ...patch } : l));
   const addLine = () => setLines(prev => [...prev, emptyLine()]);
@@ -145,14 +168,18 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
         consigneeId: consignee.id, consigneeName: consignee.name,
         principalId: principal.id, principalName: principal.name,
         notifyId: notify.id, notifyName: notify.name,
-        pol: pol.unlocode, pod: pod.unlocode, carrierCode, officeId,
-        contractId, contractRef, commodityCode, movementType, serviceType, incoterm,
+        pol: pol.unlocode, pod: pod.unlocode, carrierCode: spotOffer ? spotOffer.carrierCode : carrierCode, officeId,
+        contractId: spotOffer ? "" : contractId, contractRef: spotOffer ? spotOffer.offerRef : contractRef, commodityCode, movementType, serviceType, incoterm,
         cargoReadyDate, validUntil, notes, currency,
         declaredValue: declaredValue.trim() !== "" ? Number(declaredValue) : null, declaredValueCurrency, freightTerms,
         lines: lines.filter(l => l.serviceCode.trim())
           .map(l => ({ ...l, quantity: Number(l.quantity) || 1, rate: Number(l.rate) || 0 })),
       };
-      const saved = isEdit ? await api.quotes.update(quote.id, payload) : await api.quotes.create(payload);
+      let saved = isEdit ? await api.quotes.update(quote.id, payload) : await api.quotes.create(payload);
+      if (!isEdit && spotOffer) {
+        try { await api.spotOffers.attachToQuote(saved.id, spotOffer.id); saved = await api.quotes.get(saved.id); }
+        catch (e) { toast.warning(`Quote created, but spot offer ${spotOffer.offerRef} wasn't attached: ${e.message}`); }
+      }
       toast.success(isEdit ? "Quote updated" : `Quote created — ${saved.lines.length} line(s)`);
       onSaved(saved);
     } catch (e) { toast.error(e.message); }
@@ -172,7 +199,9 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 140px", gap: 12 }}>
           <PortField label="POL" value={pol} onChange={setPol} required />
           <PortField label="POD" value={pod} onChange={setPod} required />
-          <Field label="Carrier"><CarrierCombobox value={carrierCode} onChange={setCarrierCode} /></Field>
+          <Field label="Carrier">{spotOffer
+            ? <input value={spotOffer.carrierCode} readOnly title="Follows the spot offer" data-testid="quote-carrier-locked" style={{ ...inputBase, fontFamily: T.mono, fontSize: 13, color: T.textMuted }} />
+            : <CarrierCombobox value={carrierCode} onChange={setCarrierCode} />}</Field>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -211,7 +240,37 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
             ]} />
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
+        {spotOffer && (
+          <p style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, margin: "-6px 0 0" }}>Carrier and route follow the spot offer; remove the offer to change them.</p>
+        )}
+        <QuoteSpotOffer offer={spotOffer} sellUsd={sellUsd} rule={marginRule}
+          onApplyRule={() => { setLines(sellLinesFromRule(spotOffer, marginRule)); toast.success("Sell lines set from the offer plus the margin rule — adjust them if needed"); }}
+          onAdd={() => {
+            if (!pol?.unlocode || !pod?.unlocode) { toast.error("Set POL and POD first"); return; }
+            setSpotOpen(true);
+          }}
+          onRemove={async () => {
+            if (isEdit && quote.spotOfferId) {
+              try { await api.spotOffers.detachFromQuote(quote.id); } catch (e) { toast.error(e.message); return; }
+            }
+            setSpotOffer(null); setContractRef(""); toast.success("Spot offer removed from the quote");
+          }} />
+        {spotOpen && (
+          <AddSpotOfferModal targetLabel={isEdit ? quote.id : "the new quote"}
+            ctx={{ carrierCode: spotOffer?.carrierCode || carrierCode, pol: pol.unlocode, pod: pod.unlocode, equipment: equipmentOfQuoteLines(lines), from: cargoReadyDate || "" }}
+            onClose={() => setSpotOpen(false)}
+            onAttach={async offer => {
+              if (isEdit) {
+                const r = await api.spotOffers.attachToQuote(quote.id, offer.id);
+                if (r.warning) toast.warning(r.warning);
+                setSpotOffer(r.offer);
+              } else setSpotOffer(offer);
+              setCarrierCode(offer.carrierCode); setContractId(""); setContractRef(offer.offerRef);
+              toast.success(`Spot offer ${offer.offerRef} ${isEdit ? "attached" : "will be attached when the quote is created"}`);
+            }} />
+        )}
+
+        {!spotOffer && <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
           background: T.bg, border: `1px dashed ${T.border}`, borderRadius: 8 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, fontWeight: 600 }}>Price from a matching contract</div>
@@ -224,8 +283,8 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
           <Btn size="sm" variant="secondary" onClick={findMatches} disabled={matching}>
             {matching ? "Searching…" : "Find Matching Contracts"}
           </Btn>
-        </div>
-        {matches && (
+        </div>}
+        {matches && !spotOffer && (
           <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, maxHeight: 180, overflowY: "auto" }}>
             {matches.length === 0 ? (
               <div style={{ padding: 12, fontFamily: T.body, fontSize: 12.5, color: T.textMuted }}>No matching contracts for this route</div>
@@ -306,9 +365,14 @@ const QuoteDetailModal = ({ quoteId, navigate, onClose, onChanged, onShipmentCre
   const [declineReason, setDeclineReason] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const [spotOffer, setSpotOffer] = useState(null);
   const load = useCallback(() => {
     setLoading(true);
-    api.quotes.get(quoteId).then(setQuote).catch(e => toast.error(e.message)).finally(() => setLoading(false));
+    api.quotes.get(quoteId).then(q => {
+      setQuote(q);
+      if (q?.spotOfferId) api.spotOffers.forQuote(q.id).then(o => setSpotOffer(o || null)).catch(() => setSpotOffer(null));
+      else setSpotOffer(null);
+    }).catch(e => toast.error(e.message)).finally(() => setLoading(false));
   }, [quoteId]);
   useEffect(() => { load(); }, [load]);
 
@@ -319,7 +383,7 @@ const QuoteDetailModal = ({ quoteId, navigate, onClose, onChanged, onShipmentCre
     finally { setBusy(false); }
   };
 
-  const send = () => runAction(() => api.quotes.send(quoteId), "Quote sent");
+  const send = () => runAction(async () => { const r = await api.quotes.send(quoteId); if (r?.marginWarning) toast.warning(`${r.marginWarning} — recorded in the History`); }, "Quote sent");
   const accept = () => runAction(() => api.quotes.accept(quoteId), "Quote accepted");
   const decline = () => runAction(async () => { await api.quotes.decline(quoteId, { reason: declineReason }); setDeclining(false); setDeclineReason(""); }, "Quote declined");
   const convert = async () => {
@@ -437,6 +501,8 @@ const QuoteDetailModal = ({ quoteId, navigate, onClose, onChanged, onShipmentCre
               </tfoot>
             </table>
           </div>
+
+          {spotOffer && <QuoteSpotOffer offer={spotOffer} sellUsd={quote.totalAmountUsd || 0} editable={false} />}
 
           {quote.status === "Declined" && quote.declineReason && (
             <p style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, margin: 0 }}>Decline reason: {quote.declineReason}</p>

@@ -311,9 +311,12 @@ function startFakeCarrier() {
       ] });
     const sch = await request("GET", `/api/schedules/search?pol=ZZTS3&pod=ZZTS4&carrierCode=${carrierCode}&weeks=6`, null, token);
     const s0 = sch.body?.sailings?.[0];
-    assert("a live two-leg sailing: first vessel leg's vessel/voyage/service, both legs kept, transit days",
-      s0?.source === "live" && s0.vesselName === "FAKE FEEDER" && s0.voyageNumber === "011E" && s0.service === "FD1" && s0.legs?.length === 2
-      && s0.legs[1].vesselName === "FAKE MAINLINER" && s0.transitDays === 20 && s0.etd === "2026-11-05" && s0.eta === "2026-11-25", JSON.stringify(s0));
+    // Headlined by the MAIN vessel, the leg with the longest transit (lib/mainLeg.js, 2026-10-21): the 16-day
+    // mainliner, not the 2-day feeder before it.
+    assert("a live two-leg sailing: the main leg's vessel/voyage/service, both legs kept in order, transit days",
+      s0?.source === "live" && s0.vesselName === "FAKE MAINLINER" && s0.voyageNumber === "702W" && s0.service === "ML7" && s0.mainLegIndex === 1
+      && s0.legs?.length === 2 && s0.legs[0].vesselName === "FAKE FEEDER" && s0.legs[1].vesselName === "FAKE MAINLINER"
+      && s0.transitDays === 20 && s0.etd === "2026-11-05" && s0.eta === "2026-11-25", JSON.stringify(s0));
   } catch (e) {
     console.error("\nFatal:", e.stack || e.message);
     failed++;

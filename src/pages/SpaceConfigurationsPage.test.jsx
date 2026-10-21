@@ -427,4 +427,17 @@ describe("Space Configurations — the form", () => {
     await new Promise(r => setTimeout(r, 50));
     expect(within(origin).getByTestId("lane-pill")).toHaveTextContent("FE");
   });
+
+  it("holds the space per week when asked, and saves that choice (Epic TKT-KFGL81)", async () => {
+    const onEditAlloc = vi.fn(() => Promise.resolve());
+    renderPage({ onEditAlloc });
+    await openEdit("ALC-OK");
+    expect(screen.getByRole("radio", { name: "Per period" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByTestId("scf-basis-week"));
+    expect(screen.getByRole("radio", { name: "Per week" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText(/Allocated space \(TEU per week\)/)).toBeInTheDocument();
+    expect(screen.getByText(/nothing carried over/)).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("scf-save"));
+    await waitFor(() => expect(onEditAlloc).toHaveBeenCalledWith("ALC-OK", expect.objectContaining({ spaceBasis: "week", allocatedTEU: 50 })));
+  });
 });

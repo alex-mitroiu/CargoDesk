@@ -195,6 +195,7 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
       } else {
         toast.success(result.isMock ? "Booking request sent (demo response received)" : "Booking request sent");
       }
+      if (result.warning) toast.warning(result.warning);
     } catch (e) {
       toast.error(e.message || "Failed to send booking request");
     } finally {
@@ -314,7 +315,14 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
           {/* The contract's own real, independently-populated reference — NOT shipment.contractRef,
               which for Central bookings is just a copy of the contract's contractNumber made at
               assignment time (ShipmentSchedulesPage.jsx) and would otherwise duplicate the tile above. */}
-          {shipment.contractType === "Central" ? (contract?.contractRef || "—") : "—"}
+          {shipment.contractType === "Central" ? (contract?.contractRef || "—")
+            : shipment.spotOfferId ? (
+              // A SPOT shipment priced on a carrier's spot offer books with the offer's reference
+              // (DCSA contractQuotationReference, routes/spot-offers.js).
+              <span data-testid="booking-details-quotation-ref">{shipment.contractRef}
+                <span style={{ display: "block", fontFamily: HZ_BODY, fontSize: 11, fontWeight: 500, color: HZ.textMuted, marginTop: 2 }}>Spot offer: sent as the quotation reference</span>
+              </span>
+            ) : "—"}
         </StatTile>
         <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8, padding: "10px 14px" }}>
           <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, fontWeight: 600,

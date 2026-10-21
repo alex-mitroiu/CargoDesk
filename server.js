@@ -17,8 +17,12 @@ const {
 } = require("./lib/mailer");
 const { createAisListener } = require("./lib/ais-listener");
 const { registerCarrierAdapter, getCarrierAdapter, listRegisteredAdapterKeys } = require("./lib/carrier-integrations/registry");
+const { mainLegIndex } = require("./lib/mainLeg");
+const isoWeek = require("./lib/iso-week");
 const dcsaBkgV2Adapter = require("./lib/carrier-integrations/dcsa-bkg-v2");
 registerCarrierAdapter(dcsaBkgV2Adapter.adapterKey, dcsaBkgV2Adapter);
+const demoSpotV1Adapter = require("./lib/carrier-integrations/demo-spot-v1");
+registerCarrierAdapter(demoSpotV1Adapter.adapterKey, demoSpotV1Adapter);
 const { createMappers, ISSUED_BILLING_DOC_SQL } = require("./lib/mappers");
 const { readSecret } = require("./lib/dockerSecret");
 const { createRateLimiter } = require("./lib/rateLimit");
@@ -663,6 +667,14 @@ const SETTING_DEFAULTS = {
   ais_api_key:            '',
   // The built-in DCSA carrier simulator in production (lib/dcsa-simulator; always on elsewhere).
   dcsa_demo_carrier_enabled: 'false',
+  // Booking escalations (Epic TKT-ASIYFL, App Settings → Bookings): the group OCC/BK's Escalate
+  // pop-up pre-selects and automatic escalations go to; hours without a carrier decision before a
+  // booking counts as unanswered; whether Trade/AY may escalate further to the Trade Managers;
+  // what makes a confirmation "with changes" (JSON: vessel, dates + toleranceDays, equipment, ports).
+  booking_escalation_default_group: 'occ_ay',
+  booking_no_answer_hours:          '2',
+  booking_escalation_trade_level:   'true',
+  booking_change_rules:             '{"vessel":true,"dates":true,"toleranceDays":1,"equipment":true,"ports":true}',
   // GL Export's 3 standing control accounts — a charge code with no gl_account_mappings row
   // falls into gl_control_account_unmapped instead of silently dropping. 3 fixed keys don't earn
   // a whole dedicated table; they ride the existing generic settings GET/PUT.
@@ -2038,7 +2050,10 @@ schemaReadyPromise = schemaReadyPromise
 // carrier. Otherwise it can't be booked from CargoDesk: there is no manual confirmation, no eAdapter
 // and no hard-coded list of bookable carriers any more (all retired 2026-10-11).
 const createDcsaSimulator = require("./lib/dcsa-simulator");
-const dcsaSimulator = createDcsaSimulator({ query, uid, getSettings, port: () => PORT });
+const dcsaSimulator = createDcsaSimulator({ query, uid, getSettings, port: () => PORT,
+  expectedArrival: async ref => (await query("SELECT requested_eta FROM carrier_bookings WHERE carrier_booking_request_reference=$1", [ref]))[0]?.requested_eta || "",
+  // The spot desk prices the departures schedule search shows (routes/system.js carrierSailings).
+  sailingsFor: q => (ctx.carrierSailings ? ctx.carrierSailings(q) : []) });
 
 // The connection for a carrier that offers `capability` ('booking' | 'tracking' | 'schedules' | …),
 // with its adapter and call config — or null. A real integration needs to be active, have the
@@ -2123,6 +2138,12 @@ const syncShipmentFromLegs = async (shipmentId, actorId = null) => {
   // no-SEA-leg-at-all case (pure trucking, no ocean movement) — that edge case's behavior is
   // deliberately left exactly as it was.
   const lastSeaLeg = [...legs].reverse().find(isSeaLeg) || last;
+  // The shipment's vessel, voyage and IMO are the MAIN sea leg's — the one with the longest transit
+  // (lib/mainLeg.js; agreed 2026-10-21) — not the first one's, which on a transshipment is the
+  // feeder (found on SHP-8C7JZW: ATHENA 2 days to Antwerp, then ZEUS 7 days across; the header said
+  // ATHENA). ETD stays the first sea leg's and ETA the last's.
+  const seaLegs = legs.filter(isSeaLeg);
+  const mainSeaLeg = seaLegs[mainLegIndex(seaLegs)] || seaLeg;
   // Routing term: span from first carrier-arranged leg to last — Merchant's Haulage legs excluded
   const cLegs = legs.filter(l => !["Merchant's Haulage", "Customer Arranged"].includes(l.movement_type || l.mot));
   let routingTerm = null;
@@ -2177,13 +2198,17 @@ const syncShipmentFromLegs = async (shipmentId, actorId = null) => {
   await query(`UPDATE shipments SET pol=$1, pod=$2, etd=$3, eta=$4, carrier_code=$5, vessel=$6, vessel_imo=$7, voyage=$8, routing_term=$9,
     contract_id=$10, contract_ref=$11, allocation_id=$12, contract_routing_id=$13, status=$14 WHERE id=$15`,
     [first.pol || seaLeg.pol || '', last.pod || seaLeg.pod || '', seaLeg.etd || null, lastSeaLeg.eta || null,
-     newCarrierCode, seaLeg.vessel || '', seaLeg.vessel_imo || '', seaLeg.voyage || '', routingTerm,
+     newCarrierCode, mainSeaLeg.vessel || '', mainSeaLeg.vessel_imo || '', mainSeaLeg.voyage || '', routingTerm,
      contractDropped ? '' : (shipmentRow.contract_id || ''), contractDropped ? '' : (shipmentRow.contract_ref || ''),
      // allocation_id carries a real FK now (2026-09 Space Configuration spec, gap #3) — must
      // stay/become NULL, never '', or this read-back-and-rewrite violates the constraint on
      // every shipment with no allocation (the previously-silent '' sentinel is no longer valid).
      contractDropped ? null : (shipmentRow.allocation_id || null), contractDropped ? '' : (shipmentRow.contract_routing_id || ''),
      contractDropped ? 'Requires Review' : shipmentRow.status, shipmentId]);
+  // Weekly space counts a shipment in its ETD's week, so a new ETD (a roll) can move it into
+  // another week: refresh its pool's badges (Epic TKT-KFGL81).
+  if (!contractDropped && shipmentRow.allocation_id && String(shipmentRow.etd || '') !== String(seaLeg.etd || ''))
+    await recomputeSpaceBadgesForAllocation(shipmentRow.allocation_id);
   if (contractDropped) {
     await logEvent(shipmentId, 'CONTRACT_DROPPED', 'contract_id', shipmentRow.contract_id, null,
       JSON.stringify({ reason: 'Schedule carrier no longer matches the attached Central contract',
@@ -3000,6 +3025,34 @@ async function backfillCarrierBookings() {
 }
 schemaReadyPromise = schemaReadyPromise.then(() => backfillCarrierBookings());
 
+// The shipment's vessel is its main sea leg's (syncShipmentFromLegs, 2026-10-21). Open shipments with a
+// transshipment saved before that still name the first leg's (the feeder): correct their vessel, IMO
+// and voyage once. Idempotent — a shipment already showing its main leg is left alone. Completed and
+// Cancelled shipments keep what their documents were issued with.
+async function backfillMainVessel() {
+  const legs = await query(`SELECT l.shipment_id, l.vessel, l.vessel_imo, l.voyage, l.etd, l.eta, l.leg_order, l.leg_type, l.mot
+    FROM shipment_legs l JOIN shipments s ON s.id = l.shipment_id
+    WHERE COALESCE(s.status, '') NOT IN ('Completed', 'Cancelled') ORDER BY l.shipment_id, l.leg_order`);
+  const bySea = new Map();
+  for (const l of legs) {
+    if (!(l.leg_type ? l.leg_type === 'SEA' : l.mot === 'SEA')) continue;
+    if (!bySea.has(l.shipment_id)) bySea.set(l.shipment_id, []);
+    bySea.get(l.shipment_id).push(l);
+  }
+  let fixed = 0;
+  for (const [shipmentId, sea] of bySea) {
+    if (sea.length < 2) continue;
+    const main = sea[mainLegIndex(sea)];
+    if (!main?.vessel) continue;
+    const r = await query(`UPDATE shipments SET vessel=$1, vessel_imo=$2, voyage=$3
+      WHERE id=$4 AND (COALESCE(vessel,'') <> $1 OR COALESCE(voyage,'') <> $3) RETURNING id`,
+      [main.vessel, main.vessel_imo || '', main.voyage || '', shipmentId]);
+    fixed += r.length;
+  }
+  if (fixed > 0) console.log(`  ✔ ${fixed} open shipment(s) with a transshipment now name their main vessel`);
+}
+schemaReadyPromise = schemaReadyPromise.then(() => backfillMainVessel());
+
 // ─── Ops-automation sweep: auto-create Kanban tickets from stuck process signals ──────────────
 // Previously the app had zero automatic ticket creation anywhere — a stuck carrier booking, an
 // overdue milestone, or an unresolved compliance HIT were only ever visible as a transient
@@ -3477,10 +3530,14 @@ const findMatchingContractLegs = async (legs, { pol, pod, needsPolHaulage, needs
 
 // ─── Role helpers (hoisted from inline routes so ctx can include them) ────────
 
-const VALID_ROLES  = ["admin", "operator", "occ_bk", "trade_manager", "sales", "viewer"];
+const VALID_ROLES  = ["admin", "operator", "occ_bk", "occ_ay", "ccl_co", "trade_ay", "trade_manager", "sales", "viewer"];
 // sales ranks alongside occ_bk/trade_manager — a non-hierarchical specialty role (pipeline
-// ownership, no booking authority), not a rung above/below either of them.
-const ROLE_RANK_SV = { viewer: 0, occ_bk: 1, trade_manager: 1, sales: 1, operator: 2, admin: 3 };
+// ownership, no booking authority), not a rung above/below either of them. So do the booking-
+// escalation roles (Epic TKT-ASIYFL, 2026-10-20): OCC/AY (export-office side, the default
+// escalation group), CCL/CO (import-office side) and Trade/AY (by trade lane). They read the
+// shipments their offices/lanes cover and act on escalations; they never edit a shipment or send
+// a booking (every write route names its roles, and these aren't among them).
+const ROLE_RANK_SV = { viewer: 0, occ_bk: 1, occ_ay: 1, ccl_co: 1, trade_ay: 1, trade_manager: 1, sales: 1, operator: 2, admin: 3 };
 const primaryRoleSV  = (roles) => [...roles].sort((a, b) => ROLE_RANK_SV[b] - ROLE_RANK_SV[a])[0] || 'viewer';
 const parseUserRoles = (u) => JSON.parse(u.roles || JSON.stringify([u.role || 'viewer']));
 
@@ -3556,13 +3613,20 @@ const recomputeSpaceBadge = async shipmentId => {
         const othersStatus = ownBooking?.status === "Confirmed"
           ? "cb.status = 'Confirmed'"
           : "COALESCE(cb.status, '') NOT IN ('Rejected', 'Cancelled')"; // confirmed + pending (incl. not booked yet)
-        const [{ other_teu }] = await query(
-          `SELECT COALESCE(SUM(${TEU_EXPR("c")}),0) AS other_teu FROM containers c
+        // Weekly space (Epic TKT-KFGL81) holds its TEU per ISO week: only the other shipments in this
+        // one's week (its ETD's, else its cargo-ready date's) share it.
+        const others = await query(
+          `SELECT s.etd, s.cargo_ready_date, COALESCE(SUM(${TEU_EXPR("c")}),0) AS teu FROM containers c
            JOIN shipments s ON s.id=c.shipment_id
            LEFT JOIN carrier_bookings cb ON cb.shipment_id=s.id
-           WHERE s.allocation_id=$1 AND s.id!=$2 AND ${othersStatus} AND s.status <> 'Cancelled'`,
+           WHERE s.allocation_id=$1 AND s.id!=$2 AND ${othersStatus} AND s.status <> 'Cancelled'
+           GROUP BY s.id, s.etd, s.cargo_ready_date`,
           [shipment.allocation_id, shipmentId]
         );
+        const week = alloc.space_basis === "week" ? isoWeek.mondayOf(isoWeek.spaceDateOf(shipment.etd, shipment.cargo_ready_date)) : null;
+        const other_teu = others
+          .filter(o => week === null || isoWeek.mondayOf(isoWeek.spaceDateOf(o.etd, o.cargo_ready_date)) === week)
+          .reduce((sum, o) => sum + Number(o.teu), 0);
         const remaining = Math.max(0, alloc.allocated_teu - Number(other_teu));
         if (Number(shipment_teu) > remaining)  badge = 'exceeded';
         else if (shipment.space_overage_reason) badge = 'warning';
@@ -3613,6 +3677,9 @@ async function revalidateSpaceLoop(shipmentId, actorId = null) {
   await query("UPDATE shipments SET allocation_id=NULL, space_selection='', space_overage_reason='' WHERE id=$1", [shipmentId]);
   await logEvent(shipmentId, "SPACE_UNLINKED", "allocation_id", a.id, null,
     JSON.stringify({ reason: `Sailing is on loop ${loop}; space configuration ${a.id} is for loop ${a.loop_code}` }), actorId);
+  // The steering verdict: off its space's loop (Epic TKT-KFGL81, Story 3).
+  try { await ctx.whereToBook?.recordVerdict(shipmentId, { verdict: "other_loop", actor: actorId || "" }); }
+  catch (e) { console.error(`Steering verdict ${shipmentId}:`, e.message); }
   await recomputeSpaceBadge(shipmentId);
   await recomputeSpaceBadgesForAllocation(a.id); // its former pool-mates got the space back
   return { allocationId: a.id, loop, configLoop: a.loop_code };
@@ -3847,7 +3914,7 @@ function aggregateRatesByChargeCode(rateRows, containers) {
 // contract's in the first place. Overwrite used to delete all of these by charge code alone.
 const RECONCILE_SOURCE_LABEL = {
   principal_default: "CCD", merchant_haulage: "Merchant's Haulage",
-  carrier_invoice: "carrier invoice", adjustment: "adjustment", reversal: "reversal",
+  carrier_invoice: "carrier invoice", adjustment: "adjustment", reversal: "reversal", spot_offer: "spot offer",
 };
 const isReplaceableBuy = l => (l.status || 'accrued') === 'accrued' && (l.source === 'contract' || l.source === 'manual');
 const protectedReason = l => {
@@ -4210,6 +4277,14 @@ const ctx = {
   migrationFailures,
   createRateLimiter,
 };
+// Booking escalations (Epic TKT-ASIYFL): the rules, shared by their routes, the carrier-answer hook in
+// routes/edi.js, the Shipments list's Booking column and the no-answer sweep.
+ctx.bookingEscalations = require('./lib/booking-escalations')(ctx);
+// SPOT rates (agreed 2026-10-21): spot offers, shared by their routes, quote conversion and the booking request.
+ctx.spotOffers = require('./lib/spot-offers')(ctx);
+// Where to book (Epic TKT-KFGL81): the steered option with space for a shipment, shared by contract
+// assignment, the escalation alternatives and the out-of-order check.
+ctx.whereToBook = require('./lib/where-to-book')(ctx);
 
 require('./routes/auth')(app, ctx);
 require('./routes/shipments')(app, ctx);
@@ -4221,6 +4296,9 @@ require('./routes/testcases')(app, ctx);
 require('./routes/edi')(app, ctx);
 require('./routes/carrier-webhooks')(app, ctx);
 require('./routes/dcsa-simulator')(app, ctx);
+require('./routes/booking-escalations')(app, ctx);
+require('./routes/lane-steering')(app, ctx);
+require('./routes/where-to-book')(app, ctx);
 require('./routes/carrier-tracking')(app, ctx);
 require('./routes/customs-filing')(app, ctx);
 require('./routes/shipping-instructions')(app, ctx);
@@ -4234,6 +4312,8 @@ require('./routes/customer-statements')(app, ctx);
 require('./routes/shipment-ops')(app, ctx);
 require('./routes/carrier-invoices')(app, ctx);
 require('./routes/quotes')(app, ctx);
+require('./routes/spot-offers')(app, ctx);
+require('./routes/margin-rules')(app, ctx);
 require('./routes/opportunities')(app, ctx);
 require('./routes/admin-reset')(app, ctx);
 require('./routes/finance')(app, ctx);

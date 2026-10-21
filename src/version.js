@@ -2,12 +2,18 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.91.10";
-export const BUILD     = "2026-10-16";
-export const CODENAME  = "Plimsoll";
-export const BUILD_FINGERPRINT = "0e839c40";
+export const VERSION   = "0.91.11";
+export const BUILD     = "2026-10-21";
+export const CODENAME  = "Helmsman";
+export const BUILD_FINGERPRINT = "0a0d863a";
 
 export const CHANGELOG = [
+  {
+    version:  "0.91.11",
+    date:     "2026-10-21",
+    codename: "Helmsman",
+    summary:  "Bundled release — four epics built and tested since v0.91.10: booking escalations with three new roles and Lane Steering; the main vessel and the carrier's changes (Requested vs Carrier); priced SPOT offers; and Where to book (weekly space, the steering waterfall, the out-of-order verdict and the Steering report). No pre-release audit was run, by the user's choice.\n\n**Booking escalations** (Epic TKT-ASIYFL) — when a carrier rejects a booking, confirms it with changes, or doesn't answer within the no-answer time, the booking can be escalated from the shipment. New roles: OCC/AY (the default escalation group, export side), CCL/CO (import side) and Trade/AY (trade lanes). They hand the escalation over, name a carrier, contract and sailing, and OCC/BK books as instructed. The Shipments list has a filterable Booking column; App Settings → Bookings sets the escalation group, the no-answer time and the change rules; Reports → Carrier Responses tracks answers.\n\n**Lane Steering** (Master Data) — the carrier order on a trade lane, for one customer or everyone, with validity windows; an escalation's alternatives follow it, with the Central contract as fallback.\n\n**The main vessel and the carrier's changes** (Epic TKT-O3YBNE) — the longest-transit sea leg is the main one: it headlines every sailing in schedule searches, is marked wherever a sailing is picked, and sets the shipment's vessel, voyage and IMO. Requested (A) vs Carrier (B) replaces Sent vs Received: it compares what was asked with the carrier's confirmed booking, field by field, and the changes can be accepted.\n\n**SPOT rates** (Epic TKT-SRQF8R, phases 1–4) — a spot offer with charge lines, entered by hand or taken from the demo carrier, attached to a quote or a shipment; it creates BUY lines and sends DCSA's contractQuotationReference on the booking. An expired digital offer blocks; an expired classic quote warns; a late-cancel fee is warned and accrued. Master Data → Margin Rules prices the SELL side. Phase 5 (real carrier rate APIs) waits on carrier access.\n\n**Where to book** (Epic TKT-KFGL81) — space configurations can hold their space per ISO week; the contract picker shows the Lane Steering waterfall with each option's free space and preselects the first that fits; booking out of order asks for a reason and records a verdict (steered, out of order, other contract, other carrier, spot and more); Dashboard → Steering reports the steering rate by carrier, lane and office.\n\n**Fixes** — the date picker's calendar is rendered on the page body, so it opens under its field inside the glass cards (it opened at the bottom-right of the screen on the Shipping Instructions page).\n\n**Verification** — backend 107/107 files, Vitest 339/339, Cypress 280/280 (34 specs, none skipped), locally, on 2026-10-21. The services were not re-run; no service code changed.",
+  },
   {
     version:  "0.91.10",
     date:     "2026-10-16",

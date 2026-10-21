@@ -5,6 +5,10 @@
 
 Status legend: `PASS` | `FAIL` | `SKIP` | `BLOCKED`
 
+Areas 1–10 are the original v0.26.0 cases (2026-07-09). Area 11 was added on 2026-10-21 for Where to
+book (Epic TKT-KFGL81). Every case in it is automated, and the automated test is named in each case.
+Features built between those dates are covered by the automated suites only (TEST-PLAN.md §0).
+
 ---
 
 ## Area 1 — Authentication & Security
@@ -775,3 +779,186 @@ Status legend: `PASS` | `FAIL` | `SKIP` | `BLOCKED`
 - Bodies contain an error about authentication
 
 **Status:** TBD
+
+---
+
+## Area 11 — Where to Book & Weekly Space (2026-10-21, Epic TKT-KFGL81)
+
+Shared setup: contracts on NLRTM → USNYC (EU-N → NAM) for a scratch customer, space configurations
+on them, and a Lane Steering line for everyone. Dates in 2028 keep the cases clear of real data;
+remove the line and the configurations afterwards. ARCHITECTURE.md §8.39.
+
+### TC-051: A weekly space configuration is held per ISO week
+**Feature:** Weekly space — POST /api/allocations `spaceBasis: "week"`
+**Precondition:** A contract with one routing line
+**Steps:**
+1. POST /api/allocations with `allocatedTEU: 4`, `spaceBasis: "week"`, 2 Nov – 29 Nov 2026
+2. POST the same with `spaceBasis: "month"`, then with `minimumTEU: 17`
+
+**Expected Result:**
+- 201 with `spaceBasis: "week"` and `weeks` for ISO weeks 45–48
+- `month` is refused (400). A minimum above 4 TEU × 4 weeks = 16 is refused (400)
+
+**Status:** PASS (2026-10-21, automated: tests/weekly-space.test.js)
+
+---
+
+### TC-052: Weekly space counts each shipment in its ETD's week
+**Feature:** Weekly space — GET /api/allocations?date=, GET /api/allocations/match
+**Precondition:** TC-051's configuration; shipments A and B (ETD week 45), C (week 46), D (no ETD, cargo-ready date in week 47), one 40' HC each
+**Steps:**
+1. GET /api/allocations?date=2026-11-04
+2. GET /api/allocations/match with etd 2026-11-12
+
+**Expected Result:**
+- Week 45 shows 4 TEU pending of 4. `weeks` reads 45 → 4, 46 → 2, 47 → 2 (D, by its cargo-ready date), 48 → 0
+- `/match` for 12 Nov shows week 46 with 2 TEU pending
+
+**Status:** PASS (2026-10-21, automated: tests/weekly-space.test.js)
+
+---
+
+### TC-053: The space badge compares a shipment only with its week; a roll moves it
+**Feature:** Weekly space — shipments.space_badge
+**Steps:**
+1. Add a fifth shipment E in week 45, so week 45 holds 6 TEU of 4
+2. PUT E's ETD to 25 Nov (week 48)
+
+**Expected Result:**
+- Step 1: A, B and E are Space Exceeded; C (week 46) is not
+- Step 2: no shipment is Space Exceeded
+
+**Status:** PASS (2026-10-21, automated: tests/weekly-space.test.js)
+
+---
+
+### TC-054: Where to book walks the steering line in order
+**Feature:** GET /api/where-to-book
+**Precondition:** The line for everyone has these options: #1 MSCU (named account of another customer), #2 MAEU (4 TEU a week), #3 HLCU (loop AL1, 10 TEU), #4 CMDU (no space configured)
+**Steps:**
+1. GET /api/where-to-book?pol=NLRTM&pod=USNYC&etd=2028-03-08&teu=2&customerId=<shipper>
+2. Repeat with teu=6, then with loopCode=AL5
+
+**Expected Result:**
+- #1 is skipped (named account). #2 is available with 4 TEU free in week 10 and is the pick. #4 is order only (no cap)
+- teu=6: the pick is still #2, as an overbooking
+- AL5: #3 is skipped, with "space for loop AL1 only"
+
+**Status:** PASS (2026-10-21, automated: tests/where-to-book.test.js)
+
+---
+
+### TC-055: A full week moves the pick down; the next week is new
+**Feature:** GET /api/where-to-book
+**Steps:**
+1. Book 2 × 40' HC on #2's weekly space in week 10
+2. Ask again for 8 March, then for 15 March (week 11)
+
+**Expected Result:**
+- Week 10: #2 is full and the pick is #3
+- Week 11: #2 is the pick again, with 4 TEU free
+
+**Status:** PASS (2026-10-21, automated: tests/where-to-book.test.js)
+
+---
+
+### TC-056: A customer's own line wins, and their own space is theirs only
+**Feature:** GET /api/where-to-book — customer lines
+**Steps:**
+1. Add a line for the shipper alone: #1 MAEU
+2. Ask for the shipper, before and after the shipper gets 3 TEU a week of their own on MAEU
+3. Ask for another customer
+
+**Expected Result:**
+- The shipper's line is used. Before their own space exists, MAEU's general space applies; it is full, so #1 is the pick as an overbooking
+- With their own space, only that space counts: 4 TEU stays on it as an overbooking, never spilling into the general space
+- The other customer gets the line for everyone, and never the shipper's space
+
+**Status:** PASS (2026-10-21, automated: tests/where-to-book.test.js)
+
+---
+
+### TC-057: The contract picker shows Where to book with the pick pre-selected
+**Feature:** UI — Schedules → Change Contract
+**Precondition:** A line with #1 MAEU (4 TEU a week) and #2 HLCU (no space); a Central shipment sailing today with one 40' HC
+**Steps:**
+1. Open the shipment's Contracts & Schedules page and click Change Contract
+
+**Expected Result:**
+- The Where to book panel lists #1 MAEU as THE PICK (4 of 4 TEU free) and #2 HLCU as available, order only, with its note
+- #1 is already selected and waits for Confirm Selection
+
+**Status:** PASS (2026-10-21, automated: cypress/e2e/where-to-book.cy.js)
+
+---
+
+### TC-058: Booking a lower option asks why, and the shipment says so
+**Feature:** UI — the out-of-order warning
+**Steps:**
+1. In TC-057's picker, click Book here on #2, then Confirm Selection
+2. Try Book here anyway with no reason; then type a reason and click it
+
+**Expected Result:**
+- The warning names #1 MAEU and its 4 TEU free. Book here anyway is disabled until a reason is typed
+- The Contract area shows "#2 of 2 · out of order". GET /api/shipments/:id returns `steeringVerdict: "out_of_order"` with the reason
+
+**Status:** PASS (2026-10-21, automated: cypress/e2e/where-to-book.cy.js)
+
+---
+
+### TC-059: The server works out the verdict for every contract choice
+**Feature:** shipments.steering_* — POST/PUT /api/shipments
+**Precondition:** A line with #1 MAEU (4 TEU a week), #2 HLCU (10 TEU), #3 CMDU (no space); ONEY also sails the lane
+**Steps:**
+1. Create shipments on #1, on #2 with a `steeringReason`, then on #2 after #1's week is full
+2. Create one on ONEY, one on SPOT, one Customer Own, one Pending, and one on a lane with no steering
+
+**Expected Result:**
+- The verdicts are, in order: steered (rank 1); out_of_order (rank 2, with the reason and better option #1 at 2 TEU free); steered; other_carrier; spot; customer_own; no_contract; not_covered
+- The History has BOOKED_OUT_OF_ORDER or BOOKED_OFF_STEERING for each one that didn't follow
+
+**Status:** PASS (2026-10-21, automated: tests/steering-verdict.test.js)
+
+---
+
+### TC-060: A reassignment is judged again; a reason alone isn't
+**Feature:** PUT /api/shipments/:id
+**Steps:**
+1. Move the ONEY shipment to #3 CMDU, then to #2 HLCU
+2. PUT only a new `steeringReason` on the out-of-order shipment, after #1 has filled up
+
+**Expected Result:**
+- #3: out_of_order. #2: steered, and the old reason is cleared
+- The new reason is saved, and the verdict stays out_of_order
+
+**Status:** PASS (2026-10-21, automated: tests/steering-verdict.test.js)
+
+---
+
+### TC-061: The steering report counts the verdicts
+**Feature:** GET /api/reports/steering
+**Steps:**
+1. GET /api/reports/steering?from=2028-03-01&to=2028-03-31&lane=EU-N → NAM
+2. Repeat without the lane, with carrier=MAEU, and with to before from
+
+**Expected Result:**
+- Lane filter: 4 steered, 1 out of order, 1 SPOT; rate 66.7%. The not-followed list holds the out-of-order shipment with its pick and reason
+- Without the lane, the no-steering lane counts as not covered, outside the rate. MAEU: 2 shipments, 100%. to before from: 400
+
+**Status:** PASS (2026-10-21, automated: tests/steering-verdict.test.js)
+
+---
+
+### TC-062: Dashboard → Steering, Lane Steering's Check, and the weekly row
+**Feature:** UI
+**Steps:**
+1. Open Dashboard → Steering
+2. Open Master Data → Lane Steering → Check, pick NLRTM → USNYC, and click Check
+3. Open Space Configurations
+
+**Expected Result:**
+- The tab counts the out-of-order shipment and lists it with its reason
+- Check shows #1 as THE PICK (4 TEU a week) and #2 as order only, with the line's note
+- The weekly row reads "4 TEU/wk" and its week
+
+**Status:** PASS (2026-10-21, automated: cypress/e2e/where-to-book.cy.js)

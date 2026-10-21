@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { T, toIso, addDays } from "../tokens";
+import { periodTeuOf } from "../utils/isoWeek";
 import { api } from "../api";
 import CommandCenterView from "../components/shared/CommandCenterView";
 import { IconAnchor } from "../components/primitives/Icon";
@@ -198,8 +199,9 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
     consumedByCarrier[s.carrierCode] = (consumedByCarrier[s.carrierCode] || 0) + teu;
   });
   const activeAllocs   = allocations.filter(a => a.endDate >= todayStr);
+  // Weekly space is compared over its whole period, like a period configuration (Epic TKT-KFGL81).
   const aboveThreshold = activeAllocs.filter(a =>
-    a.allocatedTEU > 0 && (consumedByCarrier[a.carrierCode] || 0) / a.allocatedTEU * 100 >= a.alertThreshold
+    periodTeuOf(a) > 0 && (consumedByCarrier[a.carrierCode] || 0) / periodTeuOf(a) * 100 >= a.alertThreshold
   ).length;
   const in30           = addDays(todayStr, 30);
   const expiringCount  = activeAllocs.filter(a => a.endDate <= in30).length;
@@ -212,11 +214,12 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
 
   // Allocations needing attention — above their alert threshold, sorted worst first
   const attnAllocations = activeAllocs
-    .filter(a => a.allocatedTEU > 0 && (consumedByCarrier[a.carrierCode] || 0) / a.allocatedTEU * 100 >= a.alertThreshold)
+    .filter(a => periodTeuOf(a) > 0 && (consumedByCarrier[a.carrierCode] || 0) / periodTeuOf(a) * 100 >= a.alertThreshold)
     .map(a => ({
       ...a,
       consumed: consumedByCarrier[a.carrierCode] || 0,
-      pct: Math.round((consumedByCarrier[a.carrierCode] || 0) / a.allocatedTEU * 100),
+      periodTEU: periodTeuOf(a),
+      pct: Math.round((consumedByCarrier[a.carrierCode] || 0) / periodTeuOf(a) * 100),
     }))
     .sort((a, b) => b.pct - a.pct);
 
@@ -709,7 +712,7 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
                           background: a.pct >= 100 ? T.danger : T.warning, transition: "width .3s" }} />
                       </div>
                       <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                        {a.consumed} / {a.allocatedTEU} TEU
+                        {a.consumed} / {a.periodTEU} TEU
                         <span style={{ color: a.pct >= 100 ? T.danger : T.warning, fontWeight: 700, marginLeft: 6 }}>
                           {a.pct}%
                         </span>

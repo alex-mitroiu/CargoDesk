@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { T, MONTHS_LONG, DAYS_SHORT, parseIso, toIso, todayIso } from "../../tokens";
 import { Field } from "./Form";
 import { inputBase } from "./Form";
@@ -58,6 +59,11 @@ const DatePicker = ({
   // but a real bug the first time one landed inside an overflow:auto/hidden container (the
   // per-container plan table's horizontal scroller, LoadingServicePage.jsx): the popover
   // got clipped to that container's own box instead of floating over the whole page.
+  // The popover is also portaled to document.body: an ancestor with backdrop-filter (the
+  // glass cards, e.g. ShipmentShippingInstructionsPage), transform or filter becomes the
+  // containing block for position: fixed, so inline the viewport coordinates landed off
+  // that card's corner instead (the SI Cutoff calendar opened at the bottom-right of the
+  // screen). Same reason ColumnFilter/ColumnSort portal their popovers.
   const POPOVER_WIDTH = 272;
   const positionPopover = () => {
     if (!triggerRef.current) return;
@@ -105,7 +111,10 @@ const DatePicker = ({
   }, [open]);
 
   useEffect(() => {
-    const h = e => { if (ref.current && !ref.current.contains(e.target)) { setOpen(false); setView("days"); } };
+    const h = e => {
+      if (ref.current?.contains(e.target) || dropRef.current?.contains(e.target)) return;
+      setOpen(false); setView("days");
+    };
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
@@ -242,7 +251,7 @@ const DatePicker = ({
         </button>
 
         {/* Popover */}
-        {open && !disabled && (
+        {open && !disabled && createPortal(
           <div ref={dropRef} style={{ ...popover, ...dropStyle }}>
 
             {withTime && (
@@ -367,7 +376,8 @@ const DatePicker = ({
               </>
             )}
 
-          </div>
+          </div>,
+          document.body
         )}
       </div>
     </Field>

@@ -1,5 +1,7 @@
 "use strict";
 
+const { mondayOf, isoWeekNumber, mondaysBetween, spaceDateOf } = require("../lib/iso-week");
+
 module.exports = function allocationsRoutes(app, ctx) {
   const { query, transaction, ok, err, uid, requireRole, mapAllocation, logEntityEvent, linkedPortCodes, findMatchingContractLegs,
           getSettings, callContractService, TEU_EXPR, FAK_COMMODITY, parseCommodityList } = ctx;
@@ -51,7 +53,7 @@ module.exports = function allocationsRoutes(app, ctx) {
       if (!row) return null;
       c = { id: row.id, carrierCode: row.carrier_code, contractNumber: row.contract_number, contractRef: row.contract_ref,
             namedAccountId: row.named_account_id, namedAccount: row.named_account, commodityTypes: row.commodity_types,
-            dgAllowed: row.dg_allowed, validFrom: row.valid_from, validTo: row.valid_to };
+            dgAllowed: row.dg_allowed, validFrom: row.valid_from, validTo: row.valid_to, status: row.status };
       types = (await query("SELECT container_type FROM contract_container_types WHERE contract_id=$1", [contractId])).map(r => r.container_type);
       rates = (await query("SELECT service_code, amount, currency, container_type FROM contract_rates WHERE contract_id=$1", [contractId]))
         .map(r => ({ serviceCode: r.service_code, amount: r.amount, currency: r.currency, containerType: r.container_type }));
@@ -72,12 +74,14 @@ module.exports = function allocationsRoutes(app, ctx) {
     return {
       id: c.id || contractId, carrierCode: c.carrierCode || "", contractNumber: c.contractNumber || "",
       namedAccountId: c.namedAccountId || "", namedAccount: c.namedAccount || "",
-      validFrom: c.validFrom || "", validTo: c.validTo || "",
+      validFrom: c.validFrom || "", validTo: c.validTo || "", status: c.status || "",
       commodityCodes: codes.length ? codes : [FAK_COMMODITY],
       lines, legs,
       info: contractInfo({ ...c, containerTypes: types }, rates),
     };
   }
+
+  ctx.loadContract = loadContract;
 
   async function routingIdsByAllocation(ids) {
     const map = new Map();
@@ -100,38 +104,73 @@ module.exports = function allocationsRoutes(app, ctx) {
   // below, SpaceConfigurationsPage's consumption bar/Linked Shipments modal, ShipmentSchedulesPage's
   // Space Configuration panel, ShipmentFormPage's Contract Picker card). One batched query
   // rather than one subquery per allocation.
+  // Each configuration's buckets come as a whole-period total plus one set per ISO week (the
+  // week of the shipment's ETD, else its cargo-ready date): weekly space reads its week's.
   async function loadTeuBuckets() {
     const rows = await query(`
-      SELECT s.allocation_id AS allocation_id, cb.status AS booking_status,
+      SELECT s.allocation_id AS allocation_id, cb.status AS booking_status, s.etd AS etd, s.cargo_ready_date AS cargo_ready_date,
              COALESCE(SUM(${TEU_EXPR("c")}), 0) AS teu
       FROM containers c
       JOIN shipments s ON s.id = c.shipment_id
       LEFT JOIN carrier_bookings cb ON cb.shipment_id = s.id
       WHERE s.allocation_id IS NOT NULL AND s.allocation_id != ''
         AND COALESCE(s.status, '') <> 'Cancelled' -- no demand left, booked or not (a never-booked one used to stay "pending")
-      GROUP BY s.allocation_id, cb.status
+      GROUP BY s.allocation_id, cb.status, s.etd, s.cargo_ready_date
     `);
     const map = new Map();
+    const add = (bucket, status, teu) => {
+      if (status === "Confirmed") bucket.confirmedTEU += teu;
+      else if (status === "Rejected") bucket.rejectedTEU += teu;
+      else if (status === "Cancelled") { /* excluded — no live demand left */ }
+      else bucket.pendingTEU += teu; // Created, Pending, or no carrier_bookings row yet
+    };
     for (const r of rows) {
       const teu = Number(r.teu);
-      const bucket = map.get(r.allocation_id) || { confirmedTEU: 0, pendingTEU: 0, rejectedTEU: 0 };
-      if (r.booking_status === "Confirmed") bucket.confirmedTEU += teu;
-      else if (r.booking_status === "Rejected") bucket.rejectedTEU += teu;
-      else if (r.booking_status === "Cancelled") { /* excluded — no live demand left */ }
-      else bucket.pendingTEU += teu; // Created, Pending, or no carrier_bookings row yet
-      map.set(r.allocation_id, bucket);
+      const entry = map.get(r.allocation_id) || { total: { ...emptyBuckets }, weeks: new Map() };
+      add(entry.total, r.booking_status, teu);
+      const week = mondayOf(spaceDateOf(r.etd, r.cargo_ready_date));
+      if (week) {
+        if (!entry.weeks.has(week)) entry.weeks.set(week, { ...emptyBuckets });
+        add(entry.weeks.get(week), r.booking_status, teu);
+      }
+      map.set(r.allocation_id, entry);
     }
     return map;
   }
   const emptyBuckets = { confirmedTEU: 0, pendingTEU: 0, rejectedTEU: 0 };
-  const withBuckets = (base, b = emptyBuckets) => ({ ...base, confirmedTEU: b.confirmedTEU, pendingTEU: b.pendingTEU, rejectedTEU: b.rejectedTEU,
-    remainingTEU: Math.max(0, base.allocatedTEU - b.confirmedTEU) });
+  const todayIso = () => new Date().toISOString().slice(0, 10);
+  // The week whose space a weekly configuration shows for a date: the date's own week, kept inside
+  // the configuration's period (today on the list, before or after it, shows its first or last week).
+  const weekFor = (base, onDate) => {
+    const d = onDate || todayIso();
+    return mondayOf(d < base.effectiveDate ? base.effectiveDate : d > base.endDate ? base.endDate : d);
+  };
+  // A configuration's figures. Space held per period: its whole pool. Weekly space: the week of
+  // `onDate` (the shipment's ETD on /match, today on the list), with `week` and `weekNumber` saying
+  // which, and `allocatedTEU` staying the TEU per week.
+  const withBuckets = (base, entry, onDate = "") => {
+    const week = base.spaceBasis === "week" ? weekFor(base, onDate) : "";
+    const b = (week ? entry?.weeks.get(week) : entry?.total) || emptyBuckets;
+    return { ...base, confirmedTEU: b.confirmedTEU, pendingTEU: b.pendingTEU, rejectedTEU: b.rejectedTEU,
+      remainingTEU: Math.max(0, base.allocatedTEU - b.confirmedTEU),
+      ...(week && { week, weekNumber: isoWeekNumber(week) }) };
+  };
+  // Every week of a weekly configuration's period with its buckets, and the whole-period total —
+  // for the Space Configurations page's week breakdown.
+  const weeksOf = (base, entry) => base.spaceBasis !== "week" ? {} : {
+    weeks: mondaysBetween(base.effectiveDate, base.endDate).map(w => ({ week: w, weekNumber: isoWeekNumber(w), ...(entry?.weeks.get(w) || emptyBuckets) })),
+    periodTotals: { ...(entry?.total || emptyBuckets) },
+  };
 
   app.get("/api/allocations", async (req, res) => {
     const rows = await query("SELECT * FROM allocations ORDER BY effective_date DESC");
     const buckets = await loadTeuBuckets();
     const routingIds = await routingIdsByAllocation(rows.map(r => r.id));
-    ok(res, rows.map(r => ({ ...withBuckets(mapAllocation(r), buckets.get(r.id)), routingIds: routingIds.get(r.id) || [] })));
+    const onDate = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || "")) ? req.query.date : "";
+    ok(res, rows.map(r => {
+      const base = mapAllocation(r), entry = buckets.get(r.id);
+      return { ...withBuckets(base, entry, onDate), ...weeksOf(base, entry), routingIds: routingIds.get(r.id) || [] };
+    }));
   });
 
   // ─── The rules a space configuration must meet (2026-09-30, approved form mockup:
@@ -153,8 +192,15 @@ module.exports = function allocationsRoutes(app, ctx) {
     const eff = b.effectiveDate, end = b.endDate;
     if (!eff || !end) return { error: "effectiveDate and endDate are required" };
     if (end < eff) return { error: "end date must be on or after effective date" };
-    if (b.minimumTEU != null && String(b.minimumTEU).trim() !== "" && Number(b.minimumTEU) > Number(b.allocatedTEU))
-      return { error: "Minimum commitment can't exceed the allocated TEU" };
+    // Per week or per period (Epic TKT-KFGL81); the minimum commitment is always for the whole
+    // period, so weekly space is measured against its TEU over every week of the period.
+    const spaceBasis = b.spaceBasis == null || b.spaceBasis === "" ? "period" : String(b.spaceBasis);
+    if (!["period", "week"].includes(spaceBasis)) return { error: "spaceBasis must be period or week" };
+    const periodTeu = spaceBasis === "week" ? Number(b.allocatedTEU) * mondaysBetween(eff, end).length : Number(b.allocatedTEU);
+    if (b.minimumTEU != null && String(b.minimumTEU).trim() !== "" && Number(b.minimumTEU) > periodTeu)
+      return { error: spaceBasis === "week"
+        ? `Minimum commitment can't exceed the period's ${periodTeu} TEU (${b.allocatedTEU} a week)`
+        : "Minimum commitment can't exceed the allocated TEU" };
     const c = await loadContract(b.contractId);
     if (!c) return { error: "contractId does not match any existing contract" };
     if (c.unreachable) return { error: "The Contract Management Service can't be reached, so the contract can't be checked — try again", status: 502 };
@@ -209,7 +255,7 @@ module.exports = function allocationsRoutes(app, ctx) {
       const line = c.lines.find(l => l.id === clash.routing_id);
       return { error: `${line?.label || "This routing line"} already has a space configuration (${clash.id}, ${clash.effective_date} – ${clash.end_date}) for the same loop, customer and commodity` };
     }
-    return { value: { contract: c, routingIds, loopCode, customerId, customerName, commodityCode,
+    return { value: { contract: c, routingIds, loopCode, customerId, customerName, commodityCode, spaceBasis,
       carrierCode: c.carrierCode, contractNumber: c.contractNumber, pol: lines[0].pol, pod: lines[0].pod } };
   }
 
@@ -227,19 +273,20 @@ module.exports = function allocationsRoutes(app, ctx) {
     const id = `ALC-${uid()}`;
     const minTeuVal = minimumTEU != null && String(minimumTEU).trim() !== '' ? Number(minimumTEU) : null;
     await transaction(async tx => {
-      await tx.query(`INSERT INTO allocations (id,carrier_code,allocated_teu,effective_date,end_date,trade_lane,notes,alert_threshold,pol,pod,origin_lane,dest_lane,contract_id,contract_number,minimum_teu,loop_code,customer_id,customer_name,commodity_code)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+      await tx.query(`INSERT INTO allocations (id,carrier_code,allocated_teu,effective_date,end_date,trade_lane,notes,alert_threshold,pol,pod,origin_lane,dest_lane,contract_id,contract_number,minimum_teu,loop_code,customer_id,customer_name,commodity_code,space_basis)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
         [id, v.carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, v.pol, v.pod, originLane, destLane,
-         v.contract.id, v.contractNumber, minTeuVal, v.loopCode, v.customerId, v.customerName, v.commodityCode]);
+         v.contract.id, v.contractNumber, minTeuVal, v.loopCode, v.customerId, v.customerName, v.commodityCode, v.spaceBasis]);
       await saveRoutingLinks(tx, id, v.routingIds);
     });
     await logEntityEvent('allocation', id, 'CREATED', null, null, null,
-      JSON.stringify({ carrierCode: v.carrierCode, routingIds: v.routingIds, pol: v.pol, pod: v.pod, allocatedTEU, effectiveDate, endDate,
+      JSON.stringify({ carrierCode: v.carrierCode, routingIds: v.routingIds, pol: v.pol, pod: v.pod, allocatedTEU, spaceBasis: v.spaceBasis, effectiveDate, endDate,
         contractNumber: v.contractNumber, loopCode: v.loopCode, customerId: v.customerId, commodityCode: v.commodityCode, minimumTEU: minTeuVal }));
     const [row] = await query("SELECT * FROM allocations WHERE id=$1", [id]);
     // A brand-new allocation always starts at 0 in every bucket (no shipment could reference
     // this id yet) — included explicitly so the response shape matches GET's, not left undefined.
-    ok(res, { ...withBuckets(mapAllocation(row)), routingIds: v.routingIds }, 201);
+    const base = mapAllocation(row);
+    ok(res, { ...withBuckets(base), ...weeksOf(base), routingIds: v.routingIds }, 201);
   });
 
   app.put("/api/allocations/:id", write, async (req, res) => {
@@ -274,18 +321,23 @@ module.exports = function allocationsRoutes(app, ctx) {
     await transaction(async tx => {
       await tx.query(`UPDATE allocations SET carrier_code=$1, allocated_teu=$2, effective_date=$3, end_date=$4, trade_lane=$5, notes=$6, alert_threshold=$7,
         pol=$8, pod=$9, origin_lane=$10, dest_lane=$11, contract_id=$12, contract_number=$13, minimum_teu=$14,
-        loop_code=$15, customer_id=$16, customer_name=$17, commodity_code=$18 WHERE id=$19`,
+        loop_code=$15, customer_id=$16, customer_name=$17, commodity_code=$18, space_basis=$19 WHERE id=$20`,
         [v.carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, v.pol, v.pod, originLane, destLane,
-         v.contract.id, v.contractNumber, minTeuVal, v.loopCode, v.customerId, v.customerName, v.commodityCode, req.params.id]);
+         v.contract.id, v.contractNumber, minTeuVal, v.loopCode, v.customerId, v.customerName, v.commodityCode, v.spaceBasis, req.params.id]);
       await saveRoutingLinks(tx, req.params.id, v.routingIds);
     });
     await logEntityEvent('allocation', req.params.id, 'UPDATED', null, null, null,
-      JSON.stringify({ carrierCode: v.carrierCode, routingIds: v.routingIds, pol: v.pol, pod: v.pod, allocatedTEU, effectiveDate, endDate,
+      JSON.stringify({ carrierCode: v.carrierCode, routingIds: v.routingIds, pol: v.pol, pod: v.pod, allocatedTEU, spaceBasis: v.spaceBasis, effectiveDate, endDate,
         contractNumber: v.contractNumber, loopCode: v.loopCode, customerId: v.customerId, commodityCode: v.commodityCode, minimumTEU: minTeuVal }));
+    // Switching between weekly and period space (or changing the TEU) moves every linked
+    // shipment's own over/under verdict.
+    if ((existing.space_basis || "period") !== v.spaceBasis || Number(existing.allocated_teu) !== Number(allocatedTEU))
+      await ctx.recomputeSpaceBadgesForAllocation?.(req.params.id);
     // Editing an allocation's own fields never changes which shipments reference it — carry the
     // real current buckets through so the response shape matches GET's.
     const [row] = await query("SELECT * FROM allocations WHERE id=$1", [req.params.id]);
-    ok(res, { ...withBuckets(mapAllocation(row), (await loadTeuBuckets()).get(req.params.id)), routingIds: v.routingIds });
+    const base = mapAllocation(row), entry = (await loadTeuBuckets()).get(req.params.id);
+    ok(res, { ...withBuckets(base, entry), ...weeksOf(base, entry), routingIds: v.routingIds });
   });
 
   app.delete("/api/allocations/:id", write, async (req, res) => {
@@ -310,12 +362,17 @@ module.exports = function allocationsRoutes(app, ctx) {
   // commodity is FAK or the shipment's own commodity. Customer-specific space comes first, then
   // the general space that also fits. A configuration whose contract can't be checked (remote
   // service down, or an old configuration with no routing lines) falls back to its stored lane.
-  app.get("/api/allocations/match", async (req, res) => {
+  app.get("/api/allocations/match", async (req, res) => ok(res, await matchAllocations(req.query)));
+
+  // The match itself, shared: the escalation alternatives (lib/booking-escalations.js, Epic
+  // TKT-ASIYFL) use exactly this search as their "general contract search" fallback, so the two
+  // can never disagree about which space fits a shipment.
+  async function matchAllocations(params = {}) {
     const { pol = "", pod = "", etd = "", needsPolHaulage = "", needsPodHaulage = "",
-            pkuLocation = "", delLocation = "", principalId = "", commodityCode = "", loopCode = "" } = req.query;
+            pkuLocation = "", delLocation = "", principalId = "", commodityCode = "", loopCode = "" } = params;
     // No etd means "don't filter by validity window", not "return nothing" — during shipment
     // creation the sea leg's ETD is often still blank when Central is picked (real bug, fixed).
-    if (!pol || !pod) return ok(res, []);
+    if (!pol || !pod) return [];
     const polU = pol.toUpperCase(), podU = pod.toUpperCase(), loopU = String(loopCode).trim().toUpperCase();
     const needsPol = needsPolHaulage === "1" || needsPolHaulage === "true";
     const needsPod = needsPodHaulage === "1" || needsPodHaulage === "true";
@@ -353,15 +410,16 @@ module.exports = function allocationsRoutes(app, ctx) {
       // number has space" suggestion. contractNumber is read live from the contract: the
       // allocation's stored copy isn't kept in sync when a contract is renumbered.
       const contract = c && !c.unreachable ? c.info : null;
-      results.push({ ...withBuckets(base, buckets.get(a.id)), contractNumber: contract?.contractNumber || base.contractNumber, contract,
+      results.push({ ...withBuckets(base, buckets.get(a.id), etd), contractNumber: contract?.contractNumber || base.contractNumber, contract,
         routingIds: ids, routings, matchedRoutingId: matched.routingId,
         matchKind: matched.kind, linkedPolVia: matched.pol !== polU ? matched.pol : null, linkedPodVia: matched.pod !== podU ? matched.pod : null });
     }
     // Customer-specific space first; Array.prototype.sort is stable, so each group keeps the
     // newest-period-first order from the query.
     results.sort((x, y) => (y.customerId ? 1 : 0) - (x.customerId ? 1 : 0));
-    ok(res, results);
-  });
+    return results;
+  }
+  ctx.matchAllocations = matchAllocations;
 
   // Conflict detection (lane-based, kept for older callers; the space configuration form now
   // checks duplicates per routing line itself — see resolveConfig).

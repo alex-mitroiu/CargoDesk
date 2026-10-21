@@ -20,6 +20,7 @@ import DataTable, { TableToolbar } from "../components/shared/DataTable";
 import useTableQuery from "../hooks/useTableQuery";
 import { queryRows, filterOptions } from "../utils/localTableQuery";
 import { buildSpaceRows, portLookupsNeeded, SPACE_COLUMNS, SPACE_FILTER_KEYS, SPACE_SORT_OPTIONS, SPACE_SPEC } from "../utils/spaceConfigTable";
+import { isoWeekNumber, spaceDateOf, weekRange } from "../utils/isoWeek";
 import { IconCheck, IconClose, IconPencil, IconWarning, IconForbid, IconLink,
   IconClipboard, IconArchive, IconSettings, IconSearch } from "../components/primitives/Icon";
 
@@ -299,7 +300,8 @@ const SpaceConfigurationsPage = ({
     { key: "teu", header: "TEU", width: 100,
       render: r => (
         <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-          <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{r.allocated} TEU</span>
+          <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{r.allocated} TEU{r.weekly ? "/wk" : ""}</span>
+          {r.weekly && <span data-testid={`space-row-week-${r.id}`} style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>Week {r.weekNumber}</span>}
           <ConsumptionBar allocated={r.allocated} confirmed={r.confirmed} pending={r.pending} rejected={r.rejected} height={4} width={72} />
           <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T[r.barLevel] }}>
             {r.pct.toFixed(0)}% <span style={{ color: T.border }}>/ {r.thresh}%</span>
@@ -332,9 +334,9 @@ const SpaceConfigurationsPage = ({
               </span>
             )}
             {r.belowMinimum && (
-              <span title={`Committed to ${r.a.minimumTEU} TEU by ${r.a.endDate} — ${r.confirmed} confirmed so far`}
+              <span title={`Committed to ${r.a.minimumTEU} TEU by ${r.a.endDate} — ${r.mqcConfirmed} confirmed so far`}
                 style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, color: r.mqcUrgent ? T.danger : T.info }}>
-                ⚠ MQC {r.confirmed}/{r.a.minimumTEU}
+                ⚠ MQC {r.mqcConfirmed}/{r.a.minimumTEU}
               </span>
             )}
           </div>
@@ -438,6 +440,10 @@ const SpaceConfigurationsPage = ({
             viaLinkedPod: !!leg && leg.pod !== s.pod,
           };
         }).filter(s => s.teu > 0);
+        // Weekly space (Epic TKT-KFGL81): its shipments in week order, each labelled with its week.
+        const weekly = a.spaceBasis === "week";
+        const weekOfShipment = s => isoWeekNumber(spaceDateOf(s.etd, s.cargoReadyDate));
+        if (weekly) linked.sort((x, y) => spaceDateOf(x.etd, x.cargoReadyDate).localeCompare(spaceDateOf(y.etd, y.cargoReadyDate)));
 
         // Shipments that LOOK related (same carrier/contract/route/period) but were never
         // explicitly linked via the contract-assignment flow — surfaced separately, below, so
@@ -491,12 +497,33 @@ const SpaceConfigurationsPage = ({
               </div>
               <div style={{ marginLeft: "auto", textAlign: "right" }}>
                 <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginBottom: 3 }}>
+                  {weekly && <span>Week {a.weekNumber}: </span>}
                   <span style={{ color: barColor, fontWeight: 700 }}>{confirmedTEU}</span>
-                  {" / "}{allocated} TEU confirmed ({pct}%)
+                  {" / "}{allocated} TEU{weekly ? "/wk" : ""} confirmed ({pct}%)
                 </div>
                 <ConsumptionBar allocated={allocated} confirmed={confirmedTEU} pending={pendingTEU} rejected={rejectedTEU} height={6} width={140} />
               </div>
             </div>
+
+            {weekly && (a.weeks || []).length > 0 && (
+              <div data-testid="linked-weeks" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(118px, 1fr))", gap: 8, marginBottom: 16 }}>
+                {a.weeks.map(w => {
+                  const used = w.confirmedTEU + w.pendingTEU, free = allocated - used;
+                  return (
+                    <div key={w.week} data-testid={`linked-week-${w.week}`} title={weekRange(w.week)}
+                      style={{ padding: "8px 10px", borderRadius: 7, border: `1px solid ${w.week === a.week ? T.accent : T.border}`, background: T.bg,
+                        display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.text }}>Week {w.weekNumber}</span>
+                      <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>{weekRange(w.week)}</span>
+                      <ConsumptionBar allocated={allocated} confirmed={w.confirmedTEU} pending={w.pendingTEU} rejected={w.rejectedTEU} height={4} width="100%" />
+                      <span style={{ fontFamily: T.mono, fontSize: 10.5, color: free < 0 ? T.danger : T.textMuted }}>
+                        {free < 0 ? `${-free} over` : `${free} of ${allocated} free`}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {linked.length === 0 ? (
               <div style={{ padding: "40px 0", textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
@@ -533,7 +560,9 @@ const SpaceConfigurationsPage = ({
                           </span>
                         )}
                       </span>
-                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{s.etd || "—"}</span>
+                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                        {s.etd || "—"}{weekly && weekOfShipment(s) ? <span style={{ color: T.accent }}> · W{weekOfShipment(s)}</span> : null}
+                      </span>
                       <Badge variant={contractVariant(s.contractType)}>{s.contractType || "—"}</Badge>
                       <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>{s.teu}</span>
                       <Badge variant={statusVariant(s.status)}>{s.status}</Badge>

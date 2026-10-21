@@ -100,7 +100,10 @@ export const api = {
     get:     (shipmentId)          => req("GET",   `/shipments/${shipmentId}/carrier-booking`),
     cancel:  (shipmentId, data={}) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/cancel`, data),
     // Sent through a carrier integration (DCSA, TKT-KG4E49): update/amend at the carrier, ask it for the status.
-    sendUpdate:  (shipmentId) => req("POST", `/shipments/${shipmentId}/carrier-booking/send-update`, {}),
+    sendUpdate:  (shipmentId, data = {}) => req("POST", `/shipments/${shipmentId}/carrier-booking/send-update`, data),
+    // Requested (A) vs Carrier (B), and accepting the carrier's version (2026-10-21).
+    comparison:    (shipmentId) => req("GET",  `/shipments/${shipmentId}/carrier-booking/comparison`),
+    acceptChanges: (shipmentId) => req("POST", `/shipments/${shipmentId}/carrier-booking/accept-changes`, {}),
     checkStatus: (shipmentId) => req("POST", `/shipments/${shipmentId}/carrier-booking/check-status`, {}),
     syncEvents:  (shipmentId) => req("POST", `/shipments/${shipmentId}/carrier-events/sync`, {}),
     listAll: (params={})           => req("GET",   `/carrier-bookings?${new URLSearchParams(params)}`),
@@ -190,7 +193,8 @@ export const api = {
   portLanes: (unlocode) => req("GET", `/port-locations/${unlocode}/lanes`),
   portLinks: (unlocode) => req("GET", `/port-locations/${unlocode}/links`),
   allocations: {
-    list:      ()            => req("GET",    "/allocations"),
+    // params.date: the day weekly space is shown for (its week); today when left out.
+    list:      (params)      => req("GET",    params ? `/allocations?${new URLSearchParams(params)}` : "/allocations"),
     create:    (data)        => req("POST",   "/allocations", data),
     update:    (id, data)    => req("PUT",    `/allocations/${id}`, data),
     remove:    (id)          => req("DELETE", `/allocations/${id}`),
@@ -245,6 +249,43 @@ export const api = {
   },
   unlocodes: {
     search: (p = {})          => req("GET",    `/unlocodes?${new URLSearchParams(p)}`),
+  },
+  // Lane steering (Master Data → Lane Steering, routes/lane-steering.js).
+  // Where to book (Epic TKT-KFGL81): the Lane Steering answer for a shipment ({ shipmentId }) or for
+  // typed-in values ({ pol, pod, etd, customerId, commodityCode, loopCode, teu, haulage flags }).
+  whereToBook: (params) => req("GET", `/where-to-book?${new URLSearchParams(params)}`),
+  laneSteerings: {
+    list:   ()         => req("GET",    "/lane-steerings"),
+    create: (data)     => req("POST",   "/lane-steerings", data),
+    update: (id, data) => req("PUT",    `/lane-steerings/${id}`, data),
+    remove: (id)       => req("DELETE", `/lane-steerings/${id}`),
+  },
+  // Margin rules (SPOT rates phase 4): the margin a quote adds on top of what was bought.
+  marginRules: {
+    list:    ()         => req("GET",    "/margin-rules"),
+    resolve: (params)   => req("GET",    `/margin-rules/resolve?${new URLSearchParams(params)}`),
+    create:  (data)     => req("POST",   "/margin-rules", data),
+    update:  (id, data) => req("PUT",    `/margin-rules/${id}`, data),
+    remove:  (id)       => req("DELETE", `/margin-rules/${id}`),
+    forQuote: (quoteId) => req("GET",    `/quotes/${quoteId}/margin`),
+  },
+  // SPOT rates (2026-10-21): carrier spot offers, and the one a quote or shipment is priced on.
+  spotOffers: {
+    list:               (params = {})          => req("GET",    `/spot-offers?${new URLSearchParams(params)}`),
+    get:                (id)                   => req("GET",    `/spot-offers/${id}`),
+    create:             (data)                 => req("POST",   "/spot-offers", data),
+    update:             (id, data)             => req("PUT",    `/spot-offers/${id}`, data),
+    remove:             (id)                   => req("DELETE", `/spot-offers/${id}`),
+    forQuote:           (quoteId)              => req("GET",    `/quotes/${quoteId}/spot-offer`),
+    attachToQuote:      (quoteId, offerId)     => req("POST",   `/quotes/${quoteId}/spot-offer`, { offerId }),
+    detachFromQuote:    (quoteId)              => req("DELETE", `/quotes/${quoteId}/spot-offer`),
+    forShipment:        (shipmentId)           => req("GET",    `/shipments/${shipmentId}/spot-offer`),
+    attachToShipment:   (shipmentId, offerId)  => req("POST",   `/shipments/${shipmentId}/spot-offer`, { offerId }),
+    detachFromShipment: (shipmentId)           => req("DELETE", `/shipments/${shipmentId}/spot-offer`),
+    cancellationFee:    (shipmentId)           => req("GET",    `/shipments/${shipmentId}/spot-offer/cancellation-fee`),
+    // Phase 2: the carrier's live offers (or the demo carrier's), and taking one.
+    fromCarrier:        (params)               => req("GET",    `/spot-offers/from-carrier?${new URLSearchParams(params)}`),
+    takeFromCarrier:    (carrierCode, offerRef) => req("POST",  "/spot-offers/from-carrier", { carrierCode, offerRef }),
   },
   tradeLanes: {
     list:          ()              => req("GET",    "/trade-lanes"),
@@ -497,6 +538,15 @@ export const api = {
   carrierConnections: {
     get: (carrierCode) => req("GET", `/carrier-connections/${encodeURIComponent(carrierCode || "")}`),
   },
+  // Booking escalations (Epic TKT-ASIYFL): handled on the shipment itself.
+  escalations: {
+    get:          (shipmentId)       => req("GET",  `/shipments/${shipmentId}/escalation`),
+    create:       (shipmentId, d)    => req("POST", `/shipments/${shipmentId}/escalations`, d),
+    act:          (escalationId, d)  => req("POST", `/escalations/${escalationId}/actions`, d),
+    book:         (escalationId)     => req("POST", `/escalations/${escalationId}/book`, {}),
+    alternatives: (shipmentId, source = "") => req("GET", `/shipments/${shipmentId}/escalation/alternatives${source ? `?source=${source}` : ""}`),
+    mine:         ()                 => req("GET",  "/escalations/mine"),
+  },
   // Test Tools: play the built-in DCSA carrier (its bookings, and its decisions on them).
   dcsaSim: {
     status:   ()                     => req("GET",  "/dcsa-simulator/status"),
@@ -646,6 +696,10 @@ export const api = {
     // (Paid/Not Paid/Overdue/Missing/Cancelled), plus the manual sweep trigger mirroring
     // sendReminders' own shape.
     invoiceCollections: () => req("GET", "/reports/invoice-collections"),
+    // How carriers answer booking requests (Reports → Carrier Responses, Epic TKT-ASIYFL): { from, to, lane }.
+    carrierResponses: (p = {}) => req("GET", `/reports/carrier-responses?${new URLSearchParams(Object.fromEntries(Object.entries(p).filter(([, v]) => v)))}`),
+    // Did shipments follow the Lane Steering? { from, to, carrier (comma list), lane, office } (Epic TKT-KFGL81, Story 4).
+    steering: (p = {}) => req("GET", `/reports/steering?${new URLSearchParams(Object.fromEntries(Object.entries(p).filter(([, v]) => v)))}`),
     runCollectionsSweep: () => req("POST", "/billing/run-collections-sweep"),
   },
   systemMessages: {

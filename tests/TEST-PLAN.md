@@ -4,6 +4,45 @@
 **Author:** QA Engineering (Claude Code)
 **Server Under Test:** http://localhost:3001 (Express + node:sqlite)
 **Frontend Under Test:** http://localhost:5173 (React 18 + Vite)
+**Last updated:** 2026-10-21. §0 describes the suite as it is today. §1–§9 are the original v0.26.0
+plan, kept for history: it describes node:sqlite and 3 suites, long since replaced.
+
+---
+
+## 0. The test suite today (2026-10-21)
+
+Three layers, all automated. Every feature ships with tests in each layer it touches; the new
+behaviour of an epic is described in its ARCHITECTURE.md §8 section, with the test files named there.
+
+| Layer | Where | How many | Run with |
+|---|---|---|---|
+| Backend API tests | `tests/*.test.js` (plain Node, `fetch` against the running monolith) | 117 files; 107 in the `npm test` chain, the rest in the per-service `test:*-toggle` scripts | `npm test`, or one file: `node tests/<name>.test.js` |
+| Microservice tests | `services/*/tests/*.test.js` | per service | `npm run test:contract-service`, `test:mdm-service`, `test:kanban-service`, `test:customer-service`, `test:screening-service`, `test:distribution-service` |
+| Frontend unit tests | `src/**/*.test.js(x)` (Vitest + Testing Library) | 29 files, 339 tests | `npm run test:frontend` |
+| Browser tests | `cypress/e2e/*.cy.js` | 34 specs, 280 tests | `npx cypress run` (from this VS Code shell: `env -u ELECTRON_RUN_AS_NODE npx cypress run`) |
+
+**How to run a full pass**
+1. Start the stack (`npm run dev`), or restart only the monolith. Stop it with
+   `POST /internal/dev/shutdown`, never a force-kill: that once corrupted pglite.
+2. Start the monolith with CI's rate limits, or the login limiter runs out partway through:
+   `LOGIN_RATE_MAX=1000 DOC_ACTION_RATE_MAX=500 EXPORT_RATE_MAX=200 AI_EXTRACT_RATE_MAX=200 AI_CHAT_RATE_MAX=200`.
+3. Run the backend files one at a time and read each result. `npm test` is a `&&` chain that stops
+   silently at the first failing file, so its final tally can hide every file after it.
+4. Run Vitest, then Cypress against :5173.
+
+**Test data rules**
+- Every test that creates a shipment provisions its own offices (`ensureOffices()`):
+  `tests/helpers/offices.mjs` for backend tests, `cypress/support/offices.js` for Cypress.
+- Payloads use realistic, complete shipments: parties, Incoterm, POL/POD, ETD/ETA, commodity and
+  real containers.
+- Rows that change what other records are offered must be removed after the test: Lane Steering
+  lines, space configurations, margin rules and carrier agents. Date them clear of real data
+  (the steering tests use 2028).
+- A confirmed booking comes only from the carrier. Give the shipment containers and a SEA leg,
+  send the request, then act as the built-in DCSA carrier (`tests/helpers/dcsa-sim.mjs`).
+
+**Latest full run:** 2026-10-21. Backend 107/107 files, Vitest 336/336 (339/339 after the DatePicker fix), Cypress 280/280; results in
+SYSTEM-TEST-RESULTS.md. The manual test cases for Where to book are Area 11 of TEST-CASES.md.
 
 ---
 

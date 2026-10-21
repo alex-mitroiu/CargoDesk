@@ -137,7 +137,8 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
     if (costLine) {
       return {
         expectedAmount: costLine.amount, expectedCurrency: costLine.currency,
-        expectedAmountUsd: costLine.amount * costLine.exchange_rate, expectedSource: "cost_line",
+        // A spot offer's BUY line (SPOT rates, 2026-10-21) is what was bought from this carrier.
+        expectedAmountUsd: costLine.amount * costLine.exchange_rate, expectedSource: costLine.source === "spot_offer" ? "spot_offer" : "cost_line",
         matchedCostLineId: costLine.id,
       };
     }

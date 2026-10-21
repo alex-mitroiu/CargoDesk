@@ -23,8 +23,11 @@ import { GPS_LOC_TYPE, formatLegPoint, isGpsLeg, LOC_TYPE_OPTIONS } from "../../
 import { countryCodeOf } from "../../utils/countryTag";
 import useResolvedPortName from "../../hooks/useResolvedPortName";
 import ConsumptionBar from "../../components/shared/ConsumptionBar";
+import WhereToBookPanel, { spaceOf, allocFromOption, steeringCheck, SteeringWarningDialog } from "../../components/shared/WhereToBook";
 import { suggestAlternatives, isFull, availableTEU } from "../../utils/spaceSuggestions";
 import { applySailingToLegs as applySailingToLegsShared } from "../../utils/applySailingToLegs";
+import { mainLegIndex } from "../../utils/mainLeg";
+import { LegRoleChip } from "../../components/shared/LegRoles";
 
 // ─── Draft Container Manager ──────────────────────────────────────────────────
 
@@ -150,7 +153,10 @@ const SearchTermChip = ({ label, value }) => !value ? null : (
   </div>
 );
 
-export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0, cargo = {}, searchCriteria = null, currentSelection = null, onSelectContract, onSelectAllocation, onClose, onBack }) => {
+// whereToBook: the steering answer (GET /api/where-to-book) — shown above the cards, its pick
+// pre-selected when preselect is on (decided 2026-10-21); undefined = not asked for here.
+export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0, cargo = {}, searchCriteria = null, currentSelection = null, onSelectContract, onSelectAllocation, onClose, onBack,
+  whereToBook, preselect = true }) => {
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [skipMode,       setSkipMode]       = useState(false);
   const [skipReason,     setSkipReason]     = useState("");
@@ -164,6 +170,54 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
   const isLoading      = matches === null || allocs === null;
   const hasAllocs      = allocs && allocs.length > 0;
   const contractsLocked = hasAllocs && !skipReason;
+
+  // Where to book (Epic TKT-KFGL81): booking an option stages its space configuration — through the
+  // overbooking confirmation when the shipment is bigger than what's left — or, for an option with no
+  // space configured (order only), its contract. steerRank remembers which option it was.
+  const pickFor = o => {
+    const s = spaceOf(o);
+    if (!s) {
+      const c = (matches || []).find(m => m.id === o.contractId)
+        || { id: o.contractId, contractNumber: o.contractNumber, contractRef: o.contractRef, carrierCode: o.carrierCode, routingId: "" };
+      return { type: "contract", c, steerRank: o.rank };
+    }
+    const alloc = (allocs || []).find(a => a.id === s.id) || allocFromOption(o, s, { pol, pod });
+    return { type: "alloc", alloc, reason: "", selection: "direct", steerRank: o.rank, overbooks: shipmentTEU > Math.max(0, s.freeTEU) };
+  };
+  const bookOption = o => {
+    const p = pickFor(o);
+    if (p.overbooks) setOverbook({ alloc: p.alloc, reason: "", steerRank: o.rank });
+    else setStagedPick(p);
+  };
+  // Confirming a choice that skips a higher steered option with space asks why first (Story 3; a
+  // reason is required, decided 2026-10-21) — "Book on #1 instead" books that option. The reason
+  // travels with the pick; the server judges and saves the verdict when the contract is saved.
+  const [steerWarn, setSteerWarn] = useState(null);   // { check, pick } while the warning is open
+  const commit = (p, steeringReason = "") => p.type === "contract"
+    ? onSelectContract(p.c, skipReason, steeringReason)
+    : onSelectAllocation(p.alloc, p.reason, p.selection || "direct", steeringReason);
+  const confirmPick = () => {
+    const check = steeringCheck(whereToBook, stagedPick.type === "contract" ? stagedPick.c.id : stagedPick.alloc.contractId);
+    if (check) setSteerWarn({ check, pick: stagedPick });
+    else commit(stagedPick);
+  };
+  const bookInstead = () => {
+    const o = steerWarn.check.higher;
+    setSteerWarn(null);
+    const p = pickFor(o);
+    if (p.overbooks) setOverbook({ alloc: p.alloc, reason: "", steerRank: o.rank });
+    else commit(p);
+  };
+  // The pick comes pre-selected, still needing Confirm Selection — not when the shipment already
+  // has a contract, nor when it would overbook (that asks for a reason first).
+  const preselected = useRef(false);
+  useEffect(() => {
+    if (!preselect || preselected.current || isLoading || !whereToBook?.pick || whereToBook.pick.overbooking) return;
+    if (currentSelection?.contractId || currentSelection?.allocationId) return;
+    preselected.current = true;
+    const o = whereToBook.options.find(x => x.rank === whereToBook.pick.rank);
+    if (o) bookOption(o);
+  }, [whereToBook, isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // currentSelection identifies what's already assigned to the shipment (contractId+routingId,
   // or allocationId when linked to a space config) so the matching card can be shown as already
@@ -218,7 +272,7 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
           )}
         </div>
         <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>
-          {a.pol} → {a.pod} · Valid {a.effectiveDate} → {a.endDate} · {a.allocatedTEU} TEU · {a.confirmedTEU} confirmed{a.pendingTEU ? ` · ${a.pendingTEU} pending` : ""}
+          {a.pol} → {a.pod} · Valid {a.effectiveDate} → {a.endDate} · {a.spaceBasis === "week" ? `Week ${a.weekNumber}: ${a.allocatedTEU} TEU/wk` : `${a.allocatedTEU} TEU`} · {a.confirmedTEU} confirmed{a.pendingTEU ? ` · ${a.pendingTEU} pending` : ""}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {(s.fits ? s.checks : s.checks.filter(c => !c.ok)).map((c, i) => chip(c.ok, c.label, i))}
@@ -265,7 +319,8 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
           <div style={{ display: "flex", gap: 14, fontFamily: T.mono, fontSize: 11, flexWrap: "wrap" }}>
-            <span style={{ color: T.text, fontWeight: 600 }}>{alloc.allocatedTEU} TEU allocated</span>
+            {alloc.spaceBasis === "week" && <span data-testid={`shipment-form-contract-picker-alloc-${alloc.id}-week`} style={{ color: T.accent, fontWeight: 700 }}>Week {alloc.weekNumber}</span>}
+            <span style={{ color: T.text, fontWeight: 600 }}>{alloc.allocatedTEU} TEU{alloc.spaceBasis === "week" ? " a week" : ""} allocated</span>
             <span style={{ color: T.textMuted }}>{alloc.confirmedTEU} confirmed</span>
             {alloc.pendingTEU > 0 && <span style={{ color: T.warning }}>{alloc.pendingTEU} pending</span>}
             {alloc.rejectedTEU > 0 && <span style={{ color: T.danger }}>{alloc.rejectedTEU} rejected</span>}
@@ -324,7 +379,7 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
             allocation, and the carrier may roll or reject the booking.
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: "4px 16px", fontSize: 12.5, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" }}>
-            {fact("Allocated", `${a.allocatedTEU} TEU`)}
+            {fact(a.spaceBasis === "week" ? `Allocated, week ${a.weekNumber}` : "Allocated", `${a.allocatedTEU} TEU`)}
             {fact("Confirmed", `${a.confirmedTEU} TEU`)}
             {fact("Pending confirmation", `${a.pendingTEU} TEU`)}
             {fact("This shipment", `${shipmentTEU} TEU`)}
@@ -346,7 +401,7 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <Btn variant="secondary" onClick={() => setOverbook(null)}>Cancel</Btn>
             <Btn variant="danger" disabled={!overbook.reason}
-              onClick={() => { setStagedPick({ type: "alloc", alloc: a, reason: overbook.reason, selection: "overbooked" }); setOverbook(null); }}
+              onClick={() => { setStagedPick({ type: "alloc", alloc: a, reason: overbook.reason, selection: "overbooked", steerRank: overbook.steerRank ?? null }); setOverbook(null); }}
               data-testid="shipment-form-contract-picker-overbook-confirm">Overbook by {over} TEU</Btn>
           </div>
         </div>
@@ -475,6 +530,9 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
           </div>
         )}
         {isLoading && <div style={{ padding: 40, display: "flex", justifyContent: "center" }}><Spinner /></div>}
+        {!isLoading && whereToBook && (
+          <WhereToBookPanel answer={whereToBook} onBook={bookOption} stagedRank={stagedPick?.steerRank ?? null} />
+        )}
         {!isLoading && (
           <>
             {hasAllocs && (
@@ -601,13 +659,16 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
               </strong>
             </div>
             <Btn variant="secondary" onClick={() => setStagedPick(null)} data-testid="shipment-form-contract-picker-cancel-btn">Cancel</Btn>
-            <Btn onClick={() => stagedPick.type === "contract"
-                ? onSelectContract(stagedPick.c, skipReason)
-                : onSelectAllocation(stagedPick.alloc, stagedPick.reason, stagedPick.selection || "direct")}
-              data-testid="shipment-form-contract-picker-confirm-btn">Confirm Selection</Btn>
+            <Btn onClick={confirmPick} data-testid="shipment-form-contract-picker-confirm-btn">Confirm Selection</Btn>
           </div>
         )}
         {overbook && renderOverbookDialog()}
+        {steerWarn && (
+          <SteeringWarningDialog check={steerWarn.check}
+            choiceLabel={steerWarn.pick.type === "contract" ? `${steerWarn.pick.c.carrierCode} ${steerWarn.pick.c.contractNumber}` : `${steerWarn.pick.alloc.carrierCode} ${steerWarn.pick.alloc.contractNumber}`}
+            onCancel={() => setSteerWarn(null)} onInstead={bookInstead}
+            onAnyway={reason => { const p = steerWarn.pick; setSteerWarn(null); commit(p, reason); }} />
+        )}
       </div>
     </Modal>
   );
@@ -636,6 +697,7 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
   const isCentral = contractType === "Central";
   const [matches,    setMatches]    = useState(null);
   const [allocs,     setAllocs]     = useState(null);
+  const [whereToBook, setWhereToBook] = useState(null);
   const [matching,   setMatching]   = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const matchTimer   = useRef(null);
@@ -658,11 +720,17 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
           ...(pkuLocation && { pkuLocation }),
           ...(delLocation && { delLocation }) };
         const matchParams = { pol, pod, ...(dateRef && { crd: dateRef }), ...haulageParams };
+        // Where to book: the Lane Steering answer for these values (Epic TKT-KFGL81).
+        api.whereToBook({ pol, pod, ...(etd || crd ? { etd: etd || crd } : {}), ...haulageParams, teu: String(shipmentTEU || 0),
+          ...(cargo.principalId && { customerId: cargo.principalId }),
+          ...(cargo.commodityCode && { commodityCode: cargo.commodityCode }),
+          ...(cargo.loopCode && { loopCode: cargo.loopCode }) }).then(setWhereToBook).catch(() => setWhereToBook(null));
         const [contractRes, allocRes] = await Promise.all([
           api.contracts.match(matchParams),
           // Principal, commodity and (once the shipment has a sailing) loop narrow the space
           // configurations to the ones this shipment may use; customer-specific space comes first.
-          api.allocations.match({ pol, pod, etd, ...haulageParams,
+          // ETD, else the cargo-ready date: weekly space counts a shipment in that date's week.
+          api.allocations.match({ pol, pod, etd: etd || crd || "", ...haulageParams,
             ...(cargo.principalId && { principalId: cargo.principalId }),
             ...(cargo.commodityCode && { commodityCode: cargo.commodityCode }),
             ...(cargo.loopCode && { loopCode: cargo.loopCode }) }),
@@ -685,10 +753,10 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
   // c.routingId is '' for a contract with no named routings, or the specific routing (e.g.
   // "Via Rotterdam") the operator picked among — GET /api/contracts/match returns one match
   // entry per (contract, routing) pair, so the card c is already that specific choice.
-  const pickContract  = (c, skipReason = "") => { onChange({ id: c.id, ref: c.contractNumber, carrierCode: c.carrierCode, routingId: c.routingId || "", allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "", spaceSelection: "" }); setPickerOpen(false); };
+  const pickContract  = (c, skipReason = "", steeringReason = "") => { onChange({ id: c.id, ref: c.contractNumber, carrierCode: c.carrierCode, routingId: c.routingId || "", allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "", spaceSelection: "", steeringReason }); setPickerOpen(false); };
   // A space configuration's match names the ticked routing line that covered this shipment
   // (matchedRoutingId) — record it, like pickContract records the card's routing.
-  const pickAllocation = (alloc, overageReason = "", selection = "direct") => { onChange({ id: alloc.contractId, ref: alloc.contractNumber, carrierCode: alloc.carrierCode, routingId: alloc.matchedRoutingId || "", allocationId: alloc.id, spaceSkipReason: "", spaceOverageReason: overageReason, spaceSelection: selection }); setPickerOpen(false); };
+  const pickAllocation = (alloc, overageReason = "", selection = "direct", steeringReason = "") => { onChange({ id: alloc.contractId, ref: alloc.contractNumber, carrierCode: alloc.carrierCode, routingId: alloc.matchedRoutingId || "", allocationId: alloc.id, spaceSkipReason: "", spaceOverageReason: overageReason, spaceSelection: selection, steeringReason }); setPickerOpen(false); };
 
   if (!isCentral) return null;
 
@@ -735,6 +803,7 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
           searchCriteria={{ pol, pod, crd: dateRef || null, carrierCode: carrierCode || null,
             needsPolHaulage, needsPodHaulage, pkuLocation, delLocation }}
           onSelectContract={pickContract} onSelectAllocation={pickAllocation}
+          whereToBook={whereToBook} preselect={!value.id}
           onClose={() => setPickerOpen(false)} />
       )}
     </Field>
@@ -770,7 +839,7 @@ const LEG_TYPE_DEFAULT_MT   = { "Pick-up": "Carrier's Haulage", "SEA": "SEA", "D
 const LEG_LEAD_COL_W = 40;
 
 const LEG_COLS = [
-  { key: "legType",      label: "Leg Type",      w: 96  },
+  { key: "legType",      label: "Leg Type",      w: 122 }, // room for SEA + the MAIN/FEEDER chip
   { key: "movementType", label: "Movement Type", w: 168 },
   { key: "pol",          label: "From",          w: 185 },
   { key: "polLocType",   label: "Loc. Type",     w: 116 },
@@ -799,7 +868,8 @@ const cellInput = () => ({
   padding: 0,
 });
 
-const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inheritedContractRef, loopCode = "", showContractCols = true, locked = false, onUpdateSchedule = null, theme = T }) => {
+// seaRole: "MAIN" or "FEEDER" on a SEA leg of a transshipment (lib/mainLeg.js rule, 2026-10-21), else null.
+const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inheritedContractRef, loopCode = "", showContractCols = true, locked = false, onUpdateSchedule = null, theme = T, seaRole = null }) => {
   // Local shadows of the module-level T/cellInput/legTypeColor — every existing T.xxx,
   // cellInput(), and legTypeColor() reference below (all of them; confirmed via grep that
   // nothing outside LegRow calls either helper) resolves to these instead whenever a caller
@@ -922,6 +992,9 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
                   {value}
                 </span>
               )}
+              {c.key === "legType" && seaRole && (
+                <span style={{ marginLeft: 6 }}><LegRoleChip role={seaRole} /></span>
+              )}
             </div>
           );
         })}
@@ -948,6 +1021,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         }} style={{ ...cellInput(), cursor: "pointer", color: legTypeColor(d.legType) || T.textMuted, fontWeight: 700 }}>
           {LEG_TYPE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
+        {seaRole && <span style={{ margin: "0 6px" }}><LegRoleChip role={seaRole} /></span>}
       </div>
 
       {/* Movement Type */}
@@ -1344,6 +1418,9 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
               No legs yet — add one below.
             </div>
           ) : legs.map(leg => {
+            // The main vessel's leg on a transshipment (the SEA leg with the longest transit) and its feeders.
+            const seaLegs = legs.filter(l => l.legType === "SEA");
+            const seaRole = seaLegs.length > 1 && leg.legType === "SEA" ? (seaLegs[mainLegIndex(seaLegs)] === leg ? "MAIN" : "FEEDER") : null;
             const isSelected = selectedLegId === leg.id;
             return (
               <div key={leg.id} id={`leg-row-${leg.id}`} data-testid={`shipment-form-leg-row-${leg.id}`}
@@ -1363,7 +1440,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
                     editable so its type can still be changed to Pick-up/Delivery. Previously this
                     locked on legType alone, trapping a fresh leg as uneditable the instant it was
                     created whenever any schedule already existed on the shipment. */}
-                <LegRow leg={leg} onSave={saveLeg} canEdit={canEdit} widths={widths} inheritedContractType={inheritedContractType} inheritedContractRef={inheritedContractRef} loopCode={loopCode} showContractCols={showContractCols} locked={lockedSeaLegs && leg.legType === "SEA" && !!(leg.vessel || leg.voyage)} onUpdateSchedule={onUpdateSchedule} theme={theme} />
+                <LegRow leg={leg} onSave={saveLeg} canEdit={canEdit} widths={widths} inheritedContractType={inheritedContractType} inheritedContractRef={inheritedContractRef} loopCode={loopCode} showContractCols={showContractCols} locked={lockedSeaLegs && leg.legType === "SEA" && !!(leg.vessel || leg.voyage)} onUpdateSchedule={onUpdateSchedule} theme={theme} seaRole={seaRole} />
               </div>
             );
           })}
@@ -2406,7 +2483,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
           shipmentTEU={formShipmentTEU}
           cargo={{ principalId: f.principalId, principalName: f.principalName, commodityCode: f.commodityCode, containers: formCargoContainers }}
           value={{ id: f.contractId, ref: f.contractRef, allocationId: f.allocationId }}
-          onChange={({ id, ref, carrierCode, routingId, allocationId, spaceSkipReason, spaceOverageReason, spaceSelection }) => {
+          onChange={({ id, ref, carrierCode, routingId, allocationId, spaceSkipReason, spaceOverageReason, spaceSelection, steeringReason }) => {
             setF(p => {
               const next = {
                 ...p,
@@ -2417,6 +2494,8 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                 spaceSkipReason:    spaceSkipReason    !== undefined ? spaceSkipReason    : p.spaceSkipReason,
                 spaceOverageReason: spaceOverageReason !== undefined ? spaceOverageReason : p.spaceOverageReason,
                 spaceSelection:     spaceSelection     !== undefined ? spaceSelection     : p.spaceSelection,
+                // Why it was booked against the steering (Story 3); sent with the save only once set.
+                steeringReason:     steeringReason     !== undefined ? steeringReason     : p.steeringReason,
               };
               if (carrierCode && carrierCode !== p.carrierCode) { setCarrierUpdated(carrierCode); next.carrierCode = carrierCode; }
               else if (!id) { setCarrierUpdated(""); }

@@ -5,6 +5,7 @@ import Btn from "../primitives/Btn";
 import { Inp, ContractTypeInput } from "../primitives/Form";
 import DatePicker from "../primitives/DatePicker";
 import CarrierCombobox from "./CarrierCombobox";
+import { steeringCheck, SteeringWarningDialog } from "./WhereToBook";
 import { ContractPickerModal, deriveHaulageNeeds } from "../../pages/shipments/ShipmentFormPage";
 import { HZ, HZ_BODY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
 
@@ -34,6 +35,14 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, contai
   const [validTo, setValidTo] = useState(shipment.contractValidTo || "");
   const [matches, setMatches] = useState(null);
   const [allocs, setAllocs] = useState(null);
+  const [whereToBook, setWhereToBook] = useState(null);
+  // Where to book for this shipment as saved (Epic TKT-KFGL81) — its legs, week, loop and TEU — for
+  // the picker's panel and the SPOT warning.
+  useEffect(() => {
+    let live = true;
+    api.whereToBook({ shipmentId: shipment.id }).then(w => { if (live) setWhereToBook(w); }).catch(() => {});
+    return () => { live = false; };
+  }, [shipment.id]);
 
   // Derived straight from the shipment's own Pick-up/Delivery legs — NOT shipment.routingTerm
   // (the door-to-door bookend term), so this agrees with every other haulage-aware match in
@@ -58,7 +67,8 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, contai
       api.contracts.match(matchParams),
       // Principal, commodity and the sailing's loop narrow the space configurations to the ones
       // this shipment may use; customer-specific space comes first.
-      api.allocations.match({ pol, pod, etd: shipment.etd || "", ...haulageParams,
+      // ETD, else the cargo-ready date: weekly space counts a shipment in that date's week.
+      api.allocations.match({ pol, pod, etd: shipment.etd || shipment.cargoReadyDate || "", ...haulageParams,
         ...(shipment.principalId && { principalId: shipment.principalId }),
         ...(shipment.commodityCode && { commodityCode: shipment.commodityCode }),
         ...(loopCode && { loopCode }) }),
@@ -76,7 +86,7 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, contai
       carrierCode: fields.carrierCode || shipment.carrierCode || "", matchedRoute });
   };
 
-  const pickContract = (c, skipReason = "") => {
+  const pickContract = (c, skipReason = "", steeringReason = "") => {
     // matchedLegs is the specific run of legs that satisfied THIS search — not the contract's
     // full leg list, which can include other routings entirely — so the chained sailing
     // search (if one follows) scopes to the route this contract actually covers, not the
@@ -92,19 +102,23 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, contai
     // ContractPickerModal's own card the operator clicked already IS that specific choice.
     finish({ contractId: c.id, contractRef: c.contractNumber, carrierCode: c.carrierCode || shipment.carrierCode,
       contractRoutingId: c.routingId || "",
-      allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "", spaceSelection: "" }, matchedRoute);
+      allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "", spaceSelection: "", steeringReason }, matchedRoute);
   };
-  const pickAllocation = (alloc, overageReason = "", selection = "direct") => {
+  const pickAllocation = (alloc, overageReason = "", selection = "direct", steeringReason = "") => {
     // matchedRoutingId is the configuration's ticked line that covered this shipment. Without it
     // the shipment kept whatever routing its previous contract had.
     finish({ contractId: alloc.contractId, contractRef: alloc.contractNumber, carrierCode: alloc.carrierCode || shipment.carrierCode,
       contractRoutingId: alloc.matchedRoutingId || "",
-      allocationId: alloc.id, spaceSkipReason: "", spaceOverageReason: overageReason, spaceSelection: selection },
+      allocationId: alloc.id, spaceSkipReason: "", spaceOverageReason: overageReason, spaceSelection: selection, steeringReason },
       { pol: alloc.pol, pod: alloc.pod });
   };
-  const saveRef = () => {
+  // SPOT while a steered option has space asks why first (Story 3), like a lower option in the picker.
+  const [spotWarn, setSpotWarn] = useState(null);
+  const saveRef = (steeringReason = "") => {
+    const check = type === "SPOT" && steeringReason === "" ? steeringCheck(whereToBook, "", { spot: true }) : null;
+    if (check) { setSpotWarn(check); return; }
     finish({ contractId: "", allocationId: "", contractRef: refVal, carrierCode: carrierVal,
-      contractValidFrom: validFrom, contractValidTo: validTo });
+      contractValidFrom: validFrom, contractValidTo: validTo, steeringReason });
   };
 
   useHorizonFonts();
@@ -138,6 +152,7 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, contai
           ? { contractId: shipment.contractId, routingId: shipment.contractRoutingId || "", allocationId: shipment.allocationId || "" }
           : null}
         onSelectContract={pickContract} onSelectAllocation={pickAllocation} onClose={onClose}
+        whereToBook={whereToBook}
         onBack={() => setStep("type")} />
     );
   }
@@ -168,11 +183,16 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, contai
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <Btn variant="secondary" onClick={onClose} data-testid="shipment-schedules-contract-assign-cancel-btn">Cancel</Btn>
-              <Btn disabled={!refVal.trim()} onClick={saveRef} data-testid="shipment-schedules-contract-assign-save-btn">Save</Btn>
+              <Btn disabled={!refVal.trim()} onClick={() => saveRef()} data-testid="shipment-schedules-contract-assign-save-btn">Save</Btn>
             </div>
           </>
         )}
       </div>
+      {spotWarn && (
+        <SteeringWarningDialog check={spotWarn} choiceLabel={`SPOT ${refVal}`} insteadLabel="Search the contracts instead"
+          onInstead={() => { setSpotWarn(null); setType("Central"); setStep("contract"); }}
+          onAnyway={r => { setSpotWarn(null); saveRef(r); }} onCancel={() => setSpotWarn(null)} />
+      )}
     </Modal>
   );
 };

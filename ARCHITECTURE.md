@@ -1,10 +1,14 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.91.10 "Plimsoll" · **Date:** 2026-10-16
+**Version:** 0.91.11 "Helmsman" · **Date:** 2026-10-21
 **Audience:** Software architects, senior engineers, technical reviewers
 **See also:** [`DFS.md`](DFS.md) — the Design & Functional Specification (data flow diagrams,
 per-domain functional scope, roles) covers *what* the system does and *how data moves through it*;
 this document covers *how it's built*.
 
+> **2026-10-21 (v0.91.11 "Helmsman") — release, no new documentation pass.** §8.36–§8.39 (booking escalations
+> and Lane Steering, the main vessel and Requested vs Carrier, SPOT rates, Where to book) and the M12 date picker
+> update were written as the work landed and ship in v0.91.11. Nothing else was re-verified for this note.
+>
 > **2026-10-16 (v0.91.10 "Plimsoll") — release, no new documentation pass.** The work this document marked "unreleased" (§6, §8.5, §8.29–§8.35, §14)
 > shipped in v0.91.10; those markers now say so; dated history rows keep their wording. Nothing else was re-verified for this note.
 >
@@ -91,7 +95,8 @@ this document covers *how it's built*.
 ---
 
 ## Table of Contents
-_(§8.28–8.32, the full §5 `routes/` re-measure and the §4/§6/§8.5/§8.6/§11/§14 updates added
+_(§8.33–8.39 added 2026-09-30 → 2026-10-21, with the §6 table count and groupings and the §14
+write-triggered side effects brought up to date on 2026-10-21 (§8.39, Where to book); §8.28–8.32, the full §5 `routes/` re-measure and the §4/§6/§8.5/§8.6/§11/§14 updates added
 2026-09-29 (v0.91.9 + unreleased); §8.26–8.27 and the §4/§6/§11 updates added 2026-09-25 (v0.91.8); §8.25 added 2026-09-20 (v0.91.6);
 §8.23–8.24 added 2026-09-19 (v0.91.5); §8.15 extended 2026-08-29 (v0.87.0); §8.21 added 2026-08-29
 (v0.86.0); §8.20, and the §8.6/§8.9/§8.12 extensions, added 2026-08-28 (v0.85.0); §8.19 and the
@@ -419,8 +424,9 @@ three are called from `App.jsx` on mount and again from `toggleTheme`, driven by
   `transform`) on any ancestor becomes the containing block for fixed descendants, so a dropdown
   positioned from `getBoundingClientRect()` viewport coordinates lands off-target. Such dropdowns
   must render through `createPortal(…, document.body)` and check both the trigger and the portaled
-  list in their outside-click handler (`ColumnFilter`, `HsCodeCombobox`, `ContainerTypePickerModal`).
-  `CommodityCombobox`, `PortCombobox` and `CarrierCombobox` still use the non-portaled form — see M12.
+  list in their outside-click handler (`ColumnFilter`, `HsCodeCombobox`, `ContainerTypePickerModal`,
+  `DatePicker`). `CommodityCombobox`, `PortCombobox`, `CarrierCombobox`, `CustomerCombobox`,
+  `OfficeCombobox` and `ActionMenu` still use the non-portaled form — see M12.
 
 ---
 
@@ -567,20 +573,30 @@ and 25 indexes now exist beyond primary keys (§11 — this resolves the old "no
 
 ## 6. Data Model
 
-**106 tables** in the monolith's own database (remeasured directly on 2026-09-29 via
-`grep -c "CREATE TABLE IF NOT EXISTS" lib/schema.js`; +4 since v0.91.8, all from v0.91.9, §8.28:
-`gl_account_mappings`, `gl_export_batches`, `customer_statements`, `customer_statement_lines`.
-v0.91.10 added columns only: `branches.tax_registration_number`,
-`shipment_cost_lines.vat_treatment` (§8.29) and `shipments.space_selection` (§8.31); v0.91.9 itself
-also added `gl_exported_at`/`gl_export_batch_id` to `shipment_documents` and `shipment_cost_lines`
-and `paid_amount_original`/`paid_currency`/`paid_exchange_rate` to `shipment_documents`. The
-history of this figure: 102 as of the 2026-09-25 pass (v0.91.8); 98 as of the 2026-09-19 pass (v0.91.5) — up
-from the 77 as of the 2026-08-25 pass, +1 for `opportunities`, §8.20 — which was itself up from the
-35–54 this doc previously and inconsistently claimed. The latest +4: `charge_code_sides` (§8.26,
-v0.91.7) and `charge_default_setups`/`charge_default_lines`/`shipment_charge_defaults_applied`
-(§8.27, v0.91.8)), plus the Contract Management service's own 4-table copy
-(`contracts`/`contract_legs`/`contract_rates`/`contract_routings`) when `contract_source='remote'`
-(§8.1) — never both populated as the live source at once.
+**115 tables** in the monolith's own database, plus the Contract Management service's own 4-table
+copy (`contracts`/`contract_legs`/`contract_rates`/`contract_routings`) when
+`contract_source='remote'` (§8.1) — never both populated as the live source at once.
+
+- **2026-10-21 (remeasured with `grep -c "CREATE TABLE IF NOT EXISTS" lib/schema.js`):** a net +9 since
+  2026-09-29, checked against git.
+  - Ten added: `allocation_routings` (§8.33), `dcsa_sim_bookings` (§8.35), `booking_escalations`,
+    `booking_escalation_steps`, `lane_steerings`, `lane_steering_options` (§8.36), `spot_offers`,
+    `spot_offer_lines`, `margin_rules` and `dcsa_sim_spot_offers` (§8.38).
+  - One dropped: `carrier_eadapter_configs` (eAdapter retired, §8.35).
+  - Where to book (§8.39) added columns only: `allocations.space_basis`, `lane_steerings.note` and
+    the six `shipments.steering_*` columns.
+- **History of the figure:**
+  - **106 on 2026-09-29.** +4 since v0.91.8, all from v0.91.9 (§8.28): `gl_account_mappings`,
+    `gl_export_batches`, `customer_statements`, `customer_statement_lines`. v0.91.10 added columns
+    only: `branches.tax_registration_number`, `shipment_cost_lines.vat_treatment` (§8.29) and
+    `shipments.space_selection` (§8.31). v0.91.9 also added `gl_exported_at`/`gl_export_batch_id`
+    to `shipment_documents` and `shipment_cost_lines`, and
+    `paid_amount_original`/`paid_currency`/`paid_exchange_rate` to `shipment_documents`.
+  - **102 on 2026-09-25 (v0.91.8).** Its +4: `charge_code_sides` (§8.26, v0.91.7) and
+    `charge_default_setups`/`charge_default_lines`/`shipment_charge_defaults_applied` (§8.27, v0.91.8).
+  - **98 on 2026-09-19 (v0.91.5).**
+  - **77 on 2026-08-25**, +1 for `opportunities` (§8.20). Before that, this doc gave 35–54,
+    inconsistently.
 
 ### Domain groupings (representative, not exhaustive — see server.js for the authoritative list)
 
@@ -610,8 +626,11 @@ shipments ──┬── shipment_legs               (multimodal leg records)
             ├── shipment_screenings          (sanctions-screening results)
             ├── shipment_edit_locks          (first-come-first-served whole-shipment edit lock,
             │                                 one row per currently-locked shipment, §8.22)
-            └── edi_messages / carrier_bookings / carrier_booking_archive
-                                             (booking request/response log + supersede history)
+            ├── edi_messages / carrier_bookings / carrier_booking_archive
+            │                                (booking request/response log + supersede history)
+            └── booking_escalations ── booking_escalation_steps
+                                             (a rejected/changed/unanswered booking's handling, §8.36)
+            (shipments.steering_* = whether its contract followed the Lane Steering, §8.39)
 
 FREIGHT AUDIT & PAYMENT
 ───────────────────────
@@ -627,7 +646,12 @@ COMMERCIAL
 contracts ──┬── contract_legs
             ├── contract_rates
             └── contract_routings                    (named multi-routing per contract)
-allocations                                          (space vs. TEU consumption)
+allocations ── allocation_routings                   (space configurations on contract routing
+                                                      lines; TEU per period or per ISO week, §8.33,
+                                                      §8.39)
+lane_steerings ── lane_steering_options              (the carrier order per trade lane, read by
+                                                      Where to book and escalations, §8.36, §8.39)
+spot_offers ── spot_offer_lines · margin_rules       (SPOT rates, §8.38)
 
 COMPLIANCE
 ──────────
@@ -1179,10 +1203,11 @@ Bucket rule:
   Cancelled                              → excluded entirely (no live demand left)
 ```
 
-The deducting bucket is keyed on `carrier_bookings.status` specifically — the **operator's own
-explicit Confirm click** (`PATCH .../carrier-booking/confirm`) — not `last_response_status`, the
-carrier's raw EDI reply. This split predates the deduction question by design (v0.35.0): a
-confirmed EDI response has never auto-finalized a booking, only the operator's own action does.
+The deducting bucket is keyed on `carrier_bookings.status` specifically, not `last_response_status`.
+Since DCSA-everywhere phase 1 (2026-10-11) only the carrier confirms a booking — its DCSA `CONFIRMED`
+(a real carrier, or the built-in demo carrier) sets `status = 'Confirmed'` in `applyCarrierState`; the
+operator's own Confirm click (`PATCH .../carrier-booking/confirm`, the v0.35.0 design this paragraph
+used to describe) was retired.
 All four call sites that used to spread `consumedTEU`/`remainingTEU` (`GET`/`POST`/
 `PUT /api/allocations`, `GET /api/allocations/match`) now spread the three buckets plus the
 recomputed `remainingTEU`. Zero schema migration — every column involved was already a plain
@@ -1229,6 +1254,9 @@ space, and was confirmed out of scope for this pass.
   overbooking while replies are outstanding. `loadTeuBuckets()`'s own `remainingTEU` is unchanged
   (confirmed only), because other screens read it; the picker and the Dashboard's Contract
   Consumption tab (§8.32) apply the stricter figure themselves.
+
+**Weekly space (2026-10-21, §8.39).** A configuration can hold its TEU per ISO week instead of per
+period (`space_basis`). Its buckets, badge and free space are then the ETD's week's; see §8.39.
 
 ### 8.7 WebSocket — per-shipment subscription, not blanket broadcast
 
@@ -3201,6 +3229,341 @@ Notice and Port Call; Commercial Schedules re-check) follow.
   `customer-credit-control`, `shipment-detail-consistency`) now confirm through the carrier instead
   of the removed Confirm route. `eadapter.test.js` is deleted.
 
+### 8.36 Booking escalations, Lane Steering and carrier answers (Epic TKT-ASIYFL, 2026-10-20)
+
+Agreed with the user on 2026-10-20 and modelled on their Kuehne+Nagel process. The approved mockup is
+https://claude.ai/artifact/FXrT7utJNRgPabknbKyPmR. When a carrier rejects a booking, confirms it with
+changes, or doesn't decide within the no-answer time, the booking can be escalated to the people who
+find an alternative. Everything happens in the shipment; there is no separate Escalations section.
+
+- **Roles (`server.js` `VALID_ROLES`, User Management).** Three rank-1 specialty roles, all scoped
+  like the others:
+  - `occ_ay` (OCC/AY, operational care centre allocation yield; the default escalation group): the
+    shipment's export office;
+  - `ccl_co` (CCL/CO, customer care location controlling officer): the import office;
+  - `trade_ay` (Trade/AY): trade-lane scope items.
+  `canActAs` (lib/booking-escalations.js) decides who may act as a role on a shipment. Admin and
+  operator always can. OCC/BK and OCC/AY need the export side, CCL/CO the import side
+  (`officeSideOf`), and Trade/AY and Trade (`trade_manager`) need the lane.
+- **The escalation (`booking_escalations` + `booking_escalation_steps`; lib/booking-escalations.js,
+  routes/booking-escalations.js).**
+  - **Raising it.** One active escalation per shipment (a partial unique index). OCC/BK raises it
+    from Booking & Review: Escalate… opens a pop-up with the group, a reason and a note.
+  - **While open.** `holder_role` says who has it. OCC/AY ⇄ CCL/CO hand over, and either escalates
+    to Trade/AY. Trade/AY escalates to Trade (only when App Settings' Trade level is on; Trade can
+    only add messages and send it back), sends it back, or marks it impossible.
+  - **Instructions.** They name a carrier, contract and sailing, set the status to `instructed` and
+    the holder to OCC/BK.
+  - **Book As Instructed.** OCC/BK reviews the instructions in a pop-up and books, or sends them
+    back with a question. Booking (`rebook`) puts the carrier and contract (Central when one is
+    named) on the shipment, and the sailing's legs replace its sea legs (`replaceSeaLegs`; one for a
+    direct sailing, each leg of a transshipment in order, §8.37), from which the shipment's vessel,
+    ETD and ETA roll up. A pending same-carrier request is withdrawn first, and another carrier's
+    booking is superseded. The new DCSA request then goes out (`ctx.sendBookingRequest`).
+  - **The carrier's answer (`onCarrierState`, called at the end of `applyCarrierState`).**
+    Confirmed as asked resolves the escalation. Rejected, or confirmed with changes, sends it back
+    to whoever instructed it, re-snapshotting that booking.
+  - **Records.** `booking_escalations.sailing` keeps the sailing the carrier turned down or changed,
+    because rebooking overwrites the shipment's. Every step goes to the steps table and to the
+    shipment's History (`ESCALATION_*`, `BOOKED_AS_INSTRUCTED`).
+- **Finding it (Story 2).** The Shipments list has a filterable Booking column, computed per row by
+  `bookingStateOf`: Not sent, Waiting for carrier, No answer, Update requested, Confirmed, Confirmed
+  with changes, Rejected, Escalated (who has it, since when), Instructions ready, Impossible,
+  Cancelled. It has quick filters: All, Escalated to me (`escalatedToMe=1`), Rejected or changed,
+  Waiting for carrier, Instructions ready. The bell's "Escalated to you" lists what the user can act
+  on (`GET /api/escalations/mine`).
+  - **Column widths.** They now fit a 1440px screen, and the card scrolls sideways below that
+    instead of clipping.
+- **Lane Steering (Story 5; `lane_steerings` + `lane_steering_options`, routes/lane-steering.js,
+  Master Data → Lane Steering).**
+  - **What it is.** The carrier order on a trade lane (origin trade → destination trade), for
+    everyone or one customer, over a validity window. Each option is a carrier on one of its own
+    contracts.
+  - **Rules.** Overlapping windows for the same lane and customer are refused. It is maintained
+    only by admins and Trade Managers (the user, 2026-10-20: never by OCC/BK, OCC/AY or CCL/CO;
+    Trade/AY and operators can't either), read by everyone, and its history is in `entity_events`
+    (`lane_steering`).
+  - **Lookup.** `ctx.steeringFor` returns the customer's own steering first, then everyone's.
+  - **Alternatives (`alternatives()`).** They come from the steering first, in order. Each option
+    is checked against the shipment through `ctx.loadContract`: status, validity on the ETD, named
+    account, and route coverage via `findMatchingContractLegs`. Its space comes from
+    `ctx.matchAllocations`. Since 2026-10-21 this is Where to book's answer (§8.39), which also
+    marks full options; contract assignment reads the same answer.
+  - **Fallback.** The handler can switch to the general contract search (Central first). A lane
+    with no steering gets the search only.
+  - **Sailings.** `ctx.carrierSailings` (routes/system.js; `GET /api/schedules/search?onlyCarrier=1`)
+    gives one carrier's own catalog sailings, else its schedules integration, else demo sailings.
+- **Carrier answers (Story 6).**
+  - **Accepted with changes.** When a carrier confirms (or confirms an amendment),
+    `applyCarrierState` reads the confirmed booking with a DCSA GET (a poll already has it).
+    `confirmationChanges` then compares the request with the confirmation: vessel / voyage,
+    departure and arrival beyond the tolerance, equipment, and POL/POD, per `booking_change_rules`.
+    A DCSA request carries no arrival date, so the confirmed arrival (the last main-carriage leg's
+    `plannedArrivalDate`) is checked against `carrier_bookings.requested_eta`, the shipment's ETA
+    when the request was sent (the user, 2026-10-20: "check the ETA as well"). The result
+    goes to `carrier_bookings.changed_fields` and the inbound message's status
+    `confirmed_with_changes`, all before the escalation hook runs.
+  - **No answer (`sweepNoAnswer`).** It runs every 5 minutes, and on demand through
+    `POST /api/escalations/no-answer-sweep` (admin/operator). It takes DCSA-sent bookings with no
+    decision (`carrier_bookings.decided_at`, set on the first CONFIRMED / REJECTED / DECLINED /
+    PENDING_UPDATE) older than `booking_no_answer_hours`.
+    - On a lane steered with the switch on, `autoSwitch` books the next usable option after the
+      current carrier that has space for the shipment's TEU. It uses that carrier's Recommended
+      direct sailing on or after the requested ETD (`recommendedSailing`: the shortest transit,
+      the earlier departure on a tie; decided 2026-10-20), with no OCC/BK step, and records
+      History `NO_ANSWER_SWITCHED`.
+    - The handler's sailing list labels the same Recommended sailing and picks it by default.
+    - Otherwise it escalates automatically to the default group, once per booking.
+  - **Simulator.** The built-in DCSA carrier now confirms with `confirmedEquipments`,
+    `transportPlan` and `shipmentCutOffTimes` (`dcsa_sim_bookings.confirmed_json`). It confirms
+    the arrival CargoDesk expected (`expectedArrival` hook → `requested_eta`; a real carrier plans
+    it from its own schedule). Its new `confirmWithChanges` decision rolls the booking to the next
+    week's sailing on DEMO SUBSTITUTE, departing and arriving 7 days later.
+- **Settings and monitoring (Story 7).**
+  - **App Settings → Bookings → Escalations (admins).** `booking_escalation_default_group`,
+    `booking_no_answer_hours`, `booking_change_rules`, `booking_escalation_trade_level`. These are
+    admin-only on `PUT /api/settings` and validated. Unlike the rest of App Settings, the tab is a
+    draft until Save, and Discard drops the changes (the user, 2026-10-20).
+  - **Change rules.** "ETD or ETA by more than N days" covers departure and arrival alike.
+  - **Reports → Carrier Responses (`GET /api/reports/carrier-responses`; same gate and scope as the
+    other reports).** Per carrier, it counts requests sent, decided, no answer (past the no-answer
+    time), waiting, the median time to the first decision, and the outcome. It works per request
+    from the EDI thread: outbound `booking_request` plus inbound decisions with the same
+    correlation id.
+- **Tests.**
+  - Backend: `booking-escalation-roles` (18), `booking-escalations` (39), `booking-escalation-book`
+    (21), `lane-steering` (22), `booking-carrier-answers` (23), `booking-settings-report` (20).
+  - Cypress: `booking-escalation`, `lane-steering`, `booking-carrier-answers`,
+    `booking-settings-report`.
+
+### 8.37 The main vessel, and Requested (A) vs Carrier (B) (Epic TKT-O3YBNE, 2026-10-21)
+
+Agreed with the user on 2026-10-20/21; approved mockup https://claude.ai/artifact/P3xrSaDFwDHWeWiSEWVccv.
+
+- **The main vessel (`lib/mainLeg.js`, `src/utils/mainLeg.js`: one rule in two places).** Of a
+  sailing's or a shipment's sea legs, the one with the longest transit; on a tie, the earlier leg; a
+  leg without both dates counts as 0 days.
+  - **Every schedule search** (`/api/schedules/search`, `ctx.carrierSailings`; catalog, DCSA
+    integration and demo alike) headlines a transshipment by its main leg's vessel, voyage and service
+    and adds `mainLegIndex` (`withMainVessel`). Direct sailings get `mainLegIndex: null`.
+  - **The shipment's vessel, voyage and IMO** come from its main SEA leg (`syncShipmentFromLegs`); ETD
+    stays the first sea leg's and ETA the last's. `backfillMainVessel()` corrected open shipments at
+    startup (Completed and Cancelled ones keep what their documents were issued with). List and
+    detail rows carry `transshipment: { mainIndex, legs[{pol, pod, vessel, voyage, etd, eta, role}] }`
+    for 2+ sea legs.
+  - **Marked wherever a sailing is picked or shown** (`src/components/shared/LegRoles.jsx`: `LegRoleChip`,
+    `SailingLegs`, `viaText`): the Add/Change Sailing picker, Schedule Search's contract sailings,
+    Master Data → Contracts' sailings, the escalation's alternatives, Book As Instructed, the shipment
+    header ("· <main vessel> MAIN" + "via <hub>, feeder <vessel>"), the sidebar and Route Legs
+    (MAIN/FEEDER beside SEA). Legs always in sailing order: feeder, main, feeder.
+  - **Demo transshipments** (`mockSailings`) now run a 1–2 day feeder from the POL to a hub in its
+    region, the main vessel across, and on every 6th sailing a second short feeder from a hub near the
+    POD; they used to split the transit 55/45 through any hub (Singapore for Rotterdam → New York).
+  - **The DCSA booking request** sends the shipment's vessel, so the main one; the change check
+    compares it with the main leg of the carrier's transport plan.
+- **Transshipments in the escalation.** Its sailing list includes them (RECOMMENDED by shortest
+  transit over all), instructions carry the legs, and Book As Instructed and the no-answer switch
+  rebuild the shipment's sea legs from them (`replaceSeaLegs`).
+- **Requested (A) vs Carrier (B) (`lib/carrier-confirmation.js`, `CarrierComparison.jsx`).** It
+  replaces "Sent vs. Received", which always echoed the request (a DCSA notification carries only the
+  status).
+  - **B is kept.** On a confirmation `applyCarrierState` stores the carrier's DCSA booking (the GET) in
+    `carrier_bookings.carrier_confirmation`; a booking confirmed before that fetches it once.
+  - **`GET /api/shipments/:id/carrier-booking/comparison`** builds the rows: A from the latest outbound
+    request/update/amendment on the booking (and `requested_eta`), B from the confirmation (main leg's
+    vessel/voyage/IMO, first leg's ETD, last leg's ETA, each leg when it transships, equipment,
+    cut-offs, parties). Each row is `same`, `changed` (with a day delta for dates), `new` (only the
+    carrier says it) or `missing` ("Not stated": DCSA has no field for it).
+  - **Decisions** (shown while the booking is confirmed with changes and not yet accepted):
+    1. **Accept the carrier's version**
+       (`POST …/carrier-booking/accept-changes`, OCC/BK of the export side, admin, operator;
+       `acceptCarrierChanges`): the transport plan's legs replace the sea legs, cut-offs go to the
+       Shipping Instructions (documentation) and each container (VGM, FCL delivery → `cy_cutoff`), the
+       booking turns Confirmed (`changed_fields` cleared, `changes_accepted_at/by`), a `changed`
+       escalation resolves, History `CARRIER_CHANGES_ACCEPTED`.
+    2. **Ask the carrier to amend**: `send-update` with an optional `note` (History
+       `CARRIER_AMENDMENT_REQUESTED`; DCSA has no free-text field to carry it). The carrier's amendment
+       answer is compared again.
+    3. **Escalate…**: the existing pop-up.
+  - **`CUT_OFF_TIME`** joins `lib/dcsa/codes.js`.
+- **Tests.** `main-vessel-carrier-changes` (40) and Cypress `main-vessel-carrier-changes` (5) are new;
+  `dcsa-lifecycle`, `booking-carrier-answers` and Cypress `schedule-catalog-search` follow the main
+  vessel.
+
+### 8.38 SPOT rates: carrier spot offers, carrier offers, guardrails, margin rules (Epic TKT-SRQF8R, 2026-10-21)
+
+Research, gap analysis and plan: https://claude.ai/artifact/Y61PAmXZfgFxTLtpt7GiAZ (a doc). Screens:
+https://claude.ai/artifact/5DYk7qXZLEUn51zJUQpZYK (rows 1–2 approved by the user; row 3, carrier offers,
+picker prices and margin rules, built on "go ahead with everything"). Decisions (the user, 2026-10-21):
+offers come from manual entry plus the demo carrier first; an expired *digital* offer blocks, an
+expired *classic* quote warns; the booking desk may attach an offer without a quote; a late-cancel fee
+is warned and accrued as a BUY line (re-billing the customer stays manual).
+
+- **What changed.** SPOT used to be a contract type plus a free-text reference.
+  - Nothing priced it: a quote → SPOT shipment conversion made SELL lines only, and freight audit had
+    nothing to expect.
+  - A SPOT booking sent neither `serviceContractReference` nor `contractQuotationReference`, although
+    DCSA Booking 2.0 requires exactly one.
+- **A spot offer** (`spot_offers` + `spot_offer_lines`, rules in `lib/spot-offers.js` = `ctx.spotOffers`,
+  routes in `routes/spot-offers.js`) is a carrier's priced answer for one shipment. It holds:
+  - its reference: the quotation number or price id, ≤ 35 characters, DCSA's limit;
+  - its kind:
+    - **classic**: a FAK quote or rate sheet; expired → a warning only;
+    - **digital**: Maersk Spot, Hapag-Lloyd Quick Quotes Spot, CMA CGM SpotOn; expired → can't be
+      attached or booked;
+  - its source: `manual`, `demo` or `api`;
+  - route and containers;
+  - validity: a date runs to the end of that day UTC, a timestamp to that instant;
+  - the price-lock point;
+  - charges: per container or per B/L, any currency priced in USD, PRE/COL, each in the price or
+    "subject to" at shipment;
+  - penalty terms: cancellation fee and notice days, no-show fee, amendment fee, roll compensation;
+  - a status: Offered → Attached → Booked.
+- **On a quote** (`/api/quotes/:id/spot-offer`, Draft only, sales/occ_bk/operator/admin):
+  - the quote takes the offer's carrier and reference and drops a Central contract;
+  - an edit can't move the quote's carrier, route or contract away from its offer (409);
+  - deleting the quote frees the offer;
+  - conversion makes a SPOT shipment on the offer (`attachOnConversion`).
+  - The quote form (`QuoteSpotOffer`, src/components/shared/SpotOffers.jsx) shows buy / sell / margin.
+- **On a shipment** (`/api/shipments/:id/spot-offer`, OCC/BK of the export side, operator, admin; the
+  booking desk may do it without a quote; the Schedules page's Spot offer section, `SpotOfferCard`):
+  - the shipment becomes SPOT, `contract_ref` = the offer's reference, and the offer's charges become BUY
+    cost lines (`source = 'spot_offer'`, `spot_offer_id`), "subject to" ones marked;
+  - attaching is refused (409) for: a Central shipment (change its contract first), another carrier,
+    another route, an expired digital offer, or a booking already Pending/Confirmed with the carrier;
+  - a second offer replaces the first, removing its accrued BUY lines; removing the offer does the same;
+  - History: `SPOT_OFFER_ATTACHED`, `SPOT_OFFER_DETACHED`, `SPOT_PENALTY_ACCRUED`;
+  - deleting the shipment frees the offer unless it was booked on.
+- **The booking.**
+  - `bookingRequestPayload` adds `quotationReference` (only from an offer of the booking's own carrier)
+    and `dcsa-bkg-v2` sends it as `contractQuotationReference`, only when no contract number goes.
+  - Once the carrier has the request, the offer is Booked (`markBooked`).
+  - The A/B table (§8.37) shows a **Quotation** row in place of Contract, and a **CHARGES** group when the
+    carrier states its DCSA `charges` (matched to the offer's lines by code or name).
+- **Phase 2 — offers from the carrier.** No DCSA standard covers rates, so each connection is an
+  adapter with the capability `spot-rates` (`getSpotOffers`, `getSpotOffer`).
+  - `GET /api/spot-offers/from-carrier` lists the carrier's offers, priced the way a saved offer is and
+    never saved: a spot price lives hours, and Maersk asks for its offers to be kept for the session.
+  - `POST …/from-carrier` reads one back from the carrier and saves it, once.
+  - Where a carrier has no connection, the **demo carrier's spot desk** answers
+    (`lib/dcsa-simulator/spot-desk.js`, adapter `demo-spot-v1`, table `dcsa_sim_spot_offers`). It prices
+    each departure of `ctx.carrierSailings` all-in (OF from the transit time, BAF, THC-O in EUR from EU
+    origins, DOC), with per-carrier validity and limits: HLCU 3 hours and at most 20 containers, CMDU 24
+    hours, MAEU 1 hour.
+  - A booking quoting one of those offers is confirmed with its charges.
+  - Screens: the dialog's "Get offers from <carrier>" tab, and the sailing picker on a SPOT shipment
+    (each departure's price, with "Sailing + offer", taken when the route is saved).
+  - Escalation alternatives are contract options, so they carry no spot price.
+- **Phase 3 — guardrails.**
+  - Send Booking Request refuses an expired digital offer (409), and books an expired classic quote with
+    a `warning` (`bookingCheck`).
+  - `GET …/spot-offer/cancellation-fee` previews the fee in Booking & Review's Cancel dialog: the
+    cancellation fee with at least the notice days to go before ETD, the no-show fee inside them, per
+    container, and only on a Confirmed booking.
+  - `accrueCancellationFee` books the fee as a BUY line (charge "Other", the note says which fee) when the
+    carrier confirms the cancellation of a confirmed booking (`applyCarrierState`), or on the legacy
+    non-DCSA cancel.
+  - The escalation's rebook releases the offer when the carrier, a Central contract or (for a digital
+    offer) the departure changes (`releaseIfStale`). A booked offer stays Booked, as the record.
+  - Freight audit matches an invoice line to a spot BUY line as "vs. spot offer".
+- **Phase 4 — margin rules** (`margin_rules`, `routes/margin-rules.js`, Master Data → Margin Rules,
+  `MdmMarginRulesPage.jsx`; admin and trade_manager write, like Lane Steering).
+  - A rule is fixed (USD per container on the ocean freight, the rest at cost) or percent (of every
+    charge), with a minimum.
+  - The most specific valid rule applies (customer > lane > container, `ctx.marginRuleFor`), and
+    overlapping rules for the same customer, lane and container are refused.
+  - The quote form shows the rule, "Apply to the sell lines" (`sellLinesFromRule`) and a below-minimum
+    warning.
+  - `GET /api/quotes/:id/margin` gives buy/sell/margin; sending below the minimum is allowed, answered
+    with `marginWarning` and recorded as `SENT_BELOW_MINIMUM_MARGIN`.
+- **Phase 5 — real carrier APIs** wait on access: Hapag-Lloyd Quick Quotes (api-portal.hlag.com) and
+  the Maersk Offers API (approval-gated; FMC-regulated US trades are bookable only on Maersk's own site).
+- **Found on the way.** `mockSailings` derived hubs and feeder days with signed shifts of an unsigned
+  hash, so some departures had an undefined hub and a 0-day feeder ("via BEANR, , feeders …"). It now
+  uses `>>>`, with a regression check in main-vessel-carrier-changes.
+- **Tests.** `spot-offers` (52), `spot-offers-carrier` (41), Cypress `spot-offers` (8).
+
+### 8.39 Where to book: weekly space, the steering waterfall, out-of-order, steering report (Epic TKT-KFGL81, 2026-10-21)
+
+Items 1–4 of the review of the standalone Steering & Allocation app (2026-10-21). Scope doc:
+https://claude.ai/artifact/X9n2jk6TyGFKfbE7GsWKCy; approved mockup: https://claude.ai/artifact/KTkERe9u1qHg1yaESQaCEm.
+Before this, space configurations knew the space and Lane Steering (§8.36) knew the carrier order,
+but only escalations read Lane Steering, and it ignored space. Space configurations stay the source
+of space (the Steering & Allocation app replaced them; CargoDesk deliberately does not).
+
+- **Story 1 — weekly space (`allocations.space_basis` = `period` | `week`, default `period`).**
+  - Weekly space holds `allocated_teu` every ISO week (Monday–Sunday, UTC) of its period, nothing
+    carried over. A shipment counts in the week of its ETD, else of its cargo-ready date
+    (`lib/iso-week.js`, mirrored by `src/utils/isoWeek.js`).
+  - `loadTeuBuckets` keeps a whole-period total and one bucket set per week. `withBuckets(base,
+    entry, onDate)` shows weekly space for one week: the ETD's on `/match`, today's (or `?date=`)
+    on the list, kept inside the period. It adds `week` / `weekNumber`; `allocatedTEU` stays the
+    TEU per week. The list also returns `weeks[]` and `periodTotals`.
+  - `recomputeSpaceBadge` measures a shipment only against the others in its week.
+    `syncShipmentFromLegs` refreshes the pool when the ETD moves (a roll), and a basis or TEU
+    change refreshes it too.
+  - The minimum commitment stays a period figure. It is checked against TEU per week × weeks, and
+    the list's MQC flag reads `periodTotals`.
+  - Dashboards that add configurations up use `teuOverRange` (weekly TEU × the range's weeks
+    inside the period). The Contract Consumption tab also counts only the shipments sailing in
+    those weeks. Landing and Command Center compare against `periodTeuOf`.
+- **Story 2 — where to book (`lib/where-to-book.js` = `ctx.whereToBook`; `GET /api/where-to-book`
+  with `?shipmentId=` or typed values).**
+  - **The line.** The customer's own Lane Steering line (`ctx.steeringFor`), else the line for
+    everyone. No line, no steered answer.
+  - **Each option** is skipped (contract gone, not Active, not valid on the date, another named
+    account, route not covered, space only for another loop or commodity), full, or available.
+  - **Its space** is the configurations on its contract from `ctx.matchAllocations`, judged in the
+    ETD's week. On the line for everyone: the customer's own first, then everyone's. On a
+    customer's own line: their own when they have some there (never spilling into the general
+    space), else the contract's general space. A contract with no configuration for the shipment
+    is order only: available, no cap.
+  - **The pick** is the first available option, on its first configuration with free space
+    (allocated − confirmed − pending). A shipment bigger than what's left stays there as an
+    overbooking; every option full → the first one not skipped, as an overbooking.
+  - **Read by:** the contract picker (`WhereToBookPanel`, `src/components/shared/WhereToBook.jsx`,
+    in `ContractPickerModal`; the pick is pre-selected, still needing Confirm Selection), Lane
+    Steering's Check dialog and option space list, and the escalation alternatives.
+    `alternatives()` now wraps `forShipment(row, { anyLoop: true, noHaulage: true })`, keeping its
+    output shape and note wording. Its `remainingTeu` is now the stricter free figure, so the
+    no-answer switch reads it.
+  - `lane_steerings.note` is a note on the line, shown with the answer.
+- **Story 3 — the verdict (`shipments.steering_line_id`, `steering_verdict`, `steering_rank`,
+  `steering_pick` JSON, `steering_reason`, `steering_checked_at`; `ctx.whereToBook.recordVerdict`).**
+  - Worked out on the server, never trusted from a screen. It runs on shipment create and on an
+    update that changes the contract, its space, the contract type or the carrier
+    (routes/shipments.js), on quote conversion, and on an escalation rebook (`rebooked`). The
+    loop check that drops space records `other_loop`.
+  - **Verdicts:**
+    - `steered`: no higher option had space;
+    - `out_of_order`: a higher option had space;
+    - `other_contract` / `other_carrier` / `spot`: an option had space;
+    - `not_covered`: no line, or no option with space;
+    - `customer_own` / `no_contract`: left out of the report.
+  - A reason given alone (`steeringReason` with no contract change) updates only the reason, so
+    the verdict stands as it was judged.
+  - Not-followed verdicts log `BOOKED_OUT_OF_ORDER` / `BOOKED_OFF_STEERING` with the better option
+    and the reason.
+  - **On screen:** `steeringCheck` + `SteeringWarningDialog` ask for a reason (required) before
+    confirming a lower option, an off-line contract, or SPOT (ContractAssignModal), with "Book on
+    #1 instead". The server takes the save either way (warn, never block).
+  - The Schedules page's Contract area shows the verdict chip (`steeringChipOf`).
+- **Story 4 — the report (`GET /api/reports/steering?from&to&carrier&lane&office`, Dashboard →
+  Steering, `SteeringReport.jsx`).**
+  - Covers shipments with an ETD (else a cargo-ready date) in the dates, scoped like the Shipments
+    list. Customer Own and Pending are left out.
+  - **Steering rate** = (steered + rebooked) ÷ everything in the rate; `not_covered` and
+    `not_recorded` (assigned before this shipped) are counted outside it.
+  - Broken down by trade lane and by carrier, with the not-followed shipments (pick, reason, link
+    in a new tab).
+  - The Contract Consumption tab's *Steered here* columns still answer the narrower picker
+    question (§8.31).
+- **Tests.**
+  - Backend: `weekly-space` (30), `where-to-book` (23), `steering-verdict` (21, including the report).
+  - Vitest: `isoWeek`, `contractConsumption`, `spaceConfigTable`, the Space Configurations form,
+    `WhereToBook`, `SteeringReport`.
+  - Cypress: `where-to-book` (4).
+
 ## 9. Data Flow Diagrams
 
 The four diagrams in this section (shipment creation with auto-screening; contract recalculation;
@@ -3349,7 +3712,7 @@ because the host sets it and the Cypress binary then starts as plain Node and fa
 | ~~M9~~ | ~~ShipmentDetailPage section nav has no shared source of truth~~ | **RESOLVED** — see §8.11, `shipmentSections.js`. |
 | ~~M10~~ | ~~Two unrelated "document" systems~~ | **RESOLVED v0.65.0** (unchanged from last review). |
 | M11 | **Trade Horizon has two independent `HZ` token objects** (`shipmentDetailTheme.js` and `DashboardPage.jsx`) that must be kept visually consistent by hand, with two matching `apply…Theme` functions to call from `App.jsx` | Open (v0.91.5). Each edit to a shared token (a pill colour, a shadow) has to be made twice; nothing checks they haven't diverged. Consolidating them is a small refactor but was out of scope for a theming pass. |
-| M12 | **Non-portaled `position: fixed` dropdowns inside glass cards** — `CommodityCombobox`, `PortCombobox`, `CarrierCombobox` still position from viewport coordinates | Open (v0.91.5). Same defect class as the Equipment Type and HS Code dropdowns that were just fixed with portals (§4). Not checked individually inside a glass card; the defect follows from how the CSS containing block works, so any placement under a `backdrop-filter` ancestor should be assumed affected until verified. **Update (v0.91.6): the same defect hit modals.** `ShipmentHeaderBar` rendered its Loop route, compliance, contract-mismatch and tracking-link modals and its Messages/Tickets drawers *inside* `#shphdr`, which has `backdrop-filter`; the overlay shrank to the header card and the Loop modal's × sat off the top of the screen, so it could not be closed. All overlays now render as siblings of the card (`ShipmentHeaderBar.test.jsx` guards it). A static scan of every component's JSX for a `<Modal>` or `position: fixed` element nested inside an element styled with `backdropFilter`/`filter`/`transform` finds no other same-component case; an overlay reached through a child component is not covered by it, so the rule stands: never render an overlay inside such an element. |
+| M12 | **Non-portaled `position: fixed` dropdowns inside glass cards** — `CommodityCombobox`, `PortCombobox`, `CarrierCombobox` still position from viewport coordinates | Open (v0.91.5). Same defect class as the Equipment Type and HS Code dropdowns that were just fixed with portals (§4). Not checked individually inside a glass card; the defect follows from how the CSS containing block works, so any placement under a `backdrop-filter` ancestor should be assumed affected until verified. **Update (v0.91.6): the same defect hit modals.** `ShipmentHeaderBar` rendered its Loop route, compliance, contract-mismatch and tracking-link modals and its Messages/Tickets drawers *inside* `#shphdr`, which has `backdrop-filter`; the overlay shrank to the header card and the Loop modal's × sat off the top of the screen, so it could not be closed. All overlays now render as siblings of the card (`ShipmentHeaderBar.test.jsx` guards it). A static scan of every component's JSX for a `<Modal>` or `position: fixed` element nested inside an element styled with `backdropFilter`/`filter`/`transform` finds no other same-component case; an overlay reached through a child component is not covered by it, so the rule stands: never render an overlay inside such an element. **Update (2026-10-21): `DatePicker` was a live case.** Its calendar was not on this list, and the SI Cutoff picker sits directly in a glass card on the Shipping Instructions page, so the calendar opened at the bottom-right of the screen. It now portals to `<body>` (checked in a real browser: it opens 6px under the field, a day click picks it, an outside click closes it). The full list still unportaled is `CommodityCombobox`, `PortCombobox`, `CarrierCombobox`, `CustomerCombobox`, `OfficeCombobox` and `ActionMenu`. A static scan finds none of them placed directly inside a glass card today: where a page has both, the dropdown is in a modal rendered outside the card. |
 | M13 | **Two implementations of the list-endpoint filter/sort/search/page logic** — `routes/shipments.js` (inline, comma-joined params) and `lib/tableQuery.js` (repeated params) | Open (v0.91.5). Deliberate for now: the shared module was proven on Quotes first. Migrating Shipments would remove the drift risk and the wire-format inconsistency, at the cost of touching the app's most heavily used route. |
 | M14 | **Five of six seeded loop codes have unverified port lists** (AL5, ME9, PL2, PL7, TP3) | Open (v0.91.5). Only AL1 was checked against a public rotation. The others show a plausible, correctly directional structure but are illustrative until researched. |
 | M15 | **Gaps in the new finance integrations (§8.28–§8.29)**, found by reading the code on 2026-09-29. Only the first three were known when the features shipped; none is verified live. (a) **Reverse-charge purchases are not self-assessed**: the VAT Liability report shows their base amount only, because a reverse-charged line carries no rate. (b) **Consolidated statements carry no VAT**. (c) **GL Export posts no VAT lines**: revenue and cost are exported net, with nothing to VAT control accounts. (d) **Statement-billed revenue never reaches GL Export, the VAT Liability report or FX Revaluation**: all three read only `shipment_documents`, and a statement lives in `customer_statements`. (e) **Statement eligibility is one-directional** — confirmed by reading, not reproduced live: a statement excludes lines already on an issued per-shipment invoice, but `generateInvoices()` bills every SELL line on the shipment and `POST /api/shipments/:id/documents/generate` never reads `customer_statement_lines`, so a statement-billed line goes onto the next per-shipment invoice too. (f) **A GL export run is not atomic**: `runGlExport` marks the rows and inserts the batch in separate statements with no transaction, and it has no lock. Two concurrent runs could both select the same unexported rows. (g) **Statement reads ignore shipment scope**: `GET /api/customer-statements`, `/:id`, `/:id/download` and `/eligible-lines` have only the global login check, with no `applyShipmentAccessFilter`. An office- or lane-scoped user, viewer included, can list and download every statement and query any customer's billable lines company-wide. This is the same class as TKT-Z6C81S (carrier invoices). Showing Statements to every role in the navigation is deliberate (`financialsNav.js`); the missing scope is not. | Epic **TKT-XV4UHD** — **all seven closed 2026-09-30** (after v0.91.9, unreleased). Bugs (§8.28): (g) TKT-6T97DY, (e) TKT-2F19XD, (f) TKT-OBCQH7. (g) and (e) were reproduced live first; (f) can't happen on the dev pglite database, so a unit test interleaves two runs. Stories (§8.29): (b) TKT-1E55AR, (d) TKT-02776W, (a) TKT-MQAXQX, (c) TKT-AEPGWA. The follow-ups found on the way were fixed the same day at the user's request (§8.29, TKT-1V9GYU): receivables are gross and confirmed statements count as receivables; issued invoices and credit notes can't be deleted, sent back to draft or re-confirmed after voiding; and a shipment that billed its customer can't be deleted. |
@@ -3850,6 +4213,35 @@ here:
   It is idempotent through the per-contract rate snapshot rather than a marker table. Duplicate
   calls are merged by an in-process map of in-flight promises. That is enough for the monolith's
   single process, but would not be if the monolith were ever scaled out.
+
+**Added 2026-10-20 (booking escalations, §8.36).**
+
+- **`sweepNoAnswer()`** (lib/booking-escalations.js). It runs every 5 minutes
+  (routes/booking-escalations.js) and from `POST /api/escalations/no-answer-sweep`. It switches an
+  unanswered booking to the next steered option, or escalates it.
+  - It is idempotent: a switched booking starts a new no-answer time. A booking that already has an
+    escalation, of any status, is never escalated again.
+- **`confirmationChanges` + `onCarrierState`.** They run at the end of `applyCarrierState`
+  (routes/edi.js) on every carrier answer, in that order: changes (and, since §8.37, the carrier's
+  confirmation itself) are recorded first, then an open escalation is resolved or sent back.
+- **`backfillMainVessel()`** (server.js, §8.37). At startup, open shipments with a transshipment get
+  the main sea leg's vessel/voyage/IMO. Idempotent: rows already right are untouched.
+
+**Added 2026-10-21 (Where to book, §8.39).**
+
+- **`ctx.whereToBook.recordVerdict(shipmentId)`** (lib/where-to-book.js). It works out and saves
+  `shipments.steering_*`. Triggers:
+  1. `POST /api/shipments`;
+  2. `PUT /api/shipments/:id` when the contract, its space, the contract type or the carrier
+     changes (a `steeringReason` alone only updates the reason);
+  3. quote conversion (routes/quotes.js);
+  4. an escalation rebook, given `rebooked` (lib/booking-escalations.js);
+  5. `revalidateSpaceLoop` dropping the space, given `other_loop` (server.js).
+
+  Each call overwrites the last verdict, so a repeat is harmless. It never fails the save it follows.
+- **The weekly-space pool refresh.** `syncShipmentFromLegs` recomputes the space badges of the
+  shipment's whole configuration when its ETD changes, because a roll can move it into another ISO
+  week. `PUT /api/allocations/:id` does the same when the basis or the TEU changes.
 
 ---
 

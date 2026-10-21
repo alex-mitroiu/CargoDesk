@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { Fragment, useState, useMemo, useEffect, useRef } from "react";
 import { T } from "../tokens";
 import { IconSearch } from "../components/primitives/Icon";
 import { api } from "../api";
@@ -10,6 +10,8 @@ import Pagination from "../components/primitives/Pagination";
 import PageSizeSelect from "../components/primitives/PageSizeSelect";
 import { inputBase } from "../components/primitives/Form";
 import PortCombobox from "../components/shared/PortCombobox";
+import { LegRoleChip, MAIN_COLOR } from "../components/shared/LegRoles";
+import { legRoles } from "../utils/mainLeg";
 import ColumnFilter from "../components/shared/ColumnFilter";
 import { TableToolbar } from "../components/shared/DataTable";
 import useTableQuery from "../hooks/useTableQuery";
@@ -1159,7 +1161,7 @@ const SchedulePanel = ({ contract, polQuery, podQuery, containers = [] }) => {
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: T.bg }}>
-                      {["#", "Vessel", "Voyage", "Service", "ETD", "ETA", "Transit"].map(h => (
+                      {["#", "Vessel (main)", "Voyage", "Routing", "ETD", "ETA", "Transit"].map(h => (
                         <th key={h} style={{ padding: "8px 12px", textAlign: "left",
                           fontFamily: T.body, fontSize: 10, fontWeight: 600,
                           color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em",
@@ -1170,34 +1172,42 @@ const SchedulePanel = ({ contract, polQuery, podQuery, containers = [] }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {result.sailings.map((s, i) => (
-                      <tr key={i} style={{ borderBottom: `1px solid ${T.border}22` }}>
-                        <td style={{ padding: "10px 12px", fontFamily: T.mono,
-                          fontSize: 10.5, color: T.border,
-                          fontVariantNumeric: "tabular-nums" }}>{i + 1}</td>
-                        <td style={{ padding: "10px 12px", fontFamily: T.mono,
-                          fontSize: 11.5, fontWeight: 700, color: T.text,
-                          whiteSpace: "nowrap" }}>{s.vesselName}</td>
-                        <td style={{ padding: "10px 12px", fontFamily: T.mono,
-                          fontSize: 11.5, color: T.textMuted }}>{s.voyageNumber}</td>
-                        <td style={{ padding: "10px 12px", fontFamily: T.body,
-                          fontSize: 11.5, color: T.textMuted }}>{s.service}</td>
-                        <td style={{ padding: "10px 12px", fontFamily: T.mono,
-                          fontSize: 11.5, color: T.accent,
-                          fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                          {s.etd || "—"}
-                        </td>
-                        <td style={{ padding: "10px 12px", fontFamily: T.mono,
-                          fontSize: 11.5, color: T.accent,
-                          fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                          {s.eta || "—"}
-                        </td>
-                        <td style={{ padding: "10px 12px", fontFamily: T.mono,
-                          fontSize: 11.5, color: T.textMuted, whiteSpace: "nowrap" }}>
-                          {s.transitDays ? `${s.transitDays}d` : "—"}
-                        </td>
-                      </tr>
-                    ))}
+                    {/* A transshipment sailing is listed under its main vessel (the leg with the longest transit,
+                        marked MAIN), with every leg beneath it in sailing order (agreed 2026-10-21). */}
+                    {result.sailings.map((s, i) => {
+                      const legs = legRoles(s);
+                      const cell = { padding: "10px 12px", fontFamily: T.mono, fontSize: 11.5, whiteSpace: "nowrap" };
+                      const legCell = { padding: "5px 12px", fontFamily: T.mono, fontSize: 11, color: T.textMuted, whiteSpace: "nowrap" };
+                      return (
+                        <Fragment key={i}>
+                          <tr data-testid={`schedule-sailing-${i}`} style={{ borderBottom: `1px solid ${T.border}22` }}>
+                            <td style={{ ...cell, fontSize: 10.5, color: T.border, fontVariantNumeric: "tabular-nums" }}>{i + 1}</td>
+                            <td style={{ ...cell, fontWeight: 700, color: T.text }}>
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>{s.vesselName}{legs.length > 0 && <LegRoleChip role="MAIN" />}</span>
+                            </td>
+                            <td style={{ ...cell, color: T.textMuted }}>{s.voyageNumber}</td>
+                            <td style={{ ...cell, fontFamily: T.body, color: T.textMuted }}>
+                              {legs.length ? `Via ${legs.slice(0, -1).map(l => l.pod).join(", ")} · ${legs.length} legs` : "Direct"}
+                            </td>
+                            <td style={{ ...cell, color: T.accent, fontVariantNumeric: "tabular-nums" }}>{s.etd || "—"}</td>
+                            <td style={{ ...cell, color: T.accent, fontVariantNumeric: "tabular-nums" }}>{s.eta || "—"}</td>
+                            <td style={{ ...cell, color: T.textMuted }}>{s.transitDays ? `${s.transitDays}d` : "—"}</td>
+                          </tr>
+                          {legs.map((l, li) => (
+                            <tr key={`${i}-${li}`} data-testid={`schedule-sailing-${i}-leg-${li}`}
+                              style={{ borderBottom: `1px solid ${T.border}22`, background: l.role === "MAIN" ? `${MAIN_COLOR}12` : "transparent" }}>
+                              <td style={legCell}></td>
+                              <td style={legCell}><span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><LegRoleChip role={l.role} /><span style={{ color: T.text }}>{l.vesselName}</span></span></td>
+                              <td style={legCell}>{l.voyageNumber}</td>
+                              <td style={{ ...legCell, fontWeight: 700, color: T.text }}>{l.pol} → {l.pod}</td>
+                              <td style={legCell}>{l.etd || "—"}</td>
+                              <td style={legCell}>{l.eta || "—"}</td>
+                              <td style={legCell}>{l.days ? `${l.days}d` : "—"}</td>
+                            </tr>
+                          ))}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

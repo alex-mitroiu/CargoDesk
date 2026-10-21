@@ -1,5 +1,6 @@
 "use strict";
 const ExcelJS = require("exceljs");
+const { mainLegIndex } = require("../lib/mainLeg");
 
 module.exports = function shipmentsRoutes(app, ctx) {
   const { query, transaction, ok, err, uid, auth, requireRole, isUniqueViolation, isForeignKeyViolation,
@@ -51,6 +52,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
              COALESCE(ms.overdue_count, 0) AS overdue_count,
              cb.status AS booking_status,
              cb.requested_at AS booking_requested_at,
+             cb.decided_at AS booking_decided_at,
+             cb.changed_fields AS booking_changed_fields,
              COALESCE(ctr_teu.teu, 0) AS teu`;
   const SHIPMENT_ENRICHMENT_JOINS = `
       LEFT JOIN (SELECT shipment_id, SUM(${COST_LINE_EFFECTIVE_USD_SQL}) AS total
@@ -285,6 +288,30 @@ module.exports = function shipmentsRoutes(app, ctx) {
   // written once here so the two can't independently drift (the "two engines disagreeing" bug
   // class this codebase has hit before). Returns the full, access-scoped, mapped shipment set;
   // callers layer their own status/carrier/etc. filters, sort, and pagination on top.
+  // A shipment's sea legs when it transships (two or more): each in sailing order with its role, MAIN
+  // for the leg with the longest transit (lib/mainLeg.js) and FEEDER for the others — what the header
+  // and sidebar show as "<main vessel> via <hub>, feeder <vessel>" (agreed 2026-10-21). Map of
+  // shipment id → { mainIndex, legs }; a shipment with one sea leg or none isn't in it.
+  async function transshipmentsOf(ids) {
+    const out = new Map();
+    if (!ids.length) return out;
+    const legs = await query(`SELECT shipment_id, pol, pod, vessel, voyage, etd, eta, leg_type, mot FROM shipment_legs
+      WHERE shipment_id IN (${ids.map((_, i) => `$${i + 1}`).join(",")}) ORDER BY shipment_id, leg_order`, ids);
+    const bySea = new Map();
+    for (const l of legs) {
+      if (!(l.leg_type ? l.leg_type === "SEA" : l.mot === "SEA")) continue;
+      if (!bySea.has(l.shipment_id)) bySea.set(l.shipment_id, []);
+      bySea.get(l.shipment_id).push(l);
+    }
+    for (const [id, sea] of bySea) {
+      if (sea.length < 2) continue;
+      const mainIndex = mainLegIndex(sea);
+      out.set(id, { mainIndex, legs: sea.map((l, i) => ({ pol: l.pol || "", pod: l.pod || "", vessel: l.vessel || "", voyage: l.voyage || "",
+        etd: String(l.etd || "").slice(0, 10), eta: String(l.eta || "").slice(0, 10), role: i === mainIndex ? "MAIN" : "FEEDER" })) });
+    }
+    return out;
+  }
+
   const loadVisibleShipments = async (user, req) => {
     const rows = await query(`
       SELECT s.*,
@@ -304,7 +331,18 @@ module.exports = function shipmentsRoutes(app, ctx) {
       ORDER BY s.created_at DESC
     `);
     const seaPorts = await resolveSeaPorts(rows.map(r => r.id));
-    const mapped = rows.map(r => ({ ...mapShipment(r), ...(seaPorts[r.id] || { seaPol: r.pol, seaPod: r.pod, seaPolName: r.pol_name || '', seaPodName: r.pod_name || '' }) }));
+    const transships = await transshipmentsOf(rows.map(r => r.id));
+    // The Booking column (booking escalations, Epic TKT-ASIYFL): the carrier booking and the latest
+    // escalation, worked out once per row by lib/booking-escalations.js.
+    const be = ctx.bookingEscalations;
+    const cfg = await be.settings();
+    const { byShipment: escs, booked } = await be.latestByShipment();
+    const mapped = rows.map(r => {
+      const s = { ...mapShipment(r), ...(seaPorts[r.id] || { seaPol: r.pol, seaPod: r.pod, seaPolName: r.pol_name || '', seaPodName: r.pod_name || '' }) };
+      const esc = escs.get(r.id);
+      const place = !esc ? "" : ["occ_ay", "occ_bk"].includes(esc.holder_role) ? s.emoOfficeName : esc.holder_role === "ccl_co" ? s.imoOfficeName : s.tradeLane;
+      return { ...s, transshipment: transships.get(r.id) || null, bookingState: be.bookingStateOf(r, esc, esc ? booked.has(esc.id) : false, cfg, place) };
+    });
     const visible = await applyShipmentAccessFilter(mapped, user, req);
     // Office-Side Permissions Epic (TKT-Z0LB0W), Phase 3 (TKT-5W24J7) — App.jsx's own
     // load-everything-once-into-state model means THIS list is the actual data source every
@@ -370,8 +408,24 @@ module.exports = function shipmentsRoutes(app, ctx) {
       }),
       id: allIds.slice(0, MAX_ID_OPTIONS),
       idTruncated: allIds.length > MAX_ID_OPTIONS,
+      booking: BOOKING_ORDER.filter(l => visible.some(s => s.bookingState?.label === l)),
     });
   });
+
+  // The Booking column's values in the order the checklist shows them (booking escalations).
+  const BOOKING_ORDER = ["Escalated", "Instructions ready", "Rejected", "Confirmed with changes", "No answer", "Update requested",
+    "Impossible", "Waiting for carrier", "Confirmed", "Not sent", "Cancelled"];
+  // Shipments whose escalation is waiting for the caller: they hold the role it's with, for this
+  // shipment's side or lane (the same rule as GET /api/escalations/mine).
+  async function escalatedToMe(list, req) {
+    const roles = Array.isArray(req.user?.roles) ? req.user.roles : [];
+    const ids = new Set();
+    for (const s of list) {
+      const holder = s.bookingState?.holderRole;
+      if (holder && roles.includes(holder) && await ctx.bookingEscalations.canActAs(req.user, req, holder, s)) ids.add(s.id);
+    }
+    return ids;
+  }
 
   app.get("/api/shipments", async (req, res) => {
     let filtered = await loadVisibleShipments(req.user, req);
@@ -390,6 +444,12 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // accepts a comma-separated list of values (multiFilter), backward compatible with the single
     // values these first two already sent.
     const today = new Date().toISOString().slice(0, 10);
+    // Booking quick filters' counts, over everything the caller can see (not narrowed by the other filters).
+    const mine = await escalatedToMe(filtered, req);
+    const bookingCounts = {};
+    for (const s of filtered) { const l = s.bookingState?.label; if (l) bookingCounts[l] = (bookingCounts[l] || 0) + 1; }
+    filtered = multiFilter(filtered, req.query.booking, s => s.bookingState?.label);
+    if (req.query.escalatedToMe === "1") filtered = filtered.filter(s => mine.has(s.id));
     if (req.query.status === "_overdue") {
       filtered = filtered.filter(s => s.etd && s.etd < today && s.status !== "Completed" && s.status !== "Cancelled");
     } else {
@@ -421,7 +481,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (SORTERS[req.query.sort]) filtered = [...filtered].sort(SORTERS[req.query.sort]);
 
     const lim = Math.min(parseInt(req.query.limit) || 50, 500), off = parseInt(req.query.offset) || 0;
-    ok(res, { results: filtered.slice(off, off + lim), total: filtered.length, limit: lim, offset: off });
+    ok(res, { results: filtered.slice(off, off + lim), total: filtered.length, limit: lim, offset: off, bookingCounts, escalatedToMe: mine.size });
   });
 
   app.get("/api/shipments/compliance-hits", async (req, res) => {
@@ -466,6 +526,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const s = mapShipment(row);
     if (!(await applyShipmentAccessFilter([s], req.user, req)).length) return err(res, "Not found", 404);
     s.myOfficeSide = await officeSideOf(req.user, s, req);
+    s.transshipment = (await transshipmentsOf([s.id])).get(s.id) || null;
     ok(res, s);
   });
 
@@ -523,6 +584,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
   // How the space configuration was picked in the contract picker (Dashboard → Contract Consumption
   // breakdown: steered vs not). '' = not recorded.
   const SPACE_SELECTIONS = ["", "suggested", "direct", "overbooked"];
+  // Never fails the save it follows: a verdict that can't be worked out is simply not recorded.
+  const recordSteering = async (id, req, { reasonOnly = false } = {}) => {
+    try { await ctx.whereToBook?.recordVerdict(id, { reason: req.body?.steeringReason, reasonOnly, actor: req.user?.name || req.user?.email || "" }); }
+    catch (e) { console.error(`Steering verdict ${id}:`, e.message); }
+  };
 
   app.post("/api/shipments", shipmentWrite, async (req, res) => {
     const { pol, pod, carrierCode, contractType, contractNotes = "", status = "Active",
@@ -565,6 +631,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
       JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }), req.user?.name || req.user?.email || "");
     await maybeAssignLineAgents(id, carrierCode, polU, podU, req.user?.name || req.user?.email || "");
     if (contractType === 'Central' && contractId) await importContractRates(id);
+    // The steering verdict for the contract it was created on (Epic TKT-KFGL81, Story 3).
+    await recordSteering(id, req);
     const silentScreening = sanctionsMap.size > 0 ? await screenShipmentById(id) : null;
 
     // Earlier credit-check trigger point (TKT-Q00WHF, Credit Control Depth) — soft and
@@ -909,6 +977,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // assigned/changed/cleared — badges went stale the instant a space configuration changed.
     // Recompute both the old and new allocation pools when the link changed (the old pool just
     // gained capacity back; the new pool has a fresh member).
+    // The steering verdict (Epic TKT-KFGL81, Story 3): judged again whenever the contract, its space,
+    // the contract type or the carrier changes, or the desk gives a reason.
+    if ((existing.contract_id || '') !== (effContractId || '') || (existing.allocation_id || '') !== (effAllocationId || '')
+        || (existing.contract_type || '') !== (contractType || '') || (existing.carrier_code || '') !== (carrierCode || '')) await recordSteering(req.params.id, req);
+    else if (reqBody.steeringReason !== undefined) await recordSteering(req.params.id, req, { reasonOnly: true });
     if ((existing.allocation_id || '') !== (effAllocationId || '')) {
       if (existing.allocation_id) await recomputeSpaceBadgesForAllocation(existing.allocation_id);
       if (effAllocationId) await recomputeSpaceBadgesForAllocation(effAllocationId);
@@ -1001,6 +1074,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
       // cascades with the shipment.
       await tx.query("UPDATE carrier_bookings SET bl_document_id=NULL WHERE shipment_id=$1", [req.params.id]);
       await tx.query("DELETE FROM shipment_documents WHERE shipment_id=$1", [req.params.id]);
+      // Its spot offer goes back to the pool (lib/spot-offers.js); one already booked on stays the record of that booking.
+      await tx.query("UPDATE spot_offers SET status='Offered', shipment_id='' WHERE shipment_id=$1 AND status<>'Booked'", [req.params.id]);
       await tx.query("DELETE FROM shipments WHERE id=$1", [req.params.id]);
     });
     for (const d of docs) if (d.stored_name) { try { fs.unlinkSync(path.join(UPLOADS_DIR, d.stored_name)); } catch {} }

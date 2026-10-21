@@ -23,6 +23,7 @@ export const dcsaLabel = code => ALL[code] || code || "";
 // a carrier would usually reach for them, with how each is presented.
 export const CARRIER_ACTIONS = {
   confirm:             { label: "Confirm",               variant: "primary" },
+  confirmWithChanges:  { label: "Confirm with changes",  variant: "secondary", feedback: true },
   confirmAmendment:    { label: "Confirm amendment",     variant: "primary" },
   confirmCancellation: { label: "Confirm cancellation",  variant: "primary" },
   requestUpdate:       { label: "Ask for an update",     variant: "secondary", feedback: true },

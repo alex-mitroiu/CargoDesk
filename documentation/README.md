@@ -13,9 +13,14 @@ below. Untouched: `invoice-lifecycle.html`/`.drawio` (built directly from this p
 current) and `carrier-booking-details-line-agents.html`/mockups, which got a status note rather
 than a rewrite since their whole purpose is documenting a past design proposal, not current state.
 
+**Status notes added 2026-10-21** to `cargodesk-field-guide.html` (now pointing to the in-app User
+Manual as the live copy; it predates carrier-only booking confirmation, spot offers and Where to
+book) and `space-consumption-split.html` (pending space subtracted, carrier-only confirmation, weekly
+space). `cargodesk-dfs.html` was rebuilt the same day.
+
 | File | Original title | Live artifact |
 |---|---|---|
-| `cargodesk-dfs.html` | CargoDesk DFS (Design & Functional Specification) — **current reference doc, not a design proposal**; see `DFS.md` at the repo root for the versioned Markdown source. Its two data-flow diagrams are baked in as static SVG (not the live Mermaid runtime) specifically so this copy renders correctly fully offline, with zero network dependency. | https://claude.ai/code/artifact/56b2fcbd-ca72-41a9-85fb-fc8487d3414c |
+| `cargodesk-dfs.html` | CargoDesk DFS (Design & Functional Specification) — **current reference doc, not a design proposal**; generated from `DFS.md` at the repo root by `node scripts/build-dfs-html.cjs` (last rebuilt 2026-10-21, with DCSA booking, escalations, the main vessel, SPOT rates, and Where to book with weekly space and the steering report). Its data-flow diagrams are baked in as static SVG (not the live Mermaid runtime) so this copy renders fully offline, with zero network dependency. The live artifact is an older snapshot. | https://claude.ai/code/artifact/56b2fcbd-ca72-41a9-85fb-fc8487d3414c |
 | `invoice-lifecycle.html` | Invoice Lifecycle | https://claude.ai/code/artifact/2bc42301-f7a7-46ab-8a2a-4f846b69adba |
 | `invoice-lifecycle.drawio` | Invoice Lifecycle (draw.io export) | — |
 | `invoice-collections-flow.html` | Invoice Collections Flow | https://claude.ai/code/artifact/b615fe49-40ca-4c61-a85e-d322e6ceca3e |
@@ -29,7 +34,7 @@ than a rewrite since their whole purpose is documenting a past design proposal, 
 | `reports-manifest.html` | Reports Manifest | https://claude.ai/code/artifact/b0aa599d-4714-409d-93bb-3f81c33c9157 |
 | `master-data-carrier-agents.html` | Master Data — Carrier Agents | https://claude.ai/code/artifact/0f4f31e6-db57-469a-9cfc-da65e505a45f |
 | `cargodesk-field-guide.html` | CargoDesk Field Guide | https://claude.ai/code/artifact/8a28bb81-d017-4194-8ec3-f5d7f3836436 |
-| `fcl-competitive-dossier.html` | FCL Competitive Dossier — **the latest broad competitive assessment of CargoDesk**, benchmarked against 6 named platforms (2026-09-25) | https://claude.ai/artifact/8pt8jmyZ7B6eYxf7GpHfD1 |
+| `fcl-competitive-dossier.html` | FCL Competitive Dossier — **the latest broad competitive assessment of CargoDesk**, benchmarked against 6 named platforms (first edition 2026-09-25, v0.91.7; updated in place 2026-10-21 for v0.91.10 + unreleased work, with a Since September section and two new rows) | https://claude.ai/artifact/8pt8jmyZ7B6eYxf7GpHfD1 |
 | `charge-defaults.html` | Charge Defaults — mockup + technical spec for Principal/lane charge &amp; cost line defaults (2026-09-25, built and shipped in v0.91.8 "Bastion") | https://claude.ai/artifact/15DeP2Lcx9qmQbyQAUEwWd |
 | `carrier-booking-details-line-agents.html` | Carrier Booking — Details, with Line Agents | https://claude.ai/code/artifact/f840e979-6a1a-4994-bf0a-5e49df566718 |
 | `customers-mdm-filtered-view-mockup.html` | Customers MDM — Filtered View Mockup | https://claude.ai/code/artifact/5db7b008-c7fb-48b9-abef-9e426e67c034 |

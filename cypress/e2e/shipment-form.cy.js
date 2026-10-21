@@ -166,15 +166,15 @@ describe("Shipment Creation Form Suite", () => {
     // not reliably the same data the click ends up applying — confirmed as the exact cause of
     // a CI failure (`expected '2026-09-29' to equal '2026-09-28'`, only ever the ETA field).
     // Scraping the values directly off the row that gets clicked sidesteps this: whatever is on
-    // screen at click time is, by construction, what gets applied — also filters out a TSP
-    // entry via its own "TSP · N legs" badge text, rather than trusting network-side `legs`.
-    cy.get("button").filter((i, el) => /Voy /.test(el.textContent) && !el.textContent.includes("TSP · "))
+    // screen at click time is, by construction, what gets applied — also filters out a
+    // transshipment via its own MAIN chip (Epic TKT-O3YBNE: it creates several sea legs, so the
+    // first leg row would hold the feeder), rather than trusting network-side `legs`.
+    cy.get("button").filter((i, el) => /Voy /.test(el.textContent) && !el.querySelector('[data-testid="leg-role-main"]'))
       .should("have.length.greaterThan", 0)
       .first()
       .then($btn => {
         const $cols = $btn.children("div").first().children("div");
-        const vesselName = $cols.eq(0).children("div").eq(0).contents()
-          .filter((_, n) => n.nodeType === 3).text().trim();
+        const vesselName = $cols.eq(0).children("div").eq(0).children("span").eq(0).text().trim();
         const voyageNumber = $cols.eq(0).children("div").eq(1).text().split("Voy ")[1].trim();
         const etd = $cols.eq(1).children("div").eq(1).text().trim();
         const eta = $cols.eq(2).children("div").eq(1).text().trim();

@@ -1,7 +1,8 @@
 # CargoDesk — Design & Functional Specification (DFS)
 
-**Status**: first pass, top-down; last updated 2026-09-29 (v0.91.9 "Reckoning" plus the unreleased
-work after it — finance integrations, VAT, contract cost reconciliation, space steering). **Scope**:
+**Status**: first pass, top-down; last updated 2026-10-21 (v0.91.10 "Plimsoll" plus the unreleased
+work after it — DCSA booking with the built-in demo carrier, booking escalations and lane steering,
+the main vessel and Requested-vs-Carrier comparison, SPOT rates and margin rules). **Scope**:
 whole application, at the level of its major
 functional domains and system-to-system data flows — not an exhaustive per-route specification.
 **Companion documents**: [`ARCHITECTURE.md`](ARCHITECTURE.md) (technical architecture, module
@@ -12,8 +13,9 @@ move through it* — the classic Design & Functional Specification pair of conce
 
 An offline, self-contained HTML copy (same content, diagrams baked in as static SVG — no network
 dependency at all) lives at [`documentation/cargodesk-dfs.html`](documentation/cargodesk-dfs.html)
-— open it directly in a browser. The live, interactive artifact version (same content) is linked
-from `documentation/README.md`.
+— open it directly in a browser. It is generated from this file: after changing `DFS.md`, run
+`node scripts/build-dfs-html.cjs` to rebuild it (diagrams re-rendered offline). The live artifact
+version linked from `documentation/README.md` is an older snapshot.
 
 ---
 
@@ -57,13 +59,16 @@ a single big-bang rewrite.
 |---|---|---|
 | **admin** | System administrator | Full access, including user management, app settings, secrets |
 | **operator** | Day-to-day operations staff | Full shipment/contract/booking read-write, no admin config |
-| **occ_bk** | Operations/booking desk | Shipment and booking read-write, narrower than operator on admin-adjacent actions |
-| **trade_manager** | Trade-lane owner | Read-write scoped to their trade lane/office; owns credit-hold override authority |
+| **occ_bk** | Operations/booking desk | Shipment and booking read-write, narrower than operator on admin-adjacent actions; books as instructed after an escalation; attaches spot offers to shipments |
+| **occ_ay** (2026-10-20) | Booking escalation desk, export side | Finds an alternative carrier or sailing for an escalated booking and instructs OCC/BK |
+| **ccl_co** (2026-10-20) | Booking escalation desk, import side | The same as OCC/AY, from the shipment's import office |
+| **trade_ay** (2026-10-20) | Trade analyst for a lane | Takes escalations OCC/AY or CCL/CO pass up: gives an alternative, marks the booking impossible, or sends it back |
+| **trade_manager** | Trade-lane owner | Read-write scoped to their trade lane/office; owns credit-hold override authority; maintains Lane Steering and Margin Rules (with admin) |
 | **sales** (v0.91.1) | Quoting/pipeline owner | Read-write on Quotes and Opportunities only; deliberately no booking authority (not granted on shipment/booking/EDI/customs-filing writes) |
 | **viewer** | Read-only stakeholder | Read access only, scope-limited the same way as other roles |
 
-A user can hold more than one role; `occ_bk`/`trade_manager`/`sales` are co-equal, non-hierarchical
-specialty grants (same rank), not rungs on the admin/operator/viewer ladder. Access is further
+A user can hold more than one role; `occ_bk`/`occ_ay`/`ccl_co`/`trade_ay`/`trade_manager`/`sales` are
+co-equal, non-hierarchical specialty grants (same rank), not rungs on the admin/operator/viewer ladder. Access is further
 scoped by office and/or trade lane (`allOffices`/`userOffices`, `scopeItems`) independent of role —
 two `operator`s can see disjoint sets of shipments. Since v0.91.1, office scoping also supports a
 **Branch or Country grant** — a single admin action that cascades to every office under it
@@ -80,8 +85,8 @@ The whole system as one process, with every genuinely external actor and system 
 
 ```mermaid
 flowchart TB
-    Users(["Operations Users\n(Admin · Operator · OCC-Booking ·\nTrade Manager · Sales · Viewer)"])
-    Carriers(["Ocean Carriers\n(EDI / DCSA Booking API)"])
+    Users(["Operations Users\n(Admin · Operator · OCC/BK · OCC/AY ·\nCCL/CO · Trade/AY · Trade Manager ·\nSales · Viewer)"])
+    Carriers(["Ocean Carriers\n(DCSA Booking API · spot offers;\nthe built-in demo carrier stands in)"])
     SSO(["Azure AD / Entra ID"])
     SMTP(["Per-Office SMTP\nMail Servers"])
     AI(["Anthropic API"])
@@ -94,9 +99,9 @@ flowchart TB
 
     Users -->|credentials / SSO login| SYS
     SYS -->|shipments, contracts,\nreports, documents| Users
-    SYS -->|GL journal-entry CSV\n(downloaded, imported by the user)| ACC
-    SYS -->|booking requests| Carriers
-    Carriers -->|confirmations, webhooks| SYS
+    SYS -->|"GL journal-entry CSV\n(downloaded, imported by the user)"| ACC
+    SYS -->|DCSA booking requests,\nspot offer requests| Carriers
+    Carriers -->|confirmations, webhooks,\nspot offers| SYS
     SSO -->|ID token / claims| SYS
     SYS -->|outbound email| SMTP
     Users -->|chat queries, document uploads| AI
@@ -155,9 +160,9 @@ flowchart TB
     Users --> P8
     Users --> P11
 
-    P2 -->|quote converted| P1
-    P1 <--> Carriers
-    P1 <-->|space match & steering,\nconsumption, contract costs| P3
+    P2 -->|quote converted,\nwith its spot offer| P1
+    P1 <-->|DCSA booking,\nspot offers| Carriers
+    P1 <-->|space match, where to book\n& steering verdict, consumption,\ncontract costs| P3
     P1 -->|charge lines,\nissued invoices| P11
     P11 -->|GL journal CSV| Acc
     P11 --> D1
@@ -205,15 +210,18 @@ an `opportunity` (lead-tracking, pre-pricing) that converts into a `quote` (pric
 **Key functions**: track a lead through New → Qualified → Converted (to Quote)/Lost; create a quote
 against a matched contract or spot rate; Draft → Sent → Accepted/Declined/Expired lifecycle;
 convert an accepted quote into a real shipment, carrying parties, containers, and cost lines across.
-The quote and opportunity lists are filterable the way the Shipments list is: an Excel-style checklist
+A quote can be **bought on a carrier's spot offer** (§5.13): the quote then takes the offer's carrier
+and reference, shows buy / sell / margin, applies the customer's margin rule, and flags a margin under
+the rule's minimum. The quote and opportunity lists are filterable the way the Shipments list is: an Excel-style checklist
 on each column header, free-text search, sort, and server-side paging (the shared table system,
 ARCHITECTURE.md §8.23 — Quotes is its pilot; other lists follow).
 **Roles**: operator, occ_bk, sales, admin (write); all roles (read, scope-permitting). `sales`
 (v0.91.1) is this domain's dedicated role — owns both objects, no booking authority elsewhere.
-**Primary data**: `opportunities`, `quotes`, `quote_lines`.
+**Primary data**: `opportunities`, `quotes`, `quote_lines`; `spot_offers` (a quote's buy side).
 **Business rules**: an expired quote cannot be accepted; conversion splits BUY (from the matched
-contract) and SELL (from the quote's own price) cost lines — they are independent figures, not
-derived from each other. Since v0.91.1 both objects carry an `office_id` and are office-scoped the
+contract, or from the quote's spot offer — a SPOT shipment on the offer's reference) and SELL (from
+the quote's own price) cost lines — they are independent figures, not derived from each other. A
+quote on a spot offer can't change its carrier, route or contract until the offer is removed. Since v0.91.1 both objects carry an `office_id` and are office-scoped the
 same way shipments are (previously neither had any access scoping at all) — the office and any
 trade-lane restriction on the acting user's scope both apply. See ARCHITECTURE.md §8.2 and
 `USER-MANAGEMENT-REDESIGN.md`.
@@ -222,14 +230,18 @@ trade-lane restriction on the acting user's scope both apply. See ARCHITECTURE.m
 **Purpose**: the operational core — everything about moving one shipment from booking to delivery.
 **Key functions**: shipment CRUD; multimodal route legs and routing-term derivation; container/
 cargo manifest with DG classification; parties (shipper/consignee/principal + flexible additional
-roles); milestones; carrier booking lifecycle (EDI); shipment messaging; audit history.
+roles); milestones; carrier booking lifecycle (DCSA, §5.12); shipment messaging; audit history. A
+shipment's vessel, voyage and IMO are its **main** sea leg's (the longest transit), and every place a
+sailing is picked or shown marks the main vessel and its feeders (§5.12). A SPOT shipment can carry a
+carrier's **spot offer** under its contract (§5.13).
 **Roles**: operator, occ_bk (write, scoped by office/trade lane); trade_manager (write within their
 lane); viewer (read only).
 **Primary data**: `shipments`, `shipment_legs`, `containers`, `shipment_parties`,
 `shipment_milestones`, `carrier_bookings`, `shipment_messages`, `shipment_events`.
 **Business rules**: a shipment's space badge (Confirmed/Warning/Exceeded) is recomputed on every
 container, booking, or allocation-link change — never a stale, on-demand-only calculation.
-Cancelling a shipment cascades to cancel its carrier booking. Since v0.91.7, write authority on a
+Cancelling a shipment cascades to cancel its carrier booking (and, on a confirmed spot booking, accrues
+the offer's cancellation or no-show fee, §5.13). Since v0.91.7, write authority on a
 shipment's own sub-pages is **per-shipment relative to the acting user's office**, not a blanket
 role permission: Schedules/Cargo/Carrier Booking/Shipping Instructions are fixed export-side;
 Export/Import Services, Customs Filing and Cost Lines gate by the record's own side; an office on
@@ -259,12 +271,23 @@ narrowed by column and sorted (including cheapest-first once a container mix is 
 The Space Configurations list shows each configuration's trade as an Origin Trade and a Destination Trade
 (lanes not stored on an older configuration are worked out from its ports and marked as such), and can be
 searched, filtered by carrier / route / trade / contract / status, and sorted by awarded TEU or consumption.
+A space configuration holds its TEU **per period** or **per week** (that TEU every Monday-to-Sunday week of
+the period, nothing carried over; a shipment counts in the week of its ETD, or of its cargo-ready date until
+it has one); weekly ones show their week everywhere, and the Dashboard counts them per week of its dates.
+**Where to book**: when a contract is assigned (the shipment form or the Schedules page), CargoDesk shows the
+Lane Steering line for the shipment's customer and trade lane, each option as skipped (with the reason), full or
+available with its free space in the ETD's week, and pre-selects the first available one (the pick) for the user
+to confirm. Choosing a lower option while a higher one has space, a contract off the line, or SPOT asks for a
+reason first and is recorded on the shipment as *out of order* / *off the steering* (never blocked); Lane
+Steering's Check shows the same answer for a shipment typed in. The Dashboard's **Steering** tab counts, for its
+dates, how many shipments followed the steering (the steering rate), by trade lane and carrier, with the ones
+that didn't and why.
 **Roles**: admin, operator, trade_manager (write); all roles (read).
-**Primary data**: `contracts`* , `contract_legs`* , `contract_rates`* , `allocations`.
+**Primary data**: `contracts`* , `contract_legs`* , `contract_rates`* , `allocations`, `lane_steerings`, `shipments` (the steering verdict).
 *(owned by the Contract Management Service when `contract_source=remote`, monolith-local
 otherwise.)*
 **Business rules**: every consumption view buckets bookings the same way — *Confirmed* (the
-operator's own confirmation, not the carrier's raw reply), *Pending* (no booking yet, created but not
+carrier's DCSA confirmation; the operator's own Confirm click was retired on 2026-10-11), *Pending* (no booking yet, created but not
 sent, or sent and awaiting the carrier), *Rejected* (shown, never subtracted), *Cancelled* (excluded) — and a shipment counts against
 a configuration only through its own link to it, never by matching carrier/route/contract. From
 those buckets come two deliberate figures: *Remaining* (allocated − confirmed) is the
@@ -273,7 +296,12 @@ use — the contract picker and the Dashboard's Contract Consumption — so spac
 carrier reply isn't sold twice. Disagreement between views has been a recurring, actively hunted bug
 class in this codebase. A configuration is unique per contract record, route and period: two
 references under one contract number may each hold space on the same lane, which is what makes
-steering between them possible. See ARCHITECTURE.md §8.6, §8.31, §8.32.
+steering between them possible. Where to book follows the Steering & Allocation rules: a customer's own
+line first, else the line for everyone; a customer's own space is theirs only; the first option with space
+is the pick, and a shipment bigger than what's left stays there as an overbooking; with every option full,
+the first one takes it. A steered contract with no space configuration counts as order only (no cap). The
+verdict is worked out by the server whenever a contract or space is saved, not by the screen. See
+ARCHITECTURE.md §8.6, §8.31, §8.32, §8.39.
 
 ### 5.4 Compliance Screening (P4 / P4a)
 **Purpose**: screen every shipment party and customer against denied-party lists before/while a
@@ -289,7 +317,8 @@ review and override, logged. See ARCHITECTURE.md §8.4.
 
 ### 5.5 Freight Audit & Payment (P5)
 **Purpose**: reconcile what a carrier actually invoices against what was contracted and accrued.
-**Key functions**: carrier invoice import/matching against contract rates and accrued cost lines;
+**Key functions**: carrier invoice import/matching against contract rates and accrued cost lines
+(a spot offer's BUY lines are matched as "vs. spot offer", §5.13);
 Detention & Demurrage pre-audit; a Reconcile Carrier Costs modal — the shipment's existing lines
 against the contract, charge by charge, with a keep-or-take choice per charge (pre-set to a
 suggested choice, or "take all" / "add missing only") — behind Import Contract Costs, Update Carrier
@@ -374,7 +403,7 @@ there, only rendered and handed off. See ARCHITECTURE.md §8.1, §12.
 
 ### 5.10 Platform (P10)
 **Purpose**: the cross-cutting concerns every other domain relies on.
-**Key functions**: authentication (JWT + optional Azure AD/Entra SSO) and 5-role RBAC; app-wide
+**Key functions**: authentication (JWT + optional Azure AD/Entra SSO) and 9-role RBAC (§3); app-wide
 feature toggles; system messages; live FX rates; per-shipment WebSocket subscriptions (not blanket
 broadcast); the AI Agent (tool-calling chat + document extraction); GP-by-trade-area reporting
 (the finance reports — FX Revaluation, VAT Liability — belong to §5.11).
@@ -410,11 +439,70 @@ a proper credit note (the original and its credit note both count and net to zer
 void never counted; every revenue and tax figure uses this one definition. Revenue is recognised
 when a billing document is confirmed, cost when a vendor line is posted. A non-standard VAT
 treatment always means 0% on the line itself; the three kinds are kept apart because a VAT return
-reports them in different boxes. A charge line should be billed once: a statement skips lines
-already on an issued invoice or another live statement. Known gaps — the reverse check (an invoice
-does not yet skip statement-billed lines), statement scope, statements missing from the GL / VAT /
-FX figures, VAT in statements and GL export, and GL-export atomicity — are ticketed under Epic
-TKT-XV4UHD. See ARCHITECTURE.md §8.28, §8.29, §11 M15.
+reports them in different boxes. A charge line is billed once: a statement skips lines already on
+an issued invoice or another live statement, and an invoice skips lines on a live statement. The gaps
+once listed here (statement scope, statements in the GL / VAT / FX figures and reports, VAT on
+statements and in GL export, GL-export atomicity, reverse-charge self-assessment) were closed under
+Epic TKT-XV4UHD on 2026-09-30; issued invoices can no longer be deleted or un-voided. See
+ARCHITECTURE.md §8.28, §8.29, §11 M15.
+
+### 5.12 Carrier Booking — DCSA, Escalations & the Carrier's Changes (P1 / P3)
+**Purpose**: get every booking to the carrier in the industry standard, and keep it moving when the
+carrier says no, says "yes, but", or says nothing.
+**Key functions**: Send Booking Request as a **DCSA Booking 2.0** message — to the carrier's own
+integration, or, where it has none, to CargoDesk's built-in **demo carrier** (always on outside
+production; in production only when an admin turns it on), which answers like a real carrier and is
+marked DEMO CARRIER; only the carrier confirms (no manual confirmation). **Booking escalations**: a
+booking the carrier rejects, confirms with changes, or leaves unanswered past the no-answer time can be
+escalated by OCC/BK to OCC/AY (export office) or CCL/CO (import office), who find an alternative from
+**Lane Steering** (the carrier order per trade lane, for everyone or one customer, with an optional
+no-answer switch to the next option; the same order Where to book shows when a contract is assigned, §5.3)
+or the contract search, hand it over, or pass it to Trade/AY;
+OCC/BK then books as instructed. It all happens in the shipment (Booking & Review) and the Shipments
+list's Booking column — no separate section. **The main vessel**: the sea leg with the longest transit
+headlines every schedule search and the shipment, and every sailing list marks MAIN and FEEDER legs in
+order. **Requested (A) vs Carrier (B)**: Booking & Review compares every detail of what was requested
+with the carrier's confirmation (vessel, dates with day deltas, legs, equipment, cut-offs, parties,
+the quotation reference and, when the carrier states them, its charges); the user accepts the carrier's
+version (legs, dates and cut-offs onto the shipment), asks the carrier to amend, or escalates.
+**Roles**: occ_bk, operator, admin (send, accept, amend, escalate, book as instructed); occ_ay, ccl_co,
+trade_ay, trade_manager (escalation steps by side and lane); admin and trade_manager only (Lane
+Steering); admin only (the escalation settings).
+**Primary data**: `carrier_bookings` (with the carrier's DCSA confirmation), `edi_messages`,
+`booking_escalations`, `booking_escalation_steps`, `lane_steerings`, `lane_steering_options`,
+`dcsa_sim_bookings`.
+**Business rules**: a detail DCSA doesn't carry is "Not stated", never "changed". Rebooking elsewhere
+replaces the shipment's sea legs from the chosen sailing (feeder, main, feeder) and, when the carrier,
+contract or (for a digital offer) departure changes, takes the old spot offer off. See ARCHITECTURE.md
+§8.34–§8.37.
+
+### 5.13 Spot Rates & Margins (P2 / P3)
+**Purpose**: price a shipment the carrier sells at the day's market rate — what was bought, on which
+terms — and the margin a quote adds on top.
+**Key functions**: a **spot offer** — the carrier's quotation number or price id, its kind (a *classic
+quote*, days to weeks, surcharges often "subject to" at shipment; or a *digital spot* offer such as
+Maersk Spot, Hapag-Lloyd Quick Quotes Spot or CMA CGM SpotOn, hours to a day, priced per departure),
+route, containers, validity, price-lock point, charges (per container or per B/L, any currency, in the
+price or subject to) and penalty terms (cancellation fee and notice, no-show fee, amendment fee, roll
+compensation). Offers are typed in, picked from those already entered, or **taken from the carrier**
+("Get offers": the carrier's own spot connection, or the demo carrier, answering with one priced offer
+per departure; the sailing picker shows the same price per departure on a SPOT shipment). An offer is
+attached to a quote (sales) or straight to a shipment (the booking desk, e.g. when the contract has no
+space): the shipment becomes SPOT on the offer's reference and its charges become BUY cost lines; the
+booking carries the reference to the carrier as DCSA `contractQuotationReference`. **Guardrails**: an
+expired digital offer can't be attached or booked; an expired classic quote only warns; cancelling a
+confirmed booking shows the fee first and accrues it as a BUY line once the carrier confirms the
+cancellation. **Margin Rules** (Master Data): the margin a quote adds — USD per container on the
+freight, or a percentage of the buy — by customer, trade lane and container, with a minimum; the most
+specific valid rule applies; a quote below the minimum is flagged and recorded when sent, never blocked.
+**Roles**: admin, operator, occ_bk, sales (offers, quotes); admin, operator, occ_bk (offers on
+shipments, export side); admin and trade_manager only (Margin Rules); all roles (read).
+**Primary data**: `spot_offers`, `spot_offer_lines`, `margin_rules`, `dcsa_sim_spot_offers`;
+`shipment_cost_lines.spot_offer_id`.
+**Business rules**: no DCSA standard covers rates, so each carrier connection is its own adapter
+(none live yet: Hapag-Lloyd Quick Quotes and the Maersk Offers API wait on carrier access). Once the
+carrier holds the booking (Pending or Confirmed), its offer can't change. Plan and research:
+https://claude.ai/artifact/Y61PAmXZfgFxTLtpt7GiAZ. See ARCHITECTURE.md §8.38.
 
 ## 6. Design Specification Summary
 
@@ -431,7 +519,7 @@ TKT-XV4UHD. See ARCHITECTURE.md §8.28, §8.29, §11 M15.
   — they are always-on, dedicated services.
 - **Real-time**: per-shipment WebSocket subscriptions push message/badge/status updates to open
   clients; nothing polls on a fixed interval for data that has a real push path.
-- **Security**: JWT (8-hour token) + optional SSO; 5-role RBAC scoped further by office/trade lane;
+- **Security**: JWT (8-hour token) + optional SSO; 9-role RBAC scoped further by office/trade lane;
   secrets are write-only through the API (masked booleans on read).
 - **Visual design**: the Dashboard, Command Center and Shipment Details use the "Trade Horizon"
   glass-card design language, which follows the app's dark/light toggle (a dual-theme token set
@@ -448,7 +536,7 @@ ARCHITECTURE.md §§2–7 and is intentionally not duplicated here.
 
 | ID | Store | Owner | Representative tables |
 |---|---|---|---|
-| D1 | Monolith DB | `server.js` + `routes/*.js` | `shipments`, `containers`, `shipment_cost_lines`, `shipment_parties`, `shipment_milestones`, `carrier_bookings`, `quotes`, `allocations`, `shipment_documents`, `customer_statements`, `gl_export_batches`, `users`, `app_settings` |
+| D1 | Monolith DB | `server.js` + `routes/*.js` | `spot_offers`, `spot_offer_lines`, `margin_rules`, `booking_escalations`, `lane_steerings`, `dcsa_sim_bookings`, `shipments`, `containers`, `shipment_cost_lines`, `shipment_parties`, `shipment_milestones`, `carrier_bookings`, `quotes`, `allocations`, `shipment_documents`, `customer_statements`, `gl_export_batches`, `users`, `app_settings` |
 | D2 | Contract Service DB | `services/contract-management/` | `contracts`, `contract_legs`, `contract_rates`, `contract_routings` |
 | D3 | MDM Service DB | `services/mdm/` | `carriers`, `vessels`, `port_locations`, `linked_ports`, `trade_lanes`, `countries`, `commodities`, `carrier_agents` |
 | D4 | Screening Service DB | `services/screening/` | `sanctions_entries`, `sanctions_syncs` |
@@ -469,17 +557,32 @@ and `loop_code_ports` (carrier service loops and their directional rotations) an
 | **DFD** | Data Flow Diagram — the notation used in §4: processes (circles), external entities (rectangles), data stores (cylinders), labeled flows (arrows). |
 | **TEU** | Twenty-foot Equivalent Unit — the standard unit for container/space capacity (20ft = 1 TEU, 40ft = 2 TEU, admin-overridable per container type). |
 | **EDI** | Electronic Data Interchange — the carrier booking request/response protocol; DCSA is the specific industry-standard EDI schema this app targets for real carrier integrations. |
+| **DCSA** | Digital Container Shipping Association — the carriers' interface standards (Booking 2.0, eBL, Track & Trace…). Every CargoDesk booking goes out as DCSA Booking 2.0; carriers without an integration are played by the built-in demo carrier. |
+| **Booking escalation** | Handing a rejected, changed or unanswered booking to OCC/AY or CCL/CO (and on to Trade/AY) for an alternative, which OCC/BK then books as instructed (§5.12). |
+| **Lane steering** | The carrier order per trade lane (for everyone or one customer), shown as Where to book when a contract is assigned and tried first by escalations (§5.3, §5.12). |
+| **Where to book** | The Lane Steering line for a shipment with each option's status and free space, and the pick: the first option with space (§5.3). |
+| **Weekly space** | A space configuration holding its TEU every Monday-to-Sunday week of its period, nothing carried over, instead of once for the period (§5.3). |
+| **Order only** | A steered contract with no space configuration: it can be booked with no cap. |
+| **Out of order / steering rate** | Booking a lower steered option while a higher one has space (recorded with the reason) / the share of shipments that followed the steering, on the Dashboard's Steering tab (§5.3). |
+| **Main vessel** | The sea leg with the longest transit in a transshipment; the shipment and every sailing list are headlined by it, feeders marked (§5.12). |
+| **Requested (A) vs Carrier (B)** | Booking & Review's detail-by-detail comparison of the booking request with the carrier's confirmation (§5.12). |
+| **Spot offer** | A carrier's priced offer for one shipment at the day's market rate: reference, charges, validity, penalty terms (§5.13). |
+| **Classic quote / digital spot** | The two kinds of spot offer: a carrier's quote valid days to weeks (expired → a warning) and an instant, per-departure offer valid hours (expired → can't be booked). |
+| **Quotation reference** | A spot offer's reference, sent on the booking as DCSA `contractQuotationReference` in place of a contract number. |
+| **Subject to** | A charge outside the offered price, billed at its level on the shipment date. |
+| **No-show fee** | The penalty for cancelling a confirmed spot booking inside the notice period (otherwise the cancellation fee applies). |
+| **Margin rule** | The margin a quote adds on top of what was bought, by customer, lane and container, with a minimum (§5.13). |
 | **SDN / CSL** | Specially Designated Nationals (OFAC) / Consolidated Screening List (trade.gov) — the two primary US sanctions/denied-party data sources this app screens against. |
 | **B/L** | Bill of Lading — the core transport document; House B/L and Master B/L are both modeled. |
 | **INCOTERM** | International Commercial Terms — defines which party bears cost/risk at each point in the shipment's journey. |
 | **AIS** | Automatic Identification System — the maritime vessel-tracking protocol this app consumes live via aisstream.io. |
-| **RBAC** | Role-Based Access Control — this app's 5-role permission model (§3). |
+| **RBAC** | Role-Based Access Control — this app's 9-role permission model (§3). |
 | **HS Code** | Harmonized System code — the international goods-classification number; the first 6 digits are common worldwide (chapter = the first 2). CargoDesk's registry holds real 6-digit codes; national extensions (e.g. the EU's 8-digit CN) are looked up live, never stored. |
 | **Loop code** | A carrier's named recurring service rotation (e.g. `AL1`) — the ordered list of ports one vessel string calls at, out and back. |
 | **Eastbound / Westbound (EB / WB)** | The two directional legs of a loop. By convention transatlantic Europe→US is Westbound and transpacific Asia→US is Eastbound; each stop in a loop's rotation carries one of the two. |
 | **Contract number / contract reference** | One carrier contract number can have several contract records, each with its own reference (and optionally a named account, validity and rates). Space is committed per record; the Dashboard adds records up per contract number. |
 | **Space configuration** | The TEU a carrier has committed on one contract record for a route and period (stored as an `allocation`). |
-| **Steering** | Directing a booking to another reference under the same contract number that still has space, via the contract picker's suggestion; recorded per shipment as suggested / direct / overbooked. |
+| **Steering (same-contract suggestion)** | Directing a booking to another reference under the same contract number that still has space, via the contract picker's suggestion; recorded per shipment as suggested / direct / overbooked. Not to be confused with Lane steering. |
 | **Remaining / Available** | Remaining = allocated − confirmed; Available = allocated − confirmed − pending. Booking decisions use Available (§5.3). |
 | **CCD** | Charge Cost Default — a cost line added automatically from a Charge Defaults setup (Master Data → Finance). |
 | **GL / journal entry** | General Ledger — the company's accounting books. A journal entry is a balanced set of debits and credits; GL Export produces them as a file (§5.11). |

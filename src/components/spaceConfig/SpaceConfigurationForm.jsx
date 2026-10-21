@@ -9,6 +9,7 @@ import { Field, Inp, Textarea, inputBase } from "../primitives/Form";
 import CarrierCombobox from "../shared/CarrierCombobox";
 import CustomerCombobox from "../shared/CustomerCombobox";
 import ConsumptionBar from "../shared/ConsumptionBar";
+import { mondaysBetween } from "../../utils/isoWeek";
 import LanePill from "../shared/LanePill";
 import { contractLines, loopsOf, lineOnLoop, commodityCodesOf, findClashes, overlappingConfigs, periodProblems, periodDays,
   nextFreePeriod, FAK_CODE } from "../../utils/spaceConfigRules";
@@ -117,6 +118,9 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
   const [effectiveDate, setEffectiveDate] = useState(init.effectiveDate || "");
   const [endDate,       setEndDate]       = useState(init.endDate || "");
   const [teuStr,        setTeuStr]        = useState(init.allocatedTEU ? String(init.allocatedTEU) : "");
+  // Per period (the whole period's TEU) or per week (that TEU every ISO week, nothing carried
+  // over) — Epic TKT-KFGL81, Story 1.
+  const [spaceBasis,    setSpaceBasis]    = useState(init.spaceBasis === "week" ? "week" : "period");
   const [alertThreshold, setAlertThreshold] = useState(init.alertThreshold ?? 80);
   const [minTeuStr,     setMinTeuStr]     = useState(init.minimumTEU != null ? String(init.minimumTEU) : "");
   const [notes,         setNotes]         = useState(init.notes || "");
@@ -183,6 +187,10 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
 
   const teu = parseInt(teuStr, 10) || 0;
   const minTeu = minTeuStr.trim() === "" ? null : (parseInt(minTeuStr, 10) || 0);
+  const weekly = spaceBasis === "week";
+  const weeksInPeriod = effectiveDate && endDate ? mondaysBetween(effectiveDate, endDate).length : 0;
+  // The minimum commitment is for the whole period, whichever way the space is held.
+  const periodTeu = weekly ? teu * weeksInPeriod : teu;
   const thresh = Math.min(100, Math.max(1, parseInt(alertThreshold, 10) || 80));
   const threshColour = thresh >= 90 ? T.danger : thresh >= 75 ? T.warning : T.success;
   const dates = !!effectiveDate && !!endDate;
@@ -224,7 +232,7 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
     : problems.length ? problems[0]
     : clashes.length ? `Duplicate of ${clashes[0].config.id}`
     : teu <= 0 ? "Enter the TEU"
-    : minTeu !== null && minTeu > teu ? "Minimum commitment is above the TEU" : "";
+    : minTeu !== null && minTeu > periodTeu ? "Minimum commitment is above the period's TEU" : "";
 
   const handleSave = () => {
     if (why) return;
@@ -233,7 +241,7 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
         await onSave({
           contractId, contractNumber: contract.contractNumber, carrierCode: contract.carrierCode,
           routingIds, loopCode, customerId, customerName, commodityCode: commodity,
-          allocatedTEU: teu, effectiveDate, endDate, alertThreshold: thresh, minimumTEU: minTeu, notes,
+          allocatedTEU: teu, spaceBasis, effectiveDate, endDate, alertThreshold: thresh, minimumTEU: minTeu, notes,
           pol: firstLine?.chain?.pol || "", pod: firstLine?.chain?.pod || "",
           originLane, destLane, tradeLane: `${originLane}_${destLane}`,
         });
@@ -445,13 +453,31 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
           </div>
         </div>
 
-        <div>
-          <Inp id="scf-teu" label="Allocated space (TEU)" type="number" value={teuStr} onChange={setTeuStr} required
-            hint={routingIds.length > 1 ? `One pool shared by the ${routingIds.length} ticked routings.` : "Total TEU awarded by this carrier for the period."} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span id="scf-basis" style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.textMuted }}>Space is held</span>
+            <div role="radiogroup" aria-labelledby="scf-basis" style={{ display: "flex", gap: 6 }}>
+              {[["period", "Per period"], ["week", "Per week"]].map(([v, l]) => (
+                <button key={v} type="button" role="radio" aria-checked={spaceBasis === v} data-testid={`scf-basis-${v}`}
+                  onClick={() => setSpaceBasis(v)}
+                  style={{ padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: T.body, fontSize: 12, fontWeight: 600,
+                    border: `1px solid ${spaceBasis === v ? T.accent : T.border}`, background: spaceBasis === v ? T.accentBg : T.surface,
+                    color: spaceBasis === v ? T.accent : T.text }}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <Inp id="scf-teu" label={weekly ? "Allocated space (TEU per week)" : "Allocated space (TEU)"} type="number" value={teuStr} onChange={setTeuStr} required
+            hint={routingIds.length > 1 ? `One pool shared by the ${routingIds.length} ticked routings.` : weekly ? "TEU awarded by this carrier for each week." : "Total TEU awarded by this carrier for the period."} />
+          {weekly && (
+            <p data-testid="scf-weekly-note" style={note}>
+              This TEU every ISO week (Monday to Sunday) of the period, nothing carried over. A shipment counts in the week of its ETD,
+              or of its cargo-ready date until it has one.{weeksInPeriod ? ` ${weeksInPeriod} week${weeksInPeriod === 1 ? "" : "s"}, ${periodTeu} TEU in all.` : ""}
+            </p>
+          )}
           {ed && (
-            <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               <ConsumptionBar allocated={teu || ed.allocatedTEU} confirmed={ed.confirmedTEU} pending={ed.pendingTEU} rejected={ed.rejectedTEU} height={6} width="100%" />
-              <span style={note}>{ed.confirmedTEU} confirmed + {ed.pendingTEU} pending of {teu || ed.allocatedTEU} TEU. Ticking another routing doesn't move existing bookings; new bookings on it draw from the same pool.</span>
+              <span style={note}>{ed.spaceBasis === "week" ? `Week ${ed.weekNumber}: ` : ""}{ed.confirmedTEU} confirmed + {ed.pendingTEU} pending of {teu || ed.allocatedTEU} TEU. Ticking another routing doesn't move existing bookings; new bookings on it draw from the same pool.</span>
             </div>
           )}
         </div>
@@ -468,12 +494,12 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
         <div style={box()}>
           <div style={boxTitle}><span>Minimum quantity commitment (optional)</span></div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <input type="number" min={0} max={teu || undefined} value={minTeuStr} onChange={e => setMinTeuStr(e.target.value)}
+            <input type="number" min={0} max={periodTeu || undefined} value={minTeuStr} onChange={e => setMinTeuStr(e.target.value)}
               placeholder="No minimum set" aria-label="Minimum quantity commitment"
               style={{ ...inputBase, width: 180, fontFamily: T.mono, fontSize: 13 }} />
             <span style={note}>TEU by end of period</span>
           </div>
-          {minTeu !== null && minTeu > teu && <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.danger }}>Can't exceed the {teu} TEU allocated above.</div>}
+          {minTeu !== null && minTeu > periodTeu && <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.danger }}>Can't exceed the {periodTeu} TEU allocated {weekly ? "over the period" : "above"}.</div>}
         </div>
 
         <Textarea label="Notes" value={notes} onChange={setNotes} rows={3} placeholder="Contract caveats, rollover terms, special conditions…" />

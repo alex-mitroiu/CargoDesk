@@ -219,7 +219,26 @@ const UserManualPage = () => {
             Declared Value and Freight Terms — all of these carry straight through to the shipment
             on conversion, the same way the customer already did.</P>
         </StepBody>
-        <Step n={5}>Convert it to a real shipment</Step>
+        <Step n={5}>Bought on a carrier's spot offer? Put it on the quote</Step>
+        <StepBody>
+          <P>When there's no contract for the move, you buy space at the carrier's <strong>spot</strong> price
+            — a quote from its pricing desk (a <em>classic quote</em>, valid days or weeks) or an instant
+            offer from its online tool (a <em>digital spot</em> offer such as Maersk Spot, Hapag-Lloyd Quick
+            Quotes Spot or CMA CGM SpotOn, valid only hours and priced per departure). In the quote, click{" "}
+            <Tag>＋ Add spot offer</Tag> and either:</P>
+          <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+            <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Type it in</strong> — the carrier's quotation number, until when it can be booked, when the price locks, each charge (per container or per B/L, in the price or <em>subject to</em> at shipment) and the penalty terms (cancellation, no-show, amendment fees).</li>
+            <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Pick an existing offer</strong> someone already entered for this carrier and route.</li>
+            <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Get offers from the carrier</strong> — one priced offer per departure, straight from the carrier (or CargoDesk's demo carrier, marked DEMO CARRIER, where the carrier isn't connected yet).</li>
+          </ul>
+          <P>The quote then shows <strong>Buy</strong> (the offer), <strong>Sell</strong> (your quote lines) and the{" "}
+            <strong>Margin</strong>. If a <Tag>Margin Rule</Tag> covers this customer and lane (Master Data),
+            it appears too: <Tag>Apply to the sell lines</Tag> prices your lines from the offer plus the
+            rule, and a margin under the rule's minimum turns red. You can still send it — the History
+            records that it went out below the minimum. While the offer is on the quote, the carrier and
+            route follow it.</P>
+        </StepBody>
+        <Step n={6}>Convert it to a real shipment</Step>
         <StepBody>
           <P>Once a quote is <Badge variant="success">Accepted</Badge>, click{" "}
             <Tag>Convert to Shipment</Tag>. CargoDesk creates a real, numbered shipment and carries
@@ -232,8 +251,9 @@ const UserManualPage = () => {
         </StepBody>
         <Callout type="note">A quote's price doesn't have to match what you eventually pay the
           carrier. When the shipment converts, the SELL side comes from your quote and the BUY side
-          comes from the actual contract — CargoDesk keeps them independent so your margin stays
-          visible.</Callout>
+          comes from the actual contract, or from the spot offer the quote was bought on (the shipment
+          then books with the offer's quotation number) — CargoDesk keeps them independent so your
+          margin stays visible.</Callout>
       </div>
     ),
     shipment: (
@@ -319,12 +339,36 @@ const UserManualPage = () => {
         <StepBody>
           <P>Open <Tag>Booking & Routing → Contracts & Schedules</Tag> in the sidebar. If this is a
             straightforward port-to-port move, add one SEA leg from your POL to your POD.</P>
+          <P>On a Central shipment, <Tag>Change Contract</Tag> picks the contract and its space. When
+            the trade lane is steered (Master Data → Lane Steering), a <strong>Where to book</strong>{" "}
+            panel comes first: each carrier option in order, marked <Tag>THE PICK</Tag>,{" "}
+            <Tag>AVAILABLE</Tag>, <Tag>FULL</Tag> or <Tag>SKIPPED</Tag> (with the reason), and the space
+            still free in the ETD's week. The pick — the first option with space — is already selected;
+            click <Tag>Confirm Selection</Tag> to take it.</P>
+          <P>Choosing a lower option while a higher one has space, a contract that isn't on the
+            steering, or SPOT asks you why first. You can still book it: the reason is saved on the
+            shipment, its History says <em>Booked out of order</em>, and the Contract area shows the
+            verdict (for example <Tag>#2 of 3 · out of order</Tag>). <Tag>Book on #1 instead</Tag>{" "}
+            books the better option.</P>
         </StepBody>
         <Step n={2}>Search for a sailing and apply it</Step>
         <StepBody>
           <P>With a leg in place, <Tag>Add Sailing</Tag> becomes available. Search by the leg's own
             route and pick a real sailing — vessel, voyage, and ETD/ETA all copy onto the leg in one
             click.</P>
+          <P>A sailing that transships is listed under its <strong>main vessel</strong> — the leg with
+            the longest transit, marked <Tag>MAIN</Tag> — with every leg underneath in order (feeder,
+            main, feeder). Picking it creates one sea leg per leg, and the shipment's vessel becomes the
+            main one.</P>
+        </StepBody>
+        <Step n={3}>On a SPOT shipment: the spot offer</Step>
+        <StepBody>
+          <P>A shipment on <Tag>SPOT</Tag> shows a <strong>Spot offer</strong> section under its
+            contract. Add the carrier's offer there (type it in, pick one, or get offers from the
+            carrier) and the shipment books with its quotation number, its charges become the
+            shipment's BUY cost lines, and its validity and penalty terms stay in view. In the sailing
+            picker, each departure then shows the carrier's spot price: <Tag>Sailing + offer</Tag> takes
+            that departure and its offer together when you save the route.</P>
         </StepBody>
         <Callout type="warn"><strong>This is a hard gate, not a suggestion.</strong> If you jump
           straight to Carrier Booking without a contract and a schedule both in place, CargoDesk
@@ -346,16 +390,27 @@ const UserManualPage = () => {
         <Step n={2}>Send the booking request</Step>
         <StepBody>
           <P>Once a schedule's attached, this page turns into a real form. Click{" "}
-            <Tag>Send Booking Request</Tag> to transmit it to the carrier — for the carriers
-            CargoDesk can reach directly, this goes out as a real EDI message with its own outbound
-            record you can review later.</P>
+            <Tag>Send Booking Request</Tag> to transmit it to the carrier as a standard{" "}
+            <strong>DCSA</strong> booking message, with its own outbound record you can review later.
+            A carrier that isn't connected yet is played by CargoDesk's built-in{" "}
+            <strong>demo carrier</strong> (marked DEMO CARRIER). A SPOT shipment's booking carries its
+            spot offer's quotation number; an expired digital offer can't be sent — replace it first.</P>
         </StepBody>
-        <Step n={3}>Wait for the carrier's response, then confirm</Step>
+        <Step n={3}>Wait for the carrier's answer</Step>
         <StepBody>
-          <P>The booking sits as <Badge variant="warning">Pending</Badge> until the carrier
-            responds. Once they confirm, click <Tag>Confirm</Tag> yourself — this is a deliberate
-            second step, so a carrier's confirmed response doesn't silently finalize anything
-            without your own review.</P>
+          <P>The booking sits as <Badge variant="warning">Pending</Badge> until the carrier answers.
+            Only the carrier confirms a booking — there's no manual Confirm. When it does,{" "}
+            <Tag>Booking & Review</Tag> shows <strong>Requested (A) vs Carrier (B)</strong>: every
+            detail you asked for next to what the carrier confirmed (vessel, dates with the days they
+            moved, each leg, equipment, cut-offs, parties, the quotation number and, when the carrier
+            states them, its charges). If something changed, choose: <Tag>Accept the carrier's
+            version</Tag> (it goes onto the shipment), <Tag>Ask the carrier to amend</Tag>, or{" "}
+            <Tag>Escalate…</Tag>.</P>
+          <P>A booking the carrier rejects, changes, or doesn't answer can be <strong>escalated</strong>{" "}
+            to OCC/AY (export office) or CCL/CO (import office). They find another carrier or sailing —
+            Lane Steering suggests the order — and send it back as instructions; you then click{" "}
+            <Tag>Book As Instructed</Tag>. It all happens on the shipment's Booking & Review page; the
+            Shipments list's Booking column shows where every escalation stands.</P>
         </StepBody>
         <Step n={4}>Generate a Booking Confirmation document</Step>
         <StepBody>
@@ -367,6 +422,11 @@ const UserManualPage = () => {
         <Callout type="note">If you change the carrier on a leg after a booking already exists,
           CargoDesk doesn't edit the old booking in place — it archives it as history and starts a
           fresh one under the new carrier, so you can always see what actually happened.</Callout>
+        <Callout type="warn"><strong>Cancelling a spot booking can cost money.</strong> When the
+          carrier has confirmed a booking on a spot offer with penalty terms, <Tag>Cancel Booking</Tag>{" "}
+          shows the fee first — the cancellation fee with enough notice before departure, the no-show
+          fee inside it — and CargoDesk adds it as a BUY cost line once the carrier confirms the
+          cancellation. Whether to bill it on to the customer is your call.</Callout>
         <Screenshot src={imgBooking} alt="The Carrier Booking Details page showing a confirmed booking" caption="Carrier Booking — Details, once confirmed. 'Bookings on this Shipment' at the top always shows the current one, plus any earlier attempts, so nothing about the booking history is ever lost." />
       </div>
     ),
@@ -630,14 +690,36 @@ const UserManualPage = () => {
     dashboard: (
       <div>
         <H2>Consumption Dashboard</H2>
-        <P>The Dashboard shows TEU consumption against your configured carrier space allocations, scoped to a specific week.</P>
-        <H3>Week picker</H3>
-        <P>The dashboard always opens on the current week (Monday–Sunday). Use the <strong>← Prev</strong> and <strong>Next →</strong> arrows to navigate between weeks, or click <strong>Today</strong> to return to the current week. Only shipments with an ETD (or creation date) falling in the selected week are counted.</P>
+        <P>The Dashboard shows TEU consumption against your configured carrier space, for the dates
+          you choose. Its tabs are <Tag>Overview</Tag>, <Tag>Contract Consumption</Tag>,{" "}
+          <Tag>Carrier Volumes</Tag>, <Tag>Margin</Tag>, <Tag>Steering</Tag> and{" "}
+          <Tag>Compliance Review</Tag>.</P>
+        <H3>Dates</H3>
+        <P>The dashboard opens on the current week (Monday–Sunday). Pick any <strong>From</strong> and{" "}
+          <strong>To</strong> dates, up to 90 days apart. <strong>← Prev</strong> and{" "}
+          <strong>Next →</strong> move the whole range back or forward by its own length, and{" "}
+          <strong>This Week</strong> returns to the current week. Only shipments with an ETD in the
+          range are counted (or, without an ETD, their creation date).</P>
         <H3>KPIs</H3>
-        <P><strong>Total Allocated</strong> — the sum of all configured space across all carriers and contract types. <strong>Active Consumption</strong> — TEU booked in the selected week. <strong>Remaining</strong> — how much space is still available.</P>
+        <P><strong>Total Allocated</strong> — the space configured for the dates, across all carriers
+          (weekly space counts once for each of the range's weeks). <strong>Active Consumption</strong>{" "}
+          — TEU booked in the range. <strong>Remaining</strong> — how much space is still available.</P>
         <H3>Space Configurations</H3>
-        <P>Click <strong>＋ Add Configuration</strong> to set the awarded TEU for a specific carrier and contract type combination — e.g. MAEU / Customer Own = 80 TEU. Edit or remove configurations at any time. The utilisation bar turns amber above 70% and red above 90%.</P>
+        <P>Under the Dashboard, <Tag>Space Configurations</Tag> holds the TEU a carrier has committed on
+          one contract reference, for the routing lines you tick, optionally for one loop, customer or
+          commodity. Choose <strong>Per period</strong> (the TEU for the whole period) or{" "}
+          <strong>Per week</strong> (that TEU every Monday-to-Sunday week of the period, nothing carried
+          over). A shipment counts in the week of its ETD, or of its cargo-ready date until it has one;
+          a weekly row shows <Tag>TEU/wk</Tag> and the week, and its Linked Shipments shows every week.
+          The minimum commitment is always for the whole period.</P>
         <Screenshot src={imgDashboard} alt="The Consumption Dashboard Overview tab" caption="The Consumption Dashboard's Overview tab — allocated/confirmed/remaining TEU, an on-time health bar, and the shipments falling inside the selected week." />
+        <H3>Steering</H3>
+        <P>The <Tag>Steering</Tag> tab shows how many shipments sailing in the chosen dates followed
+          the Lane Steering: the <strong>steering rate</strong>, each verdict (steered, rebooked down
+          the line, out of order, other contract, other carrier, SPOT, other loop), a table by trade
+          lane and by carrier, and the shipments that didn't follow, with the option they skipped and
+          the reason given (each opens in a new tab). Lanes with no steering or no space, and
+          shipments assigned before this existed, are counted outside the rate.</P>
         <H3>Sales Pipeline</H3>
         <P>Below the shipment health bar, a <Tag>Sales Pipeline</Tag> tile rolls up what's ahead of
           a real shipment: open Opportunities, Draft and Sent Quotes, and the total USD value
@@ -841,6 +923,21 @@ const UserManualPage = () => {
         <P>ISO 3166-1 alpha-2 country registry pre-populated with 193 UN member states and key territories. Each country shows its assigned trade lanes and seaport count. Click <strong>View Locations</strong> to see all UN/LOCODE ports for that country.</P>
         <H3>UN Location Codes</H3>
         <P>A complete index of all 5-character codes in the system. The <strong>Has Seaport?</strong> column shows ✅ for any code that matches a port in the Port Locations database, and <Tag>—</Tag> for codes referenced in shipments but not yet in the master data.</P>
+        <H3>Lane Steering</H3>
+        <P>The order in which carriers should be tried on a trade lane (for everyone, or for one
+          customer), each on one of its contracts, with a note on the line and an optional switch
+          that moves an unanswered booking to the next carrier automatically. It is what{" "}
+          <strong>Where to book</strong> shows when a contract is assigned, and escalations offer it
+          first. Each option lists the space configurations on its contract; one with none is{" "}
+          <em>order only</em> (no cap). <Tag>Check</Tag> shows what the booking desk would be told
+          for a shipment you type in. Only admins and Trade Managers can change it.</P>
+        <H3>Margin Rules</H3>
+        <P>The margin a quote adds on top of what was bought: a fixed amount per container on the
+          ocean freight, or a percentage of the buy, for a customer, a trade lane and a container type
+          (blank = any), with a minimum margin. The most specific rule applies — the customer's own on
+          the lane and container, then the customer's for any lane, then everyone's on the lane, then
+          everyone's default. A rule suggests and checks; it never stops a quote. Only admins and
+          Trade Managers can change it.</P>
         <H3>Carrier Agents</H3>
         <P>Which local company represents a carrier, and where. A carrier's agent in Rotterdam usually isn't the same company as its agent in New York — this registry records that, and CargoDesk uses it to automatically fill in the "Line Agent" party on a new shipment once its carrier and route are known, so nobody has to remember or re-type it by hand.</P>
         <P>Click <strong>+ Add Carrier Agent</strong>, pick the carrier and the agent company, and add at least one place they cover — either one specific port (search by UN/LOCODE) or an entire country. One agent can cover several places at once: for example, an agent based in Spain can also be set to cover Andorra, by adding both as separate rows. If you later add a whole country and some of the ports you'd already added are inside it, CargoDesk removes those specific ports automatically (they're now redundant) and tells you exactly which ones it removed — nothing disappears silently.</P>

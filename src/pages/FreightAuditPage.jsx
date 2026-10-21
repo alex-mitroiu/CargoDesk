@@ -23,7 +23,7 @@ import { IconFileCertificate, IconSearch, IconClose, IconUpload, IconEye } from 
 
 const STATUS_VARIANT = { Pending: "warning", Reconciled: "info", Approved: "success", Disputed: "danger" };
 const LINE_STATUS_VARIANT = { pending: "warning", matched: "success", variance: "danger", approved: "success", disputed: "danger" };
-const EXPECTED_SOURCE_LABEL = { cost_line: "vs. accrued cost line", contract_rate: "vs. contract rate", dnd_calc: "vs. computed free-time charge", "": "no basis to compare" };
+const EXPECTED_SOURCE_LABEL = { cost_line: "vs. accrued cost line", spot_offer: "vs. spot offer", contract_rate: "vs. contract rate", dnd_calc: "vs. computed free-time charge", "": "no basis to compare" };
 
 const fmtUsd = v => v == null ? "—" : `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtPct = v => v == null ? "" : `${v > 0 ? "+" : ""}${v.toFixed(1)}%`;

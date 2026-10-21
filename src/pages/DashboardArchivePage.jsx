@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { T, LANE_BADGE_VARIANT, diffDays, todayIso } from "../tokens";
+import { spaceTeuLabel } from "../utils/isoWeek";
 import Badge from "../components/primitives/Badge";
 import Pagination from "../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
@@ -96,7 +97,7 @@ const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete }
                 </span>
               )}
             </div>
-            <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted }}>{a.allocatedTEU} TEU</span>
+            <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted }}>{spaceTeuLabel(a)}</span>
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{a.effectiveDate}</span>
               <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{a.endDate}</span>

@@ -89,6 +89,8 @@ import MdmCarrierIntegrationsPage from "./pages/mdm/MdmCarrierIntegrationsPage";
 import MdmTradeLanesPage      from "./pages/mdm/MdmTradeLanesPage";
 import MdmRegionsPage         from "./pages/mdm/MdmRegionsPage";
 import MdmLoopCodesPage       from "./pages/mdm/MdmLoopCodesPage";
+import MdmLaneSteeringPage    from "./pages/mdm/MdmLaneSteeringPage";
+import MdmMarginRulesPage     from "./pages/mdm/MdmMarginRulesPage";
 import LoopMapExplorerPage    from "./pages/mdm/LoopMapExplorerPage";
 import MdmCountriesPage       from "./pages/mdm/MdmCountriesPage";
 import MdmUNLocationCodesPage  from "./pages/mdm/MdmUNLocationCodesPage";
@@ -420,8 +422,8 @@ function App() {
     }
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const ROLE_RANK   = { viewer: 0, occ_bk: 1, trade_manager: 1, sales: 1, operator: 2, admin: 3 };
-  const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", trade_manager: "Trade Manager", sales: "Sales", viewer: "Viewer" };
+  const ROLE_RANK   = { viewer: 0, occ_bk: 1, occ_ay: 1, ccl_co: 1, trade_ay: 1, trade_manager: 1, sales: 1, operator: 2, admin: 3 };
+  const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", occ_ay: "OCC/AY", ccl_co: "CCL/CO", trade_ay: "Trade/AY", trade_manager: "Trade Manager", sales: "Sales", viewer: "Viewer" };
   const primaryRole    = (roles) => [...(roles || [])].sort((a, b) => ROLE_RANK[b] - ROLE_RANK[a])[0] || 'viewer';
   // Direct bug report: this used to offer every role in the whole system ranked at or below the
   // user's own primary role (an admin's own "impersonate any lower role" testing shortcut) —
@@ -723,7 +725,7 @@ function App() {
   }, [authLoading, user, page]);
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-carrier-integrations", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-loop-map-explorer", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-charge-defaults", "mdm-gl-account-mappings", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-carrier-integrations", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-loop-map-explorer", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "mdm-lane-steering", "mdm-margin-rules", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-charge-defaults", "mdm-gl-account-mappings", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
@@ -822,6 +824,8 @@ function App() {
     "mdm-customers":              "Master Data — Customers",
     "mdm-sanctioned-customers":  "Master Data — Sanctioned Customers",
     "mdm-contracts":    "Master Data — Contracts",
+    "mdm-lane-steering": "Master Data — Lane Steering",
+    "mdm-margin-rules": "Master Data — Margin Rules",
     "rate-benchmark":   "Rate Benchmarking",
     "mdm-finance": "Master Data — Finance",
     "mdm-charge-codes": "Master Data — Automated Charge Codes",
@@ -974,6 +978,16 @@ function App() {
       return () => clearInterval(t);
     }, []);
 
+    // Booking escalations waiting for this person (Epic TKT-ASIYFL) — routed by role, office and
+    // lane on the server; handled on the shipment's Booking & Review page.
+    const [myEscalations, setMyEscalations] = useState([]);
+    useEffect(() => {
+      const load = () => api.escalations.mine().then(setMyEscalations).catch(() => {});
+      load();
+      const t = setInterval(load, 60000);
+      return () => clearInterval(t);
+    }, []);
+
     const BELL_DISMISS_KEY = "cargodesk_dismissed_bell";
     const todayStr = new Date().toISOString().split('T')[0];
     // Fixed rather than a configurable setting — same "surface it at all" scoping as the
@@ -999,7 +1013,8 @@ function App() {
       const remainingExpiringQuotes = visibleExpiringQuotes.filter(qt => qt.id !== id);
       const remainingOverdueInv = visibleOverdueInvoiceDeadlines.filter(d => d.shipmentId !== id);
       const remainingMilestones = visibleMilestoneAlerts.filter(m => `${m.shipmentId}-${m.milestoneKey}` !== id);
-      if (remainingBell.length === 0 && remainingBookingBell.length === 0 && remainingExpiring.length === 0 && remainingExpiringQuotes.length === 0 && remainingOverdueInv.length === 0 && remainingMilestones.length === 0 && activeSysMsgs.length === 0) setBellOpen(false);
+      const remainingEscalations = visibleEscalations.filter(e => `esc-${e.id}` !== id);
+      if (remainingBell.length === 0 && remainingBookingBell.length === 0 && remainingExpiring.length === 0 && remainingExpiringQuotes.length === 0 && remainingOverdueInv.length === 0 && remainingMilestones.length === 0 && remainingEscalations.length === 0 && activeSysMsgs.length === 0) setBellOpen(false);
     };
 
     // Active allocations above their alert threshold, sorted worst-first (max 5 shown).
@@ -1052,8 +1067,9 @@ function App() {
     const visibleExpiringQuotes = expiringQuotes.filter(q => !dismissedBell[q.id]);
     const visibleOverdueInvoiceDeadlines = overdueInvoiceDeadlines.filter(d => !dismissedBell[d.shipmentId]);
     const visibleMilestoneAlerts = milestoneAlerts.filter(m => !dismissedBell[`${m.shipmentId}-${m.milestoneKey}`]);
+    const visibleEscalations = myEscalations.filter(e => !dismissedBell[`esc-${e.id}`]);
 
-    const bellCount = visibleBellItems.length + visibleBookingBellItems.length + visibleExpiringContracts.length + visibleExpiringQuotes.length + visibleOverdueInvoiceDeadlines.length + visibleMilestoneAlerts.length + activeSysMsgs.length;
+    const bellCount = visibleEscalations.length + visibleBellItems.length + visibleBookingBellItems.length + visibleExpiringContracts.length + visibleExpiringQuotes.length + visibleOverdueInvoiceDeadlines.length + visibleMilestoneAlerts.length + activeSysMsgs.length;
 
     useEffect(() => {
       const h = e => {
@@ -1210,6 +1226,37 @@ function App() {
                   );
                 })()}
 
+                {/* ── Booking escalations held by me ── */}
+                {visibleEscalations.length > 0 && (
+                  <>
+                    <div style={{ padding: "10px 16px 8px", borderBottom: `1px solid ${T.border}`,
+                      display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.accent }}>Escalated to you</span>
+                      <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                        {visibleEscalations.length} booking{visibleEscalations.length > 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    {visibleEscalations.map(e => (
+                      <div key={e.id} data-testid={`bell-escalation-${e.shipmentId}`} style={{ display: "flex", alignItems: "center", borderBottom: `1px solid ${T.border}22` }}>
+                        <button type="button"
+                          onClick={() => { navigate("shipment-carrier-booking-review", e.shipmentId); setBellOpen(false); }}
+                          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                            flex: 1, padding: "10px 12px 10px 16px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}
+                          onMouseEnter={ev => ev.currentTarget.style.background = T.surfaceHover}
+                          onMouseLeave={ev => ev.currentTarget.style.background = "transparent"}>
+                          <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>{e.shipmentId}</span>
+                          <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted, textAlign: "right" }}>
+                            {e.status === "instructed" ? "Instructions to book" : e.triggerLabel}
+                          </span>
+                        </button>
+                        <button type="button" onClick={() => dismissBellItem(`esc-${e.id}`)} title="Dismiss until tomorrow"
+                          style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 14, padding: "10px 12px", lineHeight: 1, flexShrink: 0 }}
+                          onMouseEnter={ev => ev.currentTarget.style.color = T.text}
+                          onMouseLeave={ev => ev.currentTarget.style.color = T.textMuted}>×</button>
+                      </div>
+                    ))}
+                  </>
+                )}
                 {/* ── Carrier bookings section ── */}
                 {visibleBookingBellItems.length > 0 && (
                   <>
@@ -1769,6 +1816,10 @@ function App() {
     // never misattributes a stale lock to the newly-selected shipment.
     canEditShipments:   roleCanEditShipments && !(shipmentLock?.locked && !shipmentLock?.ownedByMe && shipmentLock?.shipmentId === selectedId),
     canManageConfigs:   effectiveRoles.some(r => ['admin', 'operator', 'trade_manager'].includes(r)),
+    // Lane steering (the carrier order per trade lane): admins and Trade Managers only (2026-10-20).
+    canSteerLanes:      effectiveRoles.some(r => ['admin', 'trade_manager'].includes(r)),
+    // Margin rules (SPOT rates phase 4): admins and Trade Managers, like lane steering.
+    canSetMarginRules:  effectiveRoles.some(r => ['admin', 'trade_manager'].includes(r)),
     // MDM reference data (carriers/vessels/ports/lanes/countries/regions/commodities/linked
     // ports) is read-only for trade_manager — they manage Contracts/Allocations (above), not
     // the underlying reference data those entities point to.
@@ -1777,6 +1828,10 @@ function App() {
     isAdmin:            effectiveRoles.includes('admin'),
     isViewer:           effectiveRoles.every(r => r === 'viewer'),
     isOccBk:            effectiveRoles.includes('occ_bk'),
+    // Booking-escalation roles (Epic TKT-ASIYFL): handle escalations on the shipment itself.
+    isOccAy:            effectiveRoles.includes('occ_ay'),
+    isCclCo:            effectiveRoles.includes('ccl_co'),
+    isTradeAy:          effectiveRoles.includes('trade_ay'),
     isTradeManager:     effectiveRoles.includes('trade_manager'),
     isSales:            effectiveRoles.includes('sales'),
     shipmentLock:       shipmentLock?.shipmentId === selectedId ? shipmentLock : null,
@@ -1935,6 +1990,8 @@ function App() {
                   {contractsNavOpen && (
                     <NavBtn pageKey="rate-benchmark"  icon={IconSearch}    label="Rate Benchmarking" subIndent />
                   )}
+                  <NavBtn pageKey="mdm-lane-steering" icon={IconRoute} label="Lane Steering" indent />
+                  <NavBtn pageKey="mdm-margin-rules" icon={IconTag} label="Margin Rules" indent />
                   <NavBtn pageKey="mdm-carriers" icon={IconBuilding} label="Carriers"       indent
                     foldable open={carriersNavOpen} onToggleFold={() => setCarriersNavOpen(o => !o)} />
                   {carriersNavOpen && (
@@ -2411,6 +2468,8 @@ function App() {
         {page === "mdm-ports"      && isEnabled("mdm-ports")      && <MdmPortLocationsPage />}
         {page === "mdm-linked"     && isEnabled("mdm-linked")     && <MdmLinkedPortsPage />}
         {page === "mdm-loop-codes"&&                                  <MdmLoopCodesPage />}
+        {page === "mdm-lane-steering" &&                              <MdmLaneSteeringPage />}
+        {page === "mdm-margin-rules" &&                               <MdmMarginRulesPage />}
         {page === "mdm-loop-map-explorer" &&                          <LoopMapExplorerPage />}
         {page === "mdm-tradelanes" &&                                 <MdmTradeLanesPage />}
         {page === "mdm-countries"  &&                                 <MdmCountriesPage />}

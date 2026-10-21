@@ -39,12 +39,27 @@ const FILTER_COLUMNS = [
   { key: "contractType", header: "Contract"     },
   { key: "teu",          header: "TEU"          },
   { key: "status",       header: "Status"       },
+  { key: "booking",      header: "Booking"      },
   { key: "margin",       header: "Margin"       },
 ];
 const EMPTY_COL_FILTERS = Object.fromEntries(FILTER_COLUMNS.map(c => [c.key, null]));
 const EMPTY_FILTER_OPTIONS = {
   pol: [], polNames: {}, pod: [], podNames: {}, carrier: [], contractType: [],
-  status: [], routingTerm: [], tradeLane: [], teu: [], margin: [], id: [], idTruncated: false,
+  status: [], routingTerm: [], tradeLane: [], teu: [], margin: [], id: [], idTruncated: false, booking: [],
+};
+// Booking quick filters (booking escalations, Epic TKT-ASIYFL): each sets the Booking column's own
+// filter, except "Escalated to me", which the server works out from the caller's role and scope.
+const BOOKING_QUICK = [
+  { key: "all",     label: "All",                 booking: null },
+  { key: "mine",    label: "Escalated to me",     booking: null },
+  { key: "problem", label: "Rejected or changed", booking: ["Rejected", "Confirmed with changes", "No answer"] },
+  { key: "waiting", label: "Waiting for carrier", booking: ["Waiting for carrier"] },
+  { key: "instr",   label: "Instructions ready",  booking: ["Instructions ready"] },
+];
+const ROW_WIDTH = { boxSizing: "border-box", width: "max-content", minWidth: "100%" };
+const sinceText = iso => {
+  const min = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
+  return min < 60 ? `${min} min` : min < 2880 ? `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, "0")} min` : `${Math.floor(min / 1440)} days`;
 };
 
 // Real server-side pagination (TKT-none — pagination-standardization pass). `shipments` (the
@@ -88,6 +103,9 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
   const [pageItems,       setPageItems]       = useState([]);
   const [pageTotal,       setPageTotal]       = useState(0);
   const [pageLoading,     setPageLoading]     = useState(true);
+  const [quick,           setQuick]           = useState("all");
+  const [bookingCounts,   setBookingCounts]   = useState({});
+  const [mineCount,       setMineCount]       = useState(0);
   const knownIdsRef = useRef(new Set(shipments.map(s => s.id)));
   const searchTimer = useRef(null);
   // Guards against out-of-order responses (StrictMode's dev-only double-mount fires the initial
@@ -105,6 +123,7 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
     const s   = opts.sort    ?? sort;
     const off = opts.offset  ?? offset;
     const lim = opts.limit   ?? limit;
+    const q   = opts.quick   ?? quick;
     const seq = ++loadSeqRef.current;
     setPageLoading(true);
     try {
@@ -115,10 +134,13 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
       FILTER_COLUMNS.forEach(({ key }) => { if (Array.isArray(f[key])) params[key] = f[key].join(','); });
       if (f.search)  params.search  = f.search;
       if (s)         params.sort    = s;
+      if (q === "mine") params.escalatedToMe = "1";
       const r = await api.shipments.list(params);
       if (seq !== loadSeqRef.current) return; // a newer request has since been issued — discard
       setPageItems(r.results || []);
       setPageTotal(r.total ?? 0);
+      setBookingCounts(r.bookingCounts || {});
+      setMineCount(r.escalatedToMe || 0);
     } catch {
       if (seq !== loadSeqRef.current) return;
       setPageItems([]); setPageTotal(0);
@@ -179,8 +201,14 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
   // convention: null = no filter, [] = a real, deliberate "show nothing").
   const handleColumnFilterChange = (key, value) => {
     const nf = { ...filters, [key]: value };
-    setFilters(nf); setOffset(0);
-    loadPage({ filters: nf, offset: 0 });
+    const q = key === "booking" ? "all" : quick;
+    setFilters(nf); setOffset(0); setQuick(q);
+    loadPage({ filters: nf, offset: 0, quick: q });
+  };
+  const handleQuick = key => {
+    const nf = { ...filters, booking: BOOKING_QUICK.find(x => x.key === key).booking };
+    setQuick(key); setFilters(nf); setOffset(0);
+    loadPage({ filters: nf, offset: 0, quick: key });
   };
   const handleSortChange = v => {
     setSort(v); setOffset(0);
@@ -188,8 +216,8 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
   };
   const handleClear = () => {
     const nf = { search: '', ...EMPTY_COL_FILTERS };
-    setFilters(nf); setSort(""); setOffset(0);
-    loadPage({ filters: nf, sort: "", offset: 0 });
+    setFilters(nf); setSort(""); setOffset(0); setQuick("all");
+    loadPage({ filters: nf, sort: "", offset: 0, quick: "all" });
   };
   const goPage = off => { setOffset(off); loadPage({ offset: off }); };
   const changeLimit = n => { setLimit(n); setOffset(0); loadPage({ limit: n, offset: 0 }); };
@@ -220,10 +248,14 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
     } catch { return ALL_EXPORT_FIELDS; }
   };
 
-  const { template: shipTemplate, startResize: shipStartResize } = useResizableColumns("shipments", [140,70,70,80,100,150,165,46,60,80,90]);
-  const shipHeaders = ["Shipment ID","POL","POD","Routing Term","Trade Lane","Carrier","Contract","TEU","Status","Margin","Actions"];
+  // Sized to fit a 1440px screen beside the sidebar (1086px of columns at most); narrower screens
+  // scroll the card sideways. Booking fits "CONFIRMED WITH CHANGES", its longest value.
+  const { template: shipTemplate, startResize: shipStartResize } = useResizableColumns("shipments", [116,70,70,66,94,124,145,46,60,166,72,56]);
+  const shipHeaders = ["Shipment ID","POL","POD","Routing Term","Trade Lane","Carrier","Contract","TEU","Status","Booking","Margin","Actions"];
 
-  const hasFilters = !!(filters.search || FILTER_COLUMNS.some(({ key }) => filters[key] != null));
+  const hasFilters = !!(filters.search || quick !== "all" || FILTER_COLUMNS.some(({ key }) => filters[key] != null));
+  const quickCount = key => key === "mine" ? mineCount
+    : (BOOKING_QUICK.find(x => x.key === key).booking || []).reduce((n, l) => n + (bookingCounts[l] || 0), 0);
 
   const confirmDelete = async () => {
     const id = confirm;
@@ -308,6 +340,23 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
         )}
       </div>
 
+      <div role="group" aria-label="Booking quick filters" data-testid="booking-quick-filters"
+        style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: ".08em", color: T.textMuted }}>BOOKING</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4 }}>
+          {BOOKING_QUICK.map(x => {
+            const on = x.key === quick;
+            return (
+              <button key={x.key} type="button" aria-pressed={on} onClick={() => handleQuick(x.key)} data-testid={`booking-quick-${x.key}`}
+                style={{ border: "none", borderRadius: 6, padding: "6px 14px", fontFamily: T.body, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                  background: on ? T.accent : "transparent", color: on ? T.btnPrimaryText : T.textMuted }}>
+                {x.label}{x.key !== "all" ? ` · ${quickCount(x.key)}` : ""}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {carriers.length === 0 && (
         <div style={{ background: T.warningBg, border: `1px solid ${T.warning}55`, borderRadius: 8,
           padding: "12px 18px", fontFamily: T.body, fontSize: 13, color: T.warning, marginBottom: 18,
@@ -317,14 +366,16 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
         </div>
       )}
 
-      <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: shipTemplate,
+      {/* Scrolls sideways below ~1440px instead of clipping the last columns; header and rows grow
+          to the columns' width so hover and borders run the full row. */}
+      <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflowX: "auto" }}>
+        <div style={{ display: "grid", gridTemplateColumns: shipTemplate, ...ROW_WIDTH,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
           {shipHeaders.map((h, i) => {
             // Contract and Status render their data as a centered badge (alignItems:"center" on
             // the row cell below) — the header needs to match, or the label sits at the left
             // edge of a column whose actual content is centered underneath it.
-            const centered = h === "Contract" || h === "Status";
+            const centered = h === "Contract" || h === "Status" || h === "Booking";
             const col = FILTER_COLUMNS[i]; // undefined for Actions (last header) — no filter control
             const describe = col?.key === "carrier"
               ? code => carriers.find(c => c.code === code)?.name || ""
@@ -354,7 +405,7 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
           return (
             <div key={s.id} onDoubleClick={() => window.open(`#shipments/${s.id}`, "_blank")}
               title="Double-click to open"
-              style={{ display: "grid", gridTemplateColumns: shipTemplate,
+              style={{ display: "grid", gridTemplateColumns: shipTemplate, ...ROW_WIDTH,
                 padding: "14px 20px", borderBottom: `1px solid ${T.border}22`,
                 cursor: "pointer", alignItems: "center", transition: "background .1s" }}
               onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
@@ -400,12 +451,6 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
                 {s.overdueCount > 0 && (
                   <Badge variant="danger" size={9.5}>{s.overdueCount} overdue</Badge>
                 )}
-                {s.bookingStatus === "Pending" && (
-                  <Badge variant="info" size={9.5}>Booking pending</Badge>
-                )}
-                {s.bookingStatus === "Rejected" && (
-                  <Badge variant="danger" size={9.5}>Booking rejected</Badge>
-                )}
                 {/* 2026-09 Space Configuration spec, gap #1/#2 — fully computed and broadcast
                     already, just never rendered anywhere before this. */}
                 {s.spaceBadge === "exceeded" && (
@@ -413,6 +458,15 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
                 )}
                 {s.spaceBadge === "warning" && (
                   <Badge variant="warning" size={9.5}>Space warning</Badge>
+                )}
+              </div>
+              <div data-testid={`booking-cell-${s.id}`} style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "center", minWidth: 0 }}>
+                <Badge variant={s.bookingState?.tone || "default"} size={10}>{(s.bookingState?.label || "Not sent").toUpperCase()}</Badge>
+                {(s.bookingState?.sub || s.bookingState?.since) && (
+                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    title={[s.bookingState.sub, s.bookingState.since && sinceText(s.bookingState.since)].filter(Boolean).join(" · ")}>
+                    {[s.bookingState.sub, s.bookingState.since && sinceText(s.bookingState.since)].filter(Boolean).join(" · ")}
+                  </span>
                 )}
               </div>
               <div>{(() => {

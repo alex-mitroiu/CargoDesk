@@ -9,85 +9,15 @@ import { Modal } from "../../components/primitives/Modal";
 import EdiMessageList, { EDI_STATUS_COLOR } from "../../components/shared/EdiMessageList";
 import CarrierBookingsTable from "../../components/shared/CarrierBookingsTable";
 import GenerateDocumentModal from "../../components/shared/GenerateDocumentModal";
+import BookingEscalationPanel, { EscalateModal, BookAsInstructedModal } from "../../components/shared/BookingEscalation";
+import CarrierComparison from "../../components/shared/CarrierComparison";
 import { IconCheck, IconClose, IconAnchor, IconFile, IconRefresh, IconUpload } from "../../components/primitives/Icon";
 import { dcsaLabel } from "../../utils/dcsaCodes";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
 
-// Sent vs. Received comparison — same ordered field list the booking-request payload itself
-// is built from (routes/edi.js), so every field the operator actually sent has a row here,
-// not just the handful a carrier response happens to touch.
-const BOOKING_COMPARISON_FIELDS = [
-  ["pol", "POL"], ["pod", "POD"], ["carrierCode", "Carrier"], ["etd", "ETD"],
-  ["vessel", "Vessel"], ["voyage", "Voyage"], ["vesselImo", "Vessel IMO"],
-  ["contractType", "Contract Type"], ["contractRef", "Contract Ref"],
-  ["cargoReadyDate", "Cargo Ready Date"], ["placeOfReceipt", "Place of Receipt"],
-  ["placeOfDelivery", "Place of Delivery"], ["shipperName", "Shipper"],
-  ["consigneeName", "Consignee"], ["notifyName", "Notify Party"],
-  ["commodityCode", "Commodity Code"], ["containerCount", "Container Count"],
-];
-
-const fmtCompareVal = v => (v == null || v === "" ? "—" : String(v));
-
-// The shipment's message thread also carries SI, VGM and customs traffic and, since TKT-KG4E49,
-// cancellation requests: only an outbound message holding the whole booking can be diffed, and
-// only a booking answer counts as the carrier's response.
-const BOOKING_PAYLOAD_TYPES = new Set(["booking_request", "booking_update", "booking_amendment"]);
+// Only a booking answer counts as the carrier's response: the shipment's thread also carries SI, VGM and
+// customs traffic and, since TKT-KG4E49, cancellation requests.
 const isBookingAnswer = m => m.direction === "in" && (m.messageType || "").startsWith("booking_");
-
-// Diffs the outbound booking-request payload against the newest inbound carrier response —
-// both already fetched on this page (api.ediMessages.list), so this needs no new endpoint.
-// Falls back gracefully to nothing when either side's raw_payload isn't valid JSON (e.g. an
-// EDI message saved before this feature shipped).
-function buildComparisonRows(outboundMessage, inboundMessage) {
-  if (!outboundMessage || !inboundMessage) return [];
-  let sent, received;
-  try { sent = JSON.parse(outboundMessage.rawPayload || "{}"); } catch { sent = {}; }
-  try { received = JSON.parse(inboundMessage.rawPayload || "{}"); } catch { received = {}; }
-  return BOOKING_COMPARISON_FIELDS.map(([key, label]) => {
-    const sentVal = sent[key];
-    const receivedVal = key in received ? received[key] : sentVal;
-    return { key, label, sentVal, receivedVal, differs: fmtCompareVal(sentVal) !== fmtCompareVal(receivedVal) };
-  });
-}
-
-// Row-by-row Sent/Received comparison table — now a real <table> on Trade Horizon tokens
-// (Cargo/Accounting's own New Style treatment; approved mockup
-// https://claude.ai/artifact/25ygL745mmMfvYWBXZWoAE), same column set as before.
-const BookingComparisonTable = ({ outboundMessage, inboundMessage }) => {
-  const rows = buildComparisonRows(outboundMessage, inboundMessage);
-  if (rows.length === 0) return null;
-  return (
-    <div style={{ marginBottom: 24 }}>
-      <h3 style={{ fontFamily: HZ_DISPLAY, fontSize: 14, fontWeight: 700, color: HZ.text, marginBottom: 12 }}>
-        Sent vs. Received
-      </h3>
-      <div style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ background: HZ.bg, borderBottom: `1px solid ${HZ.border}` }}>
-              {["Field", "Sent", "Received"].map(h => (
-                <th key={h} style={{ textAlign: "left", padding: "8px 16px", fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700,
-                  color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em" }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(r => (
-              <tr key={r.key} style={{ borderBottom: `1px solid ${HZ.border}`,
-                boxShadow: r.differs ? `inset 3px 0 0 ${HZ.warn}` : "none",
-                background: r.differs ? HZ.warnBg : "transparent" }}>
-                <td style={{ padding: "9px 16px", fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted }}>{r.label}</td>
-                <td style={{ padding: "9px 16px", fontFamily: HZ_MONO, fontSize: 12, color: HZ.text }}>{fmtCompareVal(r.sentVal)}</td>
-                <td style={{ padding: "9px 16px", fontFamily: HZ_MONO, fontSize: 12, color: r.differs ? HZ.warn : HZ.text,
-                  fontWeight: r.differs ? 700 : 400 }}>{fmtCompareVal(r.receivedVal)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
 
 // ─── Carrier Booking — Review ─────────────────────────────────────────────────
 // The inbound half: the carrier's response plus the full bidirectional message thread, and the
@@ -113,7 +43,12 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
   const [genDocOpen,   setGenDocOpen]   = useState(false);
   const [blDocs,       setBlDocs]       = useState([]);
   const [busy, setBusy] = useState(false);
+  // Booking escalations (Epic TKT-ASIYFL): the shipment's escalation, what this user may do with it.
+  const [escView,      setEscView]      = useState(null);
+  const [escalateOpen, setEscalateOpen] = useState(false);
+  const [bookOpen,     setBookOpen]     = useState(false);
   const loadRef = useRef(null);
+  const loadEscalation = useCallback(() => api.escalations.get(shipment.id).then(setEscView).catch(() => setEscView(null)), [shipment.id]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -121,7 +56,8 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
       api.carrierBooking.get(shipment.id).catch(() => null),
       api.ediMessages.list(shipment.id).catch(() => []),
       api.documents.list(shipment.id).then(docs => docs.filter(d => d.docType === "BL01")).catch(() => []),
-    ]).then(([b, m, docs]) => { setBooking(b); setMessages(m); setBlDocs(docs); }).finally(() => setLoading(false));
+      api.escalations.get(shipment.id).catch(() => null),
+    ]).then(([b, m, docs, ev]) => { setBooking(b); setMessages(m); setBlDocs(docs); setEscView(ev); }).finally(() => setLoading(false));
   }, [shipment.id]);
   loadRef.current = load;
 
@@ -142,13 +78,16 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
           setMessages(prev => prev.some(m => m.id === frame.message.id) ? prev : [frame.message, ...prev]);
         } else if (frame.type === "booking_status_changed") {
           setBooking(frame.booking);
+          loadEscalation();
+        } else if (frame.type === "escalation_changed") {
+          loadEscalation();
         }
       } catch { /* ignore */ }
     };
     ws.onerror = () => { pollId = setInterval(() => loadRef.current?.(), 10_000); };
     ws.onclose = () => { if (pollId) clearInterval(pollId); };
     return () => { ws.close(); if (pollId) clearInterval(pollId); };
-  }, [shipment.id]);
+  }, [shipment.id, loadEscalation]);
 
   const status = booking?.status || "Created";
   // A confirmed booking whose cancellation is waiting for the carrier's answer can't be cancelled again.
@@ -168,10 +107,12 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
     : null;
   const latestInbound = messages.filter(isBookingAnswer)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
-  const outboundMessage = messages.filter(m => m.direction === "out" && BOOKING_PAYLOAD_TYPES.has(m.messageType))
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
 
-  const openCancel  = () => setCancelModal({ reason: "" });
+  // A spot offer's cancellation or no-show fee, shown before cancelling (SPOT rates, 2026-10-21).
+  const openCancel  = () => {
+    setCancelModal({ reason: "", fee: null });
+    api.spotOffers.cancellationFee(shipment.id).then(fee => setCancelModal(m => (m ? { ...m, fee } : m))).catch(() => {});
+  };
 
   const doCancel = async () => {
     setBusy(true);
@@ -234,6 +175,9 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
 
   return (
     <div id="shpbooking-review-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
+      <BookingEscalationPanel shipment={shipment} view={escView}
+        onChanged={() => { loadEscalation(); onRefresh?.(); }}
+        onBookAsInstructed={() => setBookOpen(true)} />
       <CarrierBookingsTable shipment={shipment} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -277,9 +221,26 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
             )}
             <Btn variant="secondary" onClick={openCancel} disabled={!canCancel}
               title={cancelPending ? "Cancellation requested — waiting for the carrier's answer" : undefined}>Cancel Booking</Btn>
+            {escView?.offer?.allowed && (
+              <button type="button" onClick={() => setEscalateOpen(true)} data-testid="escalate-btn"
+                title={escView.offer.triggerLabel}
+                style={{ background: HZ.cyan, border: "none", color: "#06111f", borderRadius: 7, padding: "7px 16px",
+                  fontFamily: HZ_BODY, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Escalate…</button>
+            )}
           </div>
         )}
       </div>
+
+      {escalateOpen && escView?.offer && (
+        <EscalateModal shipment={shipment} booking={booking} offer={escView.offer}
+          onClose={() => setEscalateOpen(false)}
+          onDone={() => { setEscalateOpen(false); loadEscalation(); onRefresh?.(); }} />
+      )}
+      {bookOpen && escView?.escalation && (
+        <BookAsInstructedModal shipment={shipment} booking={booking} view={escView}
+          onClose={() => setBookOpen(false)}
+          onDone={() => { setBookOpen(false); load(); onRefresh?.(); }} />
+      )}
 
       {banner && (
         <div data-testid="carrier-booking-banner" style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 16, borderRadius: 8,
@@ -330,7 +291,10 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
         )}
       </div>
 
-      <BookingComparisonTable outboundMessage={outboundMessage} inboundMessage={latestInbound} />
+      {/* Requested (A) vs Carrier (B): replaced "Sent vs. Received", which only echoed what was sent. */}
+      <CarrierComparison shipment={shipment} booking={booking} canEdit={canEdit}
+        onEscalate={escView?.offer?.allowed ? () => setEscalateOpen(true) : null}
+        onDecided={() => { load(); onRefresh?.(); }} />
 
       <h3 style={{ fontFamily: HZ_DISPLAY, fontSize: 14, fontWeight: 700, color: HZ.text, marginBottom: 12 }}>
         Message Thread
@@ -348,6 +312,15 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
                 ? `This withdraws the booking request at ${booking?.carrierCode || "the carrier"} and cancels it here.`
                 : "This marks the booking as cancelled."}
             </p>
+            {cancelModal.fee && (
+              <div role="alert" data-testid="cancel-spot-fee" style={{ background: HZ.warnBg, border: `1px solid ${HZ.warn}55`, borderRadius: 8, padding: "10px 12px",
+                fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, lineHeight: 1.5 }}>
+                <b style={{ color: HZ.warn }}>{cancelModal.fee.kind === "no_show" ? "No-show fee" : "Cancellation fee"}: {cancelModal.fee.currency} {cancelModal.fee.fee.toLocaleString("en-US", { minimumFractionDigits: 2 })}</b>
+                {" "}({cancelModal.fee.units} × {cancelModal.fee.currency} {cancelModal.fee.perUnit}
+                {cancelModal.fee.daysToEtd != null ? `, ${cancelModal.fee.daysToEtd} days before ETD` : ""}{cancelModal.fee.noticeDays != null ? `, notice ${cancelModal.fee.noticeDays} days` : ""}).
+                {" "}Spot offer {cancelModal.fee.offerRef}'s terms: it goes on the BUY side once {cancelModal.fee.carrierCode} confirms the cancellation.
+              </div>
+            )}
             <div>
               <label style={{ display: "block", fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600,
                 color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 }}>

@@ -72,6 +72,15 @@ describe("contract consumption rows", () => {
   it("sorts the fullest contract first", () => {
     expect(rows[0].totals.used).toBeGreaterThan(rows[1].totals.used);
   });
+
+  it("counts weekly space per week of the range, and only the shipments sailing in those weeks (Epic TKT-KFGL81)", () => {
+    // 10 TEU a week through October 2026; a two-week range (weeks 41 and 42).
+    const wk = { id: "AL-W", contractId: "C-E", carrierCode: "EGLV", allocatedTEU: 10, spaceBasis: "week", effectiveDate: "2026-10-01", endDate: "2026-10-31" };
+    const ships = [ship("W1", "AL-W", "Confirmed", 6, "2026-10-07"), ship("W2", "AL-W", "Pending", 4, "2026-10-14"),
+      ship("W3", "AL-W", "Confirmed", 8, "2026-10-28"), { ...ship("W4", "AL-W", "Pending", 2, ""), cargoReadyDate: "2026-10-16" }];
+    const [row] = buildContractRows({ allocations: [wk], shipments: ships, contractMap, teuOfShipment, rangeStart: "2026-10-05", rangeEnd: "2026-10-18" });
+    expect(row.totals).toMatchObject({ alloc: 20, conf: 6, pend: 6 });   // W3 sails in week 44: outside the range
+  });
 });
 
 describe("weekly confirmed trend", () => {

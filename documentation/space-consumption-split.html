@@ -358,6 +358,13 @@
     <div class="eyebrow">Design note · Space Configuration</div>
     <h1>Space Consumption Split</h1>
     <p class="subtitle">Today one number — <code>consumedTEU</code> — answers "how much space is used?" regardless of whether a carrier ever actually confirmed it. This plan splits it into Confirmed / Pending / Rejected, so the bar shows what's real.</p>
+    <div class="scope-box"><strong>Status update, 2026-10-21.</strong> Built in v0.85.0 and extended since:
+      <ul>
+        <li>The contract picker and the Dashboard also subtract pending space: Available = allocated − confirmed − pending.</li>
+        <li>The operator's Confirm step this note assumes was retired on 2026-10-11. Only the carrier's DCSA confirmation confirms a booking, and the carrier's changes are handled in Requested (A) vs Carrier (B) (ARCHITECTURE.md §8.37).</li>
+        <li>A space configuration can hold its TEU per ISO week, counted in each shipment's ETD week (§8.39).</li>
+      </ul>
+      The current reference is ARCHITECTURE.md §8.6 and §8.39.</div>
   </header>
 
   <section>

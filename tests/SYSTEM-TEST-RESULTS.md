@@ -727,3 +727,70 @@ app.get("/api/margin/summary", auth(), (req, res) => {
 | users-finance.cy.js | 14 | 14 | 0 | 0 |
 | sharing.cy.js | 13 | 13 | 0 | 0 |
 | **Total** | **75** | **74** | **0** | **1** |
+
+---
+
+## Test Run — 2026-10-21 (Where to book, Epic TKT-KFGL81)
+
+**Build:** the working tree after Epic TKT-KFGL81 (weekly space, Where to book, the out-of-order
+verdict, the steering report), uncommitted. pglite database, the full dev stack, CI's rate limits.
+
+| Layer | Result |
+|---|---|
+| Backend tests (`npm test` chain, run file by file) | **107/107 files passed** |
+| Frontend unit tests (Vitest) | **336/336** in 28 files |
+| Browser tests (Cypress, Electron) | **280/280** in 34 specs, none skipped, 10 min 4 s |
+
+**New test files**
+
+| File | Tests | Result |
+|---|---|---|
+| tests/weekly-space.test.js | 30 | PASS |
+| tests/where-to-book.test.js | 23 | PASS |
+| tests/steering-verdict.test.js (verdicts + the steering report) | 21 | PASS |
+| src/utils/isoWeek.test.js | 8 | PASS |
+| src/components/shared/WhereToBook.test.jsx | 10 | PASS |
+| src/components/dashboard/SteeringReport.test.jsx | 4 | PASS |
+| cypress/e2e/where-to-book.cy.js | 4 | PASS |
+
+Tests extended: `contractConsumption.test.js` (weekly space per week of the range),
+`spaceConfigTable.test.js` (the weekly row and its MQC on the period total), and
+`SpaceConfigurationsPage.test.jsx` (the Per week choice is saved).
+
+**Cypress, per spec (all passed):** A_login 31 · A_smoke 20 · booking-carrier-answers 3 · booking-escalation 5 · booking-settings-report 2 ·
+carrier-agents 2 · carrier-booking-lifecycle 3 · carrier-booking-negative 5 · containers 21 ·
+customs-filing-lifecycle 2 · customs-filing-negative 8 · dcsa-demo-carrier 5 · document-generation 2 ·
+invoice-reversal 8 · kanban 15 · lane-steering 3 · main-vessel-carrier-changes 5 · pending-revalidation 10 ·
+schedule-catalog-search 5 · schedule-generator 8 · schedule-leg-cascade 2 · schedules-happy-path 2 ·
+schedules 12 · sharing 13 · shipment-crud 21 · shipment-detail-walkthrough 4 · shipment-edit-delete 4 ·
+shipment-form 3 · shipment-reorg 5 · spot-offers 8 · trade-manager-role 11 · transit-suggestion 14 ·
+users-finance 14 · where-to-book 4.
+
+**Manual cases:** TC-051 – TC-062 (TEST-CASES.md Area 11), all PASS through the automated tests
+named in each.
+
+**Problems found while building and testing**
+
+| # | What happened | Outcome |
+|---|---|---|
+| 1 | Reading only a customer's own space on their own steering line made an option with no own space uncapped. It also stopped the no-answer switch moving a booking to #2 (booking-carrier-answers.test.js, 6 failures) | Rule refined: a customer's own line uses their own space when they have some on the contract, else the contract's general space. Recorded in the scope doc and ARCHITECTURE.md §8.39 |
+| 2 | Sending a reason alone re-judged the verdict against the space available at that moment, so an out-of-order verdict could flip to steered | Fixed: a reason alone updates only the reason (`reasonOnly`) |
+| 3 | The per-week explanation on the space configuration form was hidden behind a hover hint | Shown as a visible note |
+
+Leftover data after the runs: no Lane Steering lines and no weekly space configurations (checked
+through the API).
+
+### Follow-up, 2026-10-21: the SI Cutoff calendar opened in the wrong place
+
+Reported from the Shipping Instructions page: the SI Cutoff calendar opened at the bottom-right of
+the screen instead of under the field. The page's glass cards set `backdrop-filter`, which makes a
+card the reference box for `position: fixed`, so the calendar's screen coordinates were applied
+from the card's corner. `DatePicker` now renders its calendar on `<body>` (as `ColumnFilter` and
+`HsCodeCombobox` already do), and its outside-click check also accepts clicks inside the calendar.
+
+| Check | Result |
+|---|---|
+| New `src/components/primitives/DatePicker.test.jsx` | **3/3**. Each of the two halves of the fix was removed in turn, and the matching test failed |
+| Frontend unit tests (Vitest) | **339/339** in 29 files |
+| Real browser, SHP-K0D3U6's Shipping Instructions page | The calendar opens 6px under SI Cutoff, on its left edge; clicking the 15th sets "15 Oct 2026 · 09:00"; a click outside closes it. Nothing was saved |
+| Cypress | Not re-run: no spec opens a calendar (checked by searching the specs) |

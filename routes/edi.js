@@ -1,13 +1,14 @@
 "use strict";
 
 const { validateRequest, errorsText, specVersion } = require("../lib/dcsa/validate");
+const { comparisonRows, planLegs } = require("../lib/carrier-confirmation");
 
 module.exports = function ediRoutes(app, ctx) {
   const { query, ok, err, uid, auth, requireRole, shipmentSubs,
           mapEdiMessage, mapCarrierBooking, mapShipment, applyShipmentAccessFilter,
           autoCompleteMilestone, logEntityEvent, isEdiBookable, supersedeIfCarrierChanged,
           getCustomerRow, checkLineAgentCapabilityGaps, getCarrierAdapter, getSettings,
-          officeSideOf, blockIfWrongSide, recomputeSpacePool, carrierIntegrationFor, shipmentLoopCode } = ctx;
+          officeSideOf, blockIfWrongSide, recomputeSpacePool, carrierIntegrationFor, shipmentLoopCode, logEvent } = ctx;
 
   // occ_bk has canEditShipments:true on the frontend and already sees an enabled Send
   // button — this used to exclude occ_bk (a pre-existing 403-on-click gap), fixed here.
@@ -44,6 +45,7 @@ module.exports = function ediRoutes(app, ctx) {
   const BOOKING_LABEL = { RECEIVED: "received", UPDATE_RECEIVED: "received", PENDING_UPDATE: "update_requested",
     PENDING_AMENDMENT: "update_requested", CONFIRMED: "confirmed", REJECTED: "rejected", DECLINED: "rejected",
     CANCELLED: "cancelled", COMPLETED: "completed" };
+  const DECISION_STATES = ["CONFIRMED", "REJECTED", "DECLINED", "PENDING_UPDATE"];
 
   async function applyCarrierState(shipment, booking, state, { source = "callback", raw = null, simulated = false } = {}) {
     const now = new Date().toISOString();
@@ -80,16 +82,34 @@ module.exports = function ediRoutes(app, ctx) {
         label, booking.correlation_id, now]);
     const cancelledNow = status === "Cancelled" && booking.status !== "Cancelled";
     const confirmedNow = status === "Confirmed" && booking.status !== "Confirmed";
+    // The carrier's first DECISION on this request (booking escalations, TKT-ASIYFL): RECEIVED is
+    // automatic and doesn't count, so "no answer" means no decision within the no-answer time.
+    const decidedNow = changed.includes("bookingStatus") && DECISION_STATES.includes(next.bookingStatus);
     await query(`
       UPDATE carrier_bookings SET last_response_status=$1, booking_ref=$2, status=$3, responded_at=$4, is_mock=$8,
         confirmed_at=CASE WHEN $9 THEN $4 ELSE confirmed_at END,
         confirmed_by=CASE WHEN $9 THEN $10 ELSE confirmed_by END,
         carrier_state=$5, carrier_state_at=$4, updated_at=$4,
+        decided_at=CASE WHEN $11 AND decided_at IS NULL THEN $4 ELSE decided_at END,
         cancelled_at=CASE WHEN $6 THEN $4 ELSE cancelled_at END,
         cancelled_by=CASE WHEN $6 THEN 'Carrier' ELSE cancelled_by END,
         cancel_reason=CASE WHEN $6 AND COALESCE(cancel_reason,'')='' THEN 'Cancelled by the carrier' ELSE cancel_reason END
       WHERE id=$7`,
-      [label, bookingRef, status, now, JSON.stringify(next), cancelledNow, booking.id, !!(simulated || booking.is_mock), confirmedNow, booking.carrier_code || "Carrier"]);
+      [label, bookingRef, status, now, JSON.stringify(next), cancelledNow, booking.id, !!(simulated || booking.is_mock), confirmedNow, booking.carrier_code || "Carrier", decidedNow]);
+    // We asked to cancel a confirmed booking and the carrier let it go: its spot offer's cancellation
+    // or no-show fee is now owed (lib/spot-offers.js; a carrier cancelling on its own charges nothing).
+    if (cancelledNow && next.bookingCancellationStatus === "CANCELLATION_CONFIRMED" && booking.status === "Confirmed")
+      await ctx.spotOffers.accrueCancellationFee(shipment.id).catch(e => console.error("Spot offer penalty:", e.message));
+    // Accepted with changes (Epic TKT-ASIYFL, Story 6): a fresh confirmation is compared with what was
+    // asked for before the escalation hook below sees it. A notification carries only the status, so the
+    // booking is fetched (GET); a poll already has it in hand.
+    if (next.bookingStatus === "CONFIRMED" && (confirmedNow || changed.includes("amendedBookingStatus"))) {
+      const { dcsa, changes } = await confirmationChanges(booking, raw);
+      await query("UPDATE carrier_bookings SET changed_fields=$1, carrier_confirmation=$2, changes_accepted_at=NULL, changes_accepted_by='' WHERE id=$3",
+        [changes.length ? JSON.stringify(changes) : "", dcsa ? JSON.stringify(dcsa) : "", booking.id]);
+      // The thread and Reports → Carrier Responses count it per request.
+      if (changes.length) await query("UPDATE edi_messages SET status='confirmed_with_changes' WHERE id=$1", [inId]);
+    }
     if (confirmedNow && bookingRef) {
       await query("UPDATE shipments SET booking_ref=$1 WHERE id=$2", [bookingRef, shipment.id]);
       await autoCompleteMilestone(shipment.id, "booking_confirmed",
@@ -104,9 +124,30 @@ module.exports = function ediRoutes(app, ctx) {
     const updated = mapCarrierBooking(row);
     broadcast(shipment.id, { type: "booking_status_changed", booking: updated });
     if (status !== booking.status) await recomputeSpacePool(shipment.id);
+    // An open escalation follows the carrier (lib/booking-escalations.js): a booked-as-instructed
+    // confirmation resolves it, so does the original carrier confirming after all.
+    await ctx.bookingEscalations?.onCarrierState(shipment.id, row).catch(e => console.error("Booking escalation hook:", e.message));
     return { changed: true, booking: updated, message };
   }
   ctx.applyCarrierState = applyCarrierState;
+
+  // The carrier's confirmed booking (the DCSA GET; a poll already has it) and what it changed: no
+  // changes when it confirmed as asked, or when the confirmed booking can't be read (nothing is claimed
+  // that wasn't seen). → { dcsa, changes }.
+  async function confirmationChanges(booking, raw) {
+    const be = ctx.bookingEscalations;
+    if (!be) return { dcsa: null, changes: [] };
+    let dcsa = raw && typeof raw === "object" && Array.isArray(raw.transportPlan) ? raw : null;
+    if (!dcsa && booking.carrier_booking_request_reference) {
+      const integ = await carrierIntegrationFor(booking.carrier_code, "booking");
+      if (integ?.adapter.getBookingStatus) {
+        const r = await integ.adapter.getBookingStatus(integ.config, booking.carrier_booking_request_reference);
+        if (r.ok) dcsa = r.raw;
+        else console.error(`Booking ${booking.id}: reading ${booking.carrier_code}'s confirmation failed:`, r.error);
+      }
+    }
+    return { dcsa, changes: dcsa ? be.confirmationChanges(dcsa, (await be.settings()).changeRules, { requestedEta: booking.requested_eta || "" }) : [] };
+  }
 
   // An outbound message to a real carrier (update, amendment, cancellation) on the shipment's thread.
   async function recordOutbound(shipment, booking, messageType, payload) {
@@ -136,16 +177,17 @@ module.exports = function ediRoutes(app, ctx) {
           carrier_code=$2, requested_at=$3, requested_by=$4, responded_at=NULL,
           cancelled_at=NULL, cancelled_by='', cancel_reason='',
           carrier_booking_request_reference='', carrier_state='', carrier_state_at=NULL, events_synced_at=NULL,
+          decided_at=NULL, changed_fields='', requested_eta=$7, carrier_confirmation='', changes_accepted_at=NULL, changes_accepted_by='',
           updated_at=$5 WHERE id=$6
-      `, [correlationId, shipment.carrier_code, now, requestedBy, now, existing.id]);
+      `, [correlationId, shipment.carrier_code, now, requestedBy, now, existing.id, String(shipment.eta || "").slice(0, 10)]);
       const [fresh] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [existing.id]);
       return fresh;
     }
     const bookingId = `BKG-${uid()}`;
     await query(`
-      INSERT INTO carrier_bookings (id, shipment_id, carrier_code, status, correlation_id, requested_at, requested_by, created_at, updated_at)
-      VALUES ($1,$2,$3,'Pending',$4,$5,$6,$7,$8)
-    `, [bookingId, shipment.id, shipment.carrier_code, correlationId, now, requestedBy, now, now]);
+      INSERT INTO carrier_bookings (id, shipment_id, carrier_code, status, correlation_id, requested_at, requested_by, created_at, updated_at, requested_eta)
+      VALUES ($1,$2,$3,'Pending',$4,$5,$6,$7,$8,$9)
+    `, [bookingId, shipment.id, shipment.carrier_code, correlationId, now, requestedBy, now, now, String(shipment.eta || "").slice(0, 10)]);
     const [fresh] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [bookingId]);
     return fresh;
   }
@@ -256,6 +298,10 @@ module.exports = function ediRoutes(app, ctx) {
       "SELECT confirmation_number FROM customs_filings WHERE shipment_id=$1 AND filing_type='AES_EEI' AND status='Accepted'", [shipment.id]
     );
 
+    // SPOT rates (2026-10-21): a SPOT shipment priced on a carrier's spot offer books with the offer's
+    // reference — DCSA's contractQuotationReference, the counterpart of a contract's serviceContractReference.
+    const quotationReference = await ctx.spotOffers.quotationReferenceFor(shipment);
+
     const requestPayload = {
       pol: shipment.pol, pod: shipment.pod,
       carrierCode: shipment.carrier_code,
@@ -264,6 +310,7 @@ module.exports = function ediRoutes(app, ctx) {
       vesselImo: shipment.vessel_imo || null,
       contractType: shipment.contract_type || null,
       contractNumber, contractRef: contractRefForCarrier,
+      ...(quotationReference ? { quotationReference } : {}),
       rateSnapshotId: rateSnapshot?.id || null,
       cargoReadyDate: shipment.cargo_ready_date || null,
       placeOfReceipt: shipment.place_of_receipt || null,
@@ -343,18 +390,26 @@ module.exports = function ediRoutes(app, ctx) {
       .map(r => ({ ...mapCarrierBooking(r), shipment: shipmentById.get(r.shipment_id) })));
   });
 
-  app.post("/api/shipments/:id/edi-messages/booking-request", write, async (req, res) => {
-    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
-    if (!shipment) return err(res, "Shipment not found", 404);
-    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
+  // Sends the shipment's booking request to its carrier — the route below, and Book As Instructed
+  // (booking escalations, Epic TKT-ASIYFL). A refusal comes back as { status, body: { error } }, never
+  // thrown; the caller checks the office side first (blockIfWrongSide).
+  async function sendBookingRequest(shipmentId, { user = null, body = {} } = {}) {
+    const fail = (status, error) => ({ status, body: { error } });
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
+    if (!shipment) return fail(404, "Shipment not found");
     // DCSA only (2026-10-11): the carrier's own integration, or the built-in simulator where allowed.
     const integ = await carrierIntegrationFor(shipment.carrier_code, "booking");
     if (!integ)
-      return err(res, `No DCSA connection for ${shipment.carrier_code}: set one up under Carrier Integrations (or, for a demo, turn on App Settings → Demo carrier)`, 400);
+      return fail(400, `No DCSA connection for ${shipment.carrier_code}: set one up under Carrier Integrations (or, for a demo, turn on App Settings → Demo carrier)`);
 
     const [existingBooking] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
     if (existingBooking && existingBooking.status === "Pending")
-      return err(res, "A booking request is already pending for this shipment", 409);
+      return fail(409, "A booking request is already pending for this shipment");
+
+    // SPOT rates (the user, 2026-10-21): an expired digital spot offer can't be booked on; an expired
+    // classic quote goes, with a warning (its terms may still hold).
+    const spotCheck = await ctx.spotOffers.bookingCheck(shipment);
+    if (spotCheck.block) return fail(409, spotCheck.block);
 
     // Earlier credit-check trigger point (TKT-Q00WHF, Credit Control Depth) — server-side
     // enforcement of the same hold-block the frontend already checks before ever calling this
@@ -371,13 +426,13 @@ module.exports = function ediRoutes(app, ctx) {
     }
     if (heldParties.length) {
       const names = heldParties.map(h => `${h.companyName} (${h.role})`).join(", ");
-      return err(res, `On credit hold: ${names} — clear the hold on their customer profile before sending a booking request`, 409);
+      return fail(409, `On credit hold: ${names} — clear the hold on their customer profile before sending a booking request`);
     }
 
     const now = new Date().toISOString();
     const correlationId = `EDI-${uid()}`;
 
-    const requestPayload = await bookingRequestPayload(shipment, req.body);
+    const requestPayload = await bookingRequestPayload(shipment, body);
     // Built and checked against DCSA Booking 2.0 before anything is recorded: a request the carrier
     // would answer 400 is refused here, with the reasons, instead of becoming a "sent" message and a
     // Pending booking that was never sent.
@@ -387,8 +442,8 @@ module.exports = function ediRoutes(app, ctx) {
       // The two gaps people actually hit, said plainly; anything else names the spec's own reasons.
       const missing = [check.errors.some(e => e.path.startsWith("/requestedEquipments")) && "at least one container",
         check.errors.some(e => e.path.startsWith("/shipmentLocations")) && "the port of loading and port of discharge"].filter(Boolean);
-      return err(res, missing.length ? `Can't send the booking request: add ${missing.join(" and ")} first (a DCSA booking needs them)`
-        : `Can't send the booking request: it doesn't meet DCSA Booking ${specVersion("bkg")} (${errorsText(check.errors, 3)})`, 400);
+      return fail(400, missing.length ? `Can't send the booking request: add ${missing.join(" and ")} first (a DCSA booking needs them)`
+        : `Can't send the booking request: it doesn't meet DCSA Booking ${specVersion("bkg")} (${errorsText(check.errors, 3)})`);
     }
 
     // Outbound message, recorded and broadcast immediately.
@@ -404,7 +459,7 @@ module.exports = function ediRoutes(app, ctx) {
     const sentMsg = mapEdiMessage(sentMsgRow);
     broadcast(shipment.id, { type: "new_edi_message", message: sentMsg });
 
-    const requestedBy = req.user?.name || req.user?.email || "";
+    const requestedBy = user?.name || user?.email || "";
     let booking = await upsertPendingBooking(shipment, correlationId, requestedBy);
 
     // Sent to the carrier (TKT-KG4E49) — or the simulator. Never a 500 on failure: the carrier
@@ -415,6 +470,7 @@ module.exports = function ediRoutes(app, ctx) {
       if (result.ok) {
         await query("UPDATE carrier_bookings SET carrier_booking_request_reference=$1, carrier_state_at=$2, is_mock=$3 WHERE id=$4",
           [result.carrierBookingRequestReference, new Date().toISOString(), !!integ.row.is_simulator, booking.id]);
+        await ctx.spotOffers.markBooked(shipment);
       } else {
         // The carrier never got it: say so on the booking and to the caller, instead of leaving a
         // Pending booking that will never be answered (2026-10-09).
@@ -436,7 +492,18 @@ module.exports = function ediRoutes(app, ctx) {
 
     // Always pending — the carrier (a real one, or the built-in DCSA simulator) confirms
     // asynchronously, by notification (routes/carrier-webhooks.js) or when polled.
-    ok(res, { sent: sentMsg, booking: mapCarrierBooking(booking), pending: true, capabilityGaps, ...(carrierError ? { carrierError } : {}) }, 201);
+    return { status: 201, body: { sent: sentMsg, booking: mapCarrierBooking(booking), pending: true, capabilityGaps,
+      ...(carrierError ? { carrierError } : {}), ...(spotCheck.warning ? { warning: spotCheck.warning } : {}) } };
+  }
+  ctx.sendBookingRequest = sendBookingRequest;
+
+  app.post("/api/shipments/:id/edi-messages/booking-request", write, async (req, res) => {
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
+    const r = await sendBookingRequest(shipment.id, { user: req.user, body: req.body });
+    if (r.body.error) return err(res, r.body.error, r.status);
+    ok(res, r.body, r.status);
   });
 
   // Shared by the explicit PATCH route below and, since 2026-09 (Space Configuration spec, gap
@@ -481,6 +548,8 @@ module.exports = function ediRoutes(app, ctx) {
 
     // A booking that never went through DCSA (made before 2026-10-11) is cancelled here only.
     let booking;
+    if (existing?.status === "Confirmed")
+      await ctx.spotOffers.accrueCancellationFee(shipment.id, { actor: cancelledBy || "CargoDesk" }).catch(e => console.error("Spot offer penalty:", e.message));
     if (existing) {
       await query(`
         UPDATE carrier_bookings SET status='Cancelled', cancelled_at=$1, cancelled_by=$2, cancel_reason=$3, updated_at=$4 WHERE id=$5
@@ -562,12 +631,69 @@ module.exports = function ediRoutes(app, ctx) {
     const now = new Date().toISOString();
     await query("UPDATE carrier_bookings SET last_response_status=$1, updated_at=$2 WHERE id=$3",
       [amendment ? "amendment_requested" : "update_sent", now, booking.id]);
+    // A note goes to the History only: a DCSA booking has no free-text field to carry it to the carrier.
+    const note = String(req.body?.note || "").trim().slice(0, 1000);
     await logEntityEvent('carrier_booking', booking.id, amendment ? 'AMENDMENT_SENT' : 'UPDATE_SENT', null, null, null,
-      JSON.stringify({ by: req.user?.name || req.user?.email || "" }));
+      JSON.stringify({ by: req.user?.name || req.user?.email || "", ...(note ? { note } : {}) }));
+    if (amendment) await logEvent(shipment.id, "CARRIER_AMENDMENT_REQUESTED", "carrier_booking", null, booking.carrier_code,
+      JSON.stringify({ bookingRef: booking.booking_ref || "", ...(note ? { note } : {}) }), req.user?.name || req.user?.email || "");
     const [row] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [booking.id]);
     const mapped = mapCarrierBooking(row);
     broadcast(shipment.id, { type: "booking_status_changed", booking: mapped });
     ok(res, { sent, booking: mapped });
+  });
+
+  // ─── Requested (A) vs Carrier (B) (agreed 2026-10-21) ─────────────────────────────────────────
+  // Column A is the request the carrier answered (the latest outbound request, update or amendment on
+  // this booking), column B the carrier's DCSA confirmation; lib/carrier-confirmation.js builds the rows.
+  app.get("/api/shipments/:id/carrier-booking/comparison", auth(), async (req, res) => {
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    const [booking] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
+    let dcsa = null;
+    try { dcsa = booking?.carrier_confirmation ? JSON.parse(booking.carrier_confirmation) : null; } catch { dcsa = null; }
+    // Confirmed before the confirmation was kept (2026-10-21): ask the carrier once and keep it.
+    if (!dcsa && booking?.status === "Confirmed" && booking.carrier_booking_request_reference) {
+      const fetched = (await confirmationChanges(booking, null)).dcsa;
+      if (fetched && Array.isArray(fetched.transportPlan)) {
+        dcsa = fetched;
+        await query("UPDATE carrier_bookings SET carrier_confirmation=$1 WHERE id=$2", [JSON.stringify(dcsa), booking.id]);
+      }
+    }
+    if (!dcsa) return ok(res, { available: false });
+    const [out] = await query(`SELECT raw_payload, created_at FROM edi_messages WHERE shipment_id=$1 AND direction='out'
+      AND message_type IN ('booking_request','booking_update','booking_amendment') AND correlation_id=$2 ORDER BY created_at DESC LIMIT 1`,
+      [shipment.id, booking.correlation_id]);
+    let request = {};
+    try { request = JSON.parse(out?.raw_payload || "{}"); } catch { request = {}; }
+    // The spot offer the shipment is priced on, for the carrier's charges (SPOT rates, 2026-10-21).
+    const spot = shipment.spot_offer_id ? await ctx.spotOffers.get(shipment.spot_offer_id) : null;
+    const rows = comparisonRows(request, dcsa, { requestedEta: booking.requested_eta || "", carrierCode: booking.carrier_code, bookingRef: booking.booking_ref,
+      offerLines: spot?.carrierCode === booking.carrier_code ? spot.lines : null });
+    ok(res, {
+      available: true, status: booking.status, carrierCode: booking.carrier_code, bookingRef: dcsa.carrierBookingReference || booking.booking_ref || "",
+      requestedAt: out?.created_at || booking.requested_at, confirmedAt: booking.confirmed_at || booking.decided_at,
+      feedback: (dcsa.feedbacks || []).map(f => f.message).filter(Boolean),
+      changeCount: rows.filter(r => r.kind === "changed").length, withChanges: !!(booking.changed_fields && booking.changed_fields !== "[]"),
+      accepted: booking.changes_accepted_at ? { at: booking.changes_accepted_at, by: booking.changes_accepted_by || "" } : null,
+      legs: planLegs(dcsa), rows,
+    });
+  });
+
+  // Accept the carrier's version: its confirmed sailing (every leg), vessel, dates and cut-offs go on
+  // the shipment (lib/booking-escalations.js acceptCarrierChanges). OCC/BK of the export side, admin, operator.
+  app.post("/api/shipments/:id/carrier-booking/accept-changes", write, async (req, res) => {
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipment, 'export')) return;
+    const [booking] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
+    if (!booking) return err(res, "There's no carrier booking to accept", 409);
+    const r = await ctx.bookingEscalations.acceptCarrierChanges(shipment, booking, req.user);
+    if (r.error) return err(res, r.error, r.status || 400);
+    const [row] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [booking.id]);
+    const mapped = mapCarrierBooking(row);
+    broadcast(shipment.id, { type: "booking_status_changed", booking: mapped });
+    ok(res, { ...r, booking: mapped });
   });
 
   // ─── Polling the carrier (TKT-KG4E49, 2026-10-09) ────────────────────────────────────────────

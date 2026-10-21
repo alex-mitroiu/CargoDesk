@@ -250,6 +250,21 @@
   .closer { border-top: 1px solid var(--border); padding-top: 26px; color: var(--ink-muted); font-size: 13.5px; }
   .closer strong { color: var(--ink); }
 
+  /* ── Since September ──────────────────────────────────────────── */
+  .delta-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
+  table.delta { border-collapse: collapse; width: 100%; min-width: 760px; }
+  .delta th, .delta td { padding: 10px 13px; font-size: 12.5px; border-bottom: 1px solid var(--border); vertical-align: top; text-align: left; background: var(--surface); }
+  .delta thead th {
+    background: var(--surface-2); font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--ink-muted); white-space: nowrap; border-bottom: 1px solid var(--border-strong);
+  }
+  .delta tbody tr:last-child td { border-bottom: none; }
+  .delta td.area { font-weight: 700; width: 200px; }
+  .delta td.grade { white-space: nowrap; }
+  .delta td.what { color: var(--ink-muted); }
+  .pill-new { background: var(--accent-soft-2); color: var(--accent-strong); }
+  .also { margin-top: 14px; font-size: 13px; color: var(--ink-muted); max-width: 70ch; }
+
   footer.pf {
     max-width: 980px; margin: 0 auto; padding: 30px 20px 44px;
     display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
@@ -266,61 +281,105 @@
       <div><dt>Scope</dt><dd>Full Container Load, quote&rarr;invoice</dd></div>
       <div><dt>Benchmarked against</dt><dd>6 named platforms</dd></div>
       <div><dt>Method</dt><dd>Live codebase audit + vendor research</dd></div>
-      <div><dt>CargoDesk build</dt><dd>v0.91.7 &ldquo;Landfall&rdquo;</dd></div>
+      <div><dt>CargoDesk build</dt><dd>v0.91.10 + unreleased work on disk</dd></div>
+      <div><dt>Edition</dt><dd>21 Oct 2026 &middot; first 25 Sep 2026</dd></div>
     </dl>
   </header>
 
   <section class="block">
     <div class="head"><span class="tag">01</span><h2 class="h">Bottom line</h2></div>
     <p class="verdict-lede">
-      CargoDesk's FCL workflow &mdash; quoting through invoicing &mdash; is more complete than a
-      solo-built platform has any right to be. Every stage a working FCL desk touches daily is a
-      real, stateful, validated workflow, not a stub. The gap that actually matters isn't feature
-      breadth &mdash; it's <strong>who's on the other end of the wire</strong>.
+      Four weeks on, the FCL workflow is no longer the story &mdash; the commercial layer is. CargoDesk now
+      buys space the way forwarders actually do: contract space steered in order, weekly allocations,
+      carrier spot offers and margin rules. It also runs a deeper finance stack and speaks DCSA on every
+      carrier message. The deciding gap has not moved: <strong>no carrier is on the other end of the wire</strong>.
     </p>
     <div class="findings">
       <div class="finding lead">
         <div class="fnum">1</div>
         <div class="fbody">
-          <h3>Zero live carriers, despite excellent plumbing</h3>
-          <p>CargoDesk has real, spec-accurate DCSA Booking API integration &mdash; an adapter
-            registry, a signed webhook receiver, a Booking v2.0.5 adapter built against the actual
-            public standard. But no carrier is actually signed up and connected today. Every
-            booking, SI, VGM, and customs-filing exchange in production runs through an internal
-            simulator.</p>
-          <p class="why">This is a business step (sign one carrier), not a rebuild &mdash; the
-            engineering is already sitting there waiting for a sandbox.</p>
+          <h3>Still zero live carriers &mdash; and now it's the one thing missing</h3>
+          <p>The Booking, Track &amp; Trace and Schedules adapters were rebuilt against DCSA's published
+            specs, and every message is checked against them. A built-in DCSA carrier stands in for any
+            carrier without an integration. The database on disk holds zero carrier integrations, so
+            every booking and spot offer today comes from that demo carrier.</p>
+          <p class="why">One carrier sandbox (Hapag-Lloyd's is public self-service) would prove three
+            built capabilities at once: booking, events and schedules.</p>
         </div>
       </div>
       <div class="finding">
         <div class="fnum">2</div>
         <div class="fbody">
-          <h3>Freight Audit and export-compliance depth are real strengths</h3>
-          <p>These are the two areas where CargoDesk's engineering is at or above what mid-market
-            competitor Magaya documents publicly, and conceptually matches CargoWise's own
-            described AI three-way match &mdash; unglamorous, correctness-critical work that
-            experienced ops people specifically look for.</p>
+          <h3>The commercial layer now matches what the big suites sell as modules</h3>
+          <p>Allocation steering covers what Descartes markets as Allocation Management and CargoWise as
+            Ocean Carrier Contracts and Allocations: weekly space, Where to book, out-of-order reasons and
+            a steering rate. Spot offers with margin rules cover what their rate-management modules do,
+            except the live carrier spot feed.</p>
         </div>
       </div>
       <div class="finding">
         <div class="fnum">3</div>
         <div class="fbody">
-          <h3>Visibility is real at the vessel level only</h3>
-          <p>A live AIS feed genuinely auto-confirms vessel departure/arrival. But every
-            container-level and terminal event &mdash; gate in/out, discharge &mdash; is still
-            hand-typed. This is exactly the gap project44 and FourKites charge a premium to close,
-            and it's the most visible difference if someone compares a CargoDesk shipment screen to
-            a project44-fed dashboard side by side.</p>
+          <h3>Visibility is still vessel-level in practice</h3>
+          <p>The pipe for container events now exists: DCSA Track &amp; Trace ingestion feeds container events
+            and milestones. But nothing flows through it, because no live carrier is connected and the demo
+            carrier doesn't send events. Gate in/out and discharge are still typed by hand, which is still
+            the gap project44 and FourKites charge a premium to close.</p>
         </div>
       </div>
     </div>
   </section>
 
   <section class="block">
-    <div class="head"><span class="tag">02</span><h2 class="h">Capability matrix</h2></div>
+    <div class="head"><span class="tag">02</span><h2 class="h">Since September</h2></div>
+    <p class="intro">Three releases &mdash; v0.91.8 &ldquo;Bastion&rdquo;, v0.91.9 &ldquo;Reckoning&rdquo;, v0.91.10
+      &ldquo;Plimsoll&rdquo; &mdash; plus unreleased work on disk. No existing rating moved on new work, but most
+      rows got deeper. One rating was corrected and two capability areas are new.</p>
+    <div class="delta-wrap">
+      <table class="delta">
+        <thead><tr><th>Capability</th><th>25 Sep</th><th>21 Oct</th><th>What changed</th></tr></thead>
+        <tbody>
+          <tr><td class="area">Carrier booking workflow</td><td class="grade"><span class="pill pill-full">Full</span></td><td class="grade"><span class="pill pill-full">Full</span></td>
+            <td class="what">DCSA Booking 2.0 was rebuilt to the published spec (September's payload was spec-invalid), with amend, cancel and polling. Every message is checked against DCSA's specs. Only the carrier confirms (manual confirmation retired 11 Oct). Booking escalations follow Lane Steering, and each confirmation is compared with the request (Requested vs Carrier).</td></tr>
+          <tr><td class="area">Schedules &amp; routing</td><td class="grade"><span class="pill pill-full">Full</span></td><td class="grade"><span class="pill pill-full">Full</span></td>
+            <td class="what">The main vessel (longest-transit leg) is marked on every sailing. DCSA Commercial Schedules was rebuilt to spec, still unverified against a real carrier.</td></tr>
+          <tr><td class="area">Real-time visibility</td><td class="grade"><span class="pill pill-partial">Partial</span></td><td class="grade"><span class="pill pill-partial">Partial</span></td>
+            <td class="what">DCSA Track &amp; Trace ingestion is built (on demand and in a sweep, onto container events and milestones). Nothing supplies events yet.</td></tr>
+          <tr><td class="area">Quote &rarr; booking</td><td class="grade"><span class="pill pill-full">Full</span></td><td class="grade"><span class="pill pill-full">Full</span></td>
+            <td class="what">A quote can be bought on a carrier spot offer, which becomes the shipment's BUY side and goes on the booking. Margin rules price and check the sell side.</td></tr>
+          <tr><td class="area">Freight Audit &amp; Payment</td><td class="grade"><span class="pill pill-full">Full</span></td><td class="grade"><span class="pill pill-full">Full</span></td>
+            <td class="what">Invoices are also matched against spot-offer BUY lines.</td></tr>
+          <tr><td class="area">Invoicing</td><td class="grade"><span class="pill pill-full">Full</span></td><td class="grade"><span class="pill pill-full">Full</span></td>
+            <td class="what">VAT per charge line (standard, zero-rated, exempt, reverse charge), and consolidated customer statements carrying VAT.</td></tr>
+          <tr><td class="area">Multi-entity accounting</td><td class="grade"><span class="pill pill-full">Full</span></td><td class="grade"><span class="pill pill-full">Full</span></td>
+            <td class="what">GL Export to any accounting system, FX revaluation (realised and unrealised), receivables at gross, and one legal entity per statement.</td></tr>
+          <tr><td class="area">Live carrier network</td><td class="grade"><span class="pill pill-none">None</span></td><td class="grade"><span class="pill pill-none">None</span></td>
+            <td class="what">Zero carrier integrations on disk (checked 21 Oct). Every booking goes to the demo carrier.</td></tr>
+          <tr><td class="area">Rate benchmarking</td><td class="grade"><span class="pill pill-none">None</span></td><td class="grade"><span class="pill pill-partial">Partial</span> <span class="pill pill-new">Corrected</span></td>
+            <td class="what">Not new work. An internal contract-rate comparison has existed since v0.70 and September missed it. There is still no market index.</td></tr>
+          <tr><td class="area">Carrier spot rates</td><td class="grade">&mdash;</td><td class="grade"><span class="pill pill-partial">Partial</span> <span class="pill pill-new">New</span></td>
+            <td class="what">Spot offers carry charges, validity and penalty terms, on quotes and SPOT shipments. The quotation reference goes on the DCSA booking, with expiry and late-cancel guardrails. Offers are typed in or come from the demo carrier; there is no live carrier spot API yet.</td></tr>
+          <tr><td class="area">Carrier allocations &amp; steering</td><td class="grade">&mdash;</td><td class="grade"><span class="pill pill-full">Full</span> <span class="pill pill-new">New</span></td>
+            <td class="what">Space sits on contract routing lines, per period or per ISO week. Where to book walks the steering order with free space, a booking against it asks why, and the Steering tab reports the rate.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="also">Also built, outside the matrix:
+      <ul style="margin:6px 0 0;padding-left:18px">
+        <li>contract routing lines, rate reconciliation and auto-import (v0.91.10);</li>
+        <li>Charge Defaults (v0.91.8);</li>
+        <li>correct time zones for all 14,270 locations;</li>
+        <li>Completed and Cancelled shipments locked, with cancellation gated on the carrier booking and filings.</li>
+      </ul></div>
+  </section>
+
+  <section class="block">
+    <div class="head"><span class="tag">03</span><h2 class="h">Capability matrix</h2></div>
     <p class="intro">
-      Fifteen capability areas across the full FCL lifecycle, checked against CargoDesk's live
-      source code (not documentation, not memory) and each vendor's own current product materials.
+      Seventeen capability areas across the full FCL lifecycle: September's fifteen, and two built since.
+      CargoDesk's column was re-checked against the code on disk on 21 October (not documentation, not
+      memory). The vendors' columns come from their own product materials; September's were carried over
+      and the two new rows were researched now.
       Scroll sideways for the rest of the field &mdash; CargoDesk's own column stays pinned.
     </p>
     <div class="legend">
@@ -346,7 +405,7 @@
         <tbody>
           <tr>
             <td class="cap-col">Quote &rarr; booking conversion</td>
-            <td class="cd-col"><span class="pill pill-full">Full</span></td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">Spot offers and margin rules carry into the shipment</span></td>
             <td><span class="pill pill-full">Full</span></td>
             <td><span class="pill pill-full">Full</span></td>
             <td title="Customs/compliance-centric, less forwarder-quoting focus"><span class="pill pill-partial">Partial</span></td>
@@ -356,7 +415,7 @@
           </tr>
           <tr>
             <td class="cap-col">Carrier booking workflow + BC01/BR01 docs</td>
-            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">Spec-accurate DCSA adapter &mdash; live-carrier status is its own row below</span></td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">DCSA Booking 2.0 to the published spec; only the carrier confirms; escalations and Requested vs Carrier &mdash; live-carrier status is its own row below</span></td>
             <td><span class="pill pill-full">Full</span></td>
             <td title="Via INTTRA, 60+ carriers"><span class="pill pill-full">Full</span></td>
             <td title="Via GLN"><span class="pill pill-full">Full</span></td>
@@ -366,7 +425,7 @@
           </tr>
           <tr>
             <td class="cap-col">Schedules &amp; routing</td>
-            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">DCSA schedule search coded, unverified vs. a real sandbox</span></td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">Main vessel marked; DCSA Commercial Schedules coded to spec, unverified vs. a real sandbox</span></td>
             <td><span class="pill pill-full">Full</span></td>
             <td title="Via INTTRA"><span class="pill pill-full">Full</span></td>
             <td title="Via GLN"><span class="pill pill-full">Full</span></td>
@@ -376,7 +435,7 @@
           </tr>
           <tr>
             <td class="cap-col">VGM &mdash; SOLAS Method 1/2</td>
-            <td class="cd-col"><span class="pill pill-full">Full</span></td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">Simulated; DCSA VGM 1.0 planned</span></td>
             <td title="Live EDI (VERMAS)"><span class="pill pill-full">Full</span></td>
             <td title="Document generation"><span class="pill pill-full">Full</span></td>
             <td title="Claims largest number of ocean carriers"><span class="pill pill-full">Full</span></td>
@@ -386,7 +445,7 @@
           </tr>
           <tr>
             <td class="cap-col">Shipping Instructions</td>
-            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">Simulated, no live carrier EDI</span></td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">Simulated, no live carrier EDI; DCSA SI 3.0 planned</span></td>
             <td><span class="pill pill-full">Full</span></td>
             <td title="Via INTTRA"><span class="pill pill-full">Full</span></td>
             <td><span class="pill pill-full">Full</span></td>
@@ -416,7 +475,7 @@
           </tr>
           <tr>
             <td class="cap-col">House B/L lifecycle</td>
-            <td class="cd-col"><span class="pill pill-partial">Partial</span><span class="cell-note">Status tracking full (Issued/Surrendered/Released); no eB/L transfer</span></td>
+            <td class="cd-col"><span class="pill pill-partial">Partial</span><span class="cell-note">Status tracking full (Issued/Surrendered/Released); no eB/L transfer yet (DCSA eBL planned)</span></td>
             <td title="Incl. live eB/L, DCSA/FIATA/BIMCO-aligned"><span class="pill pill-full">Full</span></td>
             <td title="Status only, no eB/L found"><span class="pill pill-partial">Partial</span></td>
             <td><span class="pill pill-partial">Partial</span></td>
@@ -426,7 +485,7 @@
           </tr>
           <tr>
             <td class="cap-col">Real-time container/vessel visibility</td>
-            <td class="cd-col"><span class="pill pill-partial">Partial</span><span class="cell-note">Live AIS for vessel departure/arrival; container events are hand-entered</span></td>
+            <td class="cd-col"><span class="pill pill-partial">Partial</span><span class="cell-note">Live AIS for vessels; DCSA Track &amp; Trace ingestion built, but no carrier sends events yet</span></td>
             <td title="Carrier EDI-fed tracking"><span class="pill pill-full">Full</span></td>
             <td><span class="pill pill-partial">Partial</span></td>
             <td><span class="pill pill-partial">Partial</span></td>
@@ -436,7 +495,7 @@
           </tr>
           <tr>
             <td class="cap-col">Freight Audit &amp; Payment</td>
-            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">Accrued-line matching, DET&ne;DEM pre-audit, tolerance, exception queue</span></td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">Accrued-line and spot-offer matching, DET&ne;DEM pre-audit, tolerance, exception queue</span></td>
             <td title="AI three-way match"><span class="pill pill-full">Full</span></td>
             <td title="D&D rate/cost tools; audit depth undocumented"><span class="pill pill-partial">Partial</span></td>
             <td><span class="pill pill-partial">Partial</span></td>
@@ -446,7 +505,7 @@
           </tr>
           <tr>
             <td class="cap-col">Invoicing (FR01) + credit notes (CN01)</td>
-            <td class="cd-col"><span class="pill pill-full">Full</span></td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">VAT per charge line incl. reverse charge; consolidated statements</span></td>
             <td><span class="pill pill-full">Full</span></td>
             <td><span class="pill pill-full">Full</span></td>
             <td><span class="pill pill-partial">Partial</span></td>
@@ -456,7 +515,7 @@
           </tr>
           <tr>
             <td class="cap-col">Multi-entity / branch accounting</td>
-            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">FX-aware margin by entity, branch-scoped visibility</span></td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">GL export, FX revaluation, FX-aware margin by entity, branch-scoped visibility</span></td>
             <td title="Enterprise-grade"><span class="pill pill-full">Full</span></td>
             <td title="SMB-oriented"><span class="pill pill-partial">Partial</span></td>
             <td><span class="pill pill-na">N/A</span></td>
@@ -475,8 +534,28 @@
             <td><span class="pill pill-na">N/A</span></td>
           </tr>
           <tr>
+            <td class="cap-col">Carrier spot rates (offer &rarr; quote &rarr; booking)</td>
+            <td class="cd-col"><span class="pill pill-partial">Partial</span><span class="cell-note">Full workflow and guardrails; offers typed in or from the demo carrier &mdash; no live carrier spot API yet</span></td>
+            <td title="Rates and Contracts: spot quotes from carriers; carrier connectivity carries contract and SPOT rates"><span class="pill pill-full">Full</span></td>
+            <td title="Rate Management: spot requests; surcharges plus margin rules build the quote"><span class="pill pill-full">Full</span></td>
+            <td title="Global Price Management linked to Hapag-Lloyd Quick Quotes Spot (live since Nov 2023)"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+            <td title="An operating forwarder pricing its own quotes; no spot-offer tool for other forwarders"><span class="pill pill-na">N/A</span></td>
+            <td title="Maersk Spot and Safmarine Spot alongside confidential contract rates (2019)"><span class="pill pill-full">Full</span></td>
+          </tr>
+          <tr>
+            <td class="cap-col">Carrier allocations &amp; steering</td>
+            <td class="cd-col"><span class="pill pill-full">Full</span><span class="cell-note">Weekly or period space per contract line, Where to book waterfall, out-of-order reasons, steering rate</span></td>
+            <td title="&ldquo;Ocean Carrier Contracts and Allocations&rdquo; module"><span class="pill pill-full">Full</span></td>
+            <td title="Freight Allocation and Incentive Management extension for Catapult QMS (2021); no current product page found"><span class="pill pill-partial">Partial</span></td>
+            <td title="Allocation Management: steer bookings onto carrier agreements, confirm carriers meet commitments"><span class="pill pill-full">Full</span></td>
+            <td><span class="pill pill-na">N/A</span></td>
+            <td title="Runs its own carrier allocations; not offered as a tool"><span class="pill pill-na">N/A</span></td>
+            <td title="Rate platform; no allocation feature found"><span class="pill pill-na">N/A</span></td>
+          </tr>
+          <tr>
             <td class="cap-col">Live carrier network breadth</td>
-            <td class="cd-col"><span class="pill pill-none">None</span><span class="cell-note">~0 live carriers connected; plumbing supports any DCSA member</span></td>
+            <td class="cd-col"><span class="pill pill-none">None</span><span class="cell-note">0 carrier integrations on disk; every booking goes to the built-in DCSA demo carrier</span></td>
             <td title="&ldquo;24 of 25 top forwarders&rdquo; (self-reported)"><span class="pill pill-full">Full</span></td>
             <td title="60+ via INTTRA"><span class="pill pill-full">Full</span></td>
             <td title="GLN: 24B messages/yr"><span class="pill pill-full">Full</span></td>
@@ -486,7 +565,7 @@
           </tr>
           <tr>
             <td class="cap-col">Rate benchmarking / market index</td>
-            <td class="cd-col"><span class="pill pill-none">None</span></td>
+            <td class="cd-col"><span class="pill pill-partial">Partial</span><span class="cell-note">Internal contract-rate comparison; no market index (corrected from None in September)</span></td>
             <td title="Internal rate management only"><span class="pill pill-partial">Partial</span></td>
             <td><span class="pill pill-none">None</span></td>
             <td><span class="pill pill-none">None</span></td>
@@ -500,12 +579,12 @@
   </section>
 
   <section class="block">
-    <div class="head"><span class="tag">03</span><h2 class="h">Where CargoDesk leads or matches</h2></div>
-    <p class="intro">Not just a gap list &mdash; six places the evidence supports parity with, or an edge over, named competitors.</p>
+    <div class="head"><span class="tag">04</span><h2 class="h">Where CargoDesk leads or matches</h2></div>
+    <p class="intro">Not just a gap list &mdash; eight places the evidence supports parity with, or an edge over, named competitors.</p>
     <div class="strengths">
       <div class="strength">
         <h4>Freight Audit matching depth</h4>
-        <p>Independent DET/DEM free-time windows and a safeguard against silently overwriting an already-posted cost line &mdash; conceptually matches CargoWise's own described AI three-way match, and appears to exceed what Magaya documents publicly.</p>
+        <p>Independent DET/DEM free-time windows and a safeguard against silently overwriting an already-posted cost line; since October it also matches against spot-offer lines. Conceptually matches CargoWise's own described AI three-way match, and appears to exceed what Magaya documents publicly.</p>
       </div>
       <div class="strength">
         <h4>AES/EEI export-control depth</h4>
@@ -517,7 +596,7 @@
       </div>
       <div class="strength">
         <h4>Quote-to-shipment conversion</h4>
-        <p>One atomic transaction carries over parties, derives containers, creates SELL and BUY cost lines, checks credit hold, screens for denied parties, and recomputes the space badge &mdash; deeper than what Magaya's public materials describe for the same handoff.</p>
+        <p>One atomic transaction carries over parties, derives containers, creates SELL and BUY cost lines, checks credit hold, screens for denied parties, and recomputes the space badge. Since October, a quote bought on a carrier spot offer carries that offer through as the BUY side and the booking's quotation reference. This is deeper than what Magaya's public materials describe for the same handoff.</p>
       </div>
       <div class="strength">
         <h4>The AIS integration is real, not vaporware</h4>
@@ -525,23 +604,32 @@
       </div>
       <div class="strength">
         <h4>Multi-entity accounting</h4>
-        <p>FX-aware margin-by-entity reporting with branch scoping is enterprise-grade, and likely ahead of Magaya's more SMB-oriented accounting.</p>
+        <p>FX-aware margin by entity with branch scoping, plus GL export to any accounting system, FX revaluation and VAT per charge line, is enterprise-grade. It is likely ahead of Magaya's more SMB-oriented accounting.</p>
+      </div>
+      <div class="strength">
+        <h4>Allocation steering inside the booking flow</h4>
+        <p>Space is held per week or per period on each contract line. Where to book walks the steering order with free space, a booking against it records a reason, and the Steering tab gives a rate per lane and carrier. This is the same &ldquo;steer operations to book on the agreement&rdquo; Descartes sells as Allocation Management.</p>
+      </div>
+      <div class="strength">
+        <h4>Standards discipline on every carrier message</h4>
+        <p>Every DCSA message sent or received is validated against DCSA's own published specs, kept in the repo. The built-in DCSA carrier answers the way a real one would, so connecting a carrier will mostly be configuration, not rework.</p>
       </div>
     </div>
   </section>
 
   <section class="block">
-    <div class="head"><span class="tag">04</span><h2 class="h">The real gaps, classified</h2></div>
-    <p class="intro">Split the way the last competitive pass split its findings: work that's genuinely engineering, and work that no amount of engineering closes alone.</p>
+    <div class="head"><span class="tag">05</span><h2 class="h">The real gaps, classified</h2></div>
+    <p class="intro">Split the way the last competitive pass split its findings: work that's genuinely engineering, and work that no amount of engineering closes alone. One buildable gap closed since September: DCSA Track &amp; Trace ingestion was built on 9 October.</p>
     <div class="gap-groups">
       <div class="gap-group buildable">
         <div class="gap-group-head"><h3>Buildable</h3></div>
         <div class="sub">Real engineering effort, bounded and scoped</div>
         <ul class="gap-list">
-          <li><strong>DCSA Track &amp; Trace event ingestion</strong>The booking half is done; a webhook/polling handler for gate moves and discharge slots into the existing milestone-completion pattern.</li>
-          <li><strong>Validate the DCSA adapter against a real carrier sandbox</strong>Mostly a signup step (Hapag-Lloyd's sandbox is public self-service), with a modest engineering tail to fix real-spec deviations.</li>
+          <li><strong>Connect and validate one real carrier sandbox</strong>Booking, Track &amp; Trace and Schedules are all coded to DCSA's specs and waiting. Hapag-Lloyd's sandbox is public self-service, so this is mostly a signup step, with a modest tail to fix real-spec deviations.</li>
+          <li><strong>Live carrier spot APIs</strong>The spot-rates adapter shape exists and the demo carrier fills it. Hapag-Lloyd Quick Quotes and the Maersk Offers API need access; Maersk's is approval-gated.</li>
+          <li><strong>DCSA everywhere, phases 2&ndash;9</strong>Covers Shipping Instructions and transport documents (eBL 3.0), VGM 1.0, Track &amp; Trace 3.0, operational vessel schedules, Arrival Notice and Port Call. Planned phase by phase, with the demo carrier playing each one so the flows can be tested before a carrier connects.</li>
           <li><strong>Freight Audit matching-engine breadth</strong>More charge codes and D&amp;D edge cases &mdash; incremental extension of an engine that already works.</li>
-          <li><strong>Direct AES/EEI government EDI transmission</strong>A defined, documented API (AESDirect/ACE); needs filer credentials from the business, then a bounded build following the DCSA adapter's own pattern.</li>
+          <li><strong>Direct AES/EEI government EDI transmission</strong>A defined, documented API (AESDirect/ACE). Needs filer credentials from the business, then a bounded build following the DCSA adapter's own pattern.</li>
         </ul>
       </div>
       <div class="gap-group structural">
@@ -558,8 +646,8 @@
   </section>
 
   <section class="block">
-    <div class="head"><span class="tag">05</span><h2 class="h">Detailed evidence</h2></div>
-    <p class="intro">Full citations behind every matrix row &mdash; collapsed by default, open any that need checking.</p>
+    <div class="head"><span class="tag">06</span><h2 class="h">Detailed evidence</h2></div>
+    <p class="intro">Full citations behind every matrix row &mdash; collapsed by default, open any that need checking. Entries marked <em>Updated</em> or <em>New</em> were checked on disk on 21 October. The others keep September's file and line references (v0.91.7), which may have shifted since.</p>
     <div class="evidence-list">
 
       <details class="ev"><summary>Quote &rarr; booking conversion <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
@@ -567,19 +655,28 @@
       </details>
 
       <details class="ev"><summary>Carrier booking workflow <span class="ev-rating"><span class="pill pill-full">Full workflow</span><span class="pill pill-none">0 live</span></span></summary>
-        <div class="ev-body"><p><code>routes/edi.js</code> carries <code>carrier_bookings.status</code> through Pending&rarr;Confirmed/Rejected/Cancelled (<code>:140,149,449-459,508-515</code>), generating BR01/BC01 documents (<code>src/utils/documentBuilders.js:11-14,370,460</code>). The DCSA Booking API v2.0.5 adapter (<code>lib/carrier-integrations/dcsa-bkg-v2.js</code>) is built against the real public spec and is carrier-agnostic &mdash; any DCSA member could plug in via one config row (<code>:5-8</code>). A signed webhook receiver exists (<code>routes/carrier-webhooks.js</code>, HMAC-SHA256, master kill switch). The callback-signing scheme is explicitly disclosed as a placeholder pending a real sandbox (<code>dcsa-bkg-v2.js:118-121</code>). A real, live Maersk Booking API integration existed and was <strong>removed</strong> in v0.72.0 when Maersk's developer-tools dependency went obsolete (<code>routes/edi.js:34-36</code>). Today, booking confirmation/rejection in production runs exclusively through the Test Tools Message Simulator (<code>routes/edi.js:32-87</code>).</p></div>
+        <div class="ev-body"><p><em>Updated 21 Oct.</em></p>
+          <ul>
+            <li><strong>The adapter</strong> (<code>lib/carrier-integrations/dcsa-bkg-v2.js</code>) was rebuilt on 9 Oct against the spec files in DCSA's Conformance Gateway. The September version missed six of the booking request's eight required fields, and sent an internal container code where ISO 6346 is required. It now also covers amend, cancel and polling.</li>
+            <li><strong>Validation:</strong> every message sent or received is checked against DCSA's specs, kept in <code>lib/dcsa/specs/</code> (<code>lib/dcsa/validate.js</code>).</li>
+            <li><strong>The demo carrier:</strong> a carrier with no integration of its own is played by the built-in DCSA carrier (<code>lib/dcsa-simulator/</code>). It is reached over HTTP like a real one and badged DEMO CARRIER.</li>
+            <li><strong>Confirmation:</strong> manual confirmation and eAdapter were retired on 11 Oct. Only the carrier's DCSA confirmation confirms a booking (<code>applyCarrierState</code>, <code>routes/edi.js</code>).</li>
+            <li><strong>Escalations:</strong> a rejected, changed or unanswered booking can be escalated, with the Lane Steering order offered as alternatives. A no-answer switch moves it on by itself (<code>lib/booking-escalations.js</code>).</li>
+            <li><strong>Requested vs Carrier:</strong> every confirmation is compared detail by detail with the request (<code>lib/carrier-confirmation.js</code>).</li>
+            <li><strong>Tests:</strong> <code>dcsa-lifecycle</code>, <code>booking-escalations</code> and <code>main-vessel-carrier-changes</code>, among 107 backend files passing on 21 Oct.</li>
+          </ul></div>
       </details>
 
       <details class="ev"><summary>Schedules &amp; routing <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
-        <div class="ev-body"><p><code>routes/system.js</code> has a real internal schedule catalog (<code>catalogSailings</code>, <code>:349-402</code>, with transit days and leg breakdowns) and a mock-data fallback (<code>mockSailings</code>, <code>:301-348</code>). A leg-cascade Cypress spec (<code>cypress/e2e/schedule-leg-cascade.cy.js</code>) confirms multi-leg transshipment is real and tested. <code>dcsa-bkg-v2.js:85-116</code> adds a DCSA schedule search, flagged in its own comment as best-effort pending a real sandbox.</p></div>
+        <div class="ev-body"><p><em>Updated 21 Oct.</em> The internal schedule catalog and mock fallback are unchanged (<code>routes/system.js</code>). Every sailing now names its main vessel, the leg with the longest transit, and marks its feeders. The shipment's vessel follows the main vessel (<code>lib/mainLeg.js</code>). The DCSA Commercial Schedules search was rebuilt to the spec (<code>searchSchedules</code> in <code>dcsa-bkg-v2.js</code>) but has not run against a real carrier.</p></div>
       </details>
 
       <details class="ev"><summary>VGM &mdash; SOLAS Method 1/2 <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
-        <div class="ev-body"><p>Pending&rarr;Submitted is blocked without a declared Method 1 (Weighing) or Method 2 (Calculated) (<code>routes/shipments.js:1009-1021</code>; UI at <code>src/pages/shipments/VgmServicePage.jsx:45-46,82-83</code>) &rarr;Accepted/Rejected via a dedicated simulator (<code>:1132-1168</code>), with a <code>vgm_declaration</code> EDI message logged on submit (<code>:1111-1122</code>, explicitly simulated) and automatic milestone completion once every container is Submitted (<code>:1123-1126</code>).</p></div>
+        <div class="ev-body"><p>Pending&rarr;Submitted is blocked without a declared Method 1 (Weighing) or Method 2 (Calculated) (<code>routes/shipments.js:1009-1021</code>; UI at <code>src/pages/shipments/VgmServicePage.jsx:45-46,82-83</code>) &rarr;Accepted/Rejected via a dedicated simulator (<code>:1132-1168</code>), with a <code>vgm_declaration</code> EDI message logged on submit (<code>:1111-1122</code>, explicitly simulated) and automatic milestone completion once every container is Submitted (<code>:1123-1126</code>). <em>Updated 21 Oct:</em> still simulated; DCSA VGM 1.0 is a later phase of the DCSA-everywhere plan.</p></div>
       </details>
 
       <details class="ev"><summary>Shipping Instructions <span class="ev-rating"><span class="pill pill-full">Full, simulated</span></span></summary>
-        <div class="ev-body"><p><code>routes/shipping-instructions.js</code> implements an independent Draft&rarr;Submitted&rarr;Confirmed/Rejected machine (mirrors customs-filing's shape, <code>:1-9</code>), gated on shipper/consignee/container completeness (<code>:62-65</code>), auto-completing the <code>si_submitted</code> milestone (<code>:81</code>), with reset-and-resubmit after rejection (<code>:116-127</code>). Explicitly disclosed as simulated, no live carrier EDI (<code>:8</code>).</p></div>
+        <div class="ev-body"><p><code>routes/shipping-instructions.js</code> implements an independent Draft&rarr;Submitted&rarr;Confirmed/Rejected machine (mirrors customs-filing's shape, <code>:1-9</code>), gated on shipper/consignee/container completeness (<code>:62-65</code>), auto-completing the <code>si_submitted</code> milestone (<code>:81</code>), with reset-and-resubmit after rejection (<code>:116-127</code>). Explicitly disclosed as simulated, no live carrier EDI (<code>:8</code>). <em>Updated 21 Oct:</em> unchanged; DCSA Shipping Instructions and transport documents (eBL 3.0) are planned.</p></div>
       </details>
 
       <details class="ev"><summary>AES/EEI &amp; ISF/AMS filing <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
@@ -591,31 +688,75 @@
       </details>
 
       <details class="ev"><summary>Milestones &amp; real-time tracking <span class="ev-rating"><span class="pill pill-partial">Partial</span></span></summary>
-        <div class="ev-body"><p>The FCL template has 9 steps (<code>routes/shipment-ops.js:963-971</code>). <code>vessel_departed</code>/<code>vessel_arrived</code> are genuinely live &mdash; a persistent WebSocket to aisstream.io (<code>lib/ais-listener.js:1-52</code>) confirms them by matching vessel position and navigational status against the leg's POL/POD via haversine proximity (<code>:42-50</code>). <code>cargo_gated_in</code>/<code>cargo_released</code> auto-complete only once every container has a manually-logged Gate In/Out event (<code>routes/shipments.js:1462-1491</code>) &mdash; 100% hand-entered. <code>si_submitted</code>, <code>customs_cleared</code>, <code>booking_confirmed</code> auto-complete from CargoDesk's own internal state changes, fed by simulated upstream events. <code>bl_issued</code> is an internal document-confirm trigger. <code>delivered</code> has no auto-complete path at all &mdash; manual only. Despite its name, the DCSA adapter implements booking and schedule search only &mdash; no Track &amp; Trace event ingestion exists.</p></div>
+        <div class="ev-body"><p><em>Updated 21 Oct.</em></p>
+          <ul>
+            <li><strong>Vessels:</strong> departure and arrival are still confirmed live from AIS (<code>lib/ais-listener.js</code>).</li>
+            <li><strong>New since September:</strong> DCSA Track &amp; Trace ingestion (<code>routes/carrier-tracking.js</code>, mapping in <code>lib/carrier-integrations/tnt-mapping.js</code>). It pulls a booking's equipment and transport events, on demand or in a periodic sweep. It records them through the same <code>recordContainerEvent</code> as a manual entry, so milestones complete the same way and a re-pull never duplicates.</li>
+            <li><strong>Why it's still Partial:</strong> ingestion needs an integration with the <code>tracking</code> capability, and none exists. The built-in DCSA carrier offers only booking and spot rates (<code>lib/dcsa-simulator/index.js</code>). In practice, container events are still entered by hand.</li>
+          </ul></div>
       </details>
 
       <details class="ev"><summary>Freight Audit &amp; Payment <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
-        <div class="ev-body"><p><code>routes/carrier-invoices.js</code> reconciles a carrier's invoice line against an already-accrued cost line where one exists (<code>:128-143</code>) or the live contract rate otherwise (<code>:145-154</code>). Detention and Demurrage are distinct charge types with independent free-time windows and independent <code>container_events</code> anchor pairs (<code>:91-125</code>) &mdash; a previously-fixed bug is noted in the code where both used to share one window (<code>:96-98</code>). A configurable variance-tolerance percentage (<code>:170</code>) drives matched/variance classification; an exception queue surfaces worst-variance-first, capped at 200 rows (<code>:200-226</code>). Approving a line actualizes the matched cost line or creates a new one, and refuses to silently overwrite an already-posted line (<code>:401-417</code>). Full dispute capture and audit-event logging throughout.</p></div>
+        <div class="ev-body"><p><code>routes/carrier-invoices.js</code> reconciles a carrier's invoice line against an already-accrued cost line where one exists (<code>:128-143</code>) or the live contract rate otherwise (<code>:145-154</code>). Detention and Demurrage are distinct charge types with independent free-time windows and independent <code>container_events</code> anchor pairs (<code>:91-125</code>) &mdash; a previously-fixed bug is noted in the code where both used to share one window (<code>:96-98</code>). A configurable variance-tolerance percentage (<code>:170</code>) drives matched/variance classification; an exception queue surfaces worst-variance-first, capped at 200 rows (<code>:200-226</code>). Approving a line actualizes the matched cost line or creates a new one, and refuses to silently overwrite an already-posted line (<code>:401-417</code>). Full dispute capture and audit-event logging throughout. <em>Updated 21 Oct:</em> a spot offer's BUY lines are an expected source too (&ldquo;vs. spot offer&rdquo;, <code>routes/carrier-invoices.js</code>).</p></div>
       </details>
 
       <details class="ev"><summary>Invoicing, credit notes &amp; multi-entity accounting <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
-        <div class="ev-body"><p>FR01 invoice and CN01 credit/debit note generation are both real (<code>src/utils/invoiceGenerator.js:413,422,429,443,449</code>), backed by an invoice-reversal test suite and an invoice-collections/billing-performance UI. Multi-entity/branch accounting is real: branch-level currency, FX-aware margin-by-entity resolved from the shipment's EMO/IMO office's branch, and branch-scoped visibility for non-global users (<code>tests/multi-entity-accounting.test.js:1-8</code>, <code>routes/organization.js</code>, <code>src/pages/org/BranchPage.jsx</code>).</p></div>
+        <div class="ev-body"><p>FR01 invoice and CN01 credit/debit note generation are both real (<code>src/utils/invoiceGenerator.js:413,422,429,443,449</code>), backed by an invoice-reversal test suite and an invoice-collections/billing-performance UI. Multi-entity/branch accounting is real: branch-level currency, FX-aware margin-by-entity resolved from the shipment's EMO/IMO office's branch, and branch-scoped visibility for non-global users (<code>tests/multi-entity-accounting.test.js:1-8</code>, <code>routes/organization.js</code>, <code>src/pages/org/BranchPage.jsx</code>).</p>
+          <p><em>Updated 21 Oct:</em></p>
+          <ul>
+            <li>VAT per charge line, with zero-rated, exempt and reverse-charge treatments (<code>shipment_cost_lines.vat_treatment</code>).</li>
+            <li>Consolidated customer statements (<code>routes/customer-statements.js</code>).</li>
+            <li>GL Export to a generic journal-entry file (<code>routes/gl-export.js</code>).</li>
+            <li>FX revaluation, realised and unrealised (<code>routes/fx-revaluation.js</code>).</li>
+            <li>Receivables counted at gross.</li>
+          </ul></div>
       </details>
 
       <details class="ev"><summary>Multi-carrier integration depth <span class="ev-rating"><span class="pill pill-full">Plumbing</span><span class="pill pill-none">0 live</span></span></summary>
-        <div class="ev-body"><p>The registry pattern, the spec-accurate DCSA adapter, and the signed webhook receiver are real working code (<code>lib/carrier-integrations/registry.js</code>, <code>lib/carrier-integrations/dcsa-bkg-v2.js</code>, <code>routes/carrier-webhooks.js</code>) &mdash; wired end-to-end to <code>carrier_bookings</code>/<code>edi_messages</code> and unit-tested (<code>tests/carrier-integrations.test.js</code>). But no carrier has been signed up and validated against it; the callback signature scheme is explicitly unverified, and the one carrier this was scoped against (Hapag-Lloyd, chosen for its public self-service sandbox) has not been onboarded &mdash; deliberately left to the business side.</p></div>
+        <div class="ev-body"><p><em>Updated 21 Oct.</em> The registry, the spec-built DCSA adapter (booking, Track &amp; Trace, schedules) and the signed webhook receiver are real and tested (<code>lib/carrier-integrations/</code>, <code>routes/carrier-webhooks.js</code>, <code>tests/carrier-integrations.test.js</code>). <code>carrierIntegrationFor</code> falls back to the built-in DCSA carrier when no integration exists. Checked through the API on 21 Oct, the database on disk holds <strong>zero</strong> carrier integrations, so every booking goes to the demo carrier. The Hapag-Lloyd sandbox signup is still with the business.</p></div>
       </details>
 
       <details class="ev"><summary>Denied-party screening <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
         <div class="ev-body"><p>Two syncable list sources: OFAC SDN and the Consolidated Screening List (<code>routes/sanctions.js</code>, <code>parseOfacCsv</code>, <code>syncOfacSdn</code>/<code>syncConsolidatedScreeningList</code>). Sync/import is admin-only and rate-limited after a fixed privilege-escalation bug (a viewer-role account could previously wipe the dataset, <code>:24-35</code>). A dedicated multi-list regression test exists (<code>tests/multi-list-screening.test.js</code>). Comparable in list coverage to Magaya's dedicated DPS product; CSL is a superset of most of what Magaya lists separately.</p></div>
       </details>
 
+      <details class="ev"><summary>Carrier spot rates <span class="ev-rating"><span class="pill pill-partial">Partial</span></span></summary>
+        <div class="ev-body"><p><em>New, 21 Oct (unreleased).</em></p>
+          <ul>
+            <li><strong>The record</strong> (<code>spot_offers</code>, <code>lib/spot-offers.js</code>, <code>routes/spot-offers.js</code>): the reference; a classic quote or a digital offer; charges per container or per B/L, with &ldquo;subject to&rdquo; lines; validity; price lock; and penalty terms.</li>
+            <li><strong>On a quote,</strong> the offer fixes the carrier and becomes a SPOT shipment on conversion.</li>
+            <li><strong>On a shipment,</strong> its charges become BUY lines, and the booking carries its reference as DCSA <code>contractQuotationReference</code>.</li>
+            <li><strong>Guardrails:</strong> an expired digital offer can't be booked; a classic one only warns. Cancelling a confirmed spot booking shows the cancellation or no-show fee first and accrues it.</li>
+            <li><strong>Margin rules</strong> by customer, lane and container price and check the sell side (<code>routes/margin-rules.js</code>).</li>
+            <li><strong>Carrier offers</strong> come through an adapter with the <code>spot-rates</code> capability. Only the demo carrier's spot desk implements it (<code>lib/dcsa-simulator/spot-desk.js</code>), so live offers need Hapag-Lloyd Quick Quotes or Maersk Offers access.</li>
+            <li><strong>Tests:</strong> <code>spot-offers</code> (52), <code>spot-offers-carrier</code> (41), Cypress <code>spot-offers</code> (8).</li>
+          </ul></div>
+      </details>
+
+      <details class="ev"><summary>Carrier allocations &amp; steering <span class="ev-rating"><span class="pill pill-full">Full</span></span></summary>
+        <div class="ev-body"><p><em>New, 21 Oct.</em> Space on routing lines was released in v0.91.10; the rest is unreleased.</p>
+          <ul>
+            <li><strong>Space configurations</strong> (<code>routes/allocations.js</code>) hold a contract's committed TEU on the routing lines they tick, optionally for one loop, customer or commodity. They hold it per period or per ISO week, nothing carried over (<code>allocations.space_basis</code>). Consumption is split into confirmed, pending and rejected, and a minimum commitment (MQC) is flagged.</li>
+            <li><strong>Lane Steering</strong> orders carriers and contracts per trade lane, for everyone or one customer (<code>routes/lane-steering.js</code>).</li>
+            <li><strong>Where to book</strong> walks that order with each option's free space in the ETD's week, pre-selects the first with space and explains every skipped option (<code>lib/where-to-book.js</code>).</li>
+            <li><strong>The verdict:</strong> booking against the steering asks for a reason, and the server records the verdict on the shipment.</li>
+            <li><strong>Reporting:</strong> Dashboard &rarr; Steering gives the steering rate by lane and carrier (<code>GET /api/reports/steering</code>).</li>
+            <li><strong>Not built:</strong> MQC pace against elapsed time, and steering lines by region, country or port.</li>
+            <li><strong>Tests:</strong> <code>weekly-space</code> (30), <code>where-to-book</code> (23), <code>steering-verdict</code> (21), Cypress <code>where-to-book</code> (4).</li>
+          </ul></div>
+      </details>
+
+      <details class="ev"><summary>Rate benchmarking <span class="ev-rating"><span class="pill pill-partial">Partial</span></span></summary>
+        <div class="ev-body"><p><em>Corrected 21 Oct.</em> <code>src/pages/RateBenchmarkPage.jsx</code> (since v0.70.0, August) compares every active contract's own rates for a lane side by side, cheapest total first, using the contract match. That is the same internal rate comparison credited to CargoWise as Partial in September; the September CargoDesk rating of None missed it. There is no market index and, as a single-tenant platform, no pooled data to build one from.</p></div>
+      </details>
+
+
     </div>
   </section>
 
   <section class="block">
-    <div class="head"><span class="tag">06</span><h2 class="h">Sources</h2></div>
-    <p class="intro">Vendor claims below are drawn from each company's own marketing and help-center pages, plus one third-party comparison. Self-reported figures (like CargoWise's "99%+ of world's ocean freight electronically bookable") are marketing claims, not independently audited ones &mdash; treat them accordingly.</p>
+    <div class="head"><span class="tag">07</span><h2 class="h">Sources</h2></div>
+    <p class="intro">Vendor claims below are drawn from each company's own marketing and help-center pages, plus one third-party comparison. Self-reported figures (like CargoWise's "99%+ of world's ocean freight electronically bookable") are marketing claims, not independently audited ones &mdash; treat them accordingly. The last eight sources were added on 21 October for the two new rows.</p>
     <ul class="sources">
       <li><a href="https://www.cargowise.com/solutions/cargowise-forwarding/ocean/">CargoWise &mdash; Ocean Forwarding</a></li>
       <li><a href="https://www.cargowise.com/solutions/electronic-bills-of-lading/">CargoWise &mdash; Electronic Bills of Lading</a></li>
@@ -640,12 +781,22 @@
       <li><a href="https://cargosphere.com/about-cargosphere/">CargoSphere &mdash; About</a></li>
       <li><a href="https://www.freightos.com/freight-resources/freightos-enterprise-global-freight-logistics-solutions/">Freightos Enterprise</a></li>
       <li><a href="https://www.freightos.com/forwarders/rate-quote/ocean/">Freightos &mdash; Rate &amp; Quote Ocean</a></li>
+      <li><a href="https://www.cargowise.com/cargowise-mega-features/">CargoWise &mdash; Ocean Carrier Contracts and Allocations</a></li>
+      <li><a href="https://cargowise.com/solutions/cargowise-rates-and-contracts/">CargoWise &mdash; Rates and Contracts</a></li>
+      <li><a href="https://descartes.com/solutions/broker-and-forwarder-enterprise-systems/global-price-management/freight-allocation-management">Descartes &mdash; Allocation Management</a></li>
+      <li><a href="https://www.descartes.com/resources/knowledge-center/geodis-freight-allocation-management">Descartes &mdash; GEODIS on carrier allocation management</a></li>
+      <li><a href="https://www.descartes.com/resources/news/dachser-streamlines-ocean-shipment-booking-integration-between-hapag-lloyd-spot">Descartes &mdash; Dachser and Hapag-Lloyd Quick Quotes Spot</a></li>
+      <li><a href="https://www.magaya.com/magaya-launches-freight-allocation-and-incentive-management-extension-for-catapult-qms/">Magaya &mdash; Freight Allocation and Incentive Management extension</a></li>
+      <li><a href="https://www.magaya.com/rate-management-software-your-top-questions-answered/">Magaya &mdash; Rate Management</a></li>
+      <li><a href="https://www.hellenicshippingnews.com/cargosphere-launches-maersk-spot-product-combines-spot-and-confidential-contract-rates-on-its-neutral-rates-platform/">CargoSphere &mdash; Maersk Spot on its rates platform</a></li>
     </ul>
   </section>
 
   <section class="block closer">
-    <p>This is analysis only &mdash; every finding above traces to a specific file and line in the live
-      codebase, or a named, dated vendor source, not to memory or prior write-ups. Where a claim couldn't
+    <p>This is analysis only. CargoDesk's ratings were re-checked against the code on disk on 21 October
+      2026 (v0.91.10 plus unreleased work), and every finding traces to a file, a test or a named, dated
+      vendor source, not to memory or prior write-ups. The six vendors' ratings on September's fifteen rows
+      were carried over, not re-researched; the two new rows were researched now. Where a claim couldn't
       be verified in code, that's stated plainly rather than assumed either way. Say which of the
       buildable items to turn into real Kanban tickets, the same way the last competitive pass did, or
       which one to just start on first.</p>
@@ -655,7 +806,6 @@
 
 <footer class="pf">
   <span>CargoDesk &middot; FCL Competitive Dossier</span>
-  <span class="mono">Codebase audit + 6-vendor research, current as of v0.91.7</span>
+  <span class="mono">Codebase audit + 6-vendor research &middot; 21 Oct 2026 (v0.91.10 + unreleased) &middot; first edition v0.91.7</span>
 </footer>
-
 </body></html>

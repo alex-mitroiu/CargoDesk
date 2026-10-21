@@ -1,3 +1,5 @@
+import { mondayOf, spaceDateOf, teuOverRange, rangeWeeksOf } from "./isoWeek";
+
 // Dashboard → Contract Consumption, grouped by carrier + contract number (approved mockup:
 // https://claude.ai/artifact/TqrzSKpPFsUQF6VVkXvrs8). One contract number can have several
 // contract records (number + reference + named account); each record is one "reference" in the
@@ -54,8 +56,10 @@ export function totalsOf(refs) {
 }
 
 // allocations: the space configurations active in the selected period. shipments: the period's
-// shipments. teuOfShipment(s) → that shipment's TEU.
-export function buildContractRows({ allocations, shipments, contractMap = {}, teuOfShipment }) {
+// shipments. teuOfShipment(s) → that shipment's TEU. rangeStart/rangeEnd: the selected dates —
+// weekly space (Epic TKT-KFGL81) counts its TEU per week for each of the range's weeks inside its
+// period, and only the shipments sailing in those weeks; period space is counted whole, as always.
+export function buildContractRows({ allocations, shipments, contractMap = {}, teuOfShipment, rangeStart = "", rangeEnd = "" }) {
   const byAlloc = new Map(allocations.map(a => [a.id, a]));
   const recs = new Map();
   const recFor = a => {
@@ -63,11 +67,13 @@ export function buildContractRows({ allocations, shipments, contractMap = {}, te
     if (!recs.has(base.recordKey)) recs.set(base.recordKey, { ...base, ...emptyRecord() });
     return recs.get(base.recordKey);
   };
-  allocations.forEach(a => { recFor(a).alloc += Number(a.allocatedTEU) || 0; });
+  const weeksOf = new Map(allocations.filter(a => a.spaceBasis === "week").map(a => [a.id, new Set(rangeWeeksOf(a, rangeStart, rangeEnd))]));
+  allocations.forEach(a => { recFor(a).alloc += teuOverRange(a, rangeStart, rangeEnd); });
   shipments.forEach(s => {
     const a = s.allocationId && byAlloc.get(s.allocationId);
     const b = a && shipmentBucketOf(s);
     if (!b) return;
+    if (weeksOf.has(a.id) && !weeksOf.get(a.id).has(mondayOf(spaceDateOf(s.etd, s.cargoReadyDate)))) return;
     const r = recFor(a);
     r[b] += teuOfShipment(s);
     r[`${b}N`] += 1;

@@ -47,8 +47,11 @@ export function buildSpaceRows({ allocations, carriers = [], portInfo = {}, toda
 
     // Minimum Quantity Commitment: the floor, opposite of the ceiling the alert threshold guards.
     // Urgency scales with how much of the period has already elapsed — being under commitment on
-    // day 2 of 90 is normal, on day 85 it is not.
-    const belowMinimum = a.minimumTEU != null && confirmed < a.minimumTEU;
+    // day 2 of 90 is normal, on day 85 it is not. Weekly space (Epic TKT-KFGL81) shows this week's
+    // figures, but its minimum is for the whole period, so it is measured on the period's total.
+    const weekly = a.spaceBasis === "week";
+    const mqcConfirmed = weekly ? (a.periodTotals?.confirmedTEU ?? confirmed) : confirmed;
+    const belowMinimum = a.minimumTEU != null && mqcConfirmed < a.minimumTEU;
     const periodTotalDays = Math.max(1, diffDays(a.effectiveDate, a.endDate) + 1);
     const periodElapsedPct = Math.min(100, Math.max(0, (diffDays(a.effectiveDate, today) / periodTotalDays) * 100));
 
@@ -67,6 +70,8 @@ export function buildSpaceRows({ allocations, carriers = [], portInfo = {}, toda
       contract: a.contractNumber || "",
       notes: a.notes || "",
       allocated: a.allocatedTEU, confirmed, pending, rejected, remaining, pct, thresh,
+      // Weekly space: every figure above is this week's (weekNumber), allocated is the TEU per week.
+      weekly, weekNumber: weekly ? a.weekNumber ?? null : null, mqcConfirmed,
       status: statusOf(a, today, pct, thresh),
       alertLevel: !alerting ? null : pct >= 100 ? "over" : "at",
       // The bar's colour: red once full, amber/red from the threshold (red when the threshold is 90+).

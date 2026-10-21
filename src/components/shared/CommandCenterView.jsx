@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { T } from "../../tokens";
+import { periodTeuOf } from "../../utils/isoWeek";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { AiOrb } from "./AiOrb";
@@ -922,7 +923,7 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
   const carrierStats = Object.entries(teuByCarrier)
     .map(([code, consumed]) => {
       const alloc = allocations.filter(a => a.carrierCode === code && a.endDate >= today)
-        .reduce((n,a) => n + a.allocatedTEU, 0);
+        .reduce((n,a) => n + periodTeuOf(a), 0);
       return { code, name: carrierMap[code] || code, consumed, allocated: alloc,
         pct: alloc > 0 ? Math.round(consumed / alloc * 100) : null };
     })
@@ -1585,7 +1586,7 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
             <SLabel>Allocation Utilization</SLabel>
             {allocations.filter(a => a.endDate >= today).slice(0, 4).map(a => {
               const consumed = teuByCarrier[a.carrierCode] || 0;
-              const pct = a.allocatedTEU > 0 ? Math.round(consumed / a.allocatedTEU * 100) : 0;
+              const pct = periodTeuOf(a) > 0 ? Math.round(consumed / periodTeuOf(a) * 100) : 0;
               return (
                 <div key={a.id} style={{ marginBottom:11 }}>
                   <div style={{ display:"flex", justifyContent:"space-between",

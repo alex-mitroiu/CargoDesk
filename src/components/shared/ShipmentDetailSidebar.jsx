@@ -16,6 +16,7 @@ import {
 import { canEditShipmentSide } from "../../utils/officeSide";
 import { parseIso, todayIso } from "../../tokens";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts, carrierBadgeColors } from "../../pages/shipments/shipmentDetailTheme";
+import { viaText } from "./LegRoles";
 
 // ─── Shipment Detail Sidebar ──────────────────────────────────────────────────
 
@@ -418,6 +419,12 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
           {(shipment.vessel || shipment.voyage) && (
             <span style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted }}>
               {shipment.vessel}{shipment.voyage ? ` / ${shipment.voyage}` : ""}
+            </span>
+          )}
+          {/* The vessel above is the main one; on a transshipment, the hub and feeder it goes via. */}
+          {shipment.transshipment && (
+            <span data-testid="sidebar-via" style={{ flexBasis: "100%", fontFamily: HZ_MONO, fontSize: 10, color: HZ.textMuted }}>
+              {viaText({ legs: shipment.transshipment.legs, mainLegIndex: shipment.transshipment.mainIndex })}
             </span>
           )}
         </div>
