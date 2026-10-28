@@ -68,10 +68,12 @@ module.exports = function organizationRoutes(app, ctx) {
   };
 
   app.post("/api/branches", requireRole(["admin"]), async (req, res) => {
-    const { code, name, countryCode, locode, city, address, timezone, phone, email, currency, taxRegistrationNumber, standardVatRate } = req.body || {};
+    const { code, name, countryCode, locode, city, address, timezone, phone, email, currency, taxRegistrationNumber, standardVatRate, scac = "" } = req.body || {};
     if (!code || !name || !countryCode) return err(res, "code, name, countryCode required");
     const vatRate = parseVatRate(standardVatRate);
     if (vatRate.error) return err(res, vatRate.error);
+    const scacU = String(scac || "").trim().toUpperCase();
+    if (scacU && !/^[A-Z]{2,4}$/.test(scacU)) return err(res, "scac must be 2–4 letters (the NMFTA Standard Carrier Alpha Code)");
     const id = `BRN-${uid()}`;
     const loc = locode ? locode.toUpperCase().trim() : null;
     const cc = countryCode.toUpperCase().trim();
@@ -83,11 +85,11 @@ module.exports = function organizationRoutes(app, ctx) {
     const resolvedCurrency = currency || orgCountry?.default_currency || null;
     try {
       await query(
-        `INSERT INTO branches (id, code, name, country_code, locode, city, address, timezone, phone, email, currency, tax_registration_number, standard_vat_rate)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        `INSERT INTO branches (id, code, name, country_code, locode, city, address, timezone, phone, email, currency, tax_registration_number, standard_vat_rate, scac)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
         [id, code.toUpperCase().trim(), name.trim(), cc,
              loc, city || null, address || null, timezone || null, phone || null, email || null, resolvedCurrency,
-             (taxRegistrationNumber || "").trim(), vatRate.skip ? null : vatRate.value]);
+             (taxRegistrationNumber || "").trim(), vatRate.skip ? null : vatRate.value, scacU]);
       const [row] = await query("SELECT * FROM branches WHERE id=$1", [id]);
       ok(res, mapBranch(row));
     } catch (e) {
@@ -98,13 +100,15 @@ module.exports = function organizationRoutes(app, ctx) {
   app.put("/api/branches/:id", requireRole(["admin"]), async (req, res) => {
     const [existing] = await query("SELECT * FROM branches WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
-    const { name, locode, city, address, timezone, phone, email, currency, isActive, taxRegistrationNumber, standardVatRate } = req.body || {};
+    const { name, locode, city, address, timezone, phone, email, currency, isActive, taxRegistrationNumber, standardVatRate, scac } = req.body || {};
     const vatRate = parseVatRate(standardVatRate);
     if (vatRate.error) return err(res, vatRate.error);
+    const scacU = scac !== undefined ? String(scac || "").trim().toUpperCase() : (existing.scac || "");
+    if (scacU && !/^[A-Z]{2,4}$/.test(scacU)) return err(res, "scac must be 2–4 letters (the NMFTA Standard Carrier Alpha Code)");
     const loc = locode !== undefined ? (locode ? locode.toUpperCase().trim() : null) : existing.locode;
     await query(
       `UPDATE branches SET name=$1, locode=$2, city=$3, address=$4, timezone=$5, phone=$6, email=$7, currency=$8, is_active=$9, tax_registration_number=$10,
-         standard_vat_rate=$12 WHERE id=$11`,
+         standard_vat_rate=$12, scac=$13 WHERE id=$11`,
       [
       name    ?? existing.name,    loc,             city    ?? existing.city,
       address ?? existing.address, timezone ?? existing.timezone,
@@ -114,6 +118,7 @@ module.exports = function organizationRoutes(app, ctx) {
       taxRegistrationNumber !== undefined ? (taxRegistrationNumber || "").trim() : (existing.tax_registration_number || ""),
       req.params.id,
       vatRate.skip ? existing.standard_vat_rate : vatRate.value,
+      scacU,
       ]);
     const [row] = await query("SELECT * FROM branches WHERE id=$1", [req.params.id]);
     ok(res, mapBranch(row));

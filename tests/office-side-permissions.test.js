@@ -83,7 +83,7 @@ async function login(email, password) {
     assert("import office manager set", setManager.status === 200, JSON.stringify(setManager.body));
 
     const ship = await request("POST", "/api/shipments", {
-      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418",
       etd: "2026-06-01", eta: "2026-06-25", incoterm: "FOB", commodityCode: "001404",
       emoOfficeId: offA.body.id, imoOfficeId: offB.body.id,
       shipperName: "OSP Shipper Co", consigneeName: "OSP Consignee Co",
@@ -239,7 +239,7 @@ async function login(email, password) {
     const offC = await request("POST", "/api/offices", { name: `OSP Import No-Manager ${rand}`, unlocode: `W${rand.slice(0, 4).toUpperCase()}`, countryCode: "US", department: "SI" }, admin);
     created.offices.push(offC.body.id);
     const ship2 = await request("POST", "/api/shipments", {
-      pol: "NLRTM", pod: "USLAX", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      pol: "NLRTM", pod: "USLAX", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418",
       etd: "2026-06-01", eta: "2026-06-27", incoterm: "FOB", commodityCode: "001404",
       emoOfficeId: offA.body.id, imoOfficeId: offC.body.id,
     }, admin);
@@ -251,7 +251,7 @@ async function login(email, password) {
 
     // A third shipment left with vessel_arrived incomplete — proves no premature ticket.
     const ship3 = await request("POST", "/api/shipments", {
-      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418",
       etd: "2026-06-01", eta: "2026-06-28", incoterm: "FOB", commodityCode: "001404",
       emoOfficeId: offA.body.id, imoOfficeId: offB.body.id,
     }, admin);

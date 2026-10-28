@@ -19,7 +19,12 @@ const { createAisListener } = require("./lib/ais-listener");
 const { registerCarrierAdapter, getCarrierAdapter, listRegisteredAdapterKeys } = require("./lib/carrier-integrations/registry");
 const { mainLegIndex } = require("./lib/mainLeg");
 const isoWeek = require("./lib/iso-week");
-const dcsaBkgV2Adapter = require("./lib/carrier-integrations/dcsa-bkg-v2");
+// The generic DCSA adapter: Booking 2.0, Track & Trace 3.0 and Commercial Schedules (dcsa-bkg-v2), with
+// Shipping Instructions and the transport document 3.0 (dcsa-ebl-v3), VGM 1.0 (dcsa-vgm-v1) and Operational
+// Vessel Schedules 3.0 (dcsa-ovs-v3) under the same key, so one carrier integration row speaks every
+// standard its capabilities name.
+const dcsaBkgV2Adapter = { ...require("./lib/carrier-integrations/dcsa-bkg-v2"), ...require("./lib/carrier-integrations/dcsa-ebl-v3"),
+  ...require("./lib/carrier-integrations/dcsa-vgm-v1"), ...require("./lib/carrier-integrations/dcsa-ovs-v3") };
 registerCarrierAdapter(dcsaBkgV2Adapter.adapterKey, dcsaBkgV2Adapter);
 const demoSpotV1Adapter = require("./lib/carrier-integrations/demo-spot-v1");
 registerCarrierAdapter(demoSpotV1Adapter.adapterKey, demoSpotV1Adapter);
@@ -2856,6 +2861,7 @@ const autoCompleteMilestone = async (shipmentId, milestoneKey, note) => {
   const now = new Date().toISOString();
   await query("UPDATE shipment_milestones SET completed_at=$1, completed_by=$2, note=$3 WHERE id=$4",
     [now, 'System (Auto)', note, row.id]);
+  await onMilestoneCompleted({ ...row, completed_at: now });
 };
 
 // ─── Carrier booking auto-creation ─────────────────────────────────────────────
@@ -3125,6 +3131,45 @@ const ensureOpsTicket = async (sourceType, sourceId, { shipmentId, title, descri
   return id;
 };
 
+// The other half of ensureOpsTicket (TKT-C7EBU3 gap G21): a ticket whose condition no longer holds
+// moves to Done with a closing line, so the board only shows what still needs a person. Only a ticket
+// still on Ready or In Progress: one someone has already moved stays where they put it.
+// `rows` = [{ sourceId, shipmentId, note }]. Returns how many it closed.
+const OPEN_OPS_TICKET_STATUSES = ['Ready', 'In Progress'];
+const resolveOpsTickets = async (sourceType, rows) => {
+  if (!rows.length) return 0;
+  const notes = new Map(rows.map(r => [r.sourceId, r.note]));
+  const closing = (t, note) => `${t.description || ''}\n\nClosed automatically: ${note}`.trim();
+  let closed = 0;
+  if (((await getSettings()).kanban_source || 'local') === 'remote') {
+    try {
+      const shipmentIds = [...new Set(rows.map(r => r.shipmentId).filter(Boolean))];
+      const tickets = shipmentIds.length === 1
+        ? await callKanbanService('GET', `/internal/tickets?shipmentId=${encodeURIComponent(shipmentIds[0])}`)
+        : await callKanbanService('GET', '/internal/tickets');
+      for (const t of (Array.isArray(tickets) ? tickets : tickets?.results || [])) {
+        if (t.sourceType !== sourceType || !notes.has(t.sourceId) || !OPEN_OPS_TICKET_STATUSES.includes(t.status)) continue;
+        await callKanbanService('PUT', `/internal/tickets/${t.id}`, { status: 'Done', description: closing(t, notes.get(t.sourceId)) });
+        closed++;
+      }
+    } catch (e) { console.error('resolveOpsTickets (remote) failed:', e.message); }
+    return closed;
+  }
+  const ids = [...notes.keys()];
+  const open = await query(`SELECT id, source_id, description FROM tickets WHERE source_type=$1
+    AND source_id IN (${ids.map((_, i) => `$${i + 2}`).join(',')}) AND status IN ('Ready','In Progress')`, [sourceType, ...ids]);
+  for (const t of open) {
+    await query("UPDATE tickets SET status='Done', description=$1 WHERE id=$2", [closing(t, notes.get(t.source_id)), t.id]);
+    closed++;
+  }
+  return closed;
+};
+// An overdue-milestone ticket closes once its milestone is completed (manually or automatically).
+const onMilestoneCompleted = async milestone =>
+  resolveOpsTickets('milestone_overdue', [{ sourceId: milestone.id, shipmentId: milestone.shipment_id,
+    note: `"${milestone.label}" was completed on ${String(milestone.completed_at || new Date().toISOString()).slice(0, 10)}.` }])
+    .catch(e => console.error('onMilestoneCompleted failed:', e.message));
+
 const runOpsAutomationSweep = async () => {
   const now = Date.now();
   const staleBookings = await query(`
@@ -3148,6 +3193,20 @@ const runOpsAutomationSweep = async () => {
     WHERE (m.completed_at IS NULL OR m.completed_at='') AND m.estimated_date != '' AND m.estimated_date < $1
       AND s.status NOT IN ('Completed', 'Cancelled')
   `, [today]);
+  // …and the other way (gap G21): close the ones whose milestone is done since, or whose shipment is
+  // closed. Catches a completion made while the server was down, or before this existed.
+  const settledMilestones = await query(`
+    SELECT m.id, m.shipment_id, m.label, m.completed_at, s.status AS shipment_status FROM shipment_milestones m
+    JOIN shipments s ON s.id = m.shipment_id
+    WHERE (m.completed_at IS NOT NULL AND m.completed_at<>'') OR s.status IN ('Completed', 'Cancelled')
+  `);
+  if (settledMilestones.length) {
+    const open = ((await getSettings()).kanban_source || 'local') === 'remote' ? null
+      : new Set((await query("SELECT source_id FROM tickets WHERE source_type='milestone_overdue' AND status IN ('Ready','In Progress')")).map(r => r.source_id));
+    await resolveOpsTickets('milestone_overdue', settledMilestones.filter(m => !open || open.has(m.id)).map(m => ({
+      sourceId: m.id, shipmentId: m.shipment_id,
+      note: m.completed_at ? `"${m.label}" was completed on ${String(m.completed_at).slice(0, 10)}.` : `the shipment is ${m.shipment_status}.` })));
+  }
   for (const m of overdueMilestones) {
     await ensureOpsTicket('milestone_overdue', m.id, {
       shipmentId: m.shipment_id, priority: 'Medium',
@@ -4179,9 +4238,10 @@ const requireRole = (allowed) => (req, res, next) =>
 // Require valid token on all /api/* except /api/auth/*, /api/health, /api/share/* (public), and
 // /api/carrier-webhooks/* — an inbound carrier callback carries no CargoDesk JWT; it's
 // authenticated by its own HMAC signature instead (routes/carrier-webhooks.js's verifyCallback).
+// /api/ebl/v3/* likewise: an eBL platform's DCSA callbacks carry the platform credential (lib/ebl.js).
 app.use("/api", (req, res, next) =>
   req.path.startsWith("/auth/") || req.path === "/health" || req.path.startsWith("/share/") ||
-  req.path.startsWith("/carrier-webhooks/") ? next() : auth()(req, res, next)
+  req.path.startsWith("/carrier-webhooks/") || req.path.startsWith("/ebl/v3/") ? next() : auth()(req, res, next)
 );
 
 // ─── Shared context passed to every route module ───────────────────────────────
@@ -4191,7 +4251,11 @@ const aisListener = createAisListener({
   autoCompleteMilestone, schemaReady: schemaReadyPromise,
 });
 
+// Milestones completed by DCSA events (DCSA-everywhere phase 6, lib/milestone-events.js).
+const milestoneEvents = require("./lib/milestone-events")({ query, autoCompleteMilestone });
+
 const ctx = {
+  milestoneEvents,
   // Captured here (not re-read later) so a route file's own one-time startup sweep — anything
   // that fires an un-awaited query the moment `require('./routes/x')(app, ctx)` runs, before
   // httpServer.listen()'s own schemaReadyPromise gate — can defer its first run until the base
@@ -4257,7 +4321,7 @@ const ctx = {
   FAK_COMMODITY, parseCommodityList, unknownCommodityCodes, unknownCommodityError, commodityCodeError,
   autoCompleteMilestone,
   ensureBookingCreated, supersedeIfCarrierChanged,
-  runOpsAutomationSweep,
+  runOpsAutomationSweep, ensureOpsTicket, resolveOpsTickets, onMilestoneCompleted,
   linkedPortCodes, findMatchingContractLegs, resolveCarrierAgent, resolveCarrierAgentCandidates,
   checkLineAgentCapabilityGaps,
   screenShipmentById, rescreenActiveShipments, screenCustomer, rescreenShipmentsForCustomer, rescreenAllCustomers, resolveCustomerGroup,
@@ -4285,6 +4349,16 @@ ctx.spotOffers = require('./lib/spot-offers')(ctx);
 // Where to book (Epic TKT-KFGL81): the steered option with space for a shipment, shared by contract
 // assignment, the escalation alternatives and the out-of-order check.
 ctx.whereToBook = require('./lib/where-to-book')(ctx);
+// House B/L as a DCSA transport document (Epic TKT-C7EBU3, ARCHITECTURE.md §8.40): the record, readiness,
+// the release checks and the DCSA document, shared by the document routes and the House B/L routes.
+ctx.houseBl = require('./lib/house-bl')(ctx);
+// Track & Trace 3.0 events, pulled or pushed (DCSA-everywhere phase 6): lib/track-trace.js.
+ctx.trackTrace = require('./lib/track-trace')(ctx);
+schemaReadyPromise = schemaReadyPromise.then(() => ctx.houseBl.migrateLegacyHouseBls());
+// …and as an eBL (gap G24): CargoDesk as issuer, and the built-in eBL platform it talks to.
+ctx.ebl = require('./lib/ebl')(ctx);
+ctx.eblPlatform = require('./lib/ebl-platform-simulator')({ query, uid, getActiveSigningCert,
+  allowed: () => dcsaSimulator.allowed(), secret: () => ctx.ebl.secret() });
 
 require('./routes/auth')(app, ctx);
 require('./routes/shipments')(app, ctx);
@@ -4299,9 +4373,13 @@ require('./routes/dcsa-simulator')(app, ctx);
 require('./routes/booking-escalations')(app, ctx);
 require('./routes/lane-steering')(app, ctx);
 require('./routes/where-to-book')(app, ctx);
+require('./routes/house-bl')(app, ctx);
+require('./routes/ebl')(app, ctx);
 require('./routes/carrier-tracking')(app, ctx);
+require('./routes/vessel-schedules')(app, ctx);
 require('./routes/customs-filing')(app, ctx);
 require('./routes/shipping-instructions')(app, ctx);
+require('./routes/master-bl')(app, ctx);
 require('./routes/customers')(app, ctx);
 require('./routes/contracts')(app, ctx);
 require('./routes/charge-default-setups')(app, ctx);

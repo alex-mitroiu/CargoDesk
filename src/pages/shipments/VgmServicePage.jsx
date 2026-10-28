@@ -8,6 +8,7 @@ import DatePicker from "../../components/primitives/DatePicker";
 import { Textarea, inputBase } from "../../components/primitives/Form";
 import { IconFolder } from "../../components/primitives/Icon";
 import EdiMessageList from "../../components/shared/EdiMessageList";
+import { buildVgmDeclarationHtml } from "../../utils/documentBuilders";
 
 // ─── VGM Export Service page ────────────────────────────────────────────────
 // VGM's real compliance data (vgmWeightKg/vgmStatus/vgmCutoff) lives directly on
@@ -19,8 +20,115 @@ import EdiMessageList from "../../components/shared/EdiMessageList";
 // every write below sends the container's own complete current record with only
 // the touched VGM field overridden (that route is a full-row replace, not a merge —
 // a bare partial patch would silently null out every other field on the container).
+//
+// Declarations (DCSA VGM 1.0, 2026-10-28; mockup VUTPKnRAjdPjfb8DntUxVs): marking a container Submitted
+// declares its VGM to the carrier, a corrected weight or method declares it again, back to Pending
+// withdraws it. Each declaration keeps its evidence (VG02: the weighbridge ticket for Method 1, the weight
+// calculation for Method 2) and its VG01 VGM Declaration document; the current one is flagged "No evidence
+// on file" until evidence is attached (the user's call: optional, but flagged).
 
-const VgmRow = ({ container, canEdit, saving, onSave }) => {
+const METHOD_LABEL = { SM1: "SM1", SM2: "SM2" };
+const kg = n => (n === null || n === undefined ? "—" : `${Number(n).toLocaleString()} kg`);
+const when = s => (s ? new Date(s).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
+const readBase64 = file => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = e => resolve(String(e.target.result).split(",")[1]);
+  r.onerror = reject;
+  r.readAsDataURL(file);
+});
+
+// One container's declarations, newest first.
+const DeclarationHistory = ({ shipment, container, declarations, canEdit, onChanged }) => {
+  const [busy, setBusy] = useState("");
+  const kindOf = (d, i) => d.isLegacy ? "RECORDED BEFORE DCSA" : d.kind === "RETRACTION" ? "WITHDRAWN"
+    : declarations.slice(i + 1).some(o => o.kind === "DECLARATION" && !o.isLegacy) ? "DECLARED AGAIN" : "DECLARED";
+  const kindColor = k => (k === "WITHDRAWN" ? T.danger : k === "RECORDED BEFORE DCSA" ? T.warning : T.success);
+  const isSm1 = d => d.method === "SM1";
+
+  const attach = async (d, file) => {
+    if (!file) return;
+    setBusy(`attach-${d.id}`);
+    try {
+      await api.documents.upload(shipment.id, { filename: file.name, mimeType: file.type, docType: "VG02", data: await readBase64(file),
+        containerId: container.id, vgmDeclarationId: d.id });
+      toast.success(`${isSm1(d) ? "Weighbridge ticket" : "Weight calculation"} attached to the declaration`);
+      await onChanged();
+    } catch (e) { toast.error(e.message); }
+    setBusy("");
+  };
+  const generate = async d => {
+    setBusy(`gen-${d.id}`);
+    try {
+      const n = d.documents.filter(x => x.docType === "VG01").length;
+      const invNumber = `VG01-${shipment.id}-${container.containerNumber || container.id}${n ? `-${n + 1}` : ""}`;
+      const html = buildVgmDeclarationHtml({ shipment, container, declaration: d, invNumber, invDate: new Date().toISOString().slice(0, 10) });
+      await api.documents.generate(shipment.id, { html, filename: `${invNumber}.html`, docType: "VG01", containerId: container.id, vgmDeclarationId: d.id });
+      toast.success("VG01 VGM Declaration generated");
+      await onChanged();
+    } catch (e) { toast.error(e.message); }
+    setBusy("");
+  };
+
+  if (!declarations.length) {
+    return <div style={{ padding: "10px 12px", fontFamily: T.body, fontSize: 12, color: T.textMuted }}>Nothing declared to the carrier yet.</div>;
+  }
+  return (
+    <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
+      {declarations.map((d, i) => {
+        const kind = kindOf(d, i);
+        return (
+          <div key={d.id} id={`svcvgm-decl-${d.id}`} style={{ padding: "10px 12px", borderBottom: i < declarations.length - 1 ? `1px solid ${T.border}` : "none",
+            display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "150px 110px 50px minmax(0, 1fr)", gap: 12, alignItems: "baseline", fontFamily: T.body, fontSize: 12 }}>
+              <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, letterSpacing: ".05em", color: kindColor(kind) }}>{kind}</span>
+              <span style={{ fontFamily: T.mono, color: T.text }}>{d.kind === "RETRACTION" ? "—" : kg(d.weightKg)}</span>
+              <span style={{ color: T.text }}>{METHOD_LABEL[d.method] || "—"}</span>
+              <span style={{ color: T.textMuted }}>
+                {when(d.declaredAt || d.createdAt)}
+                {kind === "DECLARED AGAIN" ? " · replaces the declaration below" : ""}
+                {d.isLegacy ? " · marked Submitted before VGM went to the carrier as DCSA; never sent" : ""}
+                {d.kind === "DECLARATION" && !d.isLegacy ? ` · signed by ${d.signatory || "—"} · ${d.responsibleParty || "—"} responsible · ${d.submittingParty || "—"} submitting` : ""}
+                {d.kind === "RETRACTION" ? ` · withdrawn at ${d.carrierCode || "the carrier"}` : ""}
+                {d.carrierFeedback ? ` · carrier: ${d.carrierFeedback}` : ""}
+              </span>
+            </div>
+            {(d.documents.length > 0 || d.evidenceMissing || (d.current && d.kind === "DECLARATION" && !d.isLegacy && canEdit)) && (
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, paddingLeft: 162 }}>
+                {d.documents.map(f => (
+                  <button key={f.id} type="button" id={`svcvgm-doc-${f.id}`} onClick={() => api.documents.download(shipment.id, f.id, f.filename).catch(e => toast.error(e.message))}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, minHeight: 28, padding: "0 10px", borderRadius: 999, cursor: "pointer",
+                      fontFamily: T.body, fontSize: 11.5, border: `1px solid ${f.docType === "VG01" ? T.purple : T.info}55`,
+                      background: f.docType === "VG01" ? T.purpleBg : T.infoBg, color: f.docType === "VG01" ? T.purple : T.info }}>
+                    {f.docType === "VG01" ? "VG01" : "Evidence"} · {f.filename}
+                  </button>
+                ))}
+                {d.evidenceMissing && (
+                  <span id={`svcvgm-decl-${d.id}-no-evidence`} style={{ fontFamily: T.body, fontSize: 11.5, fontWeight: 600, color: T.warning }}>No evidence on file</span>
+                )}
+                {d.current && d.kind === "DECLARATION" && !d.isLegacy && canEdit && (
+                  <>
+                    <label id={`svcvgm-decl-${d.id}-attach`} style={{ position: "relative", display: "inline-flex", alignItems: "center", minHeight: 30, padding: "0 10px", borderRadius: 7,
+                      border: `1px solid ${T.border}`, cursor: busy ? "default" : "pointer", fontFamily: T.body, fontSize: 12, color: T.text, opacity: busy ? 0.6 : 1 }}>
+                      {busy === `attach-${d.id}` ? "Attaching…" : isSm1(d) ? "Attach weighbridge ticket" : "Attach weight calculation"}
+                      <input type="file" disabled={!!busy} onChange={e => { attach(d, e.target.files?.[0]); e.target.value = ""; }}
+                        style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden" }} aria-label={isSm1(d) ? "Weighbridge ticket file" : "Weight calculation file"} />
+                    </label>
+                    <Btn id={`svcvgm-decl-${d.id}-generate`} size="sm" variant="secondary" disabled={!!busy} onClick={() => generate(d)}>
+                      {busy === `gen-${d.id}` ? "Generating…" : d.documents.some(x => x.docType === "VG01") ? "Generate VG01 again" : "Generate VG01"}
+                    </Btn>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+const VgmRow = ({ shipment, container, declarations, canEdit, saving, onSave, onDeclarationsChanged }) => {
+  const [open, setOpen] = useState(false);
   const [weight, setWeight] = useState(container.vgmWeightKg != null ? String(container.vgmWeightKg) : "");
   const [status, setStatus] = useState(container.vgmStatus || "Pending");
   const [cutoff, setCutoff] = useState(container.vgmCutoff || "");
@@ -56,9 +164,13 @@ const VgmRow = ({ container, canEdit, saving, onSave }) => {
   };
 
   const state = container.vgmCutoffState;
+  const current = declarations.find(d => d.current);
+  const evidence = !current || current.kind !== "DECLARATION" ? null
+    : current.evidenceMissing ? "missing" : current.documents.some(d => d.docType === "VG02") ? (current.method === "SM1" ? "Weighbridge ticket" : "Weight calculation") : null;
 
   return (
-    <tr id={`svcvgm-row-${container.id}`} style={{ borderBottom: `1px solid ${T.border}` }}>
+    <>
+    <tr id={`svcvgm-row-${container.id}`} style={{ borderBottom: open ? "none" : `1px solid ${T.border}` }}>
       <td style={{ padding: "8px 10px" }}>
         <span style={{ fontFamily: T.mono, fontWeight: 700, color: T.accent, fontSize: 12.5 }}>
           {container.containerNumber || "TBC"}
@@ -119,12 +231,31 @@ const VgmRow = ({ container, canEdit, saving, onSave }) => {
           <Badge variant={CUTOFF_STATE_VARIANT[state]}>{COMPLIANCE_STATE_LABEL[state]}</Badge>
         )}
       </td>
+      <td id={`svcvgm-row-${container.id}-evidence`} style={{ padding: "8px 10px", width: 150, fontFamily: T.body, fontSize: 12, fontWeight: 600,
+        color: evidence === "missing" ? T.warning : evidence ? T.success : T.textMuted }}>
+        {evidence === "missing" ? "No evidence on file" : evidence || "—"}
+      </td>
+      <td style={{ padding: "8px 10px", width: 140, textAlign: "right" }}>
+        <button type="button" id={`svcvgm-row-${container.id}-declarations`} aria-expanded={open} onClick={() => setOpen(o => !o)}
+          style={{ minHeight: 30, padding: "0 10px", borderRadius: 7, border: `1px solid ${T.border}`, background: "transparent", cursor: "pointer",
+            fontFamily: T.body, fontSize: 12, color: T.text, whiteSpace: "nowrap" }}>
+          {open ? "Hide declarations" : `Declarations (${declarations.length})`}
+        </button>
+      </td>
       {saving && (
         <td style={{ padding: "8px 4px", width: 20 }}>
           <span style={{ fontSize: 10, color: T.textMuted }}>⏳</span>
         </td>
       )}
     </tr>
+    {open && (
+      <tr id={`svcvgm-row-${container.id}-history`} style={{ borderBottom: `1px solid ${T.border}` }}>
+        <td colSpan={9} style={{ padding: "0 10px 12px" }}>
+          <DeclarationHistory shipment={shipment} container={container} declarations={declarations} canEdit={canEdit} onChanged={onDeclarationsChanged} />
+        </td>
+      </tr>
+    )}
+    </>
   );
 };
 
@@ -134,8 +265,11 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
   const [savingNotes, setSavingNotes] = useState(false);
   const [savingId,    setSavingId]    = useState(null);
   const [messages,    setMessages]    = useState([]);
+  const [declarations, setDeclarations] = useState([]);
 
   const shipmentContainers = containers.filter(c => c.shipmentId === shipment.id);
+  const loadDeclarations = () => api.vgm.declarations(shipment.id).then(setDeclarations).catch(() => setDeclarations([]));
+  useEffect(() => { loadDeclarations(); }, [shipment.id]);
   // Every vgm_declaration/vgm_acceptance/vgm_rejection message across every container on this
   // shipment — one shared thread rather than splitting per-container, since each message's own
   // payload already names its containerNumber (EdiMessageList shows the raw payload).
@@ -172,11 +306,10 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
     setSavingId(containerId);
     try {
       await onEditContainer(containerId, { ...container, ...patch }, { silent: true });
-      // A Pending→Submitted transition writes a new vgm_declaration transmittal server-side —
-      // refetch so it shows up in the thread immediately rather than only after a reload.
-      if (patch.vgmStatus === "Submitted") {
-        api.ediMessages.list(shipment.id).then(setMessages).catch(() => {});
-      }
+      // A declaration, re-declaration or withdrawal may have gone to the carrier: refetch the thread and
+      // the declarations so they show at once rather than only after a reload.
+      api.ediMessages.list(shipment.id).then(setMessages).catch(() => {});
+      loadDeclarations();
     } catch { /* already toasted by onEditContainer */ }
     setSavingId(null);
   };
@@ -223,6 +356,10 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
             {service.vendorName || "No vendor set"} · {service.status}
             {service.requestedDate ? ` · Requested ${service.requestedDate}` : ""}
           </div>
+          <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, marginTop: 6, maxWidth: 640, lineHeight: 1.5 }}>
+            Marking a container Submitted declares its VGM to {shipment.carrierCode || "the carrier"} (DCSA VGM 1.0); a corrected weight or method
+            declares it again, and back to Pending withdraws it. Attach each declaration's evidence and generate its VG01 under Declarations.
+          </div>
         </div>
         {shipmentContainers.length > 0 && (
           <div id="svcvgm-summary" style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -255,7 +392,7 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
             <table id="svcvgm-table" style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-                  {["Container #", "Type", "VGM Weight (kg)", "VGM Method", "VGM Status", "VGM Cutoff", "Compliance"].map(h => (
+                  {["Container #", "Type", "VGM Weight (kg)", "VGM Method", "VGM Status", "VGM Cutoff", "Compliance", "Evidence", ""].map(h => (
                     <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontFamily: T.body,
                       fontSize: 10.5, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".05em" }}>
                       {h}
@@ -265,8 +402,9 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
               </thead>
               <tbody>
                 {shipmentContainers.map(c => (
-                  <VgmRow key={c.id} container={c} canEdit={canEdit} saving={savingId === c.id}
-                    onSave={patch => handleSaveField(c.id, patch)} />
+                  <VgmRow key={c.id} shipment={shipment} container={c} canEdit={canEdit} saving={savingId === c.id}
+                    declarations={declarations.filter(d => d.containerId === c.id)}
+                    onSave={patch => handleSaveField(c.id, patch)} onDeclarationsChanged={loadDeclarations} />
                 ))}
               </tbody>
             </table>

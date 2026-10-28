@@ -810,3 +810,110 @@ local CI replica (a clean clone, empty database, `npm run seed`, `LOGIN_RATE_MAX
 - **Search redone properly.** All 44 `<DatePicker>` uses were parsed (multi-line), and every id was
   matched against every spec, along with the calendar's own button texts. Only `lane-steering.cy.js`
   opens a calendar.
+
+### 2026-10-21: House B/L Story 1, the issue rules (Epic TKT-C7EBU3, TKT-E8R1UF)
+
+| Check | Result |
+|---|---|
+| New `tests/house-bl-issue-rules.test.js` | **25/25**, including two issues racing (one 200, one 409) |
+| Related backend files | `house-bl-lifecycle` 23/23, `carrier-booking` 159/159, `document-templates` 16/16, `office-mail` 31/31, `receivables-gross` 29/29, `document-signing` 16/16, `shipment-crud` 35/35, `invoice-reversal` 20/20 |
+| Vitest | **339/339** |
+| Cypress | `carrier-booking-lifecycle` 3/3, `document-generation` 2/2 |
+| Real browser, scratch shipment SHP-EGVHEL | The issued House B/L shows Void and no ✕; Void asks for a reason and leaves it voided |
+
+Found on the way and fixed: any voided document (invoices too) showed a Draft badge, and a type whose only
+document was voided counted as a draft. Voided rows now say Voided, and such a type counts as missing.
+
+### 2026-10-21: House B/L high-importance gaps, server side (Epic TKT-C7EBU3)
+
+| Check | Result |
+|---|---|
+| New `tests/house-bl-record.test.js` | **40/40** (packages, record, readiness, on board vs received, release) |
+| New `tests/house-bl-ebl.test.js` | **23/23** (issuance, ISSU/BREQ, endorse, SREQ → SURR/SREJ, AREQ, credential) |
+| `house-bl-issue-rules`, `house-bl-lifecycle` (moved onto the ready-shipment helper) | **25/25**, **23/23** |
+| Full backend suite, file by file | **110/110 files** |
+| Vitest | **339/339** |
+| Cypress | `document-generation`, `carrier-booking-lifecycle`, `containers`, `lane-steering`, `shipment-crud`: **50/50** |
+| Startup migration on the dev database | 14 House B/L records from the existing BL01s; a restart adds none |
+
+Found on the way and fixed: deleting a BL01 that the carrier booking linked failed with a 500 (foreign key).
+
+### 2026-10-21: House B/L screens (Epic TKT-C7EBU3, from the approved mockup)
+
+| Check | Result |
+|---|---|
+| New Vitest `HouseBlPanel.test.jsx`, `houseBlPrint.test.js` (+ the package codes mirror in `dcsaCodes.test.js`) | **10/10**, **5/5** |
+| Vitest | **355/355** in 31 files |
+| New Cypress `house-bl.cy.js` | **3/3** (issue → originals → release; packages fix via Cargo; eBL via Test Tools) |
+| Full Cypress suite | **282/283**; the one failure (`spot-offers`, first test) was a burst of HTTP 502s from the Vite proxy, and the spec passed 8/8 on its own straight after |
+| Backend: the four House B/L files, `organization`, `multi-entity-accounting`, `customer-statements`, `gl-export`, `document-signing`, `carrier-booking` | all green (25, 23, 40, 23, 64, 29, 73, 33, 16, 159) |
+| Real browser (demo shipment SHP-S4NC8S, kept) | ready → issued; the release dialog with its checks and override; the container form's Packages and Kind; the Cargo row "1,200 CT" |
+
+Found in the browser and fixed: moving from one shipment to another by hash kept the panel's "what the B/L says"
+choice from the first shipment (SHP-NLWJFQ, not loaded → Received for shipment) on the second. The panel is now keyed
+by shipment.
+
+### 2026-10-24: House B/L, the remaining gaps (Epic TKT-C7EBU3, mockup CnuymDL2eUEnxnD8oDtj57)
+
+| Check | Result |
+|---|---|
+| New `tests/house-bl-series.test.js` (G5 number series, G6 amendments, G21 overdue tasks) | **44/44** |
+| New `tests/house-bl-content.test.js` (G11, G12, G14, G16, G17, G18; every DCSA document checked against the spec) | **38/38** |
+| Full backend suite, file by file (CI rate-limit settings) | **112/112** files |
+| Vitest | **367/367** in 31 files (`HouseBlPanel` 16, `houseBlPrint` 11) |
+| Full Cypress suite | **286/286** in 35 specs (`house-bl` 6, `carrier-booking-lifecycle` links an MB01) |
+| Build | OK |
+| Real browser (demo shipment SHP-LL4EZI, kept: NLRTM → ESALG → USNYC + truck, two selling charges) | ready with the series number; issued 3 originals, 2 copies with charges; the printed BL01 (number, transshipment, on-carriage, charges table); originals log; changed since issue; surrender for amendment → version 2 pending; Conditions "Consignee on the B/L"; container UN number check; office prefix preview |
+
+Found and fixed on the way: the Copies box turned an emptied value into 0 at once, so typing "1" gave 10 (Cypress
+caught it); the amending view showed no history and reset originals, copies and charges instead of keeping version
+1's; a page holding the shipment from before the number was taken would have saved a blank B/L number over the series
+number (a blank now keeps an issued or series number); "changed since issue" flagged the vessels on B/Ls issued before
+the vessel role was added (the role is now ignored there).
+
+### 2026-10-27: The DCSA message review (TKT-6SOX30, ARCHITECTURE.md §8.41)
+
+| Check | Result |
+|---|---|
+| New `tests/dcsa-messages.test.js` (booking body, conditions and booking office; VGM 1.0; Shipping Instructions 3.0, through the built-in carrier) | **39/39** |
+| `carrier-integrations` (+ SI notifications: signed but invalid → 400, unknown reference → 404) | **34/34** |
+| `booking-escalations` (+ instructions for another carrier naming no contract → 400) | **40/40** |
+| Full backend suite, file by file (CI rate-limit settings) | **113/113** files (first pass 109/113, see below) |
+| Vitest | **367/367** in 31 files |
+| Full Cypress suite | **286/286** in 35 specs |
+| Build | OK |
+
+Found and fixed on the way:
+- A rebook to another carrier kept the old carrier's contract or quote and would have sent it to the new carrier.
+  The first full pass caught three escalation tests that still expected that, and one test shipment
+  (`shipment-detail-consistency`) with no contract reference.
+- The rebook now drops the old contract and books on the contract the instructions name.
+- Instructions for another carrier that name no contract are refused when they are sent. Before, they half-applied
+  the rebook: the shipment moved to the new carrier and no booking went out.
+
+### 2026-10-28: DCSA phases 4–6 (Master B/L, VGM declarations, carrier events; ARCHITECTURE.md §8.42)
+
+| Check | Result |
+|---|---|
+| New `tests/dcsa-documents-events.test.js` (Master B/L draft, compare, approve, issue, surrender, void; SI update and cancel; House B/Ls in the SI; VGM declarations with evidence and VG01; T&T pull and push, corrections, retractions; OVS vessel times; AIS as fallback; the sweeps; milestone template matchers) | **63/63** |
+| `dcsa-messages` (consignee identifying code; a draft Master B/L is the carrier's acceptance) | **39/39** |
+| `carrier-integrations` (+ the T&T push receiver: signed, `API-Version`, `feedbackElements`) | **37/37** |
+| `dcsa-lifecycle` (events pulled as SHIPMENT, TRANSPORT and EQUIPMENT; a re-pull adds nothing) | **33/33** |
+| Full backend suite, file by file (CI rate-limit settings) | **114/114** files |
+| Vitest | **371/371** in 32 files (new `MasterBlPanel` 4) |
+| Full Cypress suite | **290/290** in 36 specs (new `dcsa-documents-events` 4); see below |
+| Build | OK |
+| Real browser (demo shipment SHP-AQ1FIM, kept) | Shipping Instructions with the carrier's state and the Master B/L card (folded, critical facts, differences on top, all fields, approve); VGM service page with evidence, declarations history, attach and Generate VG01; Milestones with the sea-leg times, the carrier's events and the DCSA tags; Test Tools DCSA Carrier tabs |
+
+The full Cypress run first ended 286/290: `shipment-detail-walkthrough` (the Parties page still loading after 8 s)
+and `shipment-edit-delete` (the License Agreement modal over the Edit form, the startup-gate race
+`cy.dismissStartupGates` describes). Neither touches the new screens and the server log shows no error; both
+specs passed 8/8 on their own straight after.
+
+A read-only review (spec conformance, correctness, data and migrations, tests) ran before the screens were built.
+Its findings were fixed, among them: transport-document notifications that carry only the document's reference
+(they were answered 404), the notification spellings VOID and SURRENDER_FOR_*, an SI update the carrier hasn't
+worked in yet (PENDING_UPDATE) shown as Submitted, events applied out of order (now by `eventUpdatedDateTime`), a
+retraction that left its leg time and container event behind, a redraft that kept the old approval, Cargo Released
+completed by a release document as well as the B/L, a boot crash when old BL01 rows break the new unique index, and
+the VGM history lost when a container was removed.

@@ -335,7 +335,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: HZ.bg, borderBottom: `1px solid ${HZ.border}` }}>
-                  {["Container", "Size/Type", "Weight", "Volume", "DG", "VGM"].map(h => (
+                  {["Container", "Size/Type", "Packages", "Weight", "Volume", "DG", "VGM"].map(h => (
                     <th key={h} style={{ textAlign: "left", padding: "9px 14px", fontFamily: HZ_BODY, fontSize: 10,
                       fontWeight: 700, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".06em" }}>{h}</th>
                   ))}
@@ -343,7 +343,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
               </thead>
               <tbody>
                 {ctrs.length === 0 ? (
-                  <tr><td colSpan={6} style={{ padding: "18px 14px", fontFamily: HZ_BODY, fontSize: 12,
+                  <tr><td colSpan={7} style={{ padding: "18px 14px", fontFamily: HZ_BODY, fontSize: 12,
                     color: HZ.textMuted, fontStyle: "italic" }}>
                     No containers yet — add one below.
                   </td></tr>
@@ -379,6 +379,12 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
                       <td style={{ padding: "10px 14px", fontFamily: HZ_MONO, fontSize: 12, color: HZ.textMuted }}>
                         {c.size}ft {c.type}
                       </td>
+                      {/* Packages on the House B/L (Epic TKT-C7EBU3) — the container's own count and kind,
+                          not the manifest below it (decided 2026-10-21). */}
+                      <td data-testid={`shipment-containers-row-${c.id}-packages`} title={c.packageDescription || undefined}
+                        style={{ padding: "10px 14px", fontFamily: HZ_MONO, fontSize: 12, color: c.numberOfPackages ? HZ.textMuted : HZ.textFaint }}>
+                        {c.numberOfPackages ? `${c.numberOfPackages.toLocaleString()} ${c.packageCode || ""}`.trim() : "—"}
+                      </td>
                       <td style={{ padding: "10px 14px", fontFamily: HZ_MONO, fontSize: 12, color: HZ.textMuted }}>
                         {c.grossWeightKg ? `${c.grossWeightKg.toLocaleString()} kg` : "—"}
                       </td>
@@ -400,7 +406,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
                     </tr>,
                     isOpen && roots.length > 0 && (
                       <tr key={`${c.id}-packages`} style={{ borderBottom: `1px solid ${HZ.border}` }}>
-                        <td colSpan={6} style={{ padding: "4px 14px 10px 40px", background: HZ.bg }}>
+                        <td colSpan={7} style={{ padding: "4px 14px 10px 40px", background: HZ.bg }}>
                           {roots.map(pkg => (
                             <PackageTreeNode key={pkg.id} pkg={pkg} allPackages={pkgs} containerId={c.id} depth={0}
                               navOpen={navOpen} onToggle={toggleNav} selection={selection} onSelect={setSelection} packTypeById={packTypeById} />

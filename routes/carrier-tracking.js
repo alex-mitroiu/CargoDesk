@@ -1,20 +1,19 @@
 "use strict";
 
-// Track & Trace from the carrier (Epic TKT-KG4E49, 2026-10-09) — pulls a booking's DCSA events
-// (GET /v2/events by carrierBookingReference) and records the ones CargoDesk tracks as container
-// events, through the same recordContainerEvent the manual route uses, so milestones complete
-// the same way. Mapping rules: lib/carrier-integrations/tnt-mapping.js. A carrier event already
-// recorded (same container + carrier eventID), or a container that already has that event type
-// (logged by hand, say), is left alone — re-pulling never duplicates.
+// Track & Trace from the carrier (Epic TKT-KG4E49, 2026-10-09; Track & Trace 3.0 and the DCSA event model
+// since 2026-10-28) — pulls a booking's DCSA events (GET /events by carrierBookingReference: shipment,
+// transport and equipment events) and hands them to ctx.trackTrace.applyEvents (lib/track-trace.js), the
+// same path a carrier's pushed events take: kept in carrier_events, container lifecycle events through the
+// shared recordContainerEvent, vessel times onto the sea legs, milestones from the DCSA events. Re-pulling
+// never duplicates: an event already kept unchanged, or a container that already has that event type
+// (logged by hand, say), is left alone.
 //
-// Pull, not push: "Sync carrier events" on Milestones & Events, plus a sweep every
-// TRACKING_SWEEP_MINUTES for shipments whose carrier booking number is known and whose
-// containers aren't all back empty yet. Needs the integration's 'tracking' capability.
-
-const { mapTrackTraceEvents } = require("../lib/carrier-integrations/tnt-mapping");
+// "Sync carrier events" on Milestones & Events, plus a sweep every TRACKING_SWEEP_MINUTES for shipments
+// booked through an integration whose carrier booking number is known and whose containers aren't all back
+// empty yet. Needs the 'tracking' capability (the demo carrier has it too, for "Sync carrier events").
 
 module.exports = function carrierTrackingRoutes(app, ctx) {
-  const { query, ok, err, requireRole, carrierIntegrationFor, getSettings } = ctx;
+  const { query, ok, err, auth, requireRole, carrierIntegrationFor, getSettings } = ctx;
   const write = requireRole(["operator", "admin", "occ_bk"]);
 
   async function syncCarrierEvents(shipment) {
@@ -24,29 +23,9 @@ module.exports = function carrierTrackingRoutes(app, ctx) {
     if (!integ?.adapter.getEvents) return { ok: false, status: 409, error: `No active Track & Trace integration for ${booking.carrier_code}` };
     const result = await integ.adapter.getEvents(integ.config, { carrierBookingReference: booking.booking_ref });
     if (!result.ok) return { ok: false, status: 502, error: `${booking.carrier_code} could not be asked for events (${result.error})` };
-
-    const containers = await query("SELECT * FROM containers WHERE shipment_id=$1", [shipment.id]);
-    const { add, skipped } = mapTrackTraceEvents(result.events, {
-      pol: shipment.pol, pod: shipment.pod, containers: containers.map(c => ({ id: c.id, containerNumber: c.container_number })),
-    });
-    const existing = await query("SELECT container_id, event_type, carrier_event_id FROM container_events WHERE shipment_id=$1", [shipment.id]);
-    const seenId = new Set(existing.filter(e => e.carrier_event_id).map(e => `${e.container_id}|${e.carrier_event_id}`));
-    const seenType = new Set(existing.map(e => `${e.container_id}|${e.event_type}`));
-    const added = [];
-    let alreadyRecorded = 0;
-    // Oldest first, so milestones complete in the order things happened.
-    for (const a of [...add].sort((x, y) => String(x.occurredAt).localeCompare(String(y.occurredAt)))) {
-      if (seenId.has(`${a.containerId}|${a.carrierEventId}`) || seenType.has(`${a.containerId}|${a.eventType}`)) { alreadyRecorded++; continue; }
-      const ctr = containers.find(c => c.id === a.containerId);
-      added.push(await ctx.recordContainerEvent(ctr, {
-        eventType: a.eventType, occurredAt: a.occurredAt, location: a.location,
-        notes: `From ${booking.carrier_code} Track & Trace`, recordedBy: `${booking.carrier_code} Track & Trace`, carrierEventId: a.carrierEventId,
-      }));
-      seenId.add(`${a.containerId}|${a.carrierEventId}`);
-      seenType.add(`${a.containerId}|${a.eventType}`);
-    }
+    const r = await ctx.trackTrace.applyEvents(shipment, result.events, { carrierCode: booking.carrier_code, via: "pull", simulated: !!integ.row.is_simulator });
     await query("UPDATE carrier_bookings SET events_synced_at=$1 WHERE id=$2", [new Date().toISOString(), booking.id]);
-    return { ok: true, added, alreadyRecorded, skipped, received: result.events.length };
+    return { ok: true, ...r };
   }
 
   app.post("/api/shipments/:id/carrier-events/sync", write, async (req, res) => {
@@ -54,7 +33,14 @@ module.exports = function carrierTrackingRoutes(app, ctx) {
     if (!shipment) return err(res, "Shipment not found", 404);
     const r = await syncCarrierEvents(shipment);
     if (!r.ok) return err(res, r.error, r.status);
-    ok(res, { added: r.added, alreadyRecorded: r.alreadyRecorded, skipped: r.skipped, received: r.received });
+    ok(res, { added: r.added, alreadyRecorded: r.alreadyRecorded, skipped: r.skipped, received: r.received,
+      stored: r.stored, legTimes: r.legTimes, milestones: r.milestones, retracted: r.retracted });
+  });
+
+  // Every Track & Trace event the carrier sent about the shipment, newest first, with what CargoDesk did with it.
+  app.get("/api/shipments/:id/carrier-events", auth(), async (req, res) => {
+    const rows = await query("SELECT * FROM carrier_events WHERE shipment_id=$1 ORDER BY event_date_time DESC, received_at DESC", [req.params.id]);
+    ok(res, rows.map(ctx.trackTrace.mapCarrierEvent));
   });
 
   const TRACKING_SWEEP_MINUTES = 30;

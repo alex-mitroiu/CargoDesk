@@ -23,6 +23,7 @@ import Btn from "../../components/primitives/Btn";
 import Spinner from "../../components/primitives/Spinner";
 import Badge from "../../components/primitives/Badge";
 import {Inp, Sel, BtnToggle} from "../../components/primitives/Form";
+import { PACKAGE_CODES } from "../../utils/dcsaCodes";
 import { HsCodeCombobox } from "../../components/shared/HsCodeCombobox";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import DatePicker from "../../components/primitives/DatePicker";
@@ -120,10 +121,14 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
     hsCode:           init.hsCode           || "",
     cargoDescription: init.cargoDescription || "",
     marksAndNumbers:  init.marksAndNumbers  || "",
+    numberOfPackages: init.numberOfPackages != null ? String(init.numberOfPackages) : "",
+    packageCode:      init.packageCode      || "",
     grossWeightKg:    init.grossWeightKg    != null ? String(init.grossWeightKg) : "",
     volumeCbm:        init.volumeCbm        != null ? String(init.volumeCbm)     : "",
     isDg:             init.isDg             || false,
     dgClass:          init.dgClass          || "",
+    dgUnNumber:       init.dgUnNumber       || "",
+    dgProperShippingName: init.dgProperShippingName || "",
     cyCutoff:         init.cyCutoff         || "",
     originFreeTimeDays: init.originFreeTimeDays != null ? String(init.originFreeTimeDays) : "",
     destFreeTimeDays:   init.destFreeTimeDays   != null ? String(init.destFreeTimeDays)   : "",
@@ -148,8 +153,10 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
       f.size !== s.size ||
       f.type !== s.type || f.hsCode !== s.hsCode || f.cargoDescription !== s.cargoDescription ||
       f.marksAndNumbers !== s.marksAndNumbers ||
+      f.numberOfPackages !== s.numberOfPackages || f.packageCode !== s.packageCode ||
       f.grossWeightKg !== s.grossWeightKg || f.volumeCbm !== s.volumeCbm ||
       f.isDg !== s.isDg || f.dgClass !== s.dgClass ||
+      f.dgUnNumber !== s.dgUnNumber || f.dgProperShippingName !== s.dgProperShippingName ||
       f.cyCutoff !== s.cyCutoff || f.originFreeTimeDays !== s.originFreeTimeDays || f.destFreeTimeDays !== s.destFreeTimeDays ||
       f.originDetentionFreeDays !== s.originDetentionFreeDays || f.destDetentionFreeDays !== s.destDetentionFreeDays ||
       f.setTemperatureC !== s.setTemperatureC || f.setTemperatureF !== s.setTemperatureF;
@@ -183,6 +190,9 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
   const descOk   = f.cargoDescription.trim().length > 0;
 
   const dgConflict = dgPolicyConflict(dgPolicy, f.isDg, f.dgClass);
+  // The UN number for the House B/L (TKT-C7EBU3 gap G17): optional here, 4 digits when given
+  // ("UN 1263" is saved as 1263); the House B/L asks for it, and the proper shipping name, at issue.
+  const unOk = !f.isDg || !f.dgUnNumber.trim() || /^(UN\s*)?\d{4}$/i.test(f.dgUnNumber.trim());
   // Container numbers are unique physical-asset identifiers (B/L, customs, terminal EDI) —
   // catch a collision with another container on this same shipment before the round-trip to
   // the server-side check, which is the authoritative guard (this is just faster feedback).
@@ -190,7 +200,7 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
     && existingContainerNumbers.includes(f.containerNumber.toUpperCase());
 
   const valid    = f.containerNumber.length >= 4 && f.size && f.type
-                 && hsOk && descOk && weightOk && volumeOk && (!f.isDg || f.dgClass)
+                 && hsOk && descOk && weightOk && volumeOk && (!f.isDg || f.dgClass) && unOk
                  && !dgConflict && !dupeConflict;
 
   const FieldErr = ({ show, msg }) => show
@@ -202,9 +212,14 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
   const buildPayload = () => ({
     containerNumber: f.containerNumber, sealNumber: f.sealNumber, size: f.size, type: f.type,
     hsCode: f.hsCode, cargoDescription: f.cargoDescription, marksAndNumbers: f.marksAndNumbers,
+    // Packages on the House B/L (Epic TKT-C7EBU3): optional here, required only to issue the B/L.
+    numberOfPackages: f.numberOfPackages ? parseInt(f.numberOfPackages, 10) : null,
+    packageCode: f.packageCode,
     grossWeightKg: f.grossWeightKg ? parseFloat(f.grossWeightKg) : null,
     volumeCbm:     f.volumeCbm     ? parseFloat(f.volumeCbm)     : null,
     isDg: f.isDg, dgClass: f.dgClass,
+    dgUnNumber: f.isDg ? f.dgUnNumber.trim().replace(/^UN\s*/i, "") : "",
+    dgProperShippingName: f.isDg ? f.dgProperShippingName.trim() : "",
     // VGM fields are no longer edited on this form (moved to the dedicated VGM Export
     // Service page) — passed through unchanged from the current container record so an
     // ordinary Cargo-page save never wipes them (PUT /api/containers/:id is a full-row
@@ -241,6 +256,7 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
           !weightOk ? "Gross Weight" : null,
           !volumeOk ? "Volume" : null,
           f.isDg && !f.dgClass ? "IMDG Class" : null,
+          !unOk ? "UN Number (4 digits)" : null,
           dgConflict,
         ].filter(Boolean);
         return { ok: false, error: `Container form has incomplete/invalid fields: ${missing.join(", ")}` };
@@ -308,6 +324,22 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
           hint="Identifying marks and numbers stenciled on the packages, as shown on the B/L or packing list" />
       </div>
 
+      {/* Packages on the House B/L (Epic TKT-C7EBU3): printed on it, and required by DCSA on every
+          cargo item. Optional here; issuing the B/L asks for them. */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.6fr", gap: 12 }}>
+        <div data-testid="shipment-containers-form-packages-field">
+          <Inp id="ctr-number-of-packages" label="Packages" value={f.numberOfPackages}
+            onChange={v => { if (v === "" || /^\d{1,7}$/.test(v)) set("numberOfPackages")(v); }}
+            type="text" inputMode="numeric" placeholder="e.g. 1200"
+            hint="Number of packages, as printed on the B/L" />
+        </div>
+        <div data-testid="shipment-containers-form-package-kind-field">
+          <Sel id="ctr-package-code" label="Kind of packages" value={f.packageCode} onChange={set("packageCode")}
+            options={[{ value: "", label: "Choose…" }, ...Object.entries(PACKAGE_CODES).map(([code, label]) => ({ value: code, label: `${code} · ${label}` }))]}
+            hint="UN/ECE Recommendation 21 code" />
+        </div>
+      </div>
+
       {f.type === "RF" && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div data-testid="shipment-containers-form-reefer-celsius-field">
@@ -367,7 +399,7 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
           </div>
           <span data-testid="shipment-containers-form-dg-toggle-btn">
             <BtnToggle selected={f.isDg}
-              onClick={() => setF(p => ({ ...p, isDg: !p.isDg, dgClass: "" }))}>
+              onClick={() => setF(p => ({ ...p, isDg: !p.isDg, dgClass: "", dgUnNumber: "", dgProperShippingName: "" }))}>
               {f.isDg ? "DG ON" : "DG OFF"}
             </BtnToggle>
           </span>
@@ -381,6 +413,16 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
                 { value: "", label: "— Select IMDG class —" },
                 ...IMDG_CLASSES.map(c => ({ value: c.code, label: `${c.label} — ${c.name}` }))
               ]} />
+            <div data-testid="shipment-containers-form-dg-un-fields" style={{ display: "grid", gridTemplateColumns: "180px minmax(0, 1fr)", gap: 12, marginTop: 12 }}>
+              <div>
+                <Inp id="ctr-dg-un-number" label="UN Number" value={f.dgUnNumber} onChange={set("dgUnNumber")} mono maxLength={7} placeholder="1263" inputMode="numeric" />
+                <FieldErr show={!unOk} msg="The 4-digit UN number, e.g. 1263" />
+              </div>
+              <Inp id="ctr-dg-proper-shipping-name" label="Proper Shipping Name" value={f.dgProperShippingName} onChange={set("dgProperShippingName")} maxLength={250} placeholder="PAINT" />
+            </div>
+            <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginTop: 6, lineHeight: 1.5 }}>
+              The House B/L prints them under the container and sends them to DCSA; it can't be issued for a DG container without both.
+            </div>
           </div>
         )}
 
@@ -2407,6 +2449,16 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
                     {state === 'current' && <Badge variant="info" size={10}>Current</Badge>}
                     {state === 'overdue' && <Badge variant="danger" size={10}>Overdue</Badge>}
                   </div>
+
+                  {/* The DCSA events that complete it (phase 6): what the carrier, or a container event, has to report. */}
+                  {m.dcsaEvents && (
+                    <div data-testid={`shipment-milestones-step-${m.milestoneKey}-dcsa`} style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "3px 0 4px" }}>
+                      {(m.dcsaEvents.length ? m.dcsaEvents.map(d => d.label) : ["Completed by hand"]).map(l => (
+                        <span key={l} style={{ fontFamily: HZ_BODY, fontSize: 10.5, padding: "1px 8px", borderRadius: 999,
+                          border: `1px solid ${HZ.borderStrong}`, color: HZ.textMuted }}>{l}</span>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Sub-info line */}
                   <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, display: "flex", gap: 8 }}>

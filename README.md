@@ -44,7 +44,7 @@ End-User License Agreement for full terms.
 - **Sailing management safeguards** — the active sailing is highlighted in the picker, replacing one requires confirmation, and inconsistent ETD/ETA surfaces a warning badge.
 - **Editable Route Legs on the Schedules page** — legs auto-order Pick-up-first/Delivery-last; "Add Sailing" updates every affected leg on a multi-leg pick, not just the first.
 - **Dedicated Services** — an Export/Import services dashboard (VGM, Haulage, Fumigation, Storage, Customs Clearance, and more), each with a vendor, office, and a fully audit-logged status lifecycle.
-- **DCSA carrier booking** — every booking goes to the carrier as a DCSA Booking 2.0 message, checked against the published spec; a carrier without its own integration is played by the built-in demo carrier (badged DEMO CARRIER), and only the carrier confirms.
+- **DCSA carrier messages** — every booking goes to the carrier as a DCSA Booking 2.0 message, placed with the carrier's local office (the shipment's Line Agent, Export); Shipping Instructions go as DCSA Shipping Instructions 3.0 (with any issued House B/L inside), and the carrier's Master B/L drafted from them is reviewed against what was sent and approved in CargoDesk; each container's VGM goes as DCSA VGM 1.0, every declaration kept with its evidence and a VG01 VGM Declaration; the carrier's Track & Trace 3.0 events (pulled or pushed) and vessel schedules (OVS 3.0) drive container events, vessel times and milestones, with AIS as the fallback. Every message is checked against the published spec, including fields the spec doesn't define, before it's sent. A carrier without its own integration is played by the built-in demo carrier (badged DEMO CARRIER), and only the carrier confirms.
 - **The main vessel** — a transshipment is listed under its main vessel (the longest-transit leg, marked MAIN) everywhere a sailing is picked, with feeders in order; the shipment's vessel follows it.
 - **Requested vs Carrier** — Booking & Review compares every detail requested with the carrier's confirmation (vessel, dates with day deltas, legs, equipment, cut-offs, parties, charges), then accept the carrier's version, ask it to amend, or escalate.
 - **Booking escalations & Lane Steering** — a rejected, changed or unanswered booking goes to OCC/AY or CCL/CO (and on to Trade/AY) for an alternative, guided by the carrier order per trade lane, and OCC/BK books as instructed — all inside the shipment.
@@ -74,6 +74,7 @@ End-User License Agreement for full terms.
 - **Denied-party screening** — sanctions screening across every party role on a shipment, with a roll-up compliance status view.
 - **Document Readiness Overview** — a coverage bar showing confirmed/draft/missing status across every required document type.
 - **Signed PDF generation** — every generated document (B/L, invoices, packing lists, and more) is a real, tamper-evident signed PDF.
+- **House Bill of Lading** — issued only when complete, under the issuing office's number series; shipped on board or received for shipment, to order, originals and copies, charges or "as arranged", every vessel; an originals log, telex release notices, corrections as version 2 under the same number, and release only once collect charges are paid. Also issued and surrendered as an eBL (DCSA eBL Issuance and Surrender 3.0).
 - **Freight Audit & Payment** — reconcile carrier invoices against contracted rates and accrued costs, with a Detention & Demurrage pre-audit.
 
 ### Master Data
@@ -507,7 +508,7 @@ CargoDesk/
 
 ## Database Schema
 
-115 tables in the monolith — schema declared in `lib/schema.js` at startup, migrations applied automatically. See the About page's **Architectural Details** tab for the full domain-grouped list; the table below covers the core/most-referenced ones.
+119 tables in the monolith — schema declared in `lib/schema.js` at startup, migrations applied automatically. See the About page's **Architectural Details** tab for the full domain-grouped list; the table below covers the core/most-referenced ones.
 
 | Table | Purpose |
 |---|---|

@@ -1,6 +1,6 @@
 "use strict";
 
-const { validateRequest, errorsText, specVersion } = require("../lib/dcsa/validate");
+const { validateOutbound, errorsText, specVersion } = require("../lib/dcsa/validate");
 const { comparisonRows, planLegs } = require("../lib/carrier-confirmation");
 
 module.exports = function ediRoutes(app, ctx) {
@@ -112,7 +112,7 @@ module.exports = function ediRoutes(app, ctx) {
     }
     if (confirmedNow && bookingRef) {
       await query("UPDATE shipments SET booking_ref=$1 WHERE id=$2", [bookingRef, shipment.id]);
-      await autoCompleteMilestone(shipment.id, "booking_confirmed",
+      await ctx.milestoneEvents.onEvent(shipment.id, { eventType: "SHIPMENT", code: "CONFIRMED", documentType: "BOOKING" },
         `Confirmed by ${booking.carrier_code || "the carrier"}${simulated ? " (demo carrier)" : ""} (ref ${bookingRef})`);
     }
     await logEntityEvent('carrier_booking', booking.id, 'CARRIER_STATE', null, booking.status, status,
@@ -149,13 +149,16 @@ module.exports = function ediRoutes(app, ctx) {
     return { dcsa, changes: dcsa ? be.confirmationChanges(dcsa, (await be.settings()).changeRules, { requestedEta: booking.requested_eta || "" }) : [] };
   }
 
-  // An outbound message to a real carrier (update, amendment, cancellation) on the shipment's thread.
-  async function recordOutbound(shipment, booking, messageType, payload) {
+  // An outbound message to a carrier (update, amendment, cancellation) on the shipment's thread:
+  // raw_payload is the DCSA body exactly as sent, parsed_payload CargoDesk's own summary of the request
+  // (what the Requested vs Carrier comparison reads) when there is one.
+  async function recordOutbound(shipment, booking, messageType, dcsaBody, summary = null) {
     const id = `EDI-${uid()}`;
     await query(`
-      INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, status, correlation_id, is_mock, created_at)
-      VALUES ($1,$2,$3,'out',$4,'JSON',$5,'sent',$6,FALSE,$7)
-    `, [id, shipment.id, booking.carrier_code || shipment.carrier_code, messageType, JSON.stringify(payload), booking.correlation_id, new Date().toISOString()]);
+      INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, parsed_payload, status, correlation_id, is_mock, created_at)
+      VALUES ($1,$2,$3,'out',$4,'JSON',$5,$6,'sent',$7,FALSE,$8)
+    `, [id, shipment.id, booking.carrier_code || shipment.carrier_code, messageType, JSON.stringify(dcsaBody), summary ? JSON.stringify(summary) : null,
+        booking.correlation_id, new Date().toISOString()]);
     const [row] = await query("SELECT * FROM edi_messages WHERE id=$1", [id]);
     const message = mapEdiMessage(row);
     broadcast(shipment.id, { type: "new_edi_message", message });
@@ -334,8 +337,13 @@ module.exports = function ediRoutes(app, ctx) {
   // the shipment's export office), the commodity description and HS codes, the loop as service code.
   async function dcsaBookingExtras(shipment) {
     const [agent] = shipment.emo_office_id ? await query(
-      "SELECT o.name AS office_name, b.name AS branch_name FROM offices o LEFT JOIN branches b ON b.id = o.branch_id WHERE o.id=$1",
+      "SELECT o.name AS office_name, b.name AS branch_name, b.email AS branch_email, b.phone AS branch_phone FROM offices o LEFT JOIN branches b ON b.id = o.branch_id WHERE o.id=$1",
       [shipment.emo_office_id]) : [];
+    // The carrier's booking office: the shipment's Line Agent (Export), the carrier's local representative
+    // at the port of loading (shipment_parties, resolved from Carrier Agents). Without one, the carrier
+    // routes the booking itself.
+    const [lineAgent] = await query("SELECT customer_id, customer_name FROM shipment_parties WHERE shipment_id=$1 AND role='Line Agent (Export)'", [shipment.id]);
+    const agentRow = lineAgent?.customer_id ? await getCustomerRow(lineAgent.customer_id).catch(() => null) : null;
     const [commodity] = shipment.commodity_code ? await query("SELECT description FROM commodities WHERE code=$1", [shipment.commodity_code]) : [];
     const ctrs = await query("SELECT hs_code, cargo_description FROM containers WHERE shipment_id=$1", [shipment.id]);
     const loop = await shipmentLoopCode(shipment.id).catch(() => "");
@@ -343,7 +351,13 @@ module.exports = function ediRoutes(app, ctx) {
       serviceType: shipment.service_type || "Port-to-Port", movementType: shipment.movement_type || "FCL",
       freightTerms: shipment.freight_terms || "", incoterm: shipment.incoterm || "",
       declaredValue: shipment.declared_value, declaredValueCurrency: shipment.declared_value_currency || "USD",
-      bookingAgentName: agent?.branch_name || agent?.office_name || "",
+      bookingAgent: (agent?.branch_name || agent?.office_name) ? { name: agent.branch_name || agent.office_name,
+        contact: { name: agent.office_name || agent.branch_name, email: agent.branch_email || "", phone: agent.branch_phone || "" } } : null,
+      carrierBookingOffice: lineAgent ? {
+        name: lineAgent.customer_name || agentRow?.companyName || "", UNLocationCode: String(shipment.pol || "").toUpperCase(),
+        address: agentRow ? { street: agentRow.address1, postCode: agentRow.postalCode, city: agentRow.city, countryCode: agentRow.countryIso2 } : null,
+        contact: agentRow && (agentRow.email || agentRow.phone) ? { name: agentRow.companyName, email: agentRow.email, phone: agentRow.phone } : null,
+      } : null,
       commodityDescription: commodity?.description || ctrs.map(c => c.cargo_description).find(Boolean) || "",
       hsCodes: [...new Set(ctrs.map(c => c.hs_code).filter(Boolean))],
       ...(loop ? { service: loop } : {}),
@@ -437,7 +451,7 @@ module.exports = function ediRoutes(app, ctx) {
     // would answer 400 is refused here, with the reasons, instead of becoming a "sent" message and a
     // Pending booking that was never sent.
     const dcsaPayload = integ.adapter.buildBookingRequest(shipment, { ...requestPayload, ...(await dcsaBookingExtras(shipment)) });
-    const check = validateRequest("bkg", "post", "/v2/bookings", dcsaPayload);
+    const check = validateOutbound("bkg", "post", "/v2/bookings", dcsaPayload);
     if (!check.ok) {
       // The two gaps people actually hit, said plainly; anything else names the spec's own reasons.
       const missing = [check.errors.some(e => e.path.startsWith("/requestedEquipments")) && "at least one container",
@@ -445,6 +459,8 @@ module.exports = function ediRoutes(app, ctx) {
       return fail(400, missing.length ? `Can't send the booking request: add ${missing.join(" and ")} first (a DCSA booking needs them)`
         : `Can't send the booking request: it doesn't meet DCSA Booking ${specVersion("bkg")} (${errorsText(check.errors, 3)})`);
     }
+    const conditions = integ.adapter.bookingConditionProblems ? integ.adapter.bookingConditionProblems(dcsaPayload) : [];
+    if (conditions.length) return fail(400, `Can't send the booking request: a DCSA booking needs ${conditions.join(", ")}`);
 
     // Outbound message, recorded and broadcast immediately.
     const outId = `EDI-${uid()}`;
@@ -454,7 +470,9 @@ module.exports = function ediRoutes(app, ctx) {
          status, correlation_id, is_mock, created_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
     `, [outId, shipment.id, shipment.carrier_code, "out", "booking_request", "JSON",
-           JSON.stringify(requestPayload), "sent", correlationId, false, now]);
+           JSON.stringify(dcsaPayload), "sent", correlationId, false, now]);
+    // The DCSA body above is what goes to the carrier; CargoDesk's own summary is kept beside it.
+    await query("UPDATE edi_messages SET parsed_payload=$1 WHERE id=$2", [JSON.stringify(requestPayload), outId]);
     const [sentMsgRow] = await query("SELECT * FROM edi_messages WHERE id=$1", [outId]);
     const sentMsg = mapEdiMessage(sentMsgRow);
     broadcast(shipment.id, { type: "new_edi_message", message: sentMsg });
@@ -533,7 +551,7 @@ module.exports = function ediRoutes(app, ctx) {
         const result = await integ.adapter.cancelBooking(integ.config, existing.carrier_booking_request_reference, { confirmed, reason });
         if (!result.ok) throw Object.assign(new Error(`${existing.carrier_code} did not accept the cancellation (${result.error}). Nothing was changed — try again.`), { status: 502 });
         await recordOutbound(shipment, existing, confirmed ? "booking_cancellation_request" : "booking_cancellation",
-          confirmed ? { bookingCancellationStatus: "CANCELLATION_RECEIVED", reason: reason || "" } : { bookingStatus: "CANCELLED", reason: reason || "" });
+          { ...(confirmed ? { bookingCancellationStatus: "CANCELLATION_RECEIVED" } : { bookingStatus: "CANCELLED" }), ...(reason ? { reason } : {}) });
         if (confirmed) {
           await query("UPDATE carrier_bookings SET last_response_status='cancellation_requested', cancel_reason=$1, updated_at=$2 WHERE id=$3",
             [reason || "", now, existing.id]);
@@ -625,9 +643,10 @@ module.exports = function ediRoutes(app, ctx) {
     const requestPayload = await bookingRequestPayload(shipment, req.body);
     const dcsaPayload = integ.adapter.buildBookingRequest(shipment, { ...requestPayload, ...(await dcsaBookingExtras(shipment)) });
     const result = await integ.adapter.updateBooking(integ.config, booking.carrier_booking_request_reference, dcsaPayload);
+    if (!result.ok && result.invalid) return err(res, `Can't send the update: ${result.error.replace(/^Not sent: /, "")}`, 400);
     if (!result.ok) return err(res, `${booking.carrier_code} did not accept the update (${result.error}). Nothing was changed — try again.`, 502);
     const amendment = booking.status === "Confirmed";
-    const sent = await recordOutbound(shipment, booking, amendment ? "booking_amendment" : "booking_update", requestPayload);
+    const sent = await recordOutbound(shipment, booking, amendment ? "booking_amendment" : "booking_update", dcsaPayload, requestPayload);
     const now = new Date().toISOString();
     await query("UPDATE carrier_bookings SET last_response_status=$1, updated_at=$2 WHERE id=$3",
       [amendment ? "amendment_requested" : "update_sent", now, booking.id]);
@@ -661,11 +680,13 @@ module.exports = function ediRoutes(app, ctx) {
       }
     }
     if (!dcsa) return ok(res, { available: false });
-    const [out] = await query(`SELECT raw_payload, created_at FROM edi_messages WHERE shipment_id=$1 AND direction='out'
+    const [out] = await query(`SELECT raw_payload, parsed_payload, created_at FROM edi_messages WHERE shipment_id=$1 AND direction='out'
       AND message_type IN ('booking_request','booking_update','booking_amendment') AND correlation_id=$2 ORDER BY created_at DESC LIMIT 1`,
       [shipment.id, booking.correlation_id]);
+    // CargoDesk's summary of the request: parsed_payload since 2026-10-27 (raw_payload is the DCSA body
+    // as sent); before that, raw_payload held the summary.
     let request = {};
-    try { request = JSON.parse(out?.raw_payload || "{}"); } catch { request = {}; }
+    try { request = JSON.parse(out?.parsed_payload || out?.raw_payload || "{}"); } catch { request = {}; }
     // The spot offer the shipment is priced on, for the carrier's charges (SPOT rates, 2026-10-21).
     const spot = shipment.spot_offer_id ? await ctx.spotOffers.get(shipment.spot_offer_id) : null;
     const rows = comparisonRows(request, dcsa, { requestedEta: booking.requested_eta || "", carrierCode: booking.carrier_code, bookingRef: booking.booking_ref,
@@ -767,7 +788,10 @@ module.exports = function ediRoutes(app, ctx) {
     if (documentId) {
       const [doc] = await query("SELECT * FROM shipment_documents WHERE id=$1", [documentId]);
       if (!doc || doc.shipment_id !== shipment.id) return err(res, "Document not found on this shipment", 404);
-      if (doc.doc_type !== "BL01") return err(res, "Only a Bill of Lading (BL01) document can be linked", 400);
+      // The booking is the carrier's, so its B/L is the carrier's own: the Master (TKT-C7EBU3 gap G22).
+      // A House B/L linked before stays linked until it is changed.
+      if (doc.doc_type !== "MB01" && !(doc.doc_type === "BL01" && doc.id === booking.bl_document_id))
+        return err(res, "Link the carrier's Master Bill of Lading (MB01): the House B/L (BL01) is CargoDesk's own, not the carrier's", 400);
     }
 
     const now = new Date().toISOString();

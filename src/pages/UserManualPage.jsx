@@ -395,6 +395,11 @@ const UserManualPage = () => {
             A carrier that isn't connected yet is played by CargoDesk's built-in{" "}
             <strong>demo carrier</strong> (marked DEMO CARRIER). A SPOT shipment's booking carries its
             spot offer's quotation number; an expired digital offer can't be sent — replace it first.</P>
+          <P>The booking goes to the carrier's <strong>local office</strong>: the shipment's{" "}
+            <Tag>Line Agent (Export)</Tag> (Parties & Offices), not the carrier's head office. A booking
+            names exactly one <strong>contract number or carrier quote</strong>, and either an{" "}
+            <strong>ETD</strong> or a <strong>vessel and voyage</strong>. If something the DCSA standard
+            requires is missing, CargoDesk tells you what to add and sends nothing.</P>
         </StepBody>
         <Step n={3}>Wait for the carrier's answer</Step>
         <StepBody>
@@ -409,7 +414,9 @@ const UserManualPage = () => {
           <P>A booking the carrier rejects, changes, or doesn't answer can be <strong>escalated</strong>{" "}
             to OCC/AY (export office) or CCL/CO (import office). They find another carrier or sailing —
             Lane Steering suggests the order — and send it back as instructions; you then click{" "}
-            <Tag>Book As Instructed</Tag>. It all happens on the shipment's Booking & Review page; the
+            <Tag>Book As Instructed</Tag>. Instructions for another carrier must name that carrier's
+            contract: the old carrier's contract or quote comes off the shipment, and the booking goes on
+            the contract named. It all happens on the shipment's Booking & Review page; the
             Shipments list's Booking column shows where every escalation stands.</P>
         </StepBody>
         <Step n={4}>Generate a Booking Confirmation document</Step>
@@ -577,7 +584,16 @@ const UserManualPage = () => {
             Shipping Instructions, or logging a <Tag>Sailed</Tag>/<Tag>Discharged</Tag> container
             event (which auto-completes Vessel Departed/Arrived — the same credit AIS tracking would
             give a monitored vessel, now available even without one) — you only need to touch the
-            ones that don't have an obvious trigger.</P>
+            ones that don't have an obvious trigger. Under each milestone, its tags say which carrier or
+            container event completes it, for example "Transport · Departed at POL".</P>
+          <P>Above the milestones, the sea leg shows its departure and arrival, each tagged by where the date
+            came from: <strong>ACTUAL</strong> (the carrier confirmed it), <strong>EST</strong> (the carrier's
+            estimate) or <strong>AIS</strong> (detected by AIS, used only where the carrier hasn't said).
+            Below them, <strong>From the carrier</strong> lists every event the carrier sent, newest first,
+            and what CargoDesk did with each: a container event recorded, a date moved, a milestone
+            completed. <Tag>Sync carrier events</Tag> asks the carrier for its latest events, and{" "}
+            <Tag>Check vessel times</Tag> for its vessel schedule. A carrier that takes an event back
+            (retracts it) undoes what it caused.</P>
           <Screenshot src={imgMilestones} alt="The Milestones & Events page showing a stepper with two of nine steps complete" caption="Milestones & Events — a straightforward progress stepper. Completed steps show who finished them and when; the current step is highlighted." />
         </StepBody>
         <Callout type="note"><strong>Completing things out of order won't block you.</strong> Real
@@ -839,6 +855,39 @@ const UserManualPage = () => {
           <Tag>MB01</Tag> Master Bill of Lading also becomes available — shipper is the assigned NVOCC,
           consignee reads <em>"TO ORDER OF {"{NVOCC}"}"</em>, and each document's generated HTML
           cross-references the other's B/L number, exactly matching how the two are used in practice.</P>
+        <P>An issued House B/L is a document of title, so it only moves forward. Confirming a BL01 issues
+          it; after that it can't be deleted or set back to draft. If it's wrong, click{" "}
+          <strong>Void</strong> on the Documents page and give a reason: it stays on record, marked
+          Voided, and you can issue a new one. A shipment has one issued House B/L at a time, and
+          generating a new draft replaces the previous draft.</P>
+        <P>Issuing checks the B/L is complete first and, if not, lists what is missing: parties with
+          their addresses, a notify party, vessel and voyage, the carrier's confirmed booking, the
+          release type, and per container the seal, the number and kind of packages, the weight,
+          description and HS code. A B/L that says <em>Shipped on board</em> needs the container's
+          Loaded event; before loading, issue it as <em>Received for shipment</em>. At destination,
+          Mark Released waits until the originals are surrendered, collect charges are paid and the
+          consignee isn't on credit hold; an admin or finance user can override with a reason. The
+          Delivery Order can only be generated once the cargo is released.</P>
+        <H3>The House B/L panel</H3>
+        <P>The top of a shipment's <Tag>Documents</Tag> page shows the House B/L: where it is (Draft,
+          Issued, Surrendered, Released), its record and history, and the next step.</P>
+        <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Before issue</strong> — what is still missing, each with a link to the page where you fix it. Choose what the B/L says: <em>Shipped on board</em> (dated by the container's Loaded event, or a date you type) or <em>Received for shipment</em>; how many originals and non-negotiable copies; and whether the freight shows as <em>as arranged</em> or with the shipment's charges. <Tag>Generate draft</Tag> makes a copy to check or send for approval (it says the number is assigned at issue); <Tag>Issue House B/L</Tag> takes the number, prints it dated today and issues it.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>The B/L number</strong> — taken from the issuing office's series when you issue (e.g. RTMHBL2600123: the prefix, the year, a sequence). An admin sets the prefix under Organisation → Offices → Edit. A voided number is never used again. For a B/L already issued on paper, type its number on <Tag>Conditions</Tag> first.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>After issue, on paper</strong> — log who received the originals (<Tag>＋ Record handover</Tag>: to whom, in person, by courier with its tracking number, or by mail). Record them as presented at destination (an Original B/L, with who presented them) or surrendered at origin (a telex release: the import office gets a task telling it to release without originals), then <Tag>Release cargo</Tag>. The release dialog shows its three checks; an admin or finance user can override with a reason.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Corrections</strong> — if the shipment changes after issue, the panel says what no longer matches. <Tag>Surrender for amendment</Tag> records the originals coming back, with the reason; then issue version 2, which keeps the same number and prints "VERSION 2 · AMENDED". An eBL is corrected by its holder asking on the platform.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Or electronic</strong> — <Tag>Issue as eBL</Tag> sends it to an eBL platform, issued to the shipper by its platform id (Customers → Identifiers, type WAVE, CARX…). The issuing legal entity needs a SCAC, a street address and a phone or email (Organisation → Branches). The holder endorses it on the platform; when the consignee asks to surrender it for delivery, CargoDesk checks payment and credit and releases the cargo.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Void, with a reason</strong> — takes an issued House B/L out of use; it stays on record and a new one can be issued.</li>
+        </ul>
+        <P>Packages for the B/L are entered on each container (Cargo): <strong>Packages</strong> (how many) and
+          <strong> Kind of packages</strong> (carton, pallet, …). They are separate from the cargo manifest
+          below the container. A dangerous-goods container also needs its <strong>UN number</strong> and
+          <strong> proper shipping name</strong>; a reefer's set temperature prints as it is. To issue the B/L
+          <em> to order</em>, choose it on <Tag>Conditions</Tag> → Consignee on the B/L (a Sea Waybill can't be).
+          The printed B/L lists every vessel, the transshipment port and the on-carriage. In a test environment,
+          <Tag>Test Tools → eBL Platform</Tag> plays the eBL platform: issue or refuse an eBL, endorse it, or ask
+          CargoDesk to accept a surrender. The carrier booking links the carrier's own <strong>Master B/L</strong>
+          (MB01), not the House B/L.</P>
 
         <H3>Who's who on a shipment</H3>
         <P><Tag>Shipper</Tag> the party sending the goods · <Tag>Consignee</Tag> the party receiving
@@ -866,8 +915,9 @@ const UserManualPage = () => {
       <div>
         <H2>Shipping Instructions & VGM</H2>
         <Dek>Two pre-departure compliance steps that sit alongside the booking, not inside it —
-          both live under <Tag>Booking & Routing</Tag> in a shipment's sidebar, and both are
-          simulated rather than connected to a live carrier/terminal system today.</Dek>
+          both live under <Tag>Booking & Routing</Tag> in a shipment's sidebar, and both go to the
+          carrier as standard DCSA messages: Shipping Instructions 3.0 and VGM 1.0. A carrier that
+          isn't connected yet is played by the demo carrier, as for bookings.</Dek>
 
         <H3>Shipping Instructions (SI)</H3>
         <P>Shipping Instructions is the shipper's own submission of the final Bill of Lading
@@ -876,10 +926,49 @@ const UserManualPage = () => {
           fill in the SI cutoff and any special instructions, and <Tag>Save Draft</Tag>. A shipment
           needs a Shipper and a Consignee set (Parties & Offices) plus at least one container
           before <Tag>Submit</Tag> is available.</P>
-        <P>Once submitted, the record locks — a rejection (via the same simulated response cycle
-          Carrier Booking uses) is the only way back to an editable Draft, via{" "}
-          <Tag>Reset to Draft</Tag>. Confirmed or Submitted SI unlocks a formal{" "}
-          <Tag>SI01</Tag> document under Generate Document.</P>
+        <P><Tag>Submit</Tag> sends them to the carrier. The carrier must already have confirmed the
+          booking, because the instructions quote its booking number. Every container needs its
+          number, seal, HS code, gross weight and cargo description, and the export office's legal
+          entity needs a phone or email (Organisation → Branches) for the carrier to reach. If
+          anything is missing, the message lists it and nothing is sent. When the shipment has an NVOCC,
+          the NVOCC is the shipper, because these instructions are for the carrier's Master B/L.</P>
+        <P>Once submitted, the record locks. The carrier then answers:</P>
+        <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}>it <strong>drafts its Master B/L</strong> from them: <Badge variant="success">Confirmed</Badge>, and the
+            draft appears below the instructions for you to review;</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}>it <strong>asks for an update</strong>: <Badge variant="danger">Rejected</Badge> with the
+            carrier's reason. <Tag>Reset to Draft</Tag>, correct the shipment, and submit again. The
+            correction goes as an update under the same carrier reference.</li>
+        </ul>
+        <P>A declined one is final, and the next submit sends new instructions. Confirmed or Submitted
+          SI unlocks a formal <Tag>SI01</Tag> document under Generate Document.</P>
+        <P>While the carrier holds the instructions, <Tag>Send update</Tag> sends the shipment's data as it
+          is now (a corrected seal, a House B/L issued since) under the same reference, and the carrier
+          redrafts. <Tag>Cancel instructions</Tag> asks you to confirm, then cancels them at the carrier,
+          which voids its draft. An update the carrier hasn't worked in yet can be cancelled on its own. Once
+          the carrier has issued the Master B/L, nothing here can change any more.</P>
+
+        <H3>The carrier's Master B/L</H3>
+        <P>When the carrier drafts its Master B/L, a card opens under the instructions. It shows the critical
+          information first:</P>
+        <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}>where it stands: drafted, approved, issued, surrendered for delivery;</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}>anything that <strong>differs from what you sent</strong>, at the top, your value next to
+            the carrier's;</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}>six key facts, each marked ✓ (same as sent) or ≠ (changed): the document and originals, the
+            vessel and voyage, the shipper, the consignee, the ports, and the containers with their
+            weight and seals.</li>
+        </ul>
+        <P><Tag>Show all fields</Tag> opens the field-by-field comparison. Click the card's title to fold
+          it away. If the draft is right, <Tag>Approve draft</Tag>. If something needs correcting, fix
+          the shipment and use <Tag>Send update</Tag>. A task sits on the export office's Kanban until the
+          draft is approved. When the carrier issues it, the shipment takes the Master B/L number and{" "}
+          <Tag>B/L Issued</Tag> completes. When the B/L is surrendered for delivery, the carrier marks the
+          instructions complete.</P>
+        <P>A House B/L you have issued travels inside the Master's instructions where the destination's
+          advance filing needs House-level data (EU ICS2, US AMS, Mercosur). Its packages then need their
+          package code, and its HS code the destination tariff's digits; the submit tells you if either is
+          missing.</P>
         <Callout type="tip">The Container/Seal Detail table on this page flags, in amber, any
           container still missing a seal number, marks & numbers, or cargo description — worth a
           glance before you submit, since those fields render blank on the generated document
@@ -893,10 +982,26 @@ const UserManualPage = () => {
           each container's weight and Method, then move its status to{" "}
           <Badge variant="info">Submitted</Badge> — CargoDesk won't let a container move past{" "}
           <Badge variant="default">Pending</Badge> without a Method on file.</P>
-        <P>A submitted VGM can come back <Badge variant="success">Accepted</Badge> or{" "}
-          <Badge variant="danger">Rejected</Badge> (again, simulated) — a rejected container shows
-          its reason and a one-click <Tag>Reset</Tag> back to Pending for correction. The page's own
-          Message Thread shows every declaration and response for the shipment in one place.</P>
+        <P>Moving a container to Submitted sends its VGM declaration to the carrier. If no weight or
+          Method is set, or the carrier refuses it, nothing is saved. A corrected weight or Method sends
+          the declaration again, replacing the first. Moving the container back to Pending withdraws
+          it at the carrier.</P>
+        <P>Every declaration is kept. Open <Tag>Declarations</Tag> on a container to see them, newest first,
+          with what was declared, when, by whom and for whom. Each one has its own files:</P>
+        <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Evidence</strong>: the weighbridge ticket (Method 1) or the weight calculation
+            (Method 2). Attach it with <Tag>Attach weighbridge ticket</Tag> or <Tag>Attach weight calculation</Tag>.
+            Until you do, the container shows <strong>No evidence on file</strong>. A corrected weight is a
+            new declaration, so it needs its own evidence.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>VG01 VGM Declaration</strong>: the printable, signed declaration, made with{" "}
+            <Tag>Generate VG01</Tag>.</li>
+        </ul>
+        <P>The evidence stays in CargoDesk: the carrier's VGM message carries no attachments. A container
+          whose VGM the carrier holds can't be removed until you set it back to Pending, which withdraws it.</P>
+        <P>In Test Tools, a submitted VGM can be marked <Badge variant="success">Accepted</Badge> or{" "}
+          <Badge variant="danger">Rejected</Badge>, which stands in for the terminal's check. A rejected
+          container shows its reason and a one-click <Tag>Reset</Tag> back to Pending for correction. The
+          page's own Message Thread shows every declaration and response for the shipment in one place.</P>
         <Callout type="note">Once every container on a shipment has reached Submitted VGM (or, more
           precisely now, once Shipping Instructions is actually submitted), the shipment's{" "}
           <Tag>SI Submitted</Tag> milestone auto-completes — whichever of the two happens first.</Callout>
@@ -946,7 +1051,7 @@ const UserManualPage = () => {
         <P><strong>Capabilities</strong> — a checklist of what this agent can actually do (road haulage, warehousing, customs clearance, and so on). This is recorded so a future check can flag a mismatch before a booking is sent — for example, if a shipment needs road haulage arranged on export but the assigned agent doesn't offer it — but that automatic check doesn't exist yet; today the checklist is just recorded on the agent's own record.</P>
         <P><strong>Notes</strong> and <strong>Address &amp; Contact</strong> — a free-text notes box, and a read-only view of the agent company's own address and contact person (kept in sync with their Customer record — update it there, not here).</P>
         <H3>Automatic assignment on a new shipment</H3>
-        <P>Whenever a shipment's carrier, origin, or destination is set, CargoDesk automatically checks whether a registered Line Agent covers each end and — if exactly one does — fills the "Line Agent (Export)"/"Line Agent (Import)" party for you, so nobody has to remember to do it by hand. If a location resolves through more than one linked port and each has its own registered agent, CargoDesk won't guess: the shipment's header shows a <Tag>Line Agent Picks Needed</Tag> badge, and opening Parties &amp; Offices shows a "pick one" list naming every real candidate and which linked port it matched through. Dismissing that list without picking leaves the party unassigned exactly as it already is — you can always assign one manually later.</P>
+        <P>Whenever a shipment's carrier, origin, or destination is set, CargoDesk automatically checks whether a registered Line Agent covers each end and — if exactly one does — fills the "Line Agent (Export)"/"Line Agent (Import)" party for you, so nobody has to remember to do it by hand. The Line Agent (Export) is where the carrier booking goes: the booking names it as the carrier's booking office, with its address and contact from its Customer record. If a location resolves through more than one linked port and each has its own registered agent, CargoDesk won't guess: the shipment's header shows a <Tag>Line Agent Picks Needed</Tag> badge, and opening Parties &amp; Offices shows a "pick one" list naming every real candidate and which linked port it matched through. Dismissing that list without picking leaves the party unassigned exactly as it already is — you can always assign one manually later.</P>
       </div>
     ),
     "ais-integration": (

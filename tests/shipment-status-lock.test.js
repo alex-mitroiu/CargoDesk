@@ -89,7 +89,7 @@ const notLocked = res => res.status < 400;
     // priced cargo, and an export customs broker — everything a booking and an AES filing need.
     const scratchShipment = async () => {
       const res = await request("POST", "/api/shipments", {
-        pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+        pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418",
         etd: "2026-11-02", eta: "2026-11-14", incoterm: "FOB", commodityCode: "9999",
         shipperId: shipper.id, shipperName: shipper.companyName,
         consigneeId: consignee.id, consigneeName: consignee.companyName,

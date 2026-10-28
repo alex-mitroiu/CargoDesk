@@ -106,6 +106,10 @@ export const api = {
     acceptChanges: (shipmentId) => req("POST", `/shipments/${shipmentId}/carrier-booking/accept-changes`, {}),
     checkStatus: (shipmentId) => req("POST", `/shipments/${shipmentId}/carrier-booking/check-status`, {}),
     syncEvents:  (shipmentId) => req("POST", `/shipments/${shipmentId}/carrier-events/sync`, {}),
+    // Every Track & Trace event the carrier sent, with what CargoDesk did with it (DCSA phase 6).
+    carrierEvents: (shipmentId) => req("GET", `/shipments/${shipmentId}/carrier-events`),
+    // The carrier's Operational Vessel Schedules for the shipment's sea legs (DCSA OVS 3.0).
+    syncVesselTimes: (shipmentId) => req("POST", `/shipments/${shipmentId}/vessel-times/sync`, {}),
     listAll: (params={})           => req("GET",   `/carrier-bookings?${new URLSearchParams(params)}`),
     history: (shipmentId)          => req("GET",   `/shipments/${shipmentId}/carrier-booking-history`),
     linkBlDocument: (shipmentId, documentId) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/link-bl-document`, { documentId }),
@@ -131,9 +135,20 @@ export const api = {
     submit:           (shipmentId)       => req("POST",  `/shipments/${shipmentId}/shipping-instructions/submit`, {}),
     simulateResponse: (shipmentId, d)    => req("POST",  `/shipments/${shipmentId}/shipping-instructions/simulate-response`, d),
     reset:            (shipmentId)       => req("PATCH", `/shipments/${shipmentId}/shipping-instructions/reset`, {}),
+    // While the carrier holds them: the shipment's data as it is now, as an update; cancel them or a pending update.
+    sendUpdate:       (shipmentId)       => req("POST",  `/shipments/${shipmentId}/shipping-instructions/send-update`, {}),
+    cancel:           (shipmentId, update = false) => req("POST", `/shipments/${shipmentId}/shipping-instructions/cancel`, { update }),
     listAll:          (params={})        => req("GET",   `/shipping-instructions?${new URLSearchParams(params)}`),
   },
+  // The carrier's Master B/L, drafted from the Shipping Instructions (DCSA eBL 3.0 transport document).
+  masterBl: {
+    get:     (shipmentId) => req("GET",  `/shipments/${shipmentId}/master-bl`),
+    approve: (shipmentId) => req("POST", `/shipments/${shipmentId}/master-bl/approve`, {}),
+    refresh: (shipmentId) => req("POST", `/shipments/${shipmentId}/master-bl/refresh`, {}),
+  },
   vgm: {
+    // Every declaration made (DCSA VGM 1.0), newest first, each with its evidence (VG02) and VG01 document.
+    declarations:     (shipmentId)                 => req("GET",  `/shipments/${shipmentId}/vgm-declarations`),
     simulateResponse: (shipmentId, containerId, d) => req("POST", `/shipments/${shipmentId}/containers/${containerId}/vgm/simulate-response`, d),
     listSubmissions:  (params={})                  => req("GET",  `/vgm-submissions?${new URLSearchParams(params)}`),
   },
@@ -552,6 +567,33 @@ export const api = {
     status:   ()                     => req("GET",  "/dcsa-simulator/status"),
     bookings: ()                     => req("GET",  "/test-tools/dcsa-sim/bookings"),
     act:      (ref, action, message) => req("POST", `/test-tools/dcsa-sim/bookings/${encodeURIComponent(ref)}/${action}`, message ? { message } : {}),
+    // Shipping Instructions and the Master B/L: requestUpdate, decline, draft, issue, surrender, void.
+    actSi:    (ref, action, message) => req("POST", `/test-tools/dcsa-sim/shipping-instructions/${encodeURIComponent(ref)}/${action}`, message ? { message } : {}),
+    transportDocuments: ()           => req("GET",  "/test-tools/dcsa-sim/transport-documents"),
+    // Track & Trace 3.0: { shipmentId, kind, classifier, dateTime }; and its retraction.
+    reportEvent:  (data)             => req("POST", "/test-tools/dcsa-sim/events", data),
+    retractEvent: (eventId)          => req("POST", `/test-tools/dcsa-sim/events/${encodeURIComponent(eventId)}/retract`, {}),
+    events:       (bookingRef = "")  => req("GET",  `/test-tools/dcsa-sim/events${bookingRef ? `?bookingRef=${encodeURIComponent(bookingRef)}` : ""}`),
+    // Operational Vessel Schedules 3.0: the demo carrier's vessel times.
+    vesselCalls:   (p = {})          => req("GET",  `/test-tools/dcsa-sim/vessel-calls?${new URLSearchParams(p)}`),
+    setVesselCall: (data)            => req("POST", "/test-tools/dcsa-sim/vessel-calls", data),
+  },
+  // Test Tools: play the built-in eBL platform and the holders (Epic TKT-C7EBU3, lib/ebl-platform-simulator.js).
+  // act: ISSU | BREQ | REFU ({ reason }), endorse ({ partyName, partyCode }), SREQ | AREQ.
+  eblSim: {
+    documents: ()                       => req("GET",  "/test-tools/ebl-sim/documents"),
+    act:       (ref, action, data = {}) => req("POST", `/test-tools/ebl-sim/documents/${encodeURIComponent(ref)}/${action}`, data),
+  },
+  // The House B/L as a DCSA transport document (Epic TKT-C7EBU3, routes/house-bl.js + routes/ebl.js).
+  houseBl: {
+    get:      (shipmentId)       => req("GET",  `/shipments/${shipmentId}/house-bl`),
+    events:   (shipmentId, tdId) => req("GET",  `/shipments/${shipmentId}/house-bl/${tdId}/events`),
+    dcsa:     (shipmentId, tdId) => req("GET",  `/shipments/${shipmentId}/house-bl/${tdId}/dcsa`),
+    issueEbl: (shipmentId, data) => req("POST", `/shipments/${shipmentId}/house-bl/issue-ebl`, data),
+    // The number it is issued under: the shipment's, or the next from the office series (gap G5).
+    number:   (shipmentId)       => req("POST", `/shipments/${shipmentId}/house-bl/number`, {}),
+    surrenderForAmendment: (shipmentId, reason) => req("POST", `/shipments/${shipmentId}/house-bl/surrender-for-amendment`, { reason }),
+    originalsHandover: (shipmentId, data) => req("POST", `/shipments/${shipmentId}/house-bl/originals-handover`, data),
   },
   carrierIntegrations: {
     list:     ()      => req("GET",    "/carrier-integrations"),
@@ -748,8 +790,9 @@ export const api = {
     // House B/L Lifecycle — post-issuance facts (Surrendered at origin, Released at destination),
     // BL01 only. Document generation + print/email are the existing generate/download/sendEmail
     // calls above; no separate wrappers needed for those.
-    blSurrender: (shipmentId, docId) => req("PATCH", `/shipments/${shipmentId}/documents/${docId}/bl-surrender`),
-    blRelease:   (shipmentId, docId) => req("PATCH", `/shipments/${shipmentId}/documents/${docId}/bl-release`),
+    blSurrender: (shipmentId, docId, data) => req("PATCH", `/shipments/${shipmentId}/documents/${docId}/bl-surrender`, data),
+    // { override, overrideReason }: an admin or finance user releasing past the release checks.
+    blRelease:   (shipmentId, docId, data) => req("PATCH", `/shipments/${shipmentId}/documents/${docId}/bl-release`, data),
     // Invoice Collections (Epic TKT-G11AHW) — status override (Trade Manager only, own trade
     // lane), its audit history, and reassigning "user responsible".
     statusOverride:  (shipmentId, docId, data) => req("POST", `/shipments/${shipmentId}/documents/${docId}/status-override`, data),

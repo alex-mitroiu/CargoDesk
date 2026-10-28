@@ -123,7 +123,7 @@ const list = b => (Array.isArray(b) ? b : (b?.results ?? []));
     const mscu = list((await request("GET", "/api/schedules/search?pol=NLRTM&pod=USNYC&carrierCode=MSCU&weeks=6&onlyCarrier=1", null, token)).body?.sailings);
     const tsSailing = mscu.find(x => x.legs?.length === 2);
     let r = await request("POST", `/api/escalations/${esc.id}/actions`, { action: "instruct", message: "Via the hub",
-      instruction: { carrierCode: "MSCU", sailing: { vesselName: tsSailing.vesselName, voyageNumber: tsSailing.voyageNumber, etd: tsSailing.etd, eta: tsSailing.eta,
+      instruction: { carrierCode: "MSCU", contractNumber: "MSCU-SC-2026-0118", source: "contracts", sailing: { vesselName: tsSailing.vesselName, voyageNumber: tsSailing.voyageNumber, etd: tsSailing.etd, eta: tsSailing.eta,
         pol: "NLRTM", pod: "USNYC", legs: tsSailing.legs } } }, token);
     assert("instructions carry the legs", r.status === 200 && r.body.escalation.instruction?.sailing?.legs?.length === 2, JSON.stringify(r.body).slice(0, 300));
     r = await request("POST", `/api/escalations/${esc.id}/book`, {}, token);

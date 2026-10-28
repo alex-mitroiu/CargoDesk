@@ -17,7 +17,10 @@ import PortCombobox from "../../components/shared/PortCombobox";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const ID_TYPES  = ["VAT", "EORI", "Tax ID", "DUNS", "GLN", "Customs Reg", "Other"];
+const ID_TYPES  = ["VAT", "EORI", "Tax ID", "LEI", "DUNS", "FMC", "GLN", "Customs Reg", "Other"];
+// A party's id on an eBL platform (Epic TKT-C7EBU3): an eBL is issued to, and endorsed between,
+// parties by these. The codes are DCSA's (eBL Issuance 3.0 sendToPlatform).
+const EBL_PLATFORM_ID_TYPES = ["WAVE", "CARX", "IDT", "BOLE", "EDOX", "IQAX", "SECR", "TRGO", "ETEU", "TRAC", "BRIT", "COVA", "ETIT", "KTNE", "CRED", "BLOC", "DOCU", "AEOT", "SGTD"];
 const DOC_TYPES = ["KYC", "Commercial Contract", "Compliance Waiver", "Power of Attorney", "Other"];
 const CURRENCIES = ["USD", "EUR", "GBP", "CNY", "SGD", "JPY", "AED", "CHF"];
 
@@ -302,6 +305,9 @@ const IdentifierForm = ({ init = {}, onSave, onCancel, saving }) => {
         <select value={f.idType} onChange={e => set("idType")(e.target.value)}
           style={{ ...inputBase, width: "100%", cursor: "pointer" }}>
           {ID_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+          <optgroup label="eBL platform ids">
+            {EBL_PLATFORM_ID_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+          </optgroup>
         </select>
       </div>
       <Inp label="Code / Number" value={f.idCode} onChange={set("idCode")}

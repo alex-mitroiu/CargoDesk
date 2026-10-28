@@ -95,7 +95,7 @@ this document covers *how it's built*.
 ---
 
 ## Table of Contents
-_(§8.33–8.39 added 2026-09-30 → 2026-10-21, with the §6 table count and groupings and the §14
+_(§8.42 added 2026-10-28 (DCSA phases 4–6, with §6 and §14); §8.41 added 2026-10-27 (the DCSA message review, with §6 and §14); §8.40 added 2026-10-21 (House B/L, Story 1) and completed 2026-10-24 (the remaining gaps, with §6 and §14); §8.33–8.39 added 2026-09-30 → 2026-10-21, with the §6 table count and groupings and the §14
 write-triggered side effects brought up to date on 2026-10-21 (§8.39, Where to book); §8.28–8.32, the full §5 `routes/` re-measure and the §4/§6/§8.5/§8.6/§11/§14 updates added
 2026-09-29 (v0.91.9 + unreleased); §8.26–8.27 and the §4/§6/§11 updates added 2026-09-25 (v0.91.8); §8.25 added 2026-09-20 (v0.91.6);
 §8.23–8.24 added 2026-09-19 (v0.91.5); §8.15 extended 2026-08-29 (v0.87.0); §8.21 added 2026-08-29
@@ -573,10 +573,30 @@ and 25 indexes now exist beyond primary keys (§11 — this resolves the old "no
 
 ## 6. Data Model
 
-**115 tables** in the monolith's own database, plus the Contract Management service's own 4-table
+**126 tables** in the monolith's own database, plus the Contract Management service's own 4-table
 copy (`contracts`/`contract_legs`/`contract_rates`/`contract_routings`) when
 `contract_source='remote'` (§8.1) — never both populated as the live source at once.
 
+- **2026-10-28 (DCSA phases 4–6, §8.42):** +5 — `vgm_declarations`, `carrier_events`, and the built-in carrier's
+  `dcsa_sim_transport_documents`, `dcsa_sim_events` and `dcsa_sim_vessel_calls`. Columns added:
+  - `transport_documents` (Master B/L rows, `role='MASTER'`): `carrier_code`, `shipping_instructions_reference`,
+    `amended_status`, `carrier_feedback`, `is_mock`, `carrier_state_at`, `draft_count`, `approved_at`, `approved_by`;
+  - `container_events`: `dcsa_event_type`, `dcsa_event_code`, `event_classifier`, `empty_indicator`, `un_location_code`;
+  - `milestone_templates` and `shipment_milestones`: `dcsa_events`;
+  - `shipping_instructions.transport_document_reference`, `shipment_documents.vgm_declaration_id`,
+    `dcsa_sim_shipping_instructions.prev_request_json`.
+- **2026-10-27 (the DCSA message review, §8.41):** +2 — `dcsa_sim_shipping_instructions` and
+  `dcsa_sim_vgm_declarations` (the built-in carrier's side of SI and VGM). Columns added:
+  `shipping_instructions.carrier_code`, `carrier_state`, `carrier_updated_state`, `carrier_feedback`,
+  `carrier_state_at` and `is_mock`.
+- **2026-10-24 (House B/L, the remaining gaps, §8.40):** columns only, still 119 tables.
+  `offices.hbl_prefix`, `hbl_next_seq`, `hbl_seq_year` (the number series); `shipments.bl_number_source`,
+  `bl_to_order`; `transport_documents.number_source`, `to_order_mode`, `originals_count`, `copies_count`,
+  `with_charges`, `amendment_reason`, `telex_notice_ticket_id`; `containers.dg_un_number`,
+  `dg_proper_shipping_name`.
+- **2026-10-21, later (House B/L, §8.40):** +4 — `transport_documents`, `transport_document_events`,
+  `ebl_surrender_requests`, `ebl_sim_documents`. Columns added: `containers.number_of_packages`,
+  `package_code`, `package_description` and `branches.scac`.
 - **2026-10-21 (remeasured with `grep -c "CREATE TABLE IF NOT EXISTS" lib/schema.js`):** a net +9 since
   2026-09-29, checked against git.
   - Ten added: `allocation_routings` (§8.33), `dcsa_sim_bookings` (§8.35), `booking_escalations`,
@@ -3152,7 +3172,8 @@ Track & Trace 2.2, Commercial Schedules 1.0 (API 1.0.1).
   PUTs it: an update while open, an amendment once confirmed.
 - **Polling.** `GET /v2/bookings/{ref}` for bookings sent through an integration and not heard from
   for 15 minutes (sweep), and "Check status" on the Carrier Booking page.
-- **Track & Trace (decided by the user).** `routes/carrier-tracking.js` pulls `GET /v2/events` by
+- **Track & Trace (decided by the user).** *(Since 2026-10-27 this is Track & Trace 3.0, `GET /events`: §8.41.)*
+  `routes/carrier-tracking.js` pulls `GET /v2/events` by
   carrier booking number (paged) — "Sync carrier events" on Milestones & Events and a 30-minute
   sweep. `lib/carrier-integrations/tnt-mapping.js`: actual events only; GTOT/GTIN empty/laden →
   Empty Pickup / Gate In / Gate Out / Empty Return; LOAD at the POL → Loaded, DISC at the POD →
@@ -3563,6 +3584,411 @@ of space (the Steering & Allocation app replaced them; CargoDesk deliberately do
   - Vitest: `isoWeek`, `contractConsumption`, `spaceConfigTable`, the Space Configurations form,
     `WhereToBook`, `SteeringReport`.
   - Cypress: `where-to-book` (4).
+
+### 8.40 House Bill of Lading: issue rules, toward a DCSA transport document (Epic TKT-C7EBU3, 2026-10-21)
+
+Plan and gap analysis: https://claude.ai/artifact/FF9eMZXXMLHdJkCk5abaoU (25 gaps, 9 high). The House B/L was a
+printed BL01 (`shipment_documents`) plus two date stamps (§8.15 has the House/Master split). The epic makes it a
+DCSA transport document (eBL 3.0 shape, shared with the Master in DCSA Phase 4), prints BL01 from it, guards the
+release, and issues and surrenders it as an eBL through a built-in eBL platform. It delivers DCSA everywhere
+Phase 7 (`TKT-VYCTPK`, §8.35). Decided by the user on 2026-10-21, all as recommended:
+- **D1:** B/L numbers come from a series per issuing office, assigned at issue.
+- **D2:** "received for shipment" once the carrier confirmed; "shipped on board" once loaded.
+- **D3:** release is blocked on unpaid collect charges, credit hold or unsurrendered originals, with a
+  finance override.
+- **D4:** eBL issuance and surrender against a built-in platform; no PINT.
+
+- **Story 1 — issue rules (`TKT-E8R1UF`, built).** An issued (confirmed) House B/L only moves forward, like the
+  billing documents (`HOUSE_BL` beside `BILLING_DOC_TYPES` in routes/shipment-ops.js):
+  - it can't be deleted or set back to draft; it is voided, and voiding an issued one needs a reason
+    (`voidReason`, kept on the VOIDED entity event);
+  - a voided one stays voided and can't be deleted;
+  - one issued House B/L per shipment: the PATCH checks first for a readable 409, and the partial unique
+    index `ux_shipment_documents_one_issued_house_bl` (`doc_type='BL01' AND status='confirmed'`) holds under
+    concurrent issues (a 23505 becomes the same 409);
+  - a regenerated draft (`POST …/documents/generate`, BL01) replaces the earlier BL01 drafts in the same
+    transaction; a carrier booking linked to one of them (`bl_document_id`) follows to the new draft, and each
+    replaced draft gets a REPLACED entity event. Uploaded BL01 files are left alone;
+  - the Documents page shows **Void** on an issued House B/L instead of ✕, marks voided rows Voided, and a
+    type whose only document is voided counts as missing.
+- **The nine high gaps first (the user, 2026-10-21).** G1–G3 are Story 1; G4, G8, G10, G19, G23 and G24 below,
+  with their screens (mockup https://claude.ai/artifact/Tr9cyqXe31HqYTxy63ap7Z). The medium and low gaps followed on
+  2026-10-24 ("The remaining gaps", below). G25, declaring the House B/Ls to the carrier in the Master SI, waits on
+  DCSA Phase 4 (the Master transport document).
+- **The record, G23 (`lib/house-bl.js` = `ctx.houseBl`).** `transport_documents`, one row per House B/L version,
+  in DCSA eBL 3.0 terms (`status` = `TRANSPORT_DOCUMENT_STATUS`, `type_code` BOL|SWB, the Seaway Bill → SWB),
+  and `transport_document_events` for its history. Two partial unique indexes: one live House B/L per shipment
+  (issued or in a surrender), one House draft.
+  - **Generating** a BL01 draft creates or updates the House draft (`onDraftGenerated`, in the insert transaction).
+  - **Confirming** issues it (`prepareIssue` then `apply(tx)`, atomically with the document): readiness first; then
+    the issue date, the place of issue (the export office's UN/LOCODE), the type and the B/L number. The number is
+    also written to `shipments.bl_number` when that is empty. The DCSA TransportDocument is built, checked against the
+    vendored spec, and kept (`payload`, `payload_errors`). Voiding, deleting a draft and surrendering update the record.
+  - **Startup migration** (`migrateLegacyHouseBls`, idempotent): each BL01 got a record. Confirmed became ISSUED, or
+    SURRENDERED_FOR_DELIVERY when it had been marked surrendered, with the released stamp kept. The newest draft per
+    shipment became the House draft, and voided stayed voided. It records what the old print said (shipped on board,
+    no date). First run: 14 records.
+  - **API (`routes/house-bl.js`):** `GET /api/shipments/:id/house-bl` returns the records, readiness, release checks,
+    loading facts and package codes. Also `…/:tdId/events` and `…/:tdId/dcsa`.
+- **Readiness, G4.** Issue is refused (409) with a plain list of what's missing:
+  - shipper and consignee with street, city and country; a notify party;
+  - both ports; vessel and voyage; a CONFIRMED carrier booking with its number; the release type;
+  - an accepted AES/EEI filing, when there is one;
+  - per container: number, seal, package count and kind, gross weight, description, a 6–10 digit HS code;
+  - for a shipped-on-board draft, recorded loading;
+  - a B/L number of at most 20 characters, not used on another shipment.
+- **Shipped on board or received for shipment, G8 (D2).** The generate request may carry
+  `houseBl: { shippedOnBoard, onBoardDate, onBoardDateTyped }`, which is what the PDF prints.
+  - Without it, the draft is taken as the old print: always SHIPPED ON BOARD.
+  - The on-board date comes from the first Loaded (else Sailed) container event, else the completed Vessel Departed
+    milestone, else a typed date (never in the future).
+  - A shipped-on-board draft with no loading can be generated but not issued. A received-for-shipment one is issued
+    with the Gate In date, else the issue date.
+- **Packages, G10.** `containers.number_of_packages`, `package_code` (UN/ECE Rec. 21: `PACKAGE_CODES`) and
+  `package_description`. A whole-row container save that omits them keeps the stored values, because the Cargo form
+  doesn't send them yet.
+- **Release, G19 (D3).** `PATCH …/bl-release` runs `releaseChecks`:
+  - **originals:** surrendered, or no originals (Seaway Bill). For an Original B/L, `bl-surrender` is now recorded
+    on the import side, where the originals are presented; a telex release stays export side;
+  - **collect charges:** every collect SELL line sits on a paid invoice or statement (`billingHolds`);
+  - **credit hold:** the consignee isn't on credit hold.
+  - Blocked: 409 with `blocks`. `{ override: true, overrideReason }` from an admin or a user with finance access
+    releases anyway; the RELEASED_WITH_OVERRIDE event names what was overridden.
+  - Release completes Cargo Released. With a House B/L issued, the Delivery Order (DO01) is refused until release.
+- **eBL, G24 (D4; `lib/ebl.js` = `ctx.ebl`, `lib/ebl-platform-simulator.js` = `ctx.eblPlatform`, `routes/ebl.js`).**
+  - **Issuing:** `POST /api/shipments/:id/house-bl/issue-ebl { platform = "WAVE", partyCode? }` sends an issued House
+    B/L to a platform (DCSA eBL Issuance 3.0).
+    - The issue-to party is the shipper, with its platform id: a customer identifier whose type is the platform code.
+    - The legal entity must have a SCAC (`branches.scac`, new), a street and a phone or email.
+    - The document must pass the spec.
+    - The manifest holds SHA-256 checksums of the RFC 8785 canonical document and issue-to party, signed as a compact
+      JWS (RS256) with the active `org_signing_certs` key, the same one that signs the PDFs.
+  - **Receivers:** `POST /api/ebl/v3/ebl-issuance-responses` (ISSU; BREQ and REFU go back to paper with the reason)
+    and `POST /api/ebl/v3/ebl-surrender-requests`. These carry the platform credential instead of a JWT, so they are
+    exempt from the `/api` auth guard, like the carrier webhooks.
+  - **Surrender:** SREQ runs the release checks except the originals; it is answered SURR (surrendered for delivery
+    and released) or SREJ (the reasons, back to ISSUED). AREQ is answered SURR, giving SURRENDERED_FOR_AMENDMENT,
+    after which a new version can be issued. Answers go asynchronously to the platform's `/v3/ebl-surrender-responses`.
+  - **Spec checks:** every message in both directions is checked against the vendored specs.
+  - **The built-in platform** (`/ebl-sim/v3/…`, on the DCSA carrier's Demo switch) verifies the JWS and the checksums,
+    and holds the document. Test Tools plays the platform and the holders:
+    `GET/POST /api/test-tools/ebl-sim/documents[/:ref/:action]`, with the actions ISSU|BREQ|REFU, endorse, SREQ|AREQ.
+  - **Identifiers mapping:** LEI, DUNS, FMC, DID and platform ids become identifyingCodes; VAT and EORI become
+    taxLegalReferences. A named consignee needs one identifying code on a DCSA transport document.
+- **Also fixed:** deleting a BL01 that the carrier booking linked returned a 500 (a foreign key). The booking now lets go first.
+- **The screens** (the mockup https://claude.ai/artifact/Tr9cyqXe31HqYTxy63ap7Z, approved 2026-10-21):
+  - **House B/L panel** (`src/components/shared/HouseBlPanel.jsx`) at the top of the shipment's Documents page.
+    `DocumentsModal` renders it, keyed by shipment, and shares `docs` with it: each reloads after the other changes.
+    - It shows a stepper (Draft, Issued, Surrendered, Released), the record and its history.
+    - The next-step card: readiness items with a link to where each is fixed (`fixPlaceOf`); "what the B/L says"
+      (shipped on board from the Loaded event or a typed date, or received for shipment); Generate draft and Issue.
+    - Issue builds the PDF dated today, then confirms it.
+    - After issue: originals presented at destination, or surrendered at origin; the release dialog
+      (`ReleaseCargoModal`, three checks, the override for an admin or a finance user); Issue as eBL (platform,
+      issue-to id, what the entity still lacks); Void with a reason.
+    - It looks again every 4 s while the platform has something pending.
+  - **`src/utils/houseBlDocument.js`** builds the BL01 HTML for the panel and for Generate Document. It adds the
+    notify party, the issuer from the summary, and the statement, and returns the `houseBl` claim the server checks.
+    Generate Document asks "what the B/L says" for a BL01.
+  - **The print** (`buildBillOfLadingHtml`):
+    - on board or received for shipment, with its date;
+    - container/seal, marks, packages; the FCL clauses;
+    - the notify address; freight payable at; 3 (THREE) originals;
+    - the place of issue (the issuing office); the legal entity "as carrier", signed by the user.
+    - A custom Document Template still renders its own layout.
+  - **Packages: separate B/L fields, by the user's choice (2026-10-21).** Packages and Kind of packages
+    (UN/ECE codes, `PACKAGE_CODES` in `src/utils/dcsaCodes.js`, mirrored from lib/house-bl.js) on the container
+    form, and a Packages column in the Cargo table. They are independent of the `container_packages` manifest;
+    deriving them from the manifest was offered and declined.
+  - **Test Tools → eBL Platform** (`src/pages/EblPlatformPanel.jsx`): each eBL with its shipment, state and holder,
+    and only the actions valid now (ISSU/BREQ/REFU with a reason, Endorse with a name and platform id, SREQ, AREQ).
+  - **Organisation → Branch:** a SCAC field (also on create). **Customers → Identifiers:** LEI, FMC and an
+    "eBL platform ids" group (WAVE, CARX, …). "Tax ID" maps to DCSA's TIN.
+  - The summary gained `issuer` and `ebl` (platforms, the shipper's platform ids, the entity's gaps).
+- **The remaining gaps (2026-10-24; mockup https://claude.ai/artifact/CnuymDL2eUEnxnD8oDtj57).**
+  - **G5, the number series (D1).** Each export office has a series: `hbl_prefix` (empty = the UN/LOCODE's place
+    letters + HBL, NLRTM → RTMHBL; 2–10 capitals or digits, unique across offices), the 2-digit year and a 5-digit
+    sequence (`hbl_next_seq`, back to 1 when `hbl_seq_year` changes), e.g. RTMHBL2600123.
+    - `POST /api/shipments/:id/house-bl/number` (`assignNumber`) returns the shipment's own number, or takes the next
+      from the export office's series in a transaction and keeps it on the shipment (`bl_number_source` SERIES), so an
+      issue that fails part-way reuses it. A number used anywhere (voided ones included, typed ones too) is skipped.
+    - The panel's Issue calls it first, then prints the copy with the number. A draft generated before prints
+      "assigned at issue" and keeps an empty reference; such a draft can't be confirmed from the Documents list.
+    - A typed number (Conditions, `bl_number_source` TYPED: a B/L already issued on paper) is used as it is.
+    - Voiding a series number releases it from the shipment; the next House B/L takes a new one.
+    - `PUT /api/shipments/:id` refuses a different number while a House B/L stands (issued, or awaiting its amended
+      version); a blank number in a save keeps an issued or series number (a page still holding the shipment from
+      before the number was taken sends it blank).
+    - `GET /api/offices` and the office PUT return `hblPrefix`, `hblDefaultPrefix` and `hblNextNumber`.
+  - **G6, corrections.** `POST …/house-bl/surrender-for-amendment { reason }` (paper; an eBL uses the platform's AREQ,
+    same path `onSurrenderedForAmendment`): the version becomes SURRENDERED_FOR_AMENDMENT with its reason, its BL01
+    copy is voided as a document (not as a B/L), and the next draft or issue is version + 1 with `supersedes_id`,
+    under the same number (`amendmentOf`). A released B/L can't be amended.
+    - `changedSinceIssue`: the issued DCSA document against one built from today's data, field by field (parties,
+      ports, vessels, carriage, cargo, containers, freight terms, to order, declared value); the panel lists them.
+      The vessel role is ignored there, because B/Ls issued before 2026-10-22 carry none.
+  - **G11, to order.** `shipments.bl_to_order`: '' named, CONSIGNEE "to order of" the consignee, SHIPPER "to order"
+    (no consignee on the document; readiness then doesn't ask for one). DCSA `isToOrder`; never on a Sea Waybill
+    (readiness says so). The endorsee isn't named at issue (blank endorsed): who presented the originals is recorded
+    at the surrender (`presentedBy` on `bl-surrender`; for an eBL, the last recipient of the SREQ's endorsement chain).
+  - **G12 and G14, originals, copies and freight.** The draft's `houseBl` claim may carry `originals` (1–9; a Sea
+    Waybill 0), `copies` (0–20) and `withCharges` (`countsOf`), stored on the record. DCSA gets the four counts (an eBL
+    is one original). With charges, the print and DCSA `charges` list the shipment's SELL lines (`chargesOf`, reversals
+    left out); without, the print says FREIGHT PREPAID/COLLECT AS ARRANGED.
+  - **G16, the carriage.** `routingOf`: every SEA leg with a vessel (the first FIRST_SEA_GOING, the main leg
+    (lib/mainLeg.js) MOTHER), and pre-/on-carriage from Pick-up/Delivery legs that are carrier's haulage.
+  - **G17, reefer and dangerous goods.** A reefer with `set_temperature_c` gets DCSA `activeReeferSettings` (°C) and
+    prints REEFER · SET AT …; a DG container needs `dg_un_number` (4 digits; "UN 1263" saved as 1263) and
+    `dg_proper_shipping_name` to issue, sent as `outerPackaging.dangerousGoods` and printed under the container.
+  - **G18, after issue.** `POST …/house-bl/originals-handover { to, method (In person|Courier|Mail), trackingRef
+    (courier), count, handedOverOn, note }` logs ORIGINALS_HANDED_OVER while the B/L is ISSUED. A telex release
+    surrendered at origin sends the telex release notice (`sendTelexReleaseNotice`): a High Kanban task
+    `telex_release_notice` for the import office's manager, once per record (`telex_notice_ticket_id`).
+  - **G21, overdue tasks.** `resolveOpsTickets` (server.js) closes a `milestone_overdue` task (Ready or In Progress →
+    Done, with a closing line) when its milestone is completed: `autoCompleteMilestone` and the milestone PUT call
+    `onMilestoneCompleted`, and the hourly sweep catches the rest, including tasks of Completed or Cancelled
+    shipments. The 44 open "B/L Issued" tasks found on 2026-10-22 are for milestones still open; they close as those
+    House B/Ls are issued in CargoDesk.
+  - **G22, the carrier's B/L.** `link-bl-document` accepts the Master B/L (MB01) only; a House B/L linked before
+    stays linked until it is changed. The review page lists MB01 documents ("Link Master B/L").
+  - **Screens.** The House B/L panel: the number line (series or typed, or kept by an amendment), originals and
+    copies and freight in "what the B/L says", the version and to-order rows, a versions box, the changed-since-issue
+    warning, the originals log with its form, "presented by" at destination, surrender for amendment with a reason,
+    "Version N replaces version N-1", the telex notice. Office edit (SE offices): the prefix and the next number.
+    Conditions: "Consignee on the B/L" and the number hint. Container form: UN number and proper shipping name.
+    Generate Document shows the B/L number read-only. The print: the number or "assigned at issue", to order,
+    originals and copies, freight as arranged or the charges table, every vessel and the on-carriage, reefer and DG
+    lines, "VERSION N · AMENDED".
+- **Tests.**
+  - Backend: `house-bl-issue-rules` (24), `house-bl-record` (40: G10, G23, G4, G8, G19), `house-bl-ebl` (23: issuance,
+    ISSU/BREQ, endorse, SREQ to SURR or SREJ, AREQ, the credential), `house-bl-series` (44: G5, G6, G21) and
+    `house-bl-content` (38: G11, G12, G14, G16, G17, G18, each DCSA document checked against the spec);
+    `carrier-booking` covers G22.
+  - Vitest: `HouseBlPanel` (16), `houseBlPrint` (11), `dcsaCodes` (the package codes mirror).
+  - Cypress `house-bl` (6): issue, originals and release; the packages fix; eBL through Test Tools; the series number,
+    originals log and version 2; to order on Conditions; the telex notice. `carrier-booking-lifecycle` links an MB01.
+  - The helper `tests/helpers/house-bl.mjs` builds a shipment ready to issue and takes its series number
+    (`numbered: false` to leave it); test runs advance the export office's series counter.
+
+### 8.41 The DCSA message review: Booking conditions, Shipping Instructions 3.0, VGM 1.0, Track & Trace 3.0 (TKT-6SOX30, 2026-10-27)
+
+The user asked for a review of every message CargoDesk sends a carrier against the DCSA standards, and
+for the problems found to be fixed. Before this, only the booking was DCSA: Shipping Instructions and VGM
+were recorded in home-made formats and sent nowhere, and Track & Trace was still built against 2.2.
+
+- **One HTTP path (`lib/carrier-integrations/dcsa-http.js`).** `dcsaCall` is shared by every standard. It
+  validates the body before sending, sets `API-Version` (the major version for the `/v2`, `/v3` paths; the
+  full spec version for T&T and VGM, whose paths aren't versioned), and validates the carrier's answer for
+  GETs and for VGM's POST. Error text includes DCSA `errors` and `feedbackElements` messages.
+- **No invented fields.** DCSA's schemas allow additional properties, so a misspelt field passed
+  validation and the carrier would have ignored it. `lib/dcsa/validate.js` now has `unknownFields` /
+  `unknownFieldsOfSchema`, and `validateOutbound` / `validateOutboundSchema`, which fail on any field the
+  spec doesn't define. Every message CargoDesk builds is checked with them: booking requests (and updates
+  and cancellations, through `dcsaCall`), Shipping Instructions, VGM, the House B/L transport document,
+  eBL issuance requests and surrender answers, and the built-in carrier's own notifications. What a
+  carrier sends is checked with the lenient validators, because DCSA lets carriers add fields.
+- **Booking 2.0 conditions.** The spec states some rules in its descriptions, not its schema.
+  `bookingConditionProblems` (dcsa-bkg-v2) checks them, and Send Booking Request and the update refuse a
+  booking that breaks one, before anything is recorded:
+  - exactly one of `serviceContractReference` and `contractQuotationReference`;
+  - a `carrierExportVoyageNumber` only with the vessel or the service;
+  - an `expectedDepartureDate` when there is no vessel and voyage;
+  - a `declaredValueCurrency` with a `declaredValue`.
+
+  The contract number goes as `serviceContractReference`. A SPOT shipment's reference (or the quotation
+  reference) goes as `contractQuotationReference`. The Carrier Booking page already required a contract
+  or reference, so the rule matches the product.
+- **The carrier's local office (decided by the user).** The Line Agents (Export and Import) are the
+  carrier's local representatives, so a booking is placed with the local one, not the carrier's head
+  office. The shipment's **Line Agent (Export)** party is sent as `documentParties.carrierBookingOffice`:
+  its name, `UNLocationCode` = the POL, its address and contact. Booking 2.0 has no field for the import
+  side's agent. `bookingAgent` is the export office's legal entity (branch) with its email and phone, and
+  is left out when there is none.
+- **The message log.** For outbound messages `edi_messages.raw_payload` is the DCSA body exactly as sent,
+  and `parsed_payload` is CargoDesk's own summary. The Review tab's comparison reads `parsed_payload`
+  first.
+- **Shipping Instructions 3.0 (`dcsa-ebl-v3.js`, `routes/shipping-instructions.js`).**
+  - Submit sends `POST /v3/shipping-instructions` (202 + `shippingInstructionsReference`) through
+    `carrierIntegrationFor(carrier, 'shipping-instructions')`. There is no fallback: with no DCSA
+    connection the submit is refused (400).
+  - The body is built from the shipment. The shipper is the NVOCC party when there is one (these are
+    the instructions for the carrier's Master B/L), else the shipper. Containers are carrier-owned
+    `equipmentReference` entries with their seals. The contact is the export office's legal entity.
+  - Missing data refuses the submit and names each gap: the carrier's booking number, the parties, a
+    contact, and per container the number, seal, HS code, gross weight and description.
+  - The carrier answers with CloudEvents of type `org.dcsa.shipping-instructions.v3` at the same
+    webhook (answered 204), or by a 15-minute poll (`GET /v3/shipping-instructions/{ref}`).
+    `applyShippingInstructionsState` maps the DCSA state: RECEIVED / UPDATE_RECEIVED → Submitted;
+    COMPLETED → Confirmed; PENDING_UPDATE → Rejected with the carrier's feedback; DECLINED / CANCELLED →
+    Rejected, final.
+  - After a PENDING_UPDATE, Reset keeps the reference, and the next Submit is a DCSA update
+    (`PUT /v3/shipping-instructions/{ref}`, UpdateShippingInstructions).
+- **VGM 1.0 (`dcsa-vgm-v1.js`, `routes/shipments.js` `sendVgm`).** CargoDesk is the VGM Producer.
+  - **Sending.** One declaration per container goes to `POST /vgm-declarations`, under
+    `declarationReference` `CD-VGM-<container id>`. It is sent:
+    - when the container's VGM is marked Submitted;
+    - again, replacing the earlier one, when the weight, method or container number changes while
+      Submitted or Accepted;
+    - as a retraction (`isRetracted`) when the VGM goes back to Pending.
+  - **Content.** The weight is in KGM; the method is SM1 / SM2 ("Method 1" / "Method 2"). The shipper is
+    the responsible party, the export office's legal entity is the submitting party, and the user is
+    the signatory.
+  - **Refusals.** The container save is refused when there is no weight or method, no DCSA connection,
+    or the carrier refuses the declaration (an ERROR in `feedbackElements`).
+  - The VGM Simulator's accept / reject in Test Tools remains a terminal-validation stand-in, because
+    VGM 1.0 defines no answer message.
+- **Track & Trace 3.0.** `getEvents` pulls `GET /events` (`eventTypes`, cursor paging through
+  `Next-Page-Cursor`). `tnt-mapping.js` reads the v3 `eventClassification` and maps it to the flat codes
+  the mapping already used (GATED_IN → GTIN, LOADED → LOAD, DEPARTED → DEPA, ACTUAL → ACT, …). It
+  skips retracted events.
+- **Escalation rebook (a bug found in the review).** A rebook to another carrier kept the old carrier's
+  contract and quote, so the new booking would have named a contract the new carrier doesn't have.
+  - On a carrier change the old `contract_id`, `allocation_id` and reference now come off.
+  - The contract number the instructions name becomes the shipment's reference, and the shipment
+    becomes Central on it. An instruction's number always comes from a contract (Lane Steering or the
+    contract search), even when there is no contract record.
+  - Instructions for another carrier that name no contract are refused when they are sent (400, "Name
+    the MSCU contract to book on…"). Book As Instructed checks again before anything changes, so it
+    can't leave a shipment on the new carrier with no booking sent.
+  - Same-carrier rebooks are unchanged.
+- **The built-in carrier** now also plays Shipping Instructions (`/dcsa-sim/v3/shipping-instructions`:
+  POST, GET and PUT; Test Tools → complete, request an update, or decline; signed notifications) and VGM
+  (`/dcsa-sim/vgm-declarations`, listed at `GET /api/test-tools/dcsa-sim/vgm-declarations`).
+  Its capabilities are booking, shipping-instructions, vgm and spot-rates. Carrier Integrations offers
+  the two new capabilities, and `GET /api/carrier-connections/:carrier` reports them.
+- **Not DCSA.** Customs filings (AES / EEI, ISF) stay as they are, because no DCSA standard covers them.
+  House B/Ls in the Shipping Instructions (`houseBillOfLadings`, gap G25) were added the next day (§8.42).
+- **Tests.**
+  - `dcsa-messages` (39, new), through the built-in carrier:
+    - the booking body as logged (valid, no undefined fields, the contract, the booking office, the
+      booking agent);
+    - refusals for no contract and for no sailing;
+    - the spot quote reference;
+    - VGM declare, re-declare, retract, re-declare and the no-weight refusal;
+    - SI submit, update requested, reopen, update, complete, plus the no-booking refusal.
+  - `carrier-integrations` (34) covers a signed but invalid SI notification (400) and an unknown
+    reference (404).
+  - `booking-escalations` (40) covers the refused instructions; `booking-escalation-book`,
+    `booking-carrier-answers` and `main-vessel-carrier-changes` instruct with the new carrier's contract.
+  - `dcsa-lifecycle` uses a T&T 3.0 fake carrier.
+  - Tests that send bookings now give their shipments a contract or quote reference.
+
+### 8.42 DCSA phases 4–6: the Master B/L, VGM declarations, carrier events, vessel schedules (2026-10-28)
+
+The user asked to "build the rest" after §8.41: the open parts of plan phases 4–6. Server first, then the
+screens from the approved mockup (https://claude.ai/artifact/VUTPKnRAjdPjfb8DntUxVs). A read-only review
+(four reviewers: spec, correctness, data, tests) ran before the screens. Its findings are fixed below.
+
+- **Shipping Instructions, as the spec means them.** COMPLETED means the transport document was surrendered
+  for delivery, not that the carrier accepted the instructions; CargoDesk read it as acceptance before.
+  - The carrier accepts the instructions by drafting its Master B/L from them. That shows them as Confirmed
+    (`routes/master-bl.js`).
+  - A correction sent after the carrier asked for one (PENDING_UPDATE + UPDATE_RECEIVED) shows as Submitted,
+    not as a second rejection.
+  - "Send update" sends the shipment's current data under the same reference. Cancel sends PATCH
+    `CANCELLED`, or `UPDATE_CANCELLED` for a pending update only.
+  - Both are refused once the carrier has issued the Master B/L. Reset after a cancellation starts new
+    instructions.
+  - The poll also covers Confirmed instructions the carrier hasn't completed.
+  - The instructions keep the `transportDocumentReference` the carrier reports.
+- **The carrier's Master B/L (`routes/master-bl.js`, `transport_documents.role='MASTER'`).** A transport-document
+  notification (`org.dcsa.transport-document.v3`) or a poll gives the reference; CargoDesk reads the document
+  (`GET /v3/transport-documents/{ref}`) and keeps it on the row.
+  - **Matching.** The spec's own notifications carry only the status and the document's reference. The
+    instructions are found by the SI reference when there is one; else by the reference the carrier gave
+    them; else by the Master B/L row already held; else by reading the document, which names its
+    instructions. A notification about instructions finds them by either reference.
+  - **Spellings.** `VOID` and `SURRENDER_FOR_*` (the notification's spellings) are stored as `VOIDED` and
+    `SURRENDERED_FOR_*`.
+  - **A draft** (or a redraft) opens a `master_bl_draft` review task for the export side. Its approval is
+    cleared on a redraft.
+  - **The review** compares the draft with the instructions the carrier holds (`compareDraft`). An update it
+    cancelled or declined doesn't count. Ports and the vessel are compared with the shipment.
+  - **Approve** sends `PATCH {transportDocumentStatus: APPROVED}`. Issued: the shipment takes the Master
+    B/L number, and B/L Issued completes.
+  - **Polling.** A 15-minute poll covers drafts to surrenders. Admin triggers: `POST /api/master-bl/poll-sweep`
+    and `POST /api/shipping-instructions/poll-sweep`.
+- **House B/Ls in the Master's instructions (G25).** The House B/L as issued goes as `houseBillOfLadings`
+  (`houseBillOfLadingFrom`), but only where the destination's advance filing takes House-level data:
+  - CN (8 digits) into the EU and Northern Ireland;
+  - HTS into the US;
+  - NCM into Mercosur.
+
+  A package with no package code, or a commodity code too short for the tariff, is asked for instead of
+  guessed (`houseBillOfLadingFor`). Northern Ireland's ports count as the ICS2 zone.
+- **VGM declarations (`vgm_declarations`).** Every declaration, re-declaration and retraction is kept: the
+  weight, the method, the signatory, the parties, the payload and the carrier's feedback.
+  - **Legacy rows.** VGMs marked Submitted before 2026-10-27 are backfilled as legacy rows that were never
+    sent (one pass over `edi_messages`).
+  - **Containers.** A declaration outlives its container (`ON DELETE SET NULL`). A container whose VGM the
+    carrier holds can't be removed until it is withdrawn.
+  - **Documents (the user's decision).** Each declaration has its evidence (`VG02`: the weighbridge ticket
+    for Method 1, the weight calculation for Method 2) and its generated `VG01` VGM Declaration
+    (`buildVgmDeclarationHtml`). Both are linked by `shipment_documents.vgm_declaration_id`.
+  - **The flag.** The current declaration shows "No evidence on file" until evidence is attached, and a
+    re-declaration needs its own.
+- **Events and milestones on DCSA (`lib/dcsa/codes.js`, `lib/milestone-events.js`).**
+  - **Container events** keep their label and gain the DCSA classification (`CONTAINER_EVENT_DCSA`): event
+    type, code, classifier, empty or laden, and the UN/LOCODE. A typed location counts as a port only when
+    it is one of the shipment's own ports.
+  - **Milestones** carry the DCSA events that complete them (`dcsa_events`, default `MILESTONE_DCSA`); a
+    template can set its own, checked against the code lists.
+  - **`ctx.milestoneEvents.onEvent`** completes a milestone when an ACTUAL event matches:
+    - an EQUIPMENT matcher holds once every container has the event;
+    - a carrier's event that names no place doesn't count as at the shipment's port.
+
+    The booking confirmation, the instructions received, the Master B/L issued and container events all
+    go through it.
+  - **Cargo Released** takes a release only against the B/L or a container release order.
+- **Track & Trace 3.0 (`lib/track-trace.js`, `carrier_events`).** The pull and the push
+  (`POST /api/carrier-webhooks/:id/events`, signed, answered with `feedbackElements` and `API-Version`) both
+  end in `applyEvents`.
+  - **Kept.** Each event is kept by its eventID with what CargoDesk did with it (`applied`). Of two copies,
+    the one with the later `eventUpdatedDateTime` stands.
+  - **Corrections.** A newer version corrects the container events made from it.
+  - **Retractions.** A retraction removes those container events and undoes the leg time it set: back to
+    the carrier's latest estimate, or to the earlier value. A retraction is routed by its eventID alone.
+  - **Vessel times.** A TRANSPORT event moves the sea leg's time. An actual one confirms it
+    (`dcsa_actual`); an estimate updates it (`dcsa`) unless a confirmed time is there.
+  - **Routing.** A pushed event reaches its shipments by eventID, by any document it names (booking,
+    Master B/L, Shipping Instructions, VGM), by container, or by vessel and voyage. The vessel-and-voyage
+    route needs a voyage and a leg date within 21 days.
+  - **Batches.** One batch per shipment runs at a time.
+- **Vessel schedules (OVS 3.0, `dcsa-ovs-v3.js`, `routes/vessel-schedules.js`).** "Check vessel times" (and an
+  hourly sweep for carriers with their own `vessel-schedules` integration) reads the carrier's planned,
+  estimated and actual times for each sea leg's vessel and voyage. They go through the same `applyVesselTime`.
+  - **AIS is the fallback.** It never overwrites a `dcsa_actual` time.
+  - **`API-Version`.** It is the full version for OVS too.
+- **The built-in carrier** now also plays:
+  - the Master B/L: `transport-documents.js` with draft, issue, surrender and void; it declines
+    instructions for a booking it doesn't hold, and notifies in the spec's lightweight form and spellings;
+  - Track & Trace: `track-trace.js` serves `GET /events` (cursor) and pushes `POST /events`;
+  - vessel schedules: `vessel-schedules.js` serves `GET /v3/service-schedules`.
+
+  Its capabilities add tracking and vessel-schedules.
+- **Screens.**
+  - **Shipping Instructions:** the carrier's state; House B/Ls included; Send update; Cancel (with a
+    confirm); Cancel the update. The foldable Master B/L card (`MasterBlPanel.jsx`) shows status steps,
+    differences on top, six key facts marked ✓ or ≠, "Show all N fields", Approve draft, and "Ask the carrier
+    again".
+  - **VGM:** an Evidence column, and each container's declarations with their files, "Attach weighbridge
+    ticket / weight calculation" and "Generate VG01".
+  - **Milestones & Events (`CarrierEventsPanel.jsx`):** the sea legs' times with ACTUAL / EST / AIS tags;
+    each milestone's DCSA events; "From the carrier" with Sync carrier events and Check vessel times.
+  - **Test Tools → DCSA Carrier (`DcsaCarrierTabs.jsx`):** the new tabs Shipping Instructions & B/L, Track &
+    Trace (report, retract) and Vessel times.
+- **Review fixes worth knowing (2026-10-28).**
+  - An older database with two confirmed BL01 on one shipment boots, with a warning; it no longer refuses
+    to start.
+  - The UN/LOCODE backfill no longer reads "BUSAN" as a port code.
+  - The sea-leg test is `leg_type='SEA' OR (blank leg_type AND mot='SEA')`.
+  - Shipment delete also removes `transport_document_events`.
+  - Indexes for the milestone engine and the correlation lookups.
+- **Tests.**
+  - Backend: `dcsa-documents-events` (63, new); `dcsa-messages` (39); `carrier-integrations` (37, the T&T
+    push receiver); `dcsa-lifecycle` (33).
+  - Vitest: `MasterBlPanel` (4).
+  - Cypress: `dcsa-documents-events` (4).
 
 ## 9. Data Flow Diagrams
 
@@ -4242,6 +4668,38 @@ here:
 - **The weekly-space pool refresh.** `syncShipmentFromLegs` recomputes the space badges of the
   shipment's whole configuration when its ETD changes, because a roll can move it into another ISO
   week. `PUT /api/allocations/:id` does the same when the basis or the TEU changes.
+
+**Added 2026-10-24 (House B/L, §8.40).**
+
+- **`onMilestoneCompleted(milestone)`** (server.js). Closes the milestone's "Overdue milestone" Kanban task.
+  Triggers: `autoCompleteMilestone`, and `PUT /api/shipments/:id/milestones/:id` on a new completion. The hourly
+  ops sweep does the same for anything missed (`resolveOpsTickets`, also for Completed or Cancelled shipments).
+- **`ctx.houseBl.sendTelexReleaseNotice(shipmentId)`** (lib/house-bl.js). Triggered by `bl-surrender` at origin for a
+  Telex Release or Surrendered B/L; opens one `telex_release_notice` task per record (`ensureOpsTicket` dedups it).
+
+**Added 2026-10-27 (the DCSA message review, §8.41).**
+
+- **`sendVgm(shipment, container, user, { retract })`** (routes/shipments.js). Sends the container's DCSA VGM
+  declaration before the container is saved. Triggers: `POST /api/containers` with VGM Submitted; `PUT …/containers/:id`
+  on the change to Submitted, on a weight, method or number change while Submitted or Accepted, and (as a retraction)
+  on the change back to Pending. An unrelated save sends nothing. The declaration reference is stable per container,
+  so a resend replaces the last one at the carrier. If the carrier refuses, nothing is saved.
+- **`ctx.milestoneEvents.onEvent(shipmentId, event)`** (lib/milestone-events.js, §8.42). Completes the milestones whose DCSA
+  events match. Triggers: `recordContainerEvent` (manual and carrier container events), the carrier's booking confirmation
+  (`applyCarrierState`), Shipping Instructions submitted, the Master B/L issued (`applyTransportDocumentState`), Track & Trace
+  events (`ctx.trackTrace.applyEvents`), actual vessel times (`syncVesselTimes`). Idempotent through `autoCompleteMilestone`.
+- **`ctx.trackTrace.applyEvents(shipment, events)`** (lib/track-trace.js, §8.42). Container events, leg times and milestones
+  from Track & Trace events. Triggers: "Sync carrier events" and the 30-minute sweep (pull), and the carrier's
+  `POST …/events` (push). Idempotent: an event already held unchanged, or an older copy, does nothing. One batch per
+  shipment at a time.
+- **`applyTransportDocumentState`** (routes/master-bl.js, §8.42). Triggers: transport-document notifications, the 15-minute
+  poll (`POST /api/master-bl/poll-sweep`), "Ask the carrier again", and an SI state naming a transport document CargoDesk
+  doesn't hold yet. Opens or closes the `master_bl_draft` task; sets `master_bl_number` on issue.
+- **`runVesselTimesSweep()`** (routes/vessel-schedules.js, §8.42). Hourly; `POST /api/vessel-times/sync-sweep`. Carriers with
+  their own `vessel-schedules` integration only.
+- **`pollShippingInstructionsSweep()`** (routes/shipping-instructions.js). Every 15 minutes it asks the carrier for
+  the state of Shipping Instructions sent and not heard from since, and applies it through
+  `applyShippingInstructionsState`. A repeat of the same state records nothing.
 
 ---
 

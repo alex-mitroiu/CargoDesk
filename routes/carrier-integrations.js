@@ -7,7 +7,8 @@
 // PUT accepts a new secret, GET returns at most a hasCredential/hasWebhookSecret boolean, never
 // the real value back.
 
-const CAPABILITIES = ["booking", "tracking", "schedules"];
+// What a carrier's DCSA connection is used for (the generic DCSA adapter speaks all of them).
+const CAPABILITIES = ["booking", "shipping-instructions", "vgm", "tracking", "schedules", "vessel-schedules"];
 
 module.exports = function carrierIntegrationsRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, isUniqueViolation, mapCarrierIntegration,

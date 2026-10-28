@@ -24,8 +24,11 @@ import { useResizableColumns, ColResizer } from "../../components/primitives/use
 
 const CAPABILITY_OPTIONS = [
   { code: "booking",   label: "Booking" },
+  { code: "shipping-instructions", label: "Shipping Instructions" },
+  { code: "vgm",       label: "VGM" },
   { code: "tracking",  label: "Tracking" },
   { code: "schedules", label: "Schedules" },
+  { code: "vessel-schedules", label: "Vessel schedules" },
 ];
 
 const emptyForm = () => ({

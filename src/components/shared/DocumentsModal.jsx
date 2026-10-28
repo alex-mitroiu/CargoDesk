@@ -9,12 +9,15 @@ import GenerateDocumentModal from "./GenerateDocumentModal";
 import SendDocumentEmailModal from "./SendDocumentEmailModal";
 import SendDocumentEdiModal from "./SendDocumentEdiModal";
 import SendDocumentWebhookModal from "./SendDocumentWebhookModal";
+import HouseBlPanel from "./HouseBlPanel";
 import { DOC_TYPES, docTypeLabel, FILE_ICON, fmtBytes, fmtDate } from "../../utils/documentBuilders";
 import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
 
-// Invoices and credit/debit notes: deletable only while draft, and a voided one is never re-confirmed
-// (the server refuses both — routes/shipment-ops.js).
+// Invoices, credit/debit notes and the House B/L: deletable only while draft, and a voided one is
+// never re-confirmed (the server refuses both — routes/shipment-ops.js). An issued House B/L is
+// voided with a reason instead (TKT-E8R1UF).
 const BILLING_DOC_TYPES = ["FR01", "FR02", "CN01"];
+const FORWARD_ONLY_DOC_TYPES = [...BILLING_DOC_TYPES, "BL01"];
 
 // ─── Documents Modal ──────────────────────────────────────────────────────────
 // TrackedDocPreviewModal (in-app preview) now lives in
@@ -62,10 +65,11 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
   const [historyDoc,     setHistoryDoc]     = useState(null);
   const fileRef = useRef(null);
 
-  // Best doc per type: confirmed+fresh > confirmed+stale > draft+fresh > draft+stale
+  // Best doc per type: confirmed+fresh > confirmed+stale > draft+fresh > draft+stale. A voided one
+  // doesn't count: a type whose only document is voided still needs a new one.
   const latestByCode = useMemo(() => {
     const map = {};
-    docs.forEach(doc => { (map[doc.docType] ||= []).push(doc); });
+    docs.filter(doc => doc.status !== "voided").forEach(doc => { (map[doc.docType] ||= []).push(doc); });
     const result = {};
     Object.entries(map).forEach(([code, list]) => {
       const pri = d => (d.status === "confirmed" && !d.isStale) ? 0
@@ -90,12 +94,11 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
   const missingCount   = DOC_TYPES.filter(t => typeStatus(t.code) === "missing").length;
   const total          = DOC_TYPES.length;
 
-  useEffect(() => {
-    api.documents.list(shipment.id)
-      .then(setDocs)
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [shipment.id]);
+  const loadDocs = () => api.documents.list(shipment.id)
+    .then(setDocs)
+    .catch(() => {})
+    .finally(() => setLoading(false));
+  useEffect(() => { loadDocs(); }, [shipment.id]);
 
   const handleUpload = async () => {
     if (!file) return;
@@ -135,6 +138,18 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
     } catch (ex) { toast.error(ex.message); }
   };
 
+  const handleVoidHouseBl = async id => {
+    const reason = window.prompt("Void this issued House B/L? It stays on record as voided, and a new one can then be issued.\n\nReason:");
+    if (reason === null) return;
+    if (!reason.trim()) { toast.error("Give a reason to void an issued House B/L"); return; }
+    try {
+      const updated = await api.documents.patch(shipment.id, id, { status: "voided", voidReason: reason.trim() });
+      setDocs(p => p.map(d => d.id === id ? updated : d));
+      setPreviewDoc(p => p?.id === id ? updated : p);
+      toast.success("House B/L voided");
+    } catch (ex) { toast.error(ex.message); }
+  };
+
   // House B/L Lifecycle — post-issuance facts on a confirmed BL01 (see routes/shipment-ops.js).
   const handleBlSurrender = async id => {
     try {
@@ -152,6 +167,12 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
   };
 
   const statusBadge = doc => {
+    if (doc.status === "voided") return (
+      <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, borderRadius: 4, padding: "1px 6px",
+        background: HZ.surface2, color: HZ.crit }}>
+        Voided
+      </span>
+    );
     if (doc.isStale) return (
       <span title="Shipment data changed after this document was generated — consider regenerating"
         style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, borderRadius: 4, padding: "1px 6px",
@@ -176,6 +197,11 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
 
   const body = (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+        {/* House B/L (Epic TKT-C7EBU3): readiness, issue, eBL and release, above the documents. */}
+        {/* Keyed by shipment: moving to another shipment by hash keeps this page mounted, and the panel
+            must not carry one shipment's choices (e.g. what the B/L says) into the next. */}
+        {standalone && <HouseBlPanel key={shipment.id} shipment={shipment} canEdit={canEdit} docs={docs} onChanged={loadDocs} />}
 
         {/* Toolbar */}
         <div style={{ display: "flex", justifyContent: "flex-end" }}>
@@ -352,7 +378,7 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
                   <button type="button" onClick={() => setEdiDoc(doc)} style={dashedBtn}>📡 EDI</button>
                   <button type="button" onClick={() => setWebhookDoc(doc)} style={dashedBtn}>🔗 Webhook</button>
                   <button type="button" onClick={() => setHistoryDoc(doc)} style={dashedBtn}>🕐</button>
-                  {canEdit && doc.status !== "confirmed" && !(BILLING_DOC_TYPES.includes(doc.docType) && doc.status === "voided") && (
+                  {canEdit && doc.status !== "confirmed" && !(FORWARD_ONLY_DOC_TYPES.includes(doc.docType) && doc.status === "voided") && (
                     <button type="button" onClick={() => handleConfirm(doc.id)}
                       style={{ ...dashedBtn, color: HZ.good, borderColor: HZ.good + "66" }}>
                       ✓ Confirm
@@ -365,7 +391,11 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
                   {canEdit && doc.docType === "BL01" && doc.status === "confirmed" && !doc.blReleasedAt && (
                     <button type="button" onClick={() => handleBlRelease(doc.id)} style={dashedBtn}>Mark Released</button>
                   )}
-                  {canEdit && (!BILLING_DOC_TYPES.includes(doc.docType) || doc.status === "draft") && (
+                  {canEdit && doc.docType === "BL01" && doc.status === "confirmed" && (
+                    <button type="button" data-testid={`doc-void-${doc.id}`} onClick={() => handleVoidHouseBl(doc.id)}
+                      style={{ ...dashedBtn, color: HZ.crit, borderColor: HZ.crit + "55" }}>Void</button>
+                  )}
+                  {canEdit && (!FORWARD_ONLY_DOC_TYPES.includes(doc.docType) || doc.status === "draft") && (
                     <button type="button" onClick={() => handleDelete(doc.id)} style={{ ...dashedBtn, color: HZ.crit, borderColor: HZ.crit + "55" }}>✕</button>
                   )}
                 </div>
@@ -394,7 +424,7 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
           shipmentId={shipment.id}
           doc={previewDoc}
           onClose={() => setPreviewDoc(null)}
-          onConfirm={canEdit ? () => handleConfirm(previewDoc.id) : null}
+          onConfirm={canEdit && !(FORWARD_ONLY_DOC_TYPES.includes(previewDoc.docType) && previewDoc.status === "voided") ? () => handleConfirm(previewDoc.id) : null}
           onSend={() => setSendDoc(previewDoc)}
         />
       )}

@@ -1,6 +1,11 @@
 "use strict";
 const ExcelJS = require("exceljs");
 const { mainLegIndex } = require("../lib/mainLeg");
+const { PACKAGE_CODES, TO_ORDER_MODES } = require("../lib/house-bl");
+const { buildVgmDeclaration, retraction: vgmRetraction, vgmProblems } = require("../lib/carrier-integrations/dcsa-vgm-v1");
+const { CONTAINER_EVENT_DCSA } = require("../lib/dcsa/codes");
+// Consignee on the House B/L (TKT-C7EBU3 gap G11): "" named, CONSIGNEE "to order of", SHIPPER "to order".
+const toOrderError = v => (TO_ORDER_MODES.includes(v) ? null : 'blToOrder must be "" (a named consignee), CONSIGNEE (to order of the consignee) or SHIPPER (to order)');
 
 module.exports = function shipmentsRoutes(app, ctx) {
   const { query, transaction, ok, err, uid, auth, requireRole, isUniqueViolation, isForeignKeyViolation,
@@ -615,6 +620,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!SHIPMENT_STATUSES.includes(status)) return err(res, `status must be one of: ${SHIPMENT_STATUSES.join(", ")}`);
     if (blReleaseType && !BL_RELEASE_TYPES.includes(blReleaseType)) return err(res, `blReleaseType must be one of: ${BL_RELEASE_TYPES.join(", ")}`);
     if (masterBlReleaseType && !BL_RELEASE_TYPES.includes(masterBlReleaseType)) return err(res, `masterBlReleaseType must be one of: ${BL_RELEASE_TYPES.join(", ")}`);
+    const blToOrder = String(req.body.blToOrder || "").toUpperCase();
+    if (toOrderError(blToOrder)) return err(res, toOrderError(blToOrder));
     const id = `SHP-${uid()}`;
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     const createdAt = new Date().toISOString();
@@ -627,6 +634,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       throw e;
     }
     if (spaceSelection && allocationId) await query("UPDATE shipments SET space_selection=$1 WHERE id=$2", [spaceSelection, id]);
+    if (blToOrder || blNumber) await query("UPDATE shipments SET bl_to_order=$1, bl_number_source=$2 WHERE id=$3", [blToOrder, blNumber ? "TYPED" : "", id]);
     await logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }), req.user?.name || req.user?.email || "");
     await maybeAssignLineAgents(id, carrierCode, polU, podU, req.user?.name || req.user?.email || "");
@@ -715,7 +723,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const etd = field('etd', 'etd');
     const eta = field('eta', 'eta');
     const bookingRef = field('bookingRef', 'booking_ref');
-    const blNumber = field('blNumber', 'bl_number');
+    let blNumber = field('blNumber', 'bl_number');
     const blReleaseType = field('blReleaseType', 'bl_release_type');
     const masterBlNumber = field('masterBlNumber', 'master_bl_number');
     const masterBlReleaseType = field('masterBlReleaseType', 'master_bl_release_type');
@@ -767,6 +775,18 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (status && !SHIPMENT_STATUSES.includes(status)) return err(res, `status must be one of: ${SHIPMENT_STATUSES.join(", ")}`);
     if (blReleaseType && !BL_RELEASE_TYPES.includes(blReleaseType)) return err(res, `blReleaseType must be one of: ${BL_RELEASE_TYPES.join(", ")}`);
     if (masterBlReleaseType && !BL_RELEASE_TYPES.includes(masterBlReleaseType)) return err(res, `masterBlReleaseType must be one of: ${BL_RELEASE_TYPES.join(", ")}`);
+    const blToOrder = String(field('blToOrder', 'bl_to_order') || "").toUpperCase();
+    if (toOrderError(blToOrder)) return err(res, toOrderError(blToOrder));
+    // An issued House B/L's number is printed on its originals (TKT-C7EBU3 gap G5): it can't change
+    // while that B/L, or the version an amendment will replace, stands. A save that sends it blank
+    // keeps it, as it keeps a number taken from the office series: a page still holding the shipment
+    // from before the number was taken sends it blank. Only voiding the House B/L releases those.
+    if (String(blNumber || "") !== String(existing.bl_number || "")) {
+      const fixed = (await ctx.houseBl.liveHouse(req.params.id)) || (await ctx.houseBl.amendmentOf(req.params.id));
+      if (!String(blNumber || "").trim() && existing.bl_number && (fixed || existing.bl_number_source === "SERIES")) blNumber = existing.bl_number;
+      else if (fixed) return err(res, `House B/L ${fixed.reference} is issued under this number, so it can't change (void the House B/L to issue a new one)`, 409);
+    }
+    const blNumberChanged = String(blNumber || "") !== String(existing.bl_number || "");
 
     // Office-reassignment authorization (2026-09-12 QA finding, CRITICAL) — this generic PUT
     // previously accepted emoOfficeId/imoOfficeId/controllingOfficeId with ZERO authorization
@@ -876,6 +896,13 @@ module.exports = function shipmentsRoutes(app, ctx) {
       throw e;
     }
     if (updatedRows.length === 0) return err(res, "Not found", 404);
+    // The House B/L facts outside the big UPDATE: to order, and where the number came from (typed now).
+    if (blToOrder !== (existing.bl_to_order || "") || blNumberChanged) {
+      await query("UPDATE shipments SET bl_to_order=$1, bl_number_source=$2 WHERE id=$3",
+        [blToOrder, blNumberChanged ? (blNumber ? "TYPED" : "") : (existing.bl_number_source || ""), req.params.id]);
+      if (blToOrder !== (existing.bl_to_order || ""))
+        await logEvent(req.params.id, 'FIELD_UPDATED', 'bl_to_order', existing.bl_to_order || null, blToOrder || null, '', req.user?.name || req.user?.email || "");
+    }
     const finalSpaceSelection = effAllocationId ? spaceSelection : '';
     if (finalSpaceSelection !== (existing.space_selection || '')) {
       await query("UPDATE shipments SET space_selection=$1 WHERE id=$2", [finalSpaceSelection, req.params.id]);
@@ -1074,6 +1101,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
       // cascades with the shipment.
       await tx.query("UPDATE carrier_bookings SET bl_document_id=NULL WHERE shipment_id=$1", [req.params.id]);
       await tx.query("DELETE FROM shipment_documents WHERE shipment_id=$1", [req.params.id]);
+      // transport_documents cascade with the shipment; their history has no key to it, so it goes here.
+      await tx.query("DELETE FROM transport_document_events WHERE shipment_id=$1", [req.params.id]);
       // Its spot offer goes back to the pool (lib/spot-offers.js); one already booked on stays the record of that booking.
       await tx.query("UPDATE spot_offers SET status='Offered', shipment_id='' WHERE shipment_id=$1 AND status<>'Booked'", [req.params.id]);
       await tx.query("DELETE FROM shipments WHERE id=$1", [req.params.id]);
@@ -1168,6 +1197,110 @@ module.exports = function shipmentsRoutes(app, ctx) {
   // own Accepted/Rejected — never settable through a generic write route) — the generic
   // container create/update routes below only ever accept Pending/Submitted directly.
   const DIRECT_VGM_STATUSES = ["Pending", "Submitted"];
+  // Packages on the House B/L (gap G10, ARCHITECTURE.md §8.40): count, UN/ECE Rec. 21 code, description.
+  // An omitted field keeps the stored value, since the Cargo form saves whole rows and doesn't send these yet.
+  const packagesOf = (body, old) => {
+    const has = k => Object.prototype.hasOwnProperty.call(body || {}, k);
+    let n = has("numberOfPackages") ? body.numberOfPackages : (old ? old.number_of_packages : null);
+    if (n === "" || n === undefined) n = null;
+    if (n !== null) {
+      n = Number(n);
+      if (!Number.isInteger(n) || n < 1) return { error: "numberOfPackages must be a whole number of 1 or more" };
+    }
+    const code = String(has("packageCode") ? (body.packageCode ?? "") : (old?.package_code || "")).trim().toUpperCase();
+    if (code && !PACKAGE_CODES[code]) return { error: `packageCode must be one of: ${Object.keys(PACKAGE_CODES).join(", ")} (UN/ECE Recommendation 21)` };
+    let desc = has("packageDescription") ? String(body.packageDescription ?? "").trim()
+      : has("packageCode") ? "" : String(old?.package_description || "");
+    if (!desc && code) desc = PACKAGE_CODES[code];
+    // Dangerous goods on the B/L (gap G17): the UN number (4 digits) and the proper shipping name.
+    const isDg = has("isDg") ? !!body.isDg : !!old?.is_dg;
+    const un = isDg ? String(has("dgUnNumber") ? (body.dgUnNumber ?? "") : (old?.dg_un_number || "")).trim().replace(/^UN\s*/i, "") : "";
+    if (un && !/^\d{4}$/.test(un)) return { error: "dgUnNumber must be the 4-digit UN number (e.g. 1263)" };
+    const psn = isDg ? String(has("dgProperShippingName") ? (body.dgProperShippingName ?? "") : (old?.dg_proper_shipping_name || "")).trim().slice(0, 250) : "";
+    return { number_of_packages: n, package_code: code, package_description: desc.slice(0, 100), dg_un_number: un, dg_proper_shipping_name: psn };
+  };
+
+  // ─── VGM as DCSA VGM 1.0 (2026-10-27) ─────────────────────────────────────
+  // Marking a container's VGM Submitted sends its declaration to the carrier through its DCSA connection
+  // (the carrier's integration, or the built-in DCSA carrier where allowed); changing a submitted VGM
+  // sends it again (the same declarationReference replaces it); taking it back to Pending retracts it.
+  // Nothing is saved unless the carrier took it. Before 2026-10-27 only a home-made note was logged.
+  // `ctr` = the container row as it is about to be saved. → { ok } | { ok:false, status, error }
+  async function sendVgm(shipment, ctr, user, { retract = false } = {}) {
+    const integ = await ctx.carrierIntegrationFor(shipment.carrier_code, "vgm");
+    if (!integ?.adapter.sendVgmDeclarations)
+      return { ok: false, status: 400, error: `No DCSA connection for ${shipment.carrier_code || "this carrier"} to send the VGM to: set one up under Carrier Integrations (or, for a demo, turn on App Settings → Demo carrier)` };
+    let declaration;
+    if (retract) declaration = vgmRetraction(ctr);
+    else {
+      const problems = vgmProblems(ctr);
+      if (problems.length) return { ok: false, status: 400, error: `The VGM can't be sent yet: add ${problems.join(", ")}` };
+      const shipper = shipment.shipper_id ? await ctx.getCustomerRow(shipment.shipper_id).catch(() => null) : null;
+      const [office] = shipment.emo_office_id ? await query(
+        "SELECT o.name AS office_name, b.name AS branch_name, b.email, b.phone FROM offices o LEFT JOIN branches b ON b.id = o.branch_id WHERE o.id=$1",
+        [shipment.emo_office_id]) : [];
+      declaration = buildVgmDeclaration({
+        shipment, container: ctr, signatory: user?.name || user?.email || "",
+        responsible: { name: shipper?.companyName || shipment.shipper_name || "",
+          address: shipper ? { street: shipper.address1, postCode: shipper.postalCode, city: shipper.city, countryCode: shipper.countryIso2 } : null,
+          contact: shipper && (shipper.email || shipper.phone) ? { name: shipper.companyName, email: shipper.email, phone: shipper.phone } : null },
+        submitting: office ? { name: office.branch_name || office.office_name,
+          contact: office.email || office.phone ? { name: office.office_name || office.branch_name, email: office.email, phone: office.phone } : null } : null,
+      });
+    }
+    const r = await integ.adapter.sendVgmDeclarations(integ.config, [declaration]);
+    if (!r.ok) return { ok: false, status: r.invalid ? 400 : 502,
+      error: r.invalid ? `The VGM can't be sent: ${String(r.error).replace(/^Not sent: /, "")}` : `${shipment.carrier_code} did not accept the VGM (${r.error}). Nothing was changed — try again.` };
+    const now = new Date().toISOString();
+    // The declaration record (phase 5): what went, the carrier's non-blocking feedback with it. Written by
+    // the caller once the container row exists (a new container is saved after its VGM went).
+    const feedback = (r.feedback || []).map(f => `${f.severity}: ${f.message}`).filter(Boolean).join("; ");
+    const record = () => query(`INSERT INTO vgm_declarations (id, shipment_id, container_id, container_number, declaration_reference, carrier_code, kind,
+        weight_kg, method, declared_at, signatory, responsible_party, submitting_party, carrier_feedback, payload, is_mock, sent_by, created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+      [`VGMD-${uid()}${uid()}`, shipment.id, ctr.id, ctr.container_number || "", declaration.declarationReference, shipment.carrier_code || "",
+        retract ? "RETRACTION" : "DECLARATION", retract ? null : Number(ctr.vgm_weight_kg), retract ? "" : declaration.VGM?.method || "",
+        declaration.declarationDateTime || now, declaration.authorizedPersonSignatory || "", declaration.responsibleParty?.partyName || "",
+        declaration.submittingParty?.partyName || "", feedback, JSON.stringify(declaration), !!integ.row.is_simulator,
+        user?.name || user?.email || "", now]);
+    await query(`INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type,
+      format, raw_payload, parsed_payload, status, correlation_id, is_mock, created_at, processed_at)
+      VALUES ($1,$2,$3,'out',$4,'JSON',$5,$6,'sent',$7,$8,$9,$9)`,
+      [`EDI-${uid()}`, shipment.id, shipment.carrier_code || "", retract ? "vgm_retraction" : "vgm_declaration",
+        JSON.stringify({ VGMDeclarations: [declaration] }),
+        JSON.stringify({ containerNumber: ctr.container_number, ...(retract ? { retracted: true } : { vgmWeightKg: Number(ctr.vgm_weight_kg), vgmMethod: ctr.vgm_method }) }),
+        ctr.id, !!integ.row.is_simulator, now]);
+    return { ok: true, record };
+  }
+
+  // A shipment's VGM declarations, newest first (?containerId= narrows to one container), each with the
+  // documents filed against it: its evidence (VG02) and its VG01 VGM Declaration. `evidenceMissing` on the
+  // container's current declaration (the newest, when it is a declaration CargoDesk sent): the user's
+  // decision 2026-10-28 — evidence is optional but flagged until attached; a re-declaration needs its own.
+  const mapVgmDeclaration = r => ({
+    id: r.id, shipmentId: r.shipment_id, containerId: r.container_id, containerNumber: r.container_number,
+    declarationReference: r.declaration_reference, carrierCode: r.carrier_code, kind: r.kind,
+    weightKg: r.weight_kg === null || r.weight_kg === undefined ? null : Number(r.weight_kg), method: r.method,
+    declaredAt: r.declared_at, signatory: r.signatory, responsibleParty: r.responsible_party, submittingParty: r.submitting_party,
+    carrierFeedback: r.carrier_feedback, isMock: !!r.is_mock, isLegacy: !!r.is_legacy, sentBy: r.sent_by, createdAt: r.created_at,
+  });
+  app.get("/api/shipments/:id/vgm-declarations", auth(), async (req, res) => {
+    const rows = req.query.containerId
+      ? await query("SELECT * FROM vgm_declarations WHERE shipment_id=$1 AND container_id=$2 ORDER BY created_at DESC, id DESC", [req.params.id, req.query.containerId])
+      : await query("SELECT * FROM vgm_declarations WHERE shipment_id=$1 ORDER BY created_at DESC, id DESC", [req.params.id]);
+    const docs = await query(`SELECT id, filename, doc_type, status, created_at, uploaded_by, vgm_declaration_id FROM shipment_documents
+      WHERE shipment_id=$1 AND vgm_declaration_id <> '' AND status <> 'voided' ORDER BY created_at`, [req.params.id]);
+    const docsOf = id => docs.filter(d => d.vgm_declaration_id === id).map(d => ({ id: d.id, filename: d.filename, docType: d.doc_type,
+      status: d.status, createdAt: d.created_at, uploadedBy: d.uploaded_by || "" }));
+    const currentOf = new Map();
+    for (const r of rows) if (r.container_id && !currentOf.has(r.container_id)) currentOf.set(r.container_id, r.id);
+    ok(res, rows.map(r => {
+      const documents = docsOf(r.id);
+      const current = currentOf.get(r.container_id) === r.id;
+      return { ...mapVgmDeclaration(r), documents, current,
+        evidenceMissing: current && r.kind === "DECLARATION" && !r.is_legacy && !documents.some(d => d.docType === "VG02") };
+    }));
+  });
 
   app.post("/api/containers", shipmentWrite, async (req, res) => {
     const { shipmentId, containerNumber = "", sealNumber = "", size, type,
@@ -1177,6 +1310,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
             originDetentionFreeDays = null, destDetentionFreeDays = null,
             setTemperatureC = null } = req.body;
     if (!shipmentId || !size || !type) return err(res, "shipmentId, size, type required");
+    const pkg = packagesOf(req.body, null);
+    if (pkg.error) return err(res, pkg.error);
     if (!CONTAINER_SIZES.includes(size)) return err(res, `size must be one of: ${CONTAINER_SIZES.join(", ")}`);
     const [shipmentRowForGate] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
     if (!shipmentRowForGate) return err(res, "Shipment not found", 404);
@@ -1197,11 +1332,23 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // not collide with another container already on the same shipment.
     if (cnU && (await query("SELECT 1 FROM containers WHERE shipment_id=$1 AND container_number=$2", [shipmentId, cnU]))[0])
       return err(res, `Container number ${cnU} is already used on this shipment`, 409);
+    let recordVgm = null;
+    if (vgmStatus === "Submitted") {
+      const sentVgm = await sendVgm(shipmentRowForGate, { id, container_number: cnU, seal_number: sealNumber, size, type,
+        vgm_weight_kg: vgmWeightKg, vgm_method: vgmMethod || "" }, req.user);
+      if (!sentVgm.ok) return err(res, sentVgm.error, sentVgm.status);
+      recordVgm = sentVgm.record;
+    }
     await query(`INSERT INTO containers (id,shipment_id,container_number,seal_number,size,type,hs_code,cargo_description,marks_and_numbers,gross_weight_kg,volume_cbm,is_dg,dg_class,
-                vgm_weight_kg,vgm_status,vgm_cutoff,vgm_method,cy_cutoff,origin_free_time_days,dest_free_time_days,origin_detention_free_days,dest_detention_free_days,set_temperature_c) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+                vgm_weight_kg,vgm_status,vgm_cutoff,vgm_method,cy_cutoff,origin_free_time_days,dest_free_time_days,origin_detention_free_days,dest_detention_free_days,set_temperature_c,
+                number_of_packages,package_code,package_description,dg_un_number,dg_proper_shipping_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
       [id, shipmentId, cnU, sealNumber, size, type, hsCode, cargoDescription, marksAndNumbers, grossWeightKg, volumeCbm, !!isDg, dgClass,
-           vgmWeightKg, vgmStatus, vgmCutoff || null, vgmMethod || "", cyCutoff || null, originFreeTimeDays, destFreeTimeDays, originDetentionFreeDays, destDetentionFreeDays, setTemperatureC]);
+           vgmWeightKg, vgmStatus, vgmCutoff || null, vgmMethod || "", cyCutoff || null, originFreeTimeDays, destFreeTimeDays, originDetentionFreeDays, destDetentionFreeDays, setTemperatureC,
+           pkg.number_of_packages, pkg.package_code, pkg.package_description, pkg.dg_un_number, pkg.dg_proper_shipping_name]);
+    if (recordVgm) await recordVgm();
     const ctrRow = { id, shipment_id: shipmentId, container_number: cnU, seal_number: sealNumber, size, type, hs_code: hsCode, cargo_description: cargoDescription, marks_and_numbers: marksAndNumbers, gross_weight_kg: grossWeightKg, volume_cbm: volumeCbm, is_dg: !!isDg, dg_class: dgClass,
+      number_of_packages: pkg.number_of_packages, package_code: pkg.package_code, package_description: pkg.package_description,
+      dg_un_number: pkg.dg_un_number, dg_proper_shipping_name: pkg.dg_proper_shipping_name,
       vgm_weight_kg: vgmWeightKg, vgm_status: vgmStatus, vgm_cutoff: vgmCutoff || null, vgm_method: vgmMethod || "", cy_cutoff: cyCutoff || null,
       origin_free_time_days: originFreeTimeDays, dest_free_time_days: destFreeTimeDays,
       origin_detention_free_days: originDetentionFreeDays, dest_detention_free_days: destDetentionFreeDays,
@@ -1227,6 +1374,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const [shipmentRowForGate] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
     if (await blockIfWrongSide(req, res, shipmentRowForGate, 'export')) return;
     if (!size || !type) return err(res, "size, type required");
+    const pkg = packagesOf(req.body, oldCtr);
+    if (pkg.error) return err(res, pkg.error);
     if (!CONTAINER_SIZES.includes(size)) return err(res, `size must be one of: ${CONTAINER_SIZES.join(", ")}`);
     if (grossWeightKg !== null && grossWeightKg !== undefined && Number(grossWeightKg) < 0) return err(res, "grossWeightKg cannot be negative");
     if (volumeCbm !== null && volumeCbm !== undefined && Number(volumeCbm) < 0) return err(res, "volumeCbm cannot be negative");
@@ -1241,12 +1390,27 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (vgmStatus === "Submitted" && !vgmMethod) return err(res, "A VGM method (Method 1 or Method 2) is required before marking VGM as Submitted");
     const dgErr = await checkDgPolicy(oldCtr.shipment_id, isDg, dgClass);
     if (dgErr) return err(res, dgErr, 422);
+    const wasDeclared = ["Submitted", "Accepted"].includes(oldCtr.vgm_status);
+    const vgmChanged = wasDeclared && vgmStatus === "Submitted"
+      && (Number(oldCtr.vgm_weight_kg) !== Number(vgmWeightKg) || (oldCtr.vgm_method || "") !== (vgmMethod || "") || oldCtr.container_number !== cnU);
+    const vgmSend = (vgmStatus === "Submitted" && oldCtr.vgm_status !== "Submitted") || vgmChanged;
+    const vgmRetract = wasDeclared && vgmStatus === "Pending";
+    let recordVgm = null;
+    if (vgmSend || vgmRetract) {
+      const sentVgm = await sendVgm(shipmentRowForGate, { ...oldCtr, container_number: cnU, seal_number: sealNumber, size, type,
+        vgm_weight_kg: vgmWeightKg, vgm_method: vgmMethod || "" }, req.user, { retract: vgmRetract });
+      if (!sentVgm.ok) return err(res, sentVgm.error, sentVgm.status);
+      recordVgm = sentVgm.record;
+    }
     const updated = await query(`UPDATE containers SET container_number=$1, seal_number=$2, size=$3, type=$4, hs_code=$5, cargo_description=$6, marks_and_numbers=$7, gross_weight_kg=$8, volume_cbm=$9, is_dg=$10, dg_class=$11,
-                vgm_weight_kg=$12, vgm_status=$13, vgm_cutoff=$14, vgm_method=$15, cy_cutoff=$16, origin_free_time_days=$17, dest_free_time_days=$18, origin_detention_free_days=$19, dest_detention_free_days=$20, set_temperature_c=$21 WHERE id=$22 RETURNING id`,
+                vgm_weight_kg=$12, vgm_status=$13, vgm_cutoff=$14, vgm_method=$15, cy_cutoff=$16, origin_free_time_days=$17, dest_free_time_days=$18, origin_detention_free_days=$19, dest_detention_free_days=$20, set_temperature_c=$21,
+                number_of_packages=$23, package_code=$24, package_description=$25, dg_un_number=$26, dg_proper_shipping_name=$27 WHERE id=$22 RETURNING id`,
       [cnU, sealNumber, size, type, hsCode, cargoDescription, marksAndNumbers, grossWeightKg, volumeCbm, !!isDg, dgClass,
            vgmWeightKg, vgmStatus, vgmCutoff || null, vgmMethod || "", cyCutoff || null, originFreeTimeDays, destFreeTimeDays,
-           originDetentionFreeDays, destDetentionFreeDays, setTemperatureC, req.params.id]);
+           originDetentionFreeDays, destDetentionFreeDays, setTemperatureC, req.params.id,
+           pkg.number_of_packages, pkg.package_code, pkg.package_description, pkg.dg_un_number, pkg.dg_proper_shipping_name]);
     if (updated.length === 0) return err(res, "Not found", 404);
+    if (recordVgm) await recordVgm();
     const newVals = { container_number: cnU, size, type, hs_code: hsCode,
       cargo_description: cargoDescription, marks_and_numbers: marksAndNumbers, gross_weight_kg: grossWeightKg,
       volume_cbm: volumeCbm, is_dg: !!isDg, dg_class: dgClass,
@@ -1270,25 +1434,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // workflows — once every container on the shipment has VGM Submitted, treat that
     // as the si_submitted milestone step firing, rather than a separate untracked step.
     if (oldCtr.vgm_status !== 'Submitted' && vgmStatus === 'Submitted') {
-      // FCL export gap analysis finding #2 (2026-09): VGM previously had a weight/status/
-      // cutoff but never actually transmitted anything — every other regulatory-adjacent
-      // step (carrier booking, customs filing) leaves a real edi_messages record of what
-      // was sent; VGM left none. Mirrors customs-filing.js's insertMessage idiom, keyed by
-      // container id (there's no per-shipment "VGM filing" entity to correlate against —
-      // each container declares its own VGM independently).
-      const [shipForVgm] = await query("SELECT carrier_code FROM shipments WHERE id=$1", [oldCtr.shipment_id]);
-      const vgmMsgId = `EDI-${uid()}`, vgmNow = new Date().toISOString();
-      await query(`INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type,
-        format, raw_payload, status, correlation_id, is_mock, created_at, processed_at)
-        VALUES ($1,$2,$3,'out','vgm_declaration','JSON',$4,'sent',$5,false,$6,$6)`,
-        [vgmMsgId, oldCtr.shipment_id, shipForVgm?.carrier_code || "",
-             JSON.stringify({
-               containerNumber: cnU, vgmWeightKg, vgmMethod,
-               methodDescription: vgmMethod === "Method 2"
-                 ? "Method 2 — certified sum of cargo/dunnage weight plus tare weight"
-                 : "Method 1 — weighing the packed container",
-               note: "Simulated VGM declaration transmittal — no live SOLAS VGM EDI integration.",
-             }), oldCtr.id, vgmNow]);
+      // The declaration itself went to the carrier above (sendVgm, DCSA VGM 1.0) and is in the message log.
       const allCtrs = await query("SELECT vgm_status FROM containers WHERE shipment_id=$1", [oldCtr.shipment_id]);
       if (allCtrs.length > 0 && allCtrs.every(c => c.vgm_status === 'Submitted')) {
         await autoCompleteMilestone(oldCtr.shipment_id, 'si_submitted',
@@ -1355,6 +1501,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!ctr) return err(res, "Not found", 404);
     const [shipmentRowForGate] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
     if (await blockIfWrongSide(req, res, shipmentRowForGate, 'export')) return;
+    // The carrier holds this container's VGM declaration: taking the VGM back to Pending withdraws it there
+    // first (DCSA retraction). The declarations stay on record after the container goes.
+    if (["Submitted", "Accepted"].includes(ctr.vgm_status))
+      return err(res, `${ctr.container_number || "This container"}'s VGM is declared to ${shipmentRowForGate?.carrier_code || "the carrier"}: set it back to Pending first, which withdraws it, then remove the container`, 409);
     await query("DELETE FROM containers WHERE id=$1", [req.params.id]);
     await logEvent(ctr.shipment_id, 'CONTAINER_REMOVED', null, ctr.container_number, null,
       JSON.stringify({ size: ctr.size, type: ctr.type }), req.user?.name || req.user?.email || "");
@@ -1633,40 +1783,46 @@ module.exports = function shipmentsRoutes(app, ctx) {
   // One container event: the row, the History entry and the milestone it may complete. Shared by
   // the route above and Track & Trace (routes/carrier-tracking.js, TKT-KG4E49), so a carrier-reported
   // event moves milestones exactly like one typed in. carrierEventId = the carrier's eventID ('' by hand).
+  // Each event is kept with its DCSA Track & Trace classification (phase 6, lib/dcsa/codes.js
+  // CONTAINER_EVENT_DCSA): from the label for a manual one; the carrier's own for a carrier event
+  // (`dcsa`). A typed location counts as a UN/LOCODE only when it is one of the shipment's own ports,
+  // written alone or as "CODE · name" — "BUSAN" or "DEPOT 4" stays a free-text place (lib/schema.js
+  // reads existing rows the same way).
+  async function ownPortIn(shipmentId, location) {
+    const code = (String(location || "").match(/^([A-Z]{2}[A-Z2-9]{3})(?=\s*·|\s*$)/) || [])[1];
+    if (!code) return "";
+    const [own] = await query(`SELECT 1 FROM shipments WHERE id=$1 AND $2 IN (pol, pod)
+      UNION ALL SELECT 1 FROM shipment_legs WHERE shipment_id=$1 AND $2 IN (pol, pod) LIMIT 1`, [shipmentId, code]);
+    return own ? code : "";
+  }
   async function recordContainerEvent(ctr, { eventType, occurredAt, location = "", notes = "", conditionNotes = "", damageFlag = false,
-    chassisProvider = "", recordedBy = "", carrierEventId = "" }) {
+    chassisProvider = "", recordedBy = "", carrierEventId = "", dcsa = null }) {
     const id = `CEV-${uid()}`;
     const now = new Date().toISOString();
+    const cls = { ...(CONTAINER_EVENT_DCSA[eventType] || { eventType: "", code: "", emptyIndicator: "" }), ...(dcsa || {}) };
+    const unLocationCode = String(dcsa?.unLocationCode || (await ownPortIn(ctr.shipment_id, location)) || "").toUpperCase();
     await query(`INSERT INTO container_events
-      (id, container_id, shipment_id, event_type, location, occurred_at, recorded_by, notes, condition_notes, damage_flag, chassis_provider, created_at, carrier_event_id)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      (id, container_id, shipment_id, event_type, location, occurred_at, recorded_by, notes, condition_notes, damage_flag, chassis_provider, created_at, carrier_event_id,
+       dcsa_event_type, dcsa_event_code, event_classifier, empty_indicator, un_location_code)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
       [id, ctr.id, ctr.shipment_id, eventType, location, occurredAt, recordedBy, notes,
-           conditionNotes, !!damageFlag, chassisProvider, now, carrierEventId]);
+           conditionNotes, !!damageFlag, chassisProvider, now, carrierEventId,
+           cls.eventType || "", cls.code || "", cls.classifier || "ACTUAL", cls.emptyIndicator || "", unLocationCode]);
     const [eventRow] = await query("SELECT * FROM container_events WHERE id=$1", [id]);
     const event = mapContainerEvent(eventRow);
     await logEvent(ctr.shipment_id, 'CONTAINER_EVENT_ADDED', null, null, `${eventType} — ${ctr.container_number}`,
       JSON.stringify({ containerId: ctr.id, eventType, occurredAt, ...(carrierEventId ? { carrierEventId } : {}) }), recordedBy);
 
-    // TKT-OZD4V8: once every container on the shipment has logged the same lifecycle
-    // event, that's the real-world signal the corresponding milestone step represents —
-    // Gate In (origin) -> cargo_gated_in, Gate Out (destination) -> cargo_released.
-    // Sailed/Discharged (2026-09, FCL export gap analysis finding #5) extend this the same
-    // way — vessel_departed/vessel_arrived were previously only auto-completed via AIS-
-    // confirmed ETD/ETA (lib/ais-listener.js), leaving a shipment on a non-AIS-tracked
-    // vessel with no automatic credit for the exact same events an operator is already
-    // logging here. Manual completion and AIS both remain working fallbacks either way.
-    const MILESTONE_BY_EVENT = {
-      'Gate In': 'cargo_gated_in', 'Gate Out': 'cargo_released',
-      'Sailed': 'vessel_departed', 'Discharged': 'vessel_arrived',
-    };
-    const milestoneKey = MILESTONE_BY_EVENT[eventType];
-    if (milestoneKey) {
-      const allCtrs = await query("SELECT id FROM containers WHERE shipment_id=$1", [ctr.shipment_id]);
-      const withEvent = await query("SELECT DISTINCT container_id FROM container_events WHERE shipment_id=$1 AND event_type=$2", [ctr.shipment_id, eventType]);
-      if (allCtrs.length > 0 && withEvent.length >= allCtrs.length) {
-        await autoCompleteMilestone(ctr.shipment_id, milestoneKey,
-          `Auto-completed — all ${allCtrs.length} container(s) logged "${eventType}"`);
-      }
+    // TKT-OZD4V8, then DCSA-classified (phase 6, lib/milestone-events.js): once every container on the
+    // shipment has the event, the milestone it stands for completes — Gate In → Cargo Gated In,
+    // Sailed → Vessel Departed, Discharged at the POD → Vessel Arrived, Gate Out → Cargo Released,
+    // and whatever else a template wires to a DCSA event. Manual completion and AIS stay as fallbacks.
+    // The milestones this event completed come back with it (milestonesCompleted), for the caller to report.
+    if (cls.eventType) {
+      const n = (await query("SELECT COUNT(*)::int AS n FROM containers WHERE shipment_id=$1", [ctr.shipment_id]))[0]?.n || 0;
+      event.milestonesCompleted = await ctx.milestoneEvents.onEvent(ctr.shipment_id, { eventType: cls.eventType, code: cls.code, classifier: cls.classifier || "ACTUAL",
+        emptyIndicator: cls.emptyIndicator || "", unLocationCode, scope: "container", strictPlace: !!dcsa },
+        `Auto-completed — all ${n} container(s) logged "${eventType}"`);
     }
     return event;
   }

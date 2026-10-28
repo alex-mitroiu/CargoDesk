@@ -124,7 +124,7 @@ async function confirmDoc(shipmentId, docId, token) {
 
     console.log("\nScratch shipment with this customer as Principal");
     const ship = await request("POST", "/api/shipments", {
-      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418", etd: "2026-11-02",
       principalId: customerId, principalName: "Test Credit Co",
       emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
@@ -301,7 +301,7 @@ async function confirmDoc(shipmentId, docId, token) {
     assert("child linked to parent", childCust.body.parentCustomerId === parentCust.body.id);
 
     const groupShip = await request("POST", "/api/shipments", {
-      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418", etd: "2026-11-02",
       principalId: childCust.body.id, principalName: "Test Credit Child Co",
       emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
@@ -329,7 +329,7 @@ async function confirmDoc(shipmentId, docId, token) {
       companyName: "Test Credit Held Co", creditHold: true, creditHoldReason: "Overdue — test fixture",
     }, token);
     const heldShip = await request("POST", "/api/shipments", {
-      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418", etd: "2026-11-02",
       principalId: heldCust.body.id, principalName: "Test Credit Held Co",
       emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
@@ -338,7 +338,7 @@ async function confirmDoc(shipmentId, docId, token) {
     assert("creditWarning names the right company/role", heldShip.body.creditWarning.onHold[0].companyName === "Test Credit Held Co" && heldShip.body.creditWarning.onHold[0].role === "Principal");
 
     const cleanShip = await request("POST", "/api/shipments", {
-      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418", etd: "2026-11-02",
       principalId: customerId, principalName: "Test Credit Co",
       emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
@@ -368,7 +368,7 @@ async function confirmDoc(shipmentId, docId, token) {
     // "Second confirmed invoice" workaround above; credit_overrides is looked up per-shipment,
     // so a fresh one starts genuinely un-approved.
     const ship2 = await request("POST", "/api/shipments", {
-      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418", etd: "2026-11-02",
       principalId: customerId, principalName: "Test Credit Co",
       emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);

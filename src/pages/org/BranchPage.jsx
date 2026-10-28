@@ -32,6 +32,7 @@ function BranchForm({ branch, onSave, onCancel }) {
     currency:    branch?.currency    || "",
     taxRegistrationNumber: branch?.taxRegistrationNumber || "",
     standardVatRate: branch?.standardVatRate ?? "",
+    scac:        branch?.scac        || "",
   });
   const [saving, setSaving] = useState(false);
 
@@ -191,6 +192,17 @@ function BranchForm({ branch, onSave, onCancel }) {
             onChange={e => setForm(p => ({ ...p, standardVatRate: e.target.value }))}
             placeholder="e.g. 21" style={{ ...inp, fontFamily: T.mono }} />
         </div>
+        {/* The entity's NMFTA carrier code (Epic TKT-C7EBU3): on a House B/L this entity is the
+            carrier, and a DCSA transport document (an eBL) names its carrier by SCAC. */}
+        <div style={{ flex: "0 1 140px" }}>
+          <label htmlFor="branch-scac" style={{ display: "block", fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>
+            SCAC
+          </label>
+          <input id="branch-scac" value={form.scac} maxLength={4}
+            onChange={e => setForm(p => ({ ...p, scac: e.target.value.toUpperCase().replace(/[^A-Z]/g, "") }))}
+            placeholder="e.g. ABCD" style={{ ...inp, fontFamily: T.mono }} />
+          <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, marginTop: 3 }}>For House B/Ls issued as eBLs</div>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -247,7 +259,7 @@ function BranchDetail({ branch, onClose, onEdit }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 20 }}>
           {[["Country", branch.countryCode], ["LOCODE", branch.locode], ["City", branch.city],
             ["Timezone", branch.timezone], ["Phone", branch.phone], ["Email", branch.email],
-            ["Reporting Currency", branch.currency], ["VAT / Tax No.", branch.taxRegistrationNumber],
+            ["Reporting Currency", branch.currency], ["VAT / Tax No.", branch.taxRegistrationNumber], ["SCAC", branch.scac],
             ["Standard VAT Rate", branch.standardVatRate != null ? `${branch.standardVatRate}%` : ""]].map(([label, val]) => val ? (
             <div key={label}>
               <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{label}</div>

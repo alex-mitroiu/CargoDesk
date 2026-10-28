@@ -3,6 +3,16 @@
 module.exports = function officesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, mapOffice, isUniqueViolation } = ctx;
   const adminOnly = requireRole(["admin"]);
+  // The House B/L number series (TKT-C7EBU3 gap G5, decision D1): its prefix, and the number the next
+  // issue would take. A prefix an admin sets is unique across offices; empty = the default.
+  const withSeries = async (row, mapped) => ({ ...mapped, hblPrefix: row.hbl_prefix || "", hblDefaultPrefix: ctx.houseBl.seriesPrefix({ ...row, hbl_prefix: "" }),
+    hblNextNumber: await ctx.houseBl.nextSeriesNumber(row) });
+  const prefixError = async (prefix, officeId) => {
+    if (!prefix) return null;
+    if (!ctx.houseBl.PREFIX_RE.test(prefix)) return "hblPrefix: 2 to 10 capital letters or digits";
+    const [taken] = await query("SELECT code FROM offices WHERE UPPER(hbl_prefix)=$1 AND id<>$2", [prefix, officeId || ""]);
+    return taken ? `The B/L number prefix ${prefix} is already used by office ${taken.code}` : null;
+  };
 
   // ── Offices CRUD ────────────────────────────────────────────────────────────
 
@@ -12,7 +22,7 @@ module.exports = function officesRoutes(app, ctx) {
       FROM offices o LEFT JOIN users u ON u.id = o.manager_user_id
       ORDER BY o.code
     `);
-    ok(res, rows.map(r => mapOffice({ ...r, manager_name: r.manager_name || r.manager_email || null })));
+    ok(res, await Promise.all(rows.map(r => withSeries(r, mapOffice({ ...r, manager_name: r.manager_name || r.manager_email || null })))));
   });
 
   app.post("/api/offices", adminOnly, async (req, res) => {
@@ -42,6 +52,9 @@ module.exports = function officesRoutes(app, ctx) {
     if (!existing) return err(res, "Not found", 404);
     const { name = existing.name, isActive, branchId,
             managerUserId, invoiceAlertBusinessDays, invoiceEscalationBusinessDays } = req.body || {};
+    const hblPrefix = req.body?.hblPrefix !== undefined ? String(req.body.hblPrefix || "").trim().toUpperCase() : (existing.hbl_prefix || "");
+    const badPrefix = await prefixError(hblPrefix, existing.id);
+    if (badPrefix) return err(res, badPrefix);
     const active = isActive !== undefined ? !!isActive : existing.is_active;
     const bid = branchId !== undefined ? (branchId || null) : existing.branch_id;
     // Invoice Collections thresholds (Epic TKT-G11AHW) — an office's own manager_user_id is also
@@ -60,12 +73,13 @@ module.exports = function officesRoutes(app, ctx) {
     if (alertDays != null && escalationDays != null && escalationDays <= alertDays)
       return err(res, "invoiceEscalationBusinessDays must be greater than invoiceAlertBusinessDays");
     await query(`UPDATE offices SET name=$1, is_active=$2, branch_id=$3, manager_user_id=$4,
-      invoice_alert_business_days=$5, invoice_escalation_business_days=$6 WHERE id=$7`,
-      [name, active, bid, mgr, alertDays, escalationDays, req.params.id]);
+      invoice_alert_business_days=$5, invoice_escalation_business_days=$6, hbl_prefix=$7 WHERE id=$8`,
+      [name, active, bid, mgr, alertDays, escalationDays, hblPrefix, req.params.id]);
     const [managerName] = mgr ? await query("SELECT name, email FROM users WHERE id=$1", [mgr]) : [null];
-    ok(res, mapOffice({ ...existing, name, is_active: active, branch_id: bid, manager_user_id: mgr,
+    const row = { ...existing, name, is_active: active, branch_id: bid, manager_user_id: mgr, hbl_prefix: hblPrefix,
       manager_name: managerName ? (managerName.name || managerName.email) : null,
-      invoice_alert_business_days: alertDays, invoice_escalation_business_days: escalationDays }));
+      invoice_alert_business_days: alertDays, invoice_escalation_business_days: escalationDays };
+    ok(res, await withSeries(row, mapOffice(row)));
   });
 
   app.delete("/api/offices/:id", adminOnly, async (req, res) => {

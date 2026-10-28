@@ -1,5 +1,8 @@
 "use strict";
 
+const { cleanMatchers } = require("../lib/milestone-events");
+const { MILESTONE_DCSA } = require("../lib/dcsa/codes");
+
 module.exports = function shipmentOpsRoutes(app, ctx) {
   const { query, transaction, ok, err, uid, auth, requireRole, validCoord, GPS_LOC_TYPE,
           mapCostLine, mapService, mapMilestone, mapMilestoneTemplate, billingHolds, describeHolds,
@@ -66,6 +69,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       confirmedAt: r.confirmed_at || null, confirmedBy: r.confirmed_by || '',
       isStale: Number(n) > 0,
       containerId: r.container_id || '', responsibleParty: r.responsible_party || '',
+      vgmDeclarationId: r.vgm_declaration_id || '',
       relatedDocId: r.related_doc_id || null,
       sourceCostLineIds: r.source_cost_line_ids ? JSON.parse(r.source_cost_line_ids) : null,
       paidAt: r.paid_at || null, paidAmount: r.paid_amount ?? null, transactionId: r.transaction_id || '',
@@ -297,7 +301,17 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     FR01: 'export', FR02: 'export', // invoices — SELL-side only, by construction (see reverse below)
     CN01: 'export', // credit/debit note — same billing side as the invoice it corrects
     BL01: 'export', // House B/L — issued by the export/forwarding office to its own shipper
+    VG01: 'export', VG02: 'export', // VGM declaration and its evidence — VGM is the export side's
   };
+  // A document filed against a VGM declaration (VG01 / VG02): the declaration must be this shipment's.
+  // → '' (none), the id, or null after answering 400.
+  async function vgmDeclarationFor(res, shipmentId, docType, vgmDeclarationId) {
+    if (!vgmDeclarationId) return "";
+    if (!["VG01", "VG02"].includes(docType)) { err(res, "Only a VGM Declaration (VG01) or VGM evidence (VG02) belongs to a VGM declaration"); return null; }
+    const [d] = await query("SELECT id FROM vgm_declarations WHERE id=$1 AND shipment_id=$2 AND kind='DECLARATION'", [vgmDeclarationId, shipmentId]);
+    if (!d) { err(res, "That VGM declaration isn't this shipment's", 400); return null; }
+    return d.id;
+  }
   async function blockIfWrongSideForDocType(req, res, shipmentId, docType) {
     const side = DOC_TYPE_SIDE[docType];
     if (!side) return false;
@@ -308,6 +322,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
 
   // Invoices and credit/debit notes — the documents that bill a customer.
   const BILLING_DOC_TYPES = ["FR01", "FR02", "CN01"];
+  // The House B/L is a document of title: once issued (confirmed) it only moves forward too, and a
+  // shipment has at most one issued at a time (TKT-E8R1UF).
+  const HOUSE_BL = "BL01";
 
   // Which live billing document holds each SELL line (TKT-2F19XD, lib/billing-holds.js) —
   // Invoice Entry labels those lines and leaves them out of a new invoice. null = unbilled.
@@ -1084,9 +1101,10 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       const id = `MS-${uid()}`;
       const off = DATE_OFFSETS[t.milestone_key];
       const estimatedDate = off ? shiftDate(off.base, off.days) : '';
-      await query("INSERT INTO shipment_milestones (id,shipment_id,milestone_key,label,sequence_order,estimated_date,completed_at,completed_by,note,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-        [id, req.params.id, t.milestone_key, t.label, t.sequence_order, estimatedDate, '', '', '', now]);
-      created.push(mapMilestone({ id, shipment_id: req.params.id, milestone_key: t.milestone_key, label: t.label, sequence_order: t.sequence_order, estimated_date: estimatedDate, completed_at: '', completed_by: '', note: '', created_at: now }));
+      // The milestone keeps the template's DCSA events (phase 6): what completes it on this shipment.
+      await query("INSERT INTO shipment_milestones (id,shipment_id,milestone_key,label,sequence_order,estimated_date,completed_at,completed_by,note,created_at,dcsa_events) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+        [id, req.params.id, t.milestone_key, t.label, t.sequence_order, estimatedDate, '', '', '', now, t.dcsa_events || '']);
+      created.push(mapMilestone({ id, shipment_id: req.params.id, milestone_key: t.milestone_key, label: t.label, sequence_order: t.sequence_order, estimated_date: estimatedDate, completed_at: '', completed_by: '', note: '', created_at: now, dcsa_events: t.dcsa_events || '' }));
     }
     ok(res, created, 201);
   });
@@ -1123,6 +1141,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     }
     await query("UPDATE shipment_milestones SET estimated_date=$1,completed_at=$2,completed_by=$3,note=$4 WHERE id=$5",
       [estimatedDate, completedAt, completedBy, note, req.params.id]);
+    // Its "Overdue milestone" Kanban task, if the ops sweep opened one, closes now (TKT-C7EBU3 gap G21).
+    if (completedAt && !existing.completed_at) await ctx.onMilestoneCompleted({ ...existing, completed_at: completedAt });
     const updated = mapMilestone({ ...existing, estimated_date: estimatedDate, completed_at: completedAt, completed_by: completedBy, note });
     ok(res, outOfOrder ? { ...updated, outOfOrder: true } : updated);
   });
@@ -1143,9 +1163,11 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   });
 
   app.post("/api/shipments/:id/documents", shipmentWrite, async (req, res) => {
-    const { filename, mimeType, docType, data, containerId = '', responsibleParty = '', containerEventId = '' } = req.body;
+    const { filename, mimeType, docType, data, containerId = '', responsibleParty = '', containerEventId = '', vgmDeclarationId = '' } = req.body;
     if (!filename || !data) return err(res, "filename and data are required");
     if (await blockIfWrongSideForDocType(req, res, req.params.id, docType)) return;
+    const vgmDecl = await vgmDeclarationFor(res, req.params.id, docType, vgmDeclarationId);
+    if (vgmDecl === null) return;
     try {
       const buf        = Buffer.from(data, "base64");
       const ext        = path.extname(filename) || "";
@@ -1155,9 +1177,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       const now      = new Date().toISOString();
       const uploader = req.user?.name || req.user?.email || "";
       await query(`INSERT INTO shipment_documents
-        (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party, container_event_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft', $10, $11, $12)`,
-        [id, req.params.id, filename, storedName, mimeType || "", buf.length, docType || "OT", uploader, now, containerId, responsibleParty, containerEventId]);
+        (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party, container_event_id, vgm_declaration_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft', $10, $11, $12, $13)`,
+        [id, req.params.id, filename, storedName, mimeType || "", buf.length, docType || "OT", uploader, now, containerId, responsibleParty, containerEventId, vgmDecl]);
       await logEntityEvent('document', id, 'GENERATED', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, docType: docType || "OT", filename, containerId }));
       const [row] = await query("SELECT * FROM shipment_documents WHERE id = $1", [id]);
@@ -1238,9 +1260,19 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   }
 
   app.post("/api/shipments/:id/documents/generate", shipmentWrite, documentActionRateLimit, async (req, res) => {
-    const { html, filename, docType, containerId = '', responsibleParty = '', sourceCostLineIds = null, relatedDocId = null } = req.body;
+    const { html, filename, docType, containerId = '', responsibleParty = '', sourceCostLineIds = null, relatedDocId = null, vgmDeclarationId = '' } = req.body;
     if (!html || !filename) return err(res, "html and filename are required");
     if (await blockIfWrongSideForDocType(req, res, req.params.id, docType)) return;
+    const vgmDecl = await vgmDeclarationFor(res, req.params.id, docType, vgmDeclarationId);
+    if (vgmDecl === null) return;
+    // House B/L draft (TKT-C7EBU3, gap G8): what it prints about loading; a typed on-board date is checked.
+    const houseStatement = docType === HOUSE_BL ? await ctx.houseBl.draftStatement(req.params.id, req.body.houseBl) : null;
+    if (houseStatement?.error) return err(res, houseStatement.error);
+    // The Delivery Order hands the cargo over: with a House B/L issued, only once the cargo is released (gap G19).
+    if (docType === "DO01") {
+      const live = await ctx.houseBl.liveHouse(req.params.id);
+      if (live && !live.released_at) return err(res, `Release the cargo against House B/L ${live.reference} before issuing the Delivery Order`, 409);
+    }
     let consumeOverrideId = null;
     if (docType === 'FR01' || docType === 'FR02') {
       const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
@@ -1274,7 +1306,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     // marker in the shipment's existing event history.
     await logEvent(req.params.id, 'DOCUMENT_GENERATION_ATTEMPTED', null, null, null,
       JSON.stringify({ docType: docType || "OT", filename }), req.user?.name || req.user?.email || "");
-    let storedName = null, committed = false;
+    let storedName = null, committed = false, replacedDrafts = [];
     try {
       const cert = await getActiveSigningCert(query);
       const rawPdf = await renderHtmlToPdf(html);
@@ -1300,12 +1332,29 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           if (holds.size) throw Object.assign(new Error(`Cannot generate this ${docType} — ${describeHolds(holds, billedLines)}`), { status: 409 });
         }
         await tx.query(`INSERT INTO shipment_documents
-          (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party, source_cost_line_ids, related_doc_id)
-          VALUES ($1, $2, $3, $4, 'application/pdf', $5, $6, $7, $8, 'draft', $9, $10, $11, $12)`,
+          (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party, source_cost_line_ids, related_doc_id, vgm_declaration_id)
+          VALUES ($1, $2, $3, $4, 'application/pdf', $5, $6, $7, $8, 'draft', $9, $10, $11, $12, $13)`,
           [id, req.params.id, pdfFilename, storedName, signedPdf.length, docType || "OT", uploader, now, containerId, responsibleParty,
-               Array.isArray(sourceCostLineIds) ? JSON.stringify(sourceCostLineIds) : null, relatedDocId]);
+               Array.isArray(sourceCostLineIds) ? JSON.stringify(sourceCostLineIds) : null, relatedDocId, vgmDecl]);
+        // A regenerated House B/L draft replaces the earlier drafts instead of piling up (one
+        // shipment had 37). A carrier booking pointing at one of them follows to the new draft.
+        if (docType === HOUSE_BL) {
+          replacedDrafts = await tx.query("SELECT * FROM shipment_documents WHERE shipment_id=$1 AND doc_type=$2 AND status='draft' AND id<>$3",
+            [req.params.id, HOUSE_BL, id]);
+          for (const old of replacedDrafts) {
+            await tx.query("UPDATE carrier_bookings SET bl_document_id=$1 WHERE bl_document_id=$2", [id, old.id]);
+            await tx.query("DELETE FROM shipment_documents WHERE id=$1", [old.id]);
+          }
+          await ctx.houseBl.onDraftGenerated(tx, { shipmentId: req.params.id, docId: id, filename,
+            statement: houseStatement, actor: req.user?.name || req.user?.email || "" });
+        }
       });
       committed = true;
+      for (const old of replacedDrafts) {
+        try { fs.unlinkSync(path.join(UPLOADS_DIR, old.stored_name)); } catch {}
+        await logEntityEvent('document', old.id, 'REPLACED', null, null, null,
+          JSON.stringify({ shipmentId: req.params.id, docType: old.doc_type, filename: old.filename, replacedBy: id }));
+      }
       await logEntityEvent('document', id, 'GENERATED', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, docType: docType || "OT", filename: pdfFilename, containerId, signed: true, certFingerprint: cert.fingerprint_sha256 }));
       await logEvent(req.params.id, 'DOCUMENT_GENERATED', null, null, pdfFilename,
@@ -1365,9 +1414,22 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const [doc] = await query("SELECT * FROM shipment_documents WHERE id = $1 AND shipment_id = $2", [req.params.docId, req.params.shipmentId]);
     if (!doc) return err(res, "Not found", 404);
     if (await blockIfWrongSideForDocType(req, res, req.params.shipmentId, doc.doc_type)) return;
-    const { status, relatedDocId } = req.body;
+    const { status, relatedDocId, voidReason = "" } = req.body;
     if (status !== undefined) {
       if (!["draft", "confirmed", "voided"].includes(status)) return err(res, "status must be draft, confirmed, or voided");
+      if (doc.doc_type === HOUSE_BL && status !== doc.status) {
+        if (doc.status === "voided")
+          return err(res, "This House B/L is voided and stays voided — generate a new one to issue again", 409);
+        if (doc.status === "confirmed" && status === "draft")
+          return err(res, "An issued House B/L can't go back to draft — void it, then issue a new one", 409);
+        if (doc.status === "confirmed" && status === "voided" && !String(voidReason).trim())
+          return err(res, "Give a reason to void an issued House B/L", 400);
+        if (status === "confirmed") {
+          const [issued] = await query("SELECT filename FROM shipment_documents WHERE shipment_id=$1 AND doc_type=$2 AND status='confirmed' AND id<>$3",
+            [doc.shipment_id, HOUSE_BL, doc.id]);
+          if (issued) return err(res, `This shipment already has an issued House B/L (${issued.filename}) — void it before issuing another`, 409);
+        }
+      }
       // An issued invoice or credit note only moves forward (2026-09-30): draft → confirmed, and
       // draft or confirmed → voided. Taking a confirmed one back to draft would let it be deleted
       // (see DELETE below), and re-confirming a voided one would bill it again next to the credit
@@ -1379,9 +1441,23 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           return err(res, `A confirmed ${doc.doc_type} can't go back to draft — reverse it with a credit note instead`, 409);
       }
       const now = new Date().toISOString();
+      // Issuing a House B/L (TKT-C7EBU3): readiness (gap G4) and the House transport document first.
+      const issue = doc.doc_type === HOUSE_BL && status === "confirmed" && doc.status !== "confirmed"
+        ? await ctx.houseBl.prepareIssue(doc, req.user) : null;
+      if (issue?.error) return err(res, issue.error, 409);
       if (status === "confirmed") {
-        await query("UPDATE shipment_documents SET status=$1, confirmed_at=$2, confirmed_by=$3 WHERE id=$4",
-          [status, now, req.user?.name || req.user?.email || "", req.params.docId]);
+        try {
+          await transaction(async tx => {
+            await tx.query("UPDATE shipment_documents SET status=$1, confirmed_at=$2, confirmed_by=$3 WHERE id=$4",
+              [status, now, req.user?.name || req.user?.email || "", req.params.docId]);
+            if (issue) await issue.apply(tx);
+          });
+        } catch (e) {
+          // ux_shipment_documents_one_issued_house_bl / ux_transport_documents_one_live_house: another
+          // House B/L was issued meanwhile.
+          if (e.code === "23505") return err(res, "This shipment already has an issued House B/L — void it before issuing another", 409);
+          throw e;
+        }
         // Invoice Collections "user responsible" (Epic TKT-G11AHW) — defaults to whoever confirmed
         // an FR01/FR02, since they're a real, present person; never overwrites a manual
         // reassignment already on the row (e.g. a re-confirm after a correction).
@@ -1404,8 +1480,10 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         }
       }
       if (status === "voided" && doc.status !== "voided") {
+        if (doc.doc_type === HOUSE_BL) await ctx.houseBl.onVoided(doc, voidReason, req.user);
         await logEntityEvent('document', req.params.docId, 'VOIDED', null, null, null,
-          JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
+          JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '',
+            ...(String(voidReason).trim() && { reason: String(voidReason).trim() }) }));
       }
     }
     if (relatedDocId !== undefined) {
@@ -1431,10 +1509,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!doc) return err(res, "Not found", 404);
     if (doc.doc_type !== "BL01") return err(res, "Only a House Bill of Lading can be marked surrendered", 400);
     if (doc.status !== "confirmed") return err(res, "Only an issued (confirmed) House B/L can be marked surrendered", 409);
-    // Surrender happens at ORIGIN (the shipper hands back the originals before/at sailing) —
-    // export side, unlike Release below, which happens at destination.
+    // Telex release / Surrendered: the shipper hands the originals back at ORIGIN (export side). An
+    // Original B/L is surrendered at DESTINATION, where the consignee presents the originals (import
+    // side, TKT-C7EBU3 gap G19). Either way the House transport document is surrendered for delivery.
     const [shipmentForSurrender] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
-    if (shipmentForSurrender && (await blockIfWrongSide(req, res, shipmentForSurrender, 'export'))) return;
+    const live = await ctx.houseBl.liveHouse(req.params.shipmentId);
+    const atDestination = (live?.release_type || shipmentForSurrender?.bl_release_type) === "Original";
+    if (shipmentForSurrender && (await blockIfWrongSide(req, res, shipmentForSurrender, atDestination ? 'import' : 'export'))) return;
     if (!doc.bl_surrendered_at) {
       const now = new Date().toISOString();
       const actor = req.user?.name || req.user?.email || "";
@@ -1442,6 +1523,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       await logEntityEvent('document', doc.id, 'BL_SURRENDERED', null, null, null,
         JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename }));
     }
+    // Who presented the originals at destination: the holder, the last endorsee of a to-order B/L (G11).
+    const presentedBy = String(req.body?.presentedBy || "").trim().slice(0, 120);
+    await ctx.houseBl.onSurrendered(req.params.shipmentId, { kind: atDestination ? "destination" : "origin", user: req.user,
+      detail: atDestination && presentedBy ? { presentedBy } : {} });
+    // Surrendered at origin: the import office gets the telex release notice (G18).
+    if (!atDestination) await ctx.houseBl.sendTelexReleaseNotice(req.params.shipmentId, req.user);
     const [row] = await query("SELECT * FROM shipment_documents WHERE id=$1", [doc.id]);
     ok(res, await mapDoc(row, doc.shipment_id));
   });
@@ -1454,6 +1541,11 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     // Release happens at DESTINATION (cargo is released against the surrendered bill) — import side.
     const [shipmentForRelease] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
     if (shipmentForRelease && (await blockIfWrongSide(req, res, shipmentForRelease, 'import'))) return;
+    // The release checks (TKT-C7EBU3 gap G19, decision D3): originals surrendered, collect charges paid,
+    // consignee not on credit hold. An admin or finance user may override with a reason.
+    const { override = false, overrideReason = "" } = req.body || {};
+    const released = await ctx.houseBl.release(req.params.shipmentId, req.user, { override, overrideReason });
+    if (released.error) return res.status(released.status || 409).json({ error: released.error, blocks: released.blocks || [] });
     if (!doc.bl_released_at) {
       const now = new Date().toISOString();
       const actor = req.user?.name || req.user?.email || "";
@@ -1658,8 +1750,16 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     // it also freed its charges to be billed again. Reverse it with a credit note instead.
     if (BILLING_DOC_TYPES.includes(doc.doc_type) && doc.status !== "draft")
       return err(res, `A ${doc.status} ${doc.doc_type} can't be deleted — ${doc.status === "confirmed" ? "reverse it with a credit note instead" : "it stays as the record of what was issued"}`, 409);
+    if (doc.doc_type === HOUSE_BL && doc.status !== "draft")
+      return err(res, doc.status === "confirmed"
+        ? "An issued House B/L can't be deleted — void it with a reason instead"
+        : "A voided House B/L can't be deleted — it stays as the record of what was issued", 409);
+    // A booking linked to this B/L (link-bl-document) lets go of it first: the foreign key made the
+    // delete fail with a 500 (found 2026-10-21).
+    await query("UPDATE carrier_bookings SET bl_document_id=NULL WHERE bl_document_id=$1", [req.params.docId]);
     try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.stored_name)); } catch {}
     await query("DELETE FROM shipment_documents WHERE id = $1", [req.params.docId]);
+    if (doc.doc_type === HOUSE_BL) await ctx.houseBl.onDraftDocumentGone(doc.id);
     await logEntityEvent('document', req.params.docId, 'DELETED', null, null, null,
       JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
     ok(res, { ok: true });
@@ -1672,27 +1772,35 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, rows.map(mapMilestoneTemplate));
   });
 
+  // dcsaEvents (phase 6, optional): the DCSA events that complete this milestone (lib/milestone-events.js);
+  // left out, a default key gets its default and any other key none.
   app.post("/api/milestone-templates", shipmentWrite, async (req, res) => {
-    const { templateKey = 'FCL', carrierCode = '', tradeLane = '', milestoneKey, label, sequenceOrder = 0 } = req.body || {};
+    const { templateKey = 'FCL', carrierCode = '', tradeLane = '', milestoneKey, label, sequenceOrder = 0, dcsaEvents } = req.body || {};
     if (!milestoneKey || !label) return err(res, "milestoneKey and label required");
+    const cleaned = dcsaEvents === undefined ? null : cleanMatchers(dcsaEvents);
+    if (cleaned?.error) return err(res, cleaned.error);
+    const dcsa = cleaned ? JSON.stringify(cleaned.matchers) : (MILESTONE_DCSA[milestoneKey] ? JSON.stringify(MILESTONE_DCSA[milestoneKey]) : '');
     const id = `MT-${uid()}`;
     const now = new Date().toISOString();
-    await query("INSERT INTO milestone_templates (id,template_key,carrier_code,trade_lane,milestone_key,label,sequence_order,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-      [id, templateKey, carrierCode, tradeLane, milestoneKey, label, Number(sequenceOrder), now]);
-    ok(res, mapMilestoneTemplate({ id, template_key: templateKey, carrier_code: carrierCode, trade_lane: tradeLane, milestone_key: milestoneKey, label, sequence_order: Number(sequenceOrder), created_at: now }), 201);
+    await query("INSERT INTO milestone_templates (id,template_key,carrier_code,trade_lane,milestone_key,label,sequence_order,created_at,dcsa_events) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      [id, templateKey, carrierCode, tradeLane, milestoneKey, label, Number(sequenceOrder), now, dcsa]);
+    ok(res, mapMilestoneTemplate({ id, template_key: templateKey, carrier_code: carrierCode, trade_lane: tradeLane, milestone_key: milestoneKey, label, sequence_order: Number(sequenceOrder), created_at: now, dcsa_events: dcsa }), 201);
   });
 
   app.put("/api/milestone-templates/:id", shipmentWrite, async (req, res) => {
-    const { templateKey, carrierCode = '', tradeLane = '', milestoneKey, label, sequenceOrder } = req.body || {};
+    const { templateKey, carrierCode = '', tradeLane = '', milestoneKey, label, sequenceOrder, dcsaEvents } = req.body || {};
     const [existing] = await query("SELECT * FROM milestone_templates WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
     const tKey = templateKey || existing.template_key;
     const mKey = milestoneKey || existing.milestone_key;
     const lbl  = label || existing.label;
     const seq  = sequenceOrder != null ? Number(sequenceOrder) : existing.sequence_order;
-    await query("UPDATE milestone_templates SET template_key=$1,carrier_code=$2,trade_lane=$3,milestone_key=$4,label=$5,sequence_order=$6 WHERE id=$7",
-      [tKey, carrierCode, tradeLane, mKey, lbl, seq, req.params.id]);
-    ok(res, mapMilestoneTemplate({ id: req.params.id, template_key: tKey, carrier_code: carrierCode, trade_lane: tradeLane, milestone_key: mKey, label: lbl, sequence_order: seq, created_at: existing.created_at }));
+    const cleaned = dcsaEvents === undefined ? null : cleanMatchers(dcsaEvents);
+    if (cleaned?.error) return err(res, cleaned.error);
+    const dcsa = cleaned ? JSON.stringify(cleaned.matchers) : existing.dcsa_events || '';
+    await query("UPDATE milestone_templates SET template_key=$1,carrier_code=$2,trade_lane=$3,milestone_key=$4,label=$5,sequence_order=$6,dcsa_events=$8 WHERE id=$7",
+      [tKey, carrierCode, tradeLane, mKey, lbl, seq, req.params.id, dcsa]);
+    ok(res, mapMilestoneTemplate({ id: req.params.id, template_key: tKey, carrier_code: carrierCode, trade_lane: tradeLane, milestone_key: mKey, label: lbl, sequence_order: seq, created_at: existing.created_at, dcsa_events: dcsa }));
   });
 
   app.delete("/api/milestone-templates/:id", shipmentWrite, async (req, res) => {

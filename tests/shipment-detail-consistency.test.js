@@ -75,7 +75,7 @@ async function main() {
 
     console.log("\nSetup — scratch shipment with a container, a Confirmed booking, BUY+SELL cost lines");
     const ship = await request("POST", "/api/shipments", {
-      pol: "CNSHA", pod: "USLAX", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      pol: "CNSHA", pod: "USLAX", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418", etd: "2026-11-09",
       emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
     }, token);
     assert("scratch shipment created", ship.status === 201, JSON.stringify(ship.body));

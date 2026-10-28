@@ -78,12 +78,13 @@ async function getDefaultOffices(token) {
 }
 
 // A DCSA booking needs requested equipment, so a scratch shipment gets one container unless the
-// test counts containers itself.
-async function scratchShipment(token, carrierCode, { container = true } = {}) {
+// test counts containers itself, and the carrier's quote reference (a DCSA booking names a contract or
+// a quote) unless the test is about having none.
+async function scratchShipment(token, carrierCode, { container = true, contractRef = "SPOT-Q-2026-0418" } = {}) {
   const { emoOfficeId, imoOfficeId } = await getDefaultOffices(token);
   const res = await request("POST", "/api/shipments", {
     pol: "NLRTM", pod: "USNYC", carrierCode,
-    status: "Active", contractType: "SPOT", etd: "2026-09-01", emoOfficeId, imoOfficeId,
+    status: "Active", contractType: "SPOT", contractRef, etd: "2026-09-01", emoOfficeId, imoOfficeId,
   }, token);
   if (container && res.body?.id) await addContainer(request, token, res.body.id);
   return res.body.id;
@@ -220,7 +221,7 @@ async function testAutoCreate(token) {
   console.log("\nCarrier Booking — auto-created once contract + schedule both exist");
 
   // Order 1: schedule first, then contract
-  const ship1 = await scratchShipment(token, "MAEU");
+  const ship1 = await scratchShipment(token, "MAEU", { contractRef: "" });
   let get1 = await request("GET", `/api/shipments/${ship1}/carrier-booking`, null, token);
   assert("no booking before contract or schedule exist", get1.body === null);
 
@@ -247,7 +248,7 @@ async function testAutoCreate(token) {
   assert("same booking id preserved through the transition (no duplicate row)", get1.body?.id === get1.body?.id);
 
   // Order 2: contract first, then schedule
-  const ship2 = await scratchShipment(token, "MAEU");
+  const ship2 = await scratchShipment(token, "MAEU", { contractRef: "" });
   const shipRow2 = await request("GET", `/api/shipments/${ship2}`, null, token);
   await request("PUT", `/api/shipments/${ship2}`, { ...shipRow2.body, contractRef: "REF-AUTO-2" }, token);
   let get2 = await request("GET", `/api/shipments/${ship2}/carrier-booking`, null, token);
@@ -265,7 +266,7 @@ async function testAutoCreate(token) {
   // found via a real bug report (SHP-VSB0Z2): a shipment whose Route Legs were filled in
   // manually rather than through Add Sailing/Schedule Generator never got a booking
   // auto-created, since the original check only looked for a shipment_schedules row.
-  const ship3 = await scratchShipment(token, "MAEU");
+  const ship3 = await scratchShipment(token, "MAEU", { contractRef: "" });
   const shipRow3 = await request("GET", `/api/shipments/${ship3}`, null, token);
   await request("PUT", `/api/shipments/${ship3}`, { ...shipRow3.body, contractRef: "REF-AUTO-3" }, token);
   await request("POST", `/api/shipments/${ship3}/legs`, {
@@ -277,7 +278,7 @@ async function testAutoCreate(token) {
 
   // A blank SEA leg (no ETD) must NOT trigger this — every new shipment gets one by
   // default (ShipmentFormPage), so requiring bare leg existence would fire far too early.
-  const ship4 = await scratchShipment(token, "MAEU");
+  const ship4 = await scratchShipment(token, "MAEU", { contractRef: "" });
   const shipRow4 = await request("GET", `/api/shipments/${ship4}`, null, token);
   await request("PUT", `/api/shipments/${ship4}`, { ...shipRow4.body, contractRef: "REF-AUTO-4" }, token);
   await request("POST", `/api/shipments/${ship4}/legs`, { legType: "SEA", movementType: "SEA" }, token);
@@ -312,7 +313,10 @@ async function testEquipmentSummary(token) {
   const messages = await request("GET", `/api/shipments/${shipmentId}/edi-messages`, null, token);
   const outbound = messages.body.find(m => m.direction === "out" && m.messageType === "booking_request");
   assert("outbound booking_request message exists", !!outbound);
-  const payload = JSON.parse(outbound.rawPayload);
+  const payload = JSON.parse(outbound.parsedPayload || outbound.rawPayload);
+  const sentBody = JSON.parse(outbound.rawPayload);
+  assert("the message log keeps the DCSA booking as sent (2026-10-27)", Array.isArray(sentBody.requestedEquipments) && !!sentBody.receiptTypeAtOrigin
+    && sentBody.containerCount === undefined, JSON.stringify(sentBody).slice(0, 200));
   assert("containerCount is 3", payload.containerCount === 3);
   assert("equipment has 2 groups (40HC, 20GP)", Array.isArray(payload.equipment) && payload.equipment.length === 2);
   const hc = payload.equipment.find(e => e.type === "40HC");
@@ -606,7 +610,7 @@ async function testPayloadContractAndRateSnapshot(token) {
   assert("SPOT booking-request returns 201", spotSend.status === 201);
   const spotMessages = await request("GET", `/api/shipments/${spotId}/edi-messages`, null, token);
   const spotOutbound = spotMessages.body.find(m => m.direction === "out" && m.messageType === "booking_request");
-  const spotPayload = JSON.parse(spotOutbound.rawPayload);
+  const spotPayload = JSON.parse(spotOutbound.parsedPayload || spotOutbound.rawPayload);
   assert("SPOT payload contractRef matches", spotPayload.contractRef === "SPOT-REF-123");
   assert("SPOT payload rateSnapshotId is null (no Central contract, no snapshot)", spotPayload.rateSnapshotId === null);
   await request("DELETE", `/api/shipments/${spotId}`, null, token);
@@ -635,7 +639,7 @@ async function testPayloadContractAndRateSnapshot(token) {
     assert("Central booking-request returns 201", centralSend.status === 201);
     const centralMessages = await request("GET", `/api/shipments/${centralId}/edi-messages`, null, token);
     const centralOutbound = centralMessages.body.find(m => m.direction === "out" && m.messageType === "booking_request");
-    const centralPayload = JSON.parse(centralOutbound.rawPayload);
+    const centralPayload = JSON.parse(centralOutbound.parsedPayload || centralOutbound.rawPayload);
     // routes/edi.js fetches the linked contract directly for a Central booking so the payload
     // carries the contract's own genuinely distinct contractNumber and contractRef, not
     // shipment.contractRef (which is just a copy of contractNumber made at assignment time —
@@ -660,7 +664,7 @@ async function testExtendedPayloadFields(token) {
   const bareSend = await request("POST", `/api/shipments/${bareId}/edi-messages/booking-request`, {}, token);
   assert("bare booking-request returns 201", bareSend.status === 201);
   const bareMessages = await request("GET", `/api/shipments/${bareId}/edi-messages`, null, token);
-  const barePayload = JSON.parse(bareMessages.body.find(m => m.direction === "out" && m.messageType === "booking_request").rawPayload);
+  const barePayload = JSON.parse(bareMessages.body.find(m => m.direction === "out" && m.messageType === "booking_request").parsedPayload);
   assert("vesselImo is null when unset", barePayload.vesselImo === null);
   assert("cargoReadyDate is null when unset", barePayload.cargoReadyDate === null);
   assert("shipperName is null when unset", barePayload.shipperName === null);
@@ -670,7 +674,7 @@ async function testExtendedPayloadFields(token) {
   // Fully populated.
   const { emoOfficeId: fullEmoOfficeId, imoOfficeId: fullImoOfficeId } = await getDefaultOffices(token);
   const fullCreate = await request("POST", "/api/shipments", {
-    pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+    pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418",
     etd: "2026-09-01", vesselImo: "9321483", cargoReadyDate: "2026-08-15",
     placeOfReceipt: "Utrecht", placeOfDelivery: "Newark",
     shipperName: "Test Shipper Co", consigneeName: "Test Consignee Co", notifyName: "Test Notify Co",
@@ -682,7 +686,7 @@ async function testExtendedPayloadFields(token) {
   const fullSend = await request("POST", `/api/shipments/${fullId}/edi-messages/booking-request`, {}, token);
   assert("full booking-request returns 201", fullSend.status === 201);
   const fullMessages = await request("GET", `/api/shipments/${fullId}/edi-messages`, null, token);
-  const fullPayload = JSON.parse(fullMessages.body.find(m => m.direction === "out" && m.messageType === "booking_request").rawPayload);
+  const fullPayload = JSON.parse(fullMessages.body.find(m => m.direction === "out" && m.messageType === "booking_request").parsedPayload);
   assert("vesselImo round-trips", fullPayload.vesselImo === "9321483");
   assert("cargoReadyDate round-trips", fullPayload.cargoReadyDate === "2026-08-15");
   assert("placeOfReceipt round-trips", fullPayload.placeOfReceipt === "Utrecht");
@@ -707,7 +711,7 @@ async function testDgCargoSummary(token) {
   const send = await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
   assert("booking-request returns 201", send.status === 201);
   const messages = await request("GET", `/api/shipments/${shipmentId}/edi-messages`, null, token);
-  const payload = JSON.parse(messages.body.find(m => m.direction === "out" && m.messageType === "booking_request").rawPayload);
+  const payload = JSON.parse(messages.body.find(m => m.direction === "out" && m.messageType === "booking_request").parsedPayload);
 
   assert("containerCount still counts all 3 containers", payload.containerCount === 3);
   assert("equipment still has 2 groups (40HC, 20GP)", payload.equipment.length === 2);
@@ -727,21 +731,26 @@ async function testLinkBlDocument(token) {
   await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
 
   const blDoc = await request("POST", `/api/shipments/${shipmentId}/documents/generate`,
-    { html: "<html><body>BL</body></html>", filename: "BL01-test.html", docType: "BL01" }, token);
-  assert("BL01 document generated (201)", blDoc.status === 201);
+    { html: "<html><body>MBL</body></html>", filename: "MB01-test.html", docType: "MB01" }, token);
+  assert("MB01 document generated (201)", blDoc.status === 201);
+  const houseDoc = await request("POST", `/api/shipments/${shipmentId}/documents/generate`,
+    { html: "<html><body>HBL</body></html>", filename: "BL01-test.html", docType: "BL01" }, token);
   const ciDoc = await request("POST", `/api/shipments/${shipmentId}/documents/generate`,
     { html: "<html><body>CI</body></html>", filename: "CI01-test.html", docType: "CI01" }, token);
 
   const otherShipmentId = await scratchShipment(token, "MAEU");
   const otherDoc = await request("POST", `/api/shipments/${otherShipmentId}/documents/generate`,
-    { html: "<html><body>BL</body></html>", filename: "BL01-other.html", docType: "BL01" }, token);
+    { html: "<html><body>MBL</body></html>", filename: "MB01-other.html", docType: "MB01" }, token);
 
   const link = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/link-bl-document`, { documentId: blDoc.body.id }, token);
   assert("link returns 200", link.status === 200);
   assert("blDocumentId set", link.body.blDocumentId === blDoc.body.id);
 
   const rejectWrongType = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/link-bl-document`, { documentId: ciDoc.body.id }, token);
-  assert("linking a non-BL01 document is rejected (400)", rejectWrongType.status === 400);
+  assert("linking a non-B/L document is rejected (400)", rejectWrongType.status === 400);
+  const rejectHouse = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/link-bl-document`, { documentId: houseDoc.body.id }, token);
+  assert("linking the House B/L (BL01) is rejected: the booking's B/L is the carrier's Master (400)",
+    rejectHouse.status === 400 && /Master Bill of Lading/.test(rejectHouse.body?.error), JSON.stringify(rejectHouse.body));
 
   const rejectWrongShipment = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/link-bl-document`, { documentId: otherDoc.body.id }, token);
   assert("linking a document from a different shipment is rejected (404 — not found in this scope)", rejectWrongShipment.status === 404);

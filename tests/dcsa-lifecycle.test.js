@@ -1,6 +1,6 @@
 /**
  * DCSA carrier lifecycle, end to end (Epic TKT-KG4E49, built 2026-10-09) — against a fake carrier
- * that follows the published DCSA specs (Booking 2.0, Track & Trace 2.2, Commercial Schedules 1.0;
+ * that follows the published DCSA specs (Booking 2.0, Track & Trace 3.0 since 2026-10-27, Commercial Schedules 1.0;
  * dcsaorg/Conformance-Gateway): it refuses a booking missing a CreateBooking required field, enforces
  * the cancel/update preconditions, pages its events, and requires the schedule query's parameters.
  *
@@ -112,13 +112,15 @@ function startFakeCarrier() {
           return send(400, dcsaError(400, ["Unsupported cancellation body"]));
         }
       }
-      if (req.method === "GET" && url.pathname === "/v2/events") {
-        fake.eventsQueries.push(Object.fromEntries(url.searchParams));
-        const types = (url.searchParams.get("eventType") || "").split(",").filter(Boolean);
-        const all = fake.events.filter(e => e.ref === url.searchParams.get("carrierBookingReference") && (!types.length || types.includes(e.ev.eventType))).map(e => e.ev);
-        // Two pages, to exercise Next-Page.
-        if (url.searchParams.get("cursor") === "p2") return send(200, all.slice(5));
-        return send(200, all.slice(0, 5), all.length > 5 ? { "Next-Page": `/v2/events?carrierBookingReference=${encodeURIComponent(url.searchParams.get("carrierBookingReference"))}&cursor=p2` } : {});
+      // Track & Trace 3.0: GET /events, `eventTypes`, the API-Version header, { events } pages joined by
+      // the Next-Page-Cursor header.
+      if (req.method === "GET" && url.pathname === "/events") {
+        fake.eventsQueries.push({ ...Object.fromEntries(url.searchParams), apiVersion: req.headers["api-version"] || "" });
+        const types = (url.searchParams.get("eventTypes") || "").split(",").filter(Boolean);
+        const all = fake.events.filter(e => e.ref === url.searchParams.get("carrierBookingReference")
+          && (!types.length || types.includes(e.ev.eventClassification.eventType))).map(e => e.ev);
+        if (url.searchParams.get("cursor") === "p2") return send(200, { events: all.slice(5) });
+        return send(200, { events: all.slice(0, 5) }, all.length > 5 ? { "Next-Page-Cursor": "p2" } : {});
       }
       if (req.method === "GET" && url.pathname === "/v1/point-to-point-routes") {
         if (!url.searchParams.get("placeOfReceipt") || !url.searchParams.get("placeOfDelivery")) return send(400, dcsaError(400, ["placeOfReceipt and placeOfDelivery are required"]));
@@ -152,7 +154,7 @@ function startFakeCarrier() {
     const consignee = await request("POST", "/api/customers", { companyName: "DCSA Lifecycle Consignee Inc" }, token);
     cleanup.customers.push(shipper.body.id, consignee.body.id);
     const newShipment = async (ctrNumbers) => {
-      const s = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode, status: "Active", contractType: "SPOT",
+      const s = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode, status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418",
         etd: "2026-11-02", eta: "2026-11-14", incoterm: "FOB", commodityCode: "9999", serviceType: "Door-to-Port", placeOfReceipt: "Tilburg warehouse",
         shipperId: shipper.body.id, shipperName: shipper.body.companyName, consigneeId: consignee.body.id, consigneeName: consignee.body.companyName,
         principalId: shipper.body.id, principalName: shipper.body.companyName, emoOfficeId, imoOfficeId }, token);
@@ -217,29 +219,33 @@ function startFakeCarrier() {
       n2.status === 201 && (await booking(A)).lastResponseStatus === "amendment_confirmed", JSON.stringify(n2.body).slice(0, 200));
 
     console.log("\nTrack & Trace");
-    const at = (code, unloc) => ({ UNLocationCode: unloc, locationName: code });
-    const eq = (id, code, ctr, empty, unloc, when, cls = "ACT") => ({ ref: `ZQBKG${stamp}`, ev: { eventID: id, eventType: "EQUIPMENT", eventClassifierCode: cls,
-      eventDateTime: when, eventCreatedDateTime: when, equipmentEventTypeCode: code, equipmentReference: ctr, emptyIndicatorCode: empty ? "EMPTY" : "LADEN",
-      ...(unloc ? { eventLocation: at(code, unloc) } : {}) } });
+    // Track & Trace 3.0 events: eventClassification, equipmentDetails, eventLocation.
+    const eq = (id, type, ctr, empty, unloc, when, classifier = "ACTUAL") => ({ ref: `ZQBKG${stamp}`, ev: { eventID: id, eventDateTime: when,
+      eventClassification: { eventType: "EQUIPMENT", eventClassifier: classifier, equipmentEventType: type },
+      equipmentDetails: { equipmentReference: ctr, emptyIndicator: empty ? "EMPTY" : "LADEN" },
+      ...(unloc ? { eventLocation: { UNLocationCode: unloc } } : {}) } });
     F.events.push(
-      eq(`E1-${stamp}`, "GTOT", c1, true, "NLRTM", "2026-10-28T08:00:00Z"),
-      eq(`E2-${stamp}`, "GTIN", c1, false, "NLRTM", "2026-10-30T08:00:00Z"),
-      eq(`E3-${stamp}`, "GTIN", c2, false, "NLRTM", "2026-10-30T09:00:00Z"),
-      eq(`E4-${stamp}`, "LOAD", c1, false, "NLRTM", "2026-11-01T08:00:00Z"),
-      eq(`E5-${stamp}`, "LOAD", c2, false, "NLRTM", "2026-11-01T09:00:00Z", "PLN"),
-      { ref: `ZQBKG${stamp}`, ev: { eventID: `T1-${stamp}`, eventType: "TRANSPORT", eventClassifierCode: "ACT", eventDateTime: "2026-11-02T06:00:00Z",
-        eventCreatedDateTime: "2026-11-02T06:00:00Z", transportEventTypeCode: "DEPA", transportCall: { transportCallID: "tc1", modeOfTransport: "VESSEL", UNLocationCode: "NLRTM" } } },
-      eq(`E6-${stamp}`, "DISC", c1, false, "BEANR", "2026-11-03T08:00:00Z"),
-      eq(`E7-${stamp}`, "LOAD", c1, false, "BEANR", "2026-11-04T08:00:00Z"),
-      eq(`E8-${stamp}`, "DISC", c1, false, "USNYC", "2026-11-14T08:00:00Z"),
-      eq(`E9-${stamp}`, "GTOT", c1, false, "USNYC", "2026-11-15T08:00:00Z"),
-      eq(`E10-${stamp}`, "GTIN", c1, true, "USNYC", "2026-11-20T08:00:00Z"),
-      eq(`E11-${stamp}`, "LOAD", "XXXU0000000", false, "NLRTM", "2026-11-01T08:00:00Z"),
+      eq(`E1-${stamp}`, "GATED_OUT", c1, true, "NLRTM", "2026-10-28T08:00:00Z"),
+      eq(`E2-${stamp}`, "GATED_IN", c1, false, "NLRTM", "2026-10-30T08:00:00Z"),
+      eq(`E3-${stamp}`, "GATED_IN", c2, false, "NLRTM", "2026-10-30T09:00:00Z"),
+      eq(`E4-${stamp}`, "LOADED", c1, false, "NLRTM", "2026-11-01T08:00:00Z"),
+      eq(`E5-${stamp}`, "LOADED", c2, false, "NLRTM", "2026-11-01T09:00:00Z", "PLANNED"),
+      { ref: `ZQBKG${stamp}`, ev: { eventID: `T1-${stamp}`, eventDateTime: "2026-11-02T06:00:00Z",
+        eventClassification: { eventType: "TRANSPORT", eventClassifier: "ACTUAL", transportEventType: "DEPARTED" },
+        eventLocation: { UNLocationCode: "NLRTM" }, transportDetails: { transportCall: { transportCallReference: "tc1" } } } },
+      eq(`E6-${stamp}`, "DISCHARGED", c1, false, "BEANR", "2026-11-03T08:00:00Z"),
+      eq(`E7-${stamp}`, "LOADED", c1, false, "BEANR", "2026-11-04T08:00:00Z"),
+      eq(`E8-${stamp}`, "DISCHARGED", c1, false, "USNYC", "2026-11-14T08:00:00Z"),
+      eq(`E9-${stamp}`, "GATED_OUT", c1, false, "USNYC", "2026-11-15T08:00:00Z"),
+      eq(`E10-${stamp}`, "GATED_IN", c1, true, "USNYC", "2026-11-20T08:00:00Z"),
+      eq(`E11-${stamp}`, "LOADED", "XXXU0000000", false, "NLRTM", "2026-11-01T08:00:00Z"),
     );
     const sync = await request("POST", `/api/shipments/${A}/carrier-events/sync`, {}, token);
     assert("synced (both pages read)", sync.status === 200 && sync.body.received === 12, JSON.stringify({ status: sync.status, received: sync.body?.received, err: sync.body?.error }));
-    assert("asked by carrierBookingReference for EQUIPMENT,TRANSPORT, comma-separated as the spec says",
-      F.eventsQueries[0]?.carrierBookingReference === `ZQBKG${stamp}` && F.eventsQueries[0]?.eventType === "EQUIPMENT,TRANSPORT", JSON.stringify(F.eventsQueries[0]));
+    // Shipment events too since the DCSA event model (2026-10-28): they complete milestones of their own.
+    assert("asked T&T 3.0 by carrierBookingReference for eventTypes SHIPMENT,TRANSPORT,EQUIPMENT, with API-Version 3.0.0",
+      F.eventsQueries[0]?.carrierBookingReference === `ZQBKG${stamp}` && F.eventsQueries[0]?.eventTypes === "SHIPMENT,TRANSPORT,EQUIPMENT"
+      && F.eventsQueries[0]?.apiVersion === "3.0.0", JSON.stringify(F.eventsQueries[0]));
     const ev = await request("GET", `/api/containers?shipmentId=${A}`, null, token);
     const ctrs = Array.isArray(ev.body) ? ev.body : ev.body.results || [];
     const evsOf = async n => {
@@ -258,7 +264,9 @@ function startFakeCarrier() {
     assert("milestones completed the same way as manual events (cargo gated in, vessel departed)", done("cargo_gated_in") && done("vessel_departed"),
       JSON.stringify(ms.map(m => [m.milestoneKey, !!m.completedAt])));
     const sync2 = await request("POST", `/api/shipments/${A}/carrier-events/sync`, {}, token);
-    assert("a re-pull adds nothing", sync2.status === 200 && sync2.body.added.length === 0 && sync2.body.alreadyRecorded === 9, JSON.stringify({ added: sync2.body.added?.length, already: sync2.body.alreadyRecorded }));
+    // Every event is kept (carrier_events, 2026-10-28), so a re-pull finds all 12 already held, unchanged.
+    assert("a re-pull adds nothing: all 12 events are already kept", sync2.status === 200 && sync2.body.added.length === 0 && sync2.body.alreadyRecorded === 12,
+      JSON.stringify({ added: sync2.body.added?.length, already: sync2.body.alreadyRecorded }));
 
     console.log("\nCancelling a CONFIRMED booking — only a request until the carrier confirms");
     const cx = await request("PATCH", `/api/shipments/${A}/carrier-booking/cancel`, { reason: "Shipper cancelled" }, token);

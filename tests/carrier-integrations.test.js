@@ -164,7 +164,7 @@ async function main() {
     const adaptersRes = await request("GET", "/api/carrier-integrations/adapters", null, token);
     assert("registered adapters list includes dcsa-bkg-v2", adaptersRes.body?.includes("dcsa-bkg-v2"));
 
-    const shipRes = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode, status: "Active", contractType: "SPOT", etd: "2026-10-01", emoOfficeId: officeA.id, imoOfficeId: defaultImoOfficeId }, token);
+    const shipRes = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode, status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418", etd: "2026-10-01", emoOfficeId: officeA.id, imoOfficeId: defaultImoOfficeId }, token);
     shipmentId = shipRes.body?.id;
     assert("scratch shipment created", !!shipmentId, JSON.stringify(shipRes.body));
     await addContainer(request, token, shipmentId); // a DCSA booking needs requested equipment
@@ -190,6 +190,30 @@ async function main() {
     const flatWebhook = await rawPost(`/api/carrier-webhooks/${integrationId}`, flat, { "x-dcsa-signature": "sha256=" + crypto.createHmac("sha256", webhookSecret).update(flat).digest("hex") });
     assert("a correctly signed body that isn't a DCSA notification is refused (400)", flatWebhook.status === 400, JSON.stringify(flatWebhook.body));
 
+    // Shipping Instructions 3.0 notifications come to the same address (2026-10-27): one that isn't valid
+    // DCSA is refused, and a valid one for Shipping Instructions nobody sent through this integration matches nothing.
+    const signed = obj => { const raw = Buffer.from(JSON.stringify(obj), "utf8"); return [raw, { "x-dcsa-signature": "sha256=" + crypto.createHmac("sha256", webhookSecret).update(raw).digest("hex") }]; };
+    const siEvent = data => ({ specversion: "1.0", id: crypto.randomUUID(), source: "https://mock-carrier.invalid", type: "org.dcsa.shipping-instructions.v3",
+      time: new Date().toISOString(), datacontenttype: "application/json", subscriptionReference: "cargodesk-test", data });
+    const siBad = await rawPost(`/api/carrier-webhooks/${integrationId}`, ...signed(siEvent({ shippingInstructionsReference: "SI-NOPE-1" })));
+    assert("a signed Shipping Instructions notification without its status is refused (400)", siBad.status === 400 && /Shipping Instructions/.test(siBad.body?.error), JSON.stringify(siBad.body));
+    const siUnknown = await rawPost(`/api/carrier-webhooks/${integrationId}`, ...signed(siEvent({ shippingInstructionsStatus: "COMPLETED", shippingInstructionsReference: "SI-NOPE-1" })));
+    assert("a valid one for Shipping Instructions this integration never received matches nothing (404)", siUnknown.status === 404, JSON.stringify(siUnknown.body));
+
+    // Track & Trace 3.0 pushed events (2026-10-28) come to …/events, signed like the notifications. An event
+    // about nothing booked through this integration is answered 200 with a WARN feedback element (DCSA's
+    // PostEventsResponse); a body that isn't a DCSA event list is refused, and so is a bad signature.
+    const tntEvent = { eventID: "TNT-NOPE-1", eventDateTime: new Date().toISOString(),
+      eventClassification: { eventType: "EQUIPMENT", eventClassifier: "ACTUAL", equipmentEventType: "GATED_IN" },
+      eventLocation: { UNLocationCode: "NLRTM" }, equipmentDetails: { equipmentReference: "ZZZU0000000", emptyIndicator: "LADEN" } };
+    const pushed = await rawPost(`/api/carrier-webhooks/${integrationId}/events`, ...signed({ events: [tntEvent] }));
+    assert("a pushed Track & Trace event for nothing booked here is taken (200) with a WARN feedback element", pushed.status === 200
+      && pushed.body?.feedbackElements?.[0]?.severity === "WARN" && /TNT-NOPE-1/.test(pushed.body.feedbackElements[0].message), JSON.stringify(pushed.body));
+    const pushedBad = await rawPost(`/api/carrier-webhooks/${integrationId}/events`, ...signed({ events: "none" }));
+    assert("a signed body that isn't a DCSA event list is refused (400)", pushedBad.status === 400, JSON.stringify(pushedBad.body));
+    const pushedUnsigned = await rawPost(`/api/carrier-webhooks/${integrationId}/events`, Buffer.from(JSON.stringify({ events: [tntEvent] }), "utf8"), { "x-dcsa-signature": "sha256=deadbeef" });
+    assert("pushed events with a bad signature are refused (401)", pushedUnsigned.status === 401, JSON.stringify(pushedUnsigned.body));
+
     const threadRes = await request("GET", `/api/shipments/${shipmentId}/edi-messages`, null, token);
     assert("a real (non-mock) inbound edi_messages row was written", threadRes.body?.some(m => m.direction === "in" && m.isMock === false));
 
@@ -199,7 +223,7 @@ async function main() {
     const scheduleRes = await request("GET", `/api/schedules/search?pol=ZZTSA&pod=ZZTSB&carrierCode=${carrierCode}&weeks=4`, null, token);
     assert("schedule search uses the active 'schedules' integration ahead of mock fallback", scheduleRes.body?.sailings?.[0]?.vesselName === "MOCK CARRIER VESSEL" && scheduleRes.body?.sailings?.[0]?.source === "live" && scheduleRes.body?.isMock === false);
 
-    const unconfiguredShip = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", etd: "2026-10-01", emoOfficeId: officeA.id, imoOfficeId: defaultImoOfficeId }, token);
+    const unconfiguredShip = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418", etd: "2026-10-01", emoOfficeId: officeA.id, imoOfficeId: defaultImoOfficeId }, token);
     unconfiguredShipmentId = unconfiguredShip.body?.id;
     await addContainer(request, token, unconfiguredShipmentId);
     const unconfiguredSend = await request("POST", `/api/shipments/${unconfiguredShipmentId}/edi-messages/booking-request`, {}, token);
@@ -212,7 +236,7 @@ async function main() {
     let toggleShipmentId = null;
     await request("PUT", "/api/settings", { api_carrier_integrations_enabled: "false" }, token);
     try {
-      const toggleShip = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode, status: "Active", contractType: "SPOT", etd: "2026-10-01", emoOfficeId: officeA.id, imoOfficeId: defaultImoOfficeId }, token);
+      const toggleShip = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode, status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418", etd: "2026-10-01", emoOfficeId: officeA.id, imoOfficeId: defaultImoOfficeId }, token);
       toggleShipmentId = toggleShip.body?.id;
       await addContainer(request, token, toggleShipmentId);
       const sendWhileOff = await request("POST", `/api/shipments/${toggleShipmentId}/edi-messages/booking-request`, {}, token);

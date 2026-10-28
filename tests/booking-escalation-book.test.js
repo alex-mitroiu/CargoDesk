@@ -90,8 +90,10 @@ const list = b => (Array.isArray(b) ? b : (b?.results ?? []));
     const s = (await request("GET", `/api/shipments/${A}`, null, token)).body;
     assert("the shipment carries the instructions: MSCU and the new dates", s.carrierCode === "MSCU" && String(s.etd).startsWith("2026-11-23") && String(s.eta).startsWith("2026-12-07"),
       JSON.stringify({ c: s.carrierCode, etd: s.etd, eta: s.eta }));
-    assert("instructions naming no contract record leave the contract as it was", s.contractType === "SPOT" && s.contractRef === `SPOT-BAI-${rand}`,
-      JSON.stringify({ t: s.contractType, ref: s.contractRef }));
+    // Another carrier: CMDU's quote can't go to MSCU (the DCSA review, 2026-10-27), so the contract the
+    // instructions name takes its place, even without a contract record.
+    assert("another carrier: the old quote comes off, the instructed MSCU contract number is the shipment's (Central)",
+      s.contractType === "Central" && s.contractRef === "MSCU-2026-ATL-001" && !s.contractId, JSON.stringify({ t: s.contractType, ref: s.contractRef, id: s.contractId }));
     const sea = list((await request("GET", `/api/shipments/${A}/legs`, null, token)).body).find(l => l.legType === "SEA");
     assert("its sea leg too: vessel and dates", sea?.carrierCode === "MSCU" && sea.vessel === "DEMO ALLEGRO" && String(sea.etd).startsWith("2026-11-23"), JSON.stringify(sea));
     const nb = (await waitForCarrierReference(request, token, A));

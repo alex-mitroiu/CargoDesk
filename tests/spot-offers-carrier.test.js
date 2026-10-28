@@ -188,17 +188,18 @@ const hoursAhead = iso => (Date.parse(iso) - Date.now()) / 36e5;
     await carrierActs(request, token, F, "reject", "No space");
     const esc = (await request("POST", `/api/shipments/${F}/escalations`, { toRole: "occ_ay" }, escBk)).body.escalation;
     await request("POST", `/api/escalations/${esc.id}/actions`, { action: "instruct", message: "MSCU has space",
-      instruction: { carrierCode: "MSCU", contractNumber: "", rank: 2, source: "contracts", sailing: { vesselName: "DEMO ALLEGRO", voyageNumber: "DM002W", etd: "2026-11-23", eta: "2026-12-07", service: "DEMO SERVICE", transitDays: 14 } } }, escAy);
+      instruction: { carrierCode: "MSCU", contractNumber: "MSCU-SC-2026-0118", rank: 2, source: "contracts", sailing: { vesselName: "DEMO ALLEGRO", voyageNumber: "DM002W", etd: "2026-11-23", eta: "2026-12-07", service: "DEMO SERVICE", transitDays: 14 } } }, escAy);
     r = await request("POST", `/api/escalations/${esc.id}/book`, {}, escBk);
     const sf = (await request("GET", `/api/shipments/${F}`, null, token)).body;
     assert("booked with MSCU as instructed", r.status === 200 && sf.carrierCode === "MSCU", JSON.stringify(r.body).slice(0, 200));
-    assert("CMDU's offer came off: no offer, no reference, no spot BUY lines", sf.spotOfferId === "" && sf.contractRef === ""
+    assert("CMDU's offer came off: no offer, no spot BUY lines, and the reference is the MSCU contract the instruction named",
+      sf.spotOfferId === "" && sf.contractRef === "MSCU-SC-2026-0118"
       && !(await shipmentLines(F)).some(l => l.source === "spot_offer"), JSON.stringify({ o: sf.spotOfferId, r: sf.contractRef }));
     assert("History says why", (await history(F)).some(e => e.eventType === "SPOT_OFFER_DETACHED" && /MSCU/.test(e.meta?.reason || "")));
     const outF = list((await request("GET", `/api/shipments/${F}/edi-messages`, null, token)).body)
       .filter(m => m.direction === "out" && m.messageType === "booking_request" && m.carrierCode === "MSCU");
     let payloadF = {};
-    try { payloadF = JSON.parse(outF[0]?.rawPayload || "{}"); } catch { payloadF = {}; }
+    try { payloadF = JSON.parse(outF[0]?.parsedPayload || outF[0]?.rawPayload || "{}"); } catch { payloadF = {}; }
     assert("MSCU's booking request carries no CMDU quotation reference", outF.length === 1 && !payloadF.quotationReference, JSON.stringify(payloadF).slice(0, 160));
     assert("CMDU's offer stays Booked: the record of the request it went with", (await request("GET", `/api/spot-offers/${cmduQuote.id}`, null, token)).body.status === "Booked");
 

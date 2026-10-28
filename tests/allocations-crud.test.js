@@ -219,7 +219,7 @@ async function login() {
     // with no pol/pod matching required, so a bare carrierCode is enough here.
     async function bucketShipment(status) {
       const s = await request("POST", "/api/shipments", {
-        pol: portA, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+        pol: portA, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418",
         etd: "2026-02-01", allocationId: allocId,
         emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, token);
@@ -295,7 +295,7 @@ async function login() {
     const overflowAllocId = overflowAlloc.body.id;
     async function overflowShipment() {
       const s = await request("POST", "/api/shipments", {
-        pol: portB, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+        pol: portB, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT", contractRef: "SPOT-Q-2026-0418",
         etd: "2026-02-01", allocationId: overflowAllocId,
         emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
       }, token);

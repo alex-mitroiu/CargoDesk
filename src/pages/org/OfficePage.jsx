@@ -392,7 +392,13 @@ function OfficeForm({ office, branches, onSave, onCancel }) {
     managerUserId: office?.managerUserId || "",
     invoiceAlertBusinessDays: office?.invoiceAlertBusinessDays != null ? String(office.invoiceAlertBusinessDays) : "",
     invoiceEscalationBusinessDays: office?.invoiceEscalationBusinessDays != null ? String(office.invoiceEscalationBusinessDays) : "",
+    hblPrefix: office?.hblPrefix || "",
   });
+  // The House B/L number series (TKT-C7EBU3 gap G5): prefix + 2-digit year + 5-digit sequence. The
+  // preview keeps the year and sequence the server reported and swaps in the prefix being typed.
+  const hblPrefix = form.hblPrefix.trim().toUpperCase();
+  const prefixOk = !hblPrefix || /^[A-Z0-9]{2,10}$/.test(hblPrefix);
+  const hblPreview = office?.hblNextNumber ? `${hblPrefix || office.hblDefaultPrefix}${office.hblNextNumber.slice(-7)}` : "";
   const [saving,     setSaving]     = useState(false);
   const [resolving,  setResolving]  = useState(false);
   const [codePreview,setCodePreview]= useState(
@@ -422,6 +428,7 @@ function OfficeForm({ office, branches, onSave, onCancel }) {
 
   const handleSave = async () => {
     if (!form.unlocode || !form.name) return toast.error("LOCODE and name are required");
+    if (!prefixOk) return toast.error("B/L number prefix: 2 to 10 capital letters or digits");
     setSaving(true);
     try {
       if (isEdit) {
@@ -430,6 +437,7 @@ function OfficeForm({ office, branches, onSave, onCancel }) {
           managerUserId: form.managerUserId || null,
           invoiceAlertBusinessDays: form.invoiceAlertBusinessDays === "" ? null : form.invoiceAlertBusinessDays,
           invoiceEscalationBusinessDays: form.invoiceEscalationBusinessDays === "" ? null : form.invoiceEscalationBusinessDays,
+          hblPrefix,
         });
         toast.success("Office updated");
       } else {
@@ -521,6 +529,34 @@ function OfficeForm({ office, branches, onSave, onCancel }) {
             Overrides the global default for shipments run through this office — useful where local
             invoicing-deadline law is stricter (e.g. Spain). Leave blank to inherit the country's own
             setting, or the global default if that's blank too.
+          </div>
+        </div>
+      )}
+      {isEdit && office.department === "SE" && (
+        <div data-testid="office-hbl-series" style={{ marginBottom: 14, padding: "14px 16px", background: T.bg, borderRadius: 8, border: `1px solid ${T.border}` }}>
+          <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: T.textMuted,
+            textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 10 }}>
+            House B/L numbers
+          </div>
+          <div style={{ display: "flex", gap: 16, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <label htmlFor="office-hbl-prefix" style={{ display: "flex", flexDirection: "column", gap: 4, fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+              Prefix
+              <input id="office-hbl-prefix" value={form.hblPrefix} placeholder={office.hblDefaultPrefix || ""} maxLength={10}
+                onChange={e => setForm(p => ({ ...p, hblPrefix: e.target.value.toUpperCase() }))}
+                style={{ ...inp, width: 160, fontFamily: T.mono, textTransform: "uppercase", borderColor: prefixOk ? T.border : T.danger || "#ef4444" }} />
+            </label>
+            {hblPreview && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Next number</span>
+                <span data-testid="office-hbl-next" style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 700, color: T.accent,
+                  padding: "6px 10px", background: T.accent + "12", borderRadius: 6 }}>{hblPreview}</span>
+              </div>
+            )}
+          </div>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 8, lineHeight: 1.5 }}>
+            Empty means the default, {office.hblDefaultPrefix || "the UN/LOCODE's place letters and HBL"}. The number is taken when a House B/L is
+            issued from this office, never before, and the sequence starts again at 00001 each January. A number used anywhere,
+            voided ones included, is skipped; no two offices can share a prefix you set.
           </div>
         </div>
       )}

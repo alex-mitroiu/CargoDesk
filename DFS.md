@@ -2,7 +2,10 @@
 
 **Status**: first pass, top-down; last updated 2026-10-21 (v0.91.10 "Plimsoll" plus the unreleased
 work after it — DCSA booking with the built-in demo carrier, booking escalations and lane steering,
-the main vessel and Requested-vs-Carrier comparison, SPOT rates and margin rules). **Scope**:
+the main vessel and Requested-vs-Carrier comparison, SPOT rates and margin rules; §5.12 brought up to
+date 2026-10-27 for the DCSA message review: Shipping Instructions and VGM as DCSA, the carrier's local
+office on the booking; and 2026-10-28 for the carrier's Master B/L, VGM declarations with their evidence, and
+the carrier's events and vessel times). **Scope**:
 whole application, at the level of its major
 functional domains and system-to-system data flows — not an exhaustive per-route specification.
 **Companion documents**: [`ARCHITECTURE.md`](ARCHITECTURE.md) (technical architecture, module
@@ -86,7 +89,7 @@ The whole system as one process, with every genuinely external actor and system 
 ```mermaid
 flowchart TB
     Users(["Operations Users\n(Admin · Operator · OCC/BK · OCC/AY ·\nCCL/CO · Trade/AY · Trade Manager ·\nSales · Viewer)"])
-    Carriers(["Ocean Carriers\n(DCSA Booking API · spot offers;\nthe built-in demo carrier stands in)"])
+    Carriers(["Ocean Carriers\n(DCSA Booking · Shipping Instructions ·\nVGM · Track & Trace · spot offers;\nthe built-in demo carrier stands in)"])
     SSO(["Azure AD / Entra ID"])
     SMTP(["Per-Office SMTP\nMail Servers"])
     AI(["Anthropic API"])
@@ -100,8 +103,8 @@ flowchart TB
     Users -->|credentials / SSO login| SYS
     SYS -->|shipments, contracts,\nreports, documents| Users
     SYS -->|"GL journal-entry CSV\n(downloaded, imported by the user)"| ACC
-    SYS -->|DCSA booking requests,\nspot offer requests| Carriers
-    Carriers -->|confirmations, webhooks,\nspot offers| SYS
+    SYS -->|DCSA booking requests, Shipping\nInstructions, VGM declarations,\nspot offer requests| Carriers
+    Carriers -->|confirmations, notifications,\ntracking events, spot offers| SYS
     SSO -->|ID token / claims| SYS
     SYS -->|outbound email| SMTP
     Users -->|chat queries, document uploads| AI
@@ -395,7 +398,18 @@ as a real, tamper-evident signed PDF.
 **Key functions**: server-side rendering (headless Chromium) with CAdES/PKCS#7 signing; a
 per-office/carrier free-form Document Template Editor (BL01 pilot); outbound delivery via email or
 webhook with its own retry/failure handling, decoupled from the request/response cycle that
-triggered generation.
+triggered generation. An issued House B/L (BL01) only moves forward: it is voided with a reason, never
+deleted or set back to draft, and a shipment has at most one issued (ARCHITECTURE.md §8.40). Behind it is a
+DCSA transport document record: issue is refused until the B/L is complete (parties with addresses, sealed
+containers with packages and HS codes, a confirmed booking, loading for a shipped-on-board B/L); release at
+destination waits for the originals, paid collect charges and no credit hold (a finance override with a reason);
+and the House B/L can be issued and surrendered as an eBL (DCSA eBL Issuance and Surrender 3.0). Its number comes
+from the issuing office's series (e.g. RTMHBL2600123), taken when it is issued and never reused, unless one was typed
+for a B/L already issued on paper. A correction is a surrender for amendment followed by version 2 under the same
+number. The B/L can be issued to order, in a chosen number of originals and copies, with the charges or "freight as
+arranged"; it prints every vessel and the on-carriage, a reefer's temperature and dangerous goods. The originals
+handed over are logged, and a telex release surrendered at origin sends the import office a task. All of it is run
+from the House B/L panel at the top of the shipment's Documents page; Test Tools plays the eBL platform.
 **Roles**: operator, occ_bk (generate/send); all roles (view/download, scope-permitting).
 **Primary data**: `shipment_documents`; delivery state owned by the Document Distribution Service.
 **Business rules**: PDF Render is stateless by design — no document content is ever persisted
@@ -465,16 +479,45 @@ order. **Requested (A) vs Carrier (B)**: Booking & Review compares every detail 
 with the carrier's confirmation (vessel, dates with day deltas, legs, equipment, cut-offs, parties,
 the quotation reference and, when the carrier states them, its charges); the user accepts the carrier's
 version (legs, dates and cut-offs onto the shipment), asks the carrier to amend, or escalates.
+**After the booking** (2026-10-27): the **Shipping Instructions** go to the carrier as DCSA Shipping
+Instructions 3.0 once the carrier has confirmed the booking. The carrier receives them, asks for an update
+(with its reason; the user corrects them and resends them as an update under the same reference) or
+completes them. Each container's **VGM** goes as a DCSA VGM 1.0 declaration when it is marked Submitted. It
+is declared again when it changes, and retracted when it goes back to Pending. The carrier's tracking
+events arrive as DCSA Track & Trace 3.0.
+**The carrier's Master B/L** (2026-10-28): the carrier accepts the Shipping Instructions by drafting its Master
+B/L from them. The export side reviews the draft against what was sent: differences first, then the key
+facts, with the full field list behind a button. It approves the draft, or corrects the shipment and sends an
+update. The carrier issues it (B/L Issued completes), and its surrender for delivery completes the
+instructions. An issued House B/L travels in the Master's instructions where the destination's advance
+filing needs House-level data (EU ICS2, US AMS, Mercosur).
+**VGM declarations** are kept, every one, each with its evidence (the weighbridge ticket for Method 1, the
+weight calculation for Method 2) and a generated VG01 VGM Declaration. A declaration with no evidence is
+flagged.
+**The carrier's events** are kept with what CargoDesk did with each. Container events and milestones follow
+from them, and the sea legs' times are marked as confirmed by the carrier, its estimate, or AIS (which only
+fills in). The carrier's vessel schedules (DCSA OVS 3.0) can be asked for the same.
 **Roles**: occ_bk, operator, admin (send, accept, amend, escalate, book as instructed); occ_ay, ccl_co,
 trade_ay, trade_manager (escalation steps by side and lane); admin and trade_manager only (Lane
 Steering); admin only (the escalation settings).
-**Primary data**: `carrier_bookings` (with the carrier's DCSA confirmation), `edi_messages`,
+**Primary data**: `carrier_bookings` (with the carrier's DCSA confirmation), `edi_messages`, `shipping_instructions`,
+`transport_documents` (the Master B/L), `vgm_declarations`, `carrier_events`,
 `booking_escalations`, `booking_escalation_steps`, `lane_steerings`, `lane_steering_options`,
 `dcsa_sim_bookings`.
 **Business rules**: a detail DCSA doesn't carry is "Not stated", never "changed". Rebooking elsewhere
-replaces the shipment's sea legs from the chosen sailing (feeder, main, feeder) and, when the carrier,
-contract or (for a digital offer) departure changes, takes the old spot offer off. See ARCHITECTURE.md
-§8.34–§8.37.
+replaces the shipment's sea legs from the chosen sailing (feeder, main, feeder). When the carrier,
+contract or (for a digital offer) departure changes, it takes the old spot offer off. A rebook to another
+carrier drops the old carrier's contract and quote, so instructions for another carrier must name its contract (the booking then goes on that contract number).
+- **Contract or quote.** A booking names exactly one contract number or carrier quote reference.
+- **Sailing.** A booking names an ETD, or a vessel and voyage.
+- **The carrier's local office.** The booking goes to the carrier's local office: the shipment's Line
+  Agent (Export).
+- **Refusals.** Nothing is sent that isn't valid DCSA, including a field the standard doesn't define;
+  the user is told what's missing.
+- **No connection.** Shipping Instructions and VGM need a DCSA connection to the carrier (its own, or
+  the demo carrier); there is no manual path.
+
+See ARCHITECTURE.md §8.34–§8.37, §8.41 and §8.42.
 
 ### 5.13 Spot Rates & Margins (P2 / P3)
 **Purpose**: price a shipment the carrier sells at the day's market rate — what was bought, on which
@@ -557,7 +600,10 @@ and `loop_code_ports` (carrier service loops and their directional rotations) an
 | **DFD** | Data Flow Diagram — the notation used in §4: processes (circles), external entities (rectangles), data stores (cylinders), labeled flows (arrows). |
 | **TEU** | Twenty-foot Equivalent Unit — the standard unit for container/space capacity (20ft = 1 TEU, 40ft = 2 TEU, admin-overridable per container type). |
 | **EDI** | Electronic Data Interchange — the carrier booking request/response protocol; DCSA is the specific industry-standard EDI schema this app targets for real carrier integrations. |
-| **DCSA** | Digital Container Shipping Association — the carriers' interface standards (Booking 2.0, eBL, Track & Trace…). Every CargoDesk booking goes out as DCSA Booking 2.0; carriers without an integration are played by the built-in demo carrier. |
+| **DCSA** | Digital Container Shipping Association — the carriers' interface standards (Booking 2.0, eBL, Track & Trace…). Every CargoDesk booking goes out as DCSA Booking 2.0, Shipping Instructions as DCSA Shipping Instructions 3.0, and each container's VGM as DCSA VGM 1.0; carriers without an integration are played by the built-in demo carrier. |
+| **Master B/L** | The carrier's own bill of lading for the shipment, drafted from the Shipping Instructions; CargoDesk reviews and approves the draft, the carrier issues it (§5.12). |
+| **VGM evidence / VG01** | What a VGM declaration rests on (weighbridge ticket, weight calculation) and the printable VGM Declaration CargoDesk generates for it. |
+| **Line Agent (Export / Import)** | The carrier's local representative at the port of loading (Export) or discharge (Import). A booking is placed with the Line Agent (Export), sent as the DCSA carrier booking office. |
 | **Booking escalation** | Handing a rejected, changed or unanswered booking to OCC/AY or CCL/CO (and on to Trade/AY) for an alternative, which OCC/BK then books as instructed (§5.12). |
 | **Lane steering** | The carrier order per trade lane (for everyone or one customer), shown as Where to book when a contract is assigned and tried first by escalations (§5.3, §5.12). |
 | **Where to book** | The Lane Steering line for a shipment with each option's status and free space, and the pick: the first option with space (§5.3). |

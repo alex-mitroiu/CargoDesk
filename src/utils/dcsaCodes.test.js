@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createRequire } from "node:module";
-import { BOOKING_STATUS_LABEL, AMENDED_BOOKING_STATUS_LABEL, BOOKING_CANCELLATION_STATUS_LABEL, CARRIER_ACTIONS, dcsaLabel } from "./dcsaCodes";
+import { BOOKING_STATUS_LABEL, AMENDED_BOOKING_STATUS_LABEL, BOOKING_CANCELLATION_STATUS_LABEL, CARRIER_ACTIONS, dcsaLabel, PACKAGE_CODES } from "./dcsaCodes";
 
 // The backend's code lists (lib/dcsa/codes.js, checked against the published specs by
 // tests/dcsa-standards.test.js) are the source; the screens' copy must not drift from them.
@@ -26,5 +26,12 @@ describe("carrier actions", () => {
     const block = src.slice(src.indexOf("const ACTIONS = {"), src.indexOf("};", src.indexOf("const ACTIONS = {")));
     const simKeys = [...block.matchAll(/^\s{4}(\w+):\s+\{/gm)].map(m => m[1]).sort();
     expect(Object.keys(CARRIER_ACTIONS).sort()).toEqual(simKeys);
+  });
+});
+
+describe("PACKAGE_CODES mirrors lib/house-bl.js", () => {
+  it("has the same codes and labels as the server", () => {
+    const { PACKAGE_CODES: server } = require("../../lib/house-bl.js");
+    expect(PACKAGE_CODES).toEqual({ ...server });
   });
 });

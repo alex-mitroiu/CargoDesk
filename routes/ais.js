@@ -23,7 +23,8 @@ module.exports = function aisRoutes(app, ctx) {
              l.etd, l.eta, l.etd_source, l.eta_source
       FROM shipment_legs l
       JOIN shipments s ON s.id = l.shipment_id
-      WHERE l.leg_type='SEA' AND l.vessel_imo != '' AND (l.etd_source != 'ais' OR l.eta_source != 'ais')
+      WHERE l.leg_type='SEA' AND l.vessel_imo != ''
+        AND (l.etd_source NOT IN ('ais', 'dcsa_actual') OR l.eta_source NOT IN ('ais', 'dcsa_actual'))
       ORDER BY l.created_at DESC LIMIT 50
     `);
     ok(res, rows.map(r => ({

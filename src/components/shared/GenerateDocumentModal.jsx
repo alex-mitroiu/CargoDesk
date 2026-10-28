@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { T } from "../../tokens";
 import { api } from "../../api";
 import { toast } from "../../toast";
@@ -7,6 +7,8 @@ import Btn from "../primitives/Btn";
 import { DOC_TYPES, docTypeLabel, getMissingDocRequirements, dispatchDocBuilder } from "../../utils/documentBuilders";
 import { renderTemplateHtml } from "../../utils/templateRenderer";
 import { resolveInvoiceTaxInfo } from "../../utils/invoiceGenerator";
+import { buildHouseBlHtml, houseBlStatement, houseBlNumber } from "../../utils/houseBlDocument";
+import { useAuth } from "../../AuthContext";
 
 const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
   const defaultNum = `${shipment.id}-${Date.now().toString(36).toUpperCase().slice(-6)}`;
@@ -15,10 +17,34 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
   const [docDate,  setDocDate]  = useState(new Date().toISOString().slice(0, 10));
   const [notes,    setNotes]    = useState("");
   const [loading,  setLoading]  = useState(false);
+  const { user } = useAuth();
+  // House B/L (Epic TKT-C7EBU3): what the copy says about loading — shipped on board (the Loaded
+  // event's date, or a typed one) or received for shipment.
+  const [house,    setHouse]    = useState(null);
+  const [choice,   setChoice]   = useState("onboard");
+  const [typed,    setTyped]    = useState("");
+  useEffect(() => {
+    if (docCode !== "BL01" || house) return;
+    api.houseBl.get(shipment.id).then(h => { setHouse(h); setChoice(h?.onBoard?.shippedOnBoard ? "onboard" : "received"); }).catch(() => {});
+  }, [docCode]);
 
   const handlePreview = async () => {
     setLoading(true);
     try {
+      if (docCode === "BL01") {
+        const built = await buildHouseBlHtml(shipment, { docNum: houseBlNumber(shipment, house), docDate, notes, summary: house, signatory: user?.name || user?.email || "",
+          statement: houseBlStatement(choice, house?.onBoard, typed) });
+        if (built.missing) {
+          toast.error(`Cannot generate ${docTypeLabel(docCode)} — missing:\n${built.missing.map(m => `• ${m}`).join("\n")}`);
+          setLoading(false);
+          return;
+        }
+        const saved = await api.documents.generate(shipment.id, { html: built.html, filename: built.filename, docType: "BL01", houseBl: built.houseBl });
+        toast.success(`${docTypeLabel(docCode)} saved to Documents`);
+        onSaved?.(saved);
+        setLoading(false);
+        return;
+      }
       const needsCostLines = docCode === "FR01" || docCode === "FR02";
       const needsDgSettings = docCode === "DG01";
       // ITN (TKT-6A7J45 story 1) — only House/Master B/L carry it, no reason to fetch
@@ -123,13 +149,16 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
               border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px", cursor: "pointer" }}>
             {/* CN01 is excluded — it's only ever produced by the Reverse action on Invoice Entry,
                 never picked ad hoc (it needs real reversal-line data behind it). */}
-            {DOC_TYPES.filter(t => t.code !== "CN01").map(t => <option key={t.code} value={t.code}>{t.code} · {t.label}</option>)}
+            {/* CN01 has its own flow; VG01 is generated per declaration on the VGM page, VG02 is an upload. */}
+            {DOC_TYPES.filter(t => !["CN01", "VG01", "VG02"].includes(t.code)).map(t => <option key={t.code} value={t.code}>{t.code} · {t.label}</option>)}
           </select>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <div>
-            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Reference Number</div>
-            <input value={docNum} onChange={e => setDocNum(e.target.value)}
+            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>{docCode === "BL01" ? "B/L Number" : "Reference Number"}</div>
+            {/* A House B/L's number is the shipment's, or taken from the office series at issue (TKT-C7EBU3 gap G5). */}
+            <input value={docCode === "BL01" ? (houseBlNumber(shipment, house) || "Assigned at issue") : docNum} onChange={e => setDocNum(e.target.value)}
+              readOnly={docCode === "BL01"} title={docCode === "BL01" ? "Set on Conditions, or taken from the office series when the House B/L is issued" : undefined}
               style={{ width: "100%", fontFamily: T.mono, fontSize: 12, background: T.surface, color: T.text,
                 border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 10px" }} />
           </div>
@@ -140,6 +169,28 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
                 border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 10px" }} />
           </div>
         </div>
+        {docCode === "BL01" && (
+          <fieldset data-testid="generate-doc-house-bl-statement"
+            style={{ margin: 0, border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 12px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
+            <legend style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, padding: "0 4px" }}>What the B/L says</legend>
+            <label style={{ display: "flex", gap: 8, alignItems: "center", fontFamily: T.body, fontSize: 12.5, color: T.text, cursor: "pointer" }}>
+              <input type="radio" name="gen-house-bl-statement" checked={choice === "onboard"} onChange={() => setChoice("onboard")} />
+              Shipped on board
+              <span style={{ color: T.textMuted }}>{house?.onBoard?.onBoardDate ? `· ${house.onBoard.onBoardDate}, ${house.onBoard.onBoardSource}` : "· no loading recorded yet"}</span>
+            </label>
+            <label style={{ display: "flex", gap: 8, alignItems: "center", fontFamily: T.body, fontSize: 12.5, color: T.text, cursor: "pointer" }}>
+              <input type="radio" name="gen-house-bl-statement" checked={choice === "received"} onChange={() => setChoice("received")} />
+              Received for shipment
+            </label>
+            {choice === "onboard" && (
+              <label style={{ display: "flex", gap: 8, alignItems: "center", fontFamily: T.body, fontSize: 11.5, color: T.textMuted, paddingLeft: 22 }}>
+                On-board date, typed
+                <input type="date" value={typed} onChange={e => setTyped(e.target.value)} aria-label="On-board date, typed"
+                  style={{ fontFamily: T.body, fontSize: 12, background: T.surface, color: T.text, border: `1px solid ${T.border}`, borderRadius: 6, padding: "4px 8px" }} />
+              </label>
+            )}
+          </fieldset>
+        )}
         <div>
           <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Notes (optional)</div>
           <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
@@ -152,7 +203,7 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
           <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
-          <Btn onClick={handlePreview} disabled={loading || !docNum.trim()}>
+          <Btn onClick={handlePreview} disabled={loading || (docCode !== "BL01" && !docNum.trim())}>
             {loading ? "Building…" : "Generate →"}
           </Btn>
         </div>

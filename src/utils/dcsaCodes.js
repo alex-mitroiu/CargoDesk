@@ -33,3 +33,11 @@ export const CARRIER_ACTIONS = {
   reject:              { label: "Reject",                variant: "danger",    feedback: true },
   decline:             { label: "Decline",               variant: "danger",    feedback: true },
 };
+
+// Kind of packages on the House B/L (UN/ECE Recommendation 21), mirrored from lib/house-bl.js
+// PACKAGE_CODES; dcsaCodes.test.js fails if they drift.
+export const PACKAGE_CODES = {
+  CT: "Carton", BX: "Box", CS: "Case", PK: "Package", PX: "Pallet", BG: "Bag", SA: "Sack", DR: "Drum",
+  BL: "Bale, compressed", BE: "Bundle", CR: "Crate", RO: "Roll", CY: "Cylinder", PL: "Pail", JR: "Jar",
+  NE: "Unpacked or unpackaged",
+};

@@ -175,7 +175,7 @@ const rand = Math.random().toString(36).slice(2, 7).toUpperCase();
     const shipF = await newShipment();
     await request("POST", `/api/shipments/${shipF}/legs`, { legType: "SEA", movementType: "SEA", pol: "NLRTM", pod: "USNYC",
       etd: "2026-10-12", eta: "2026-10-24", carrierCode: "MAEU", vessel: "RCV TEST", vesselImo: "9777777", voyage: "R12W" }, token);
-    const fBl = await request("POST", `/api/shipments/${shipF}/documents/generate`, { html: SAMPLE_HTML, filename: `BL01-${shipF}.html`, docType: "BL01" }, token);
+    const fBl = await request("POST", `/api/shipments/${shipF}/documents/generate`, { html: SAMPLE_HTML, filename: `MB01-${shipF}.html`, docType: "MB01" }, token);
     const fLink = await request("PATCH", `/api/shipments/${shipF}/carrier-booking/link-bl-document`, { documentId: fBl.body.id }, token);
     assert("(setup) the shipment's booking has the B/L linked", fLink.status === 200 && fLink.body.blDocumentId === fBl.body.id, JSON.stringify(fLink.body).slice(0, 200));
     const delF = await request("DELETE", `/api/shipments/${shipF}`, null, token);

@@ -29,6 +29,10 @@ const DOC_TYPES = [
   { code: "UP01", label: "Unloading Plan" },
   { code: "PU01", label: "Pickup Plan" },
   { code: "DL01", label: "Delivery Plan" },
+  // VGM (2026-10-28): VG01 is generated per declaration on the VGM page; VG02 is the evidence a declaration
+  // rests on (weighbridge ticket for Method 1, weight calculation for Method 2), uploaded there.
+  { code: "VG01", label: "VGM Declaration" },
+  { code: "VG02", label: "VGM Evidence" },
   { code: "OT",   label: "Other" },
 ];
 const DOC_TYPE_MAP   = Object.fromEntries(DOC_TYPES.map(t => [t.code, t.label]));
@@ -138,7 +142,18 @@ const _ctrTotals = ctrs => {
   return { w, v };
 };
 
-const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee, parties, exportFilingItn }) => {
+// The House B/L (Epic TKT-C7EBU3, mockups https://claude.ai/artifact/Tr9cyqXe31HqYTxy63ap7Z and
+// https://claude.ai/artifact/CnuymDL2eUEnxnD8oDtj57). `houseBl` is what this copy says — { shippedOnBoard,
+// onBoardDate, originals, copies, withCharges } — and goes to the server with the PDF (lib/house-bl.js
+// checks it); `issuer` is the issuing office and its legal entity ({ entityName, officeName, placeName,
+// unlocode, signatory }); `notify` the notify party's customer record; `routing` the carriage
+// ({ vessels, preCarriageBy, onCarriageBy }) and `charges` the selling charges (GET …/house-bl);
+// `version` > 1 marks an amended B/L. An empty invNumber prints "assigned at issue" (the number comes
+// from the office series when it is issued). A caller passing none of them gets the pre-2026-10-21
+// wording (shipped on board, no date).
+const COUNT_WORDS = ["ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE"];
+const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee, notify, parties, exportFilingItn, houseBl, issuer,
+  routing = null, charges = [], version = 1, amendsIssueDate = null }) => {
   const { w: totalWeight, v: totalVolume } = _ctrTotals(containers);
   // Additive party roles (Epic TKT-5XFCAP), same falls-back-to-today's-output pattern CD01/IC01
   // already use: an unassigned role renders nothing rather than a blank placeholder row.
@@ -150,43 +165,82 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
   // is issued (3 is the standard trade-practice count); Telex/Surrendered already gave up the
   // original at origin, so zero travel with the goods; a Seaway Bill is never negotiable and
   // never issued as a physical original at all.
-  const originalsLine = {
-    "Original": "3 ORIGINALS", "Telex Release": "0 ORIGINALS — TELEX RELEASE",
-    "Surrendered": "0 ORIGINALS — SURRENDERED AT ORIGIN",
-    "Seaway Bill": "NOT NEGOTIABLE — NO ORIGINALS ISSUED (SEAWAY BILL)",
-  }[sh.blReleaseType] || "—";
+  // A count chosen with the draft (gap G12) prints as "3 (THREE)"; without one, the release type's usual.
+  const n = houseBl?.originals;
+  const counted = Number.isInteger(n) && n > 0 ? `${n} (${COUNT_WORDS[n] || n})` : null;
+  const originalsLine = sh.blReleaseType === "Seaway Bill" ? "NOT NEGOTIABLE — NO ORIGINALS ISSUED (SEAWAY BILL)"
+    : counted ? `${counted}${["Telex Release", "Surrendered"].includes(sh.blReleaseType) ? " — TO BE SURRENDERED AT ORIGIN" : ""}`
+    : ({ "Original": "3 (THREE)", "Telex Release": "0 ORIGINALS — TELEX RELEASE", "Surrendered": "0 ORIGINALS — SURRENDERED AT ORIGIN" }[sh.blReleaseType] || "—");
+  const copies = Number(houseBl?.copies) || 0;
+  const withCharges = !!houseBl?.withCharges;
+  const blNumber = invNumber || sh.blNumber || "";
+  const fmtLong = d => new Date(`${String(d).slice(0, 10)}T00:00:00`).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  const onBoard = houseBl ? houseBl.shippedOnBoard !== false : true;
+  const statementDate = onBoard ? houseBl?.onBoardDate : (houseBl?.receivedDate || invDate);
+  // Freight is payable where it is earned: prepaid at the port of loading, collect at discharge.
+  const payableAt = sh.freightTerms === "Collect" ? (sh.podName || sh.pod) : (sh.polName || sh.pol);
+  const fcl = (sh.movementType || "FCL") !== "LCL";
+  // The carriage (gap G16): the first sea-going vessel, any transshipment onto later vessels, and the
+  // pre-/on-carriage when the carrier does it. Without routing, the shipment's own vessel.
+  const vessels = routing?.vessels?.length ? routing.vessels : [{ vessel: sh.vessel, voyage: sh.voyage, pol: sh.pol, pod: sh.pod }];
+  const first = vessels[0] || {};
+  const transshipments = vessels.slice(1).map(v => `at ${_esc(v.pol)} on ${_esc(v.vessel)} / ${_esc(v.voyage)}${v.role === "MOTHER" ? " (mother vessel)" : ""}`);
+  const carriageBy = by => ({ TRUCK: "Truck", RAIL: "Rail", BARGE: "Barge", VESSEL: "Vessel" }[by] || by);
+  // To order (gap G11): "TO ORDER OF" the consignee, or "TO ORDER" with no consignee named.
+  const toOrder = sh.blReleaseType === "Seaway Bill" ? "" : (sh.blToOrder || "");
+  // Reefer and dangerous goods (gap G17), on a line under their container.
+  const cargoNotes = c => [
+    c.setTemperatureC !== null && c.setTemperatureC !== undefined && c.setTemperatureC !== "" ? `REEFER · SET AT ${Number(c.setTemperatureC).toFixed(1)} °C` : "",
+    c.isDg ? `DANGEROUS GOODS${c.dgUnNumber ? ` · UN ${_esc(c.dgUnNumber)}` : ""}${c.dgProperShippingName ? ` ${_esc(c.dgProperShippingName)}` : ""}${c.dgClass ? ` · CLASS ${_esc(c.dgClass)}` : ""}` : "",
+  ].filter(Boolean).join(" &nbsp;·&nbsp; ");
+  const terms = (sh.freightTerms || "Prepaid").toUpperCase();
+  const placeOfIssue = issuer?.placeName
+    ? `${_esc(issuer.placeName)}${issuer.unlocode ? ` (${_esc(issuer.unlocode)})` : ""}`
+    : _esc(sh.pol || "—");
   const rows = containers.length === 0
     ? `<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
     : containers.map(c => `<tr>
-        <td><span class="code">${_esc(c.containerNumber || "TBC")}</span></td>
-        <td>${_esc(c.sealNumber || "—")}</td>
-        <td>${_esc(c.size)}ft ${_esc(c.type)}${c.isDg ? ` <span class="dg">DG ${_esc(c.dgClass)}</span>` : ""}</td>
+        <td><span class="code">${_esc(c.containerNumber || "TBC")}</span><br><span style="color:#6b7280">${_esc(c.sealNumber || "—")} · ${_esc(c.size)}' ${_esc(c.type)}</span></td>
+        <td>${_esc(c.marksAndNumbers || "—")}</td>
+        <td><span class="code">${c.numberOfPackages ? `${Number(c.numberOfPackages).toLocaleString()} ${_esc(c.packageCode || "")}` : "—"}</span>${c.numberOfPackages && (c.packageDescription || c.packageCode) ? `<br><span style="color:#6b7280">${_esc(c.packageDescription || c.packageCode)}</span>` : ""}</td>
         <td>${_esc(c.cargoDescription || "—")}</td>
+        <td>${c.hsCode ? `<span class="code" style="font-size:11px">${_esc(c.hsCode)}</span>` : "—"}</td>
         <td class="num">${c.grossWeightKg != null ? Number(c.grossWeightKg).toLocaleString() + " kg" : "—"}</td>
         <td class="num">${c.volumeCbm != null ? Number(c.volumeCbm) + " CBM" : "—"}</td>
-        <td>${c.hsCode ? `<span class="code" style="font-size:11px">${_esc(c.hsCode)}</span>` : "—"}</td>
-      </tr>`).join("");
+      </tr>${cargoNotes(c) ? `<tr><td colspan="7" style="padding-top:0;font-size:11px;font-weight:700;letter-spacing:.3px">${cargoNotes(c)}</td></tr>` : ""}`).join("");
+  const partyBox = (label, name, rec) => `<div class="party"><div class="party-label">${label}</div>
+        <div class="party-name">${_esc(name || "—")}</div>
+        ${fmtAddrHtml(rec) ? `<div class="party-addr">${fmtAddrHtml(rec)}</div>` : ""}
+      </div>`;
+  const consigneeBox = toOrder === "SHIPPER"
+    ? `<div class="party"><div class="party-label">Consignee</div><div class="party-name">TO ORDER</div></div>`
+    : toOrder === "CONSIGNEE"
+      ? `<div class="party"><div class="party-label">Consignee</div><div class="party-name">TO ORDER OF</div>
+        <div class="party-name">${_esc(sh.consigneeName || consignee?.companyName || "—")}</div>
+        ${fmtAddrHtml(consignee) ? `<div class="party-addr">${fmtAddrHtml(consignee)}</div>` : ""}</div>`
+      : partyBox("Consignee", sh.consigneeName || consignee?.companyName, consignee);
+  // With charges (gap G14): the selling charges, prepaid and collect; without, "as arranged".
+  const money = (amt, cur) => `${_esc(cur)} ${Number(amt).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const chargesTable = withCharges && charges.length ? `
+    <div class="section-label">Freight and Charges</div>
+    <table><thead><tr><th>Charge</th><th>Basis</th><th style="text-align:right">Prepaid</th><th style="text-align:right">Collect</th></tr></thead><tbody>
+      ${charges.map(ch => `<tr><td>${_esc(ch.name)}</td><td>Per shipment</td>
+        <td class="num">${ch.paymentTerm === "PRE" ? money(ch.amount, ch.currency) : "—"}</td>
+        <td class="num">${ch.paymentTerm === "COL" ? money(ch.amount, ch.currency) : "—"}</td></tr>`).join("")}
+    </tbody></table>` : "";
 
   const body = `
     <div class="parties" style="grid-template-columns:${alsoNotify ? "1fr 1fr 1fr 1fr" : "1fr 1fr 1fr"}">
-      <div class="party"><div class="party-label">Shipper / Exporter</div>
-        <div class="party-name">${_esc(sh.shipperName || shipper?.companyName || "—")}</div>
-        ${fmtAddrHtml(shipper) ? `<div class="party-addr">${fmtAddrHtml(shipper)}</div>` : ""}
-      </div>
-      <div class="party"><div class="party-label">Consignee</div>
-        <div class="party-name">${_esc(sh.consigneeName || consignee?.companyName || "—")}</div>
-        ${fmtAddrHtml(consignee) ? `<div class="party-addr">${fmtAddrHtml(consignee)}</div>` : ""}
-      </div>
-      <div class="party"><div class="party-label">Notify Party</div>
-        <div class="party-name">${_esc(sh.notifyName || "—")}</div>
-      </div>
+      ${partyBox("Shipper / Exporter", sh.shipperName || shipper?.companyName, shipper)}
+      ${consigneeBox}
+      ${partyBox("Notify Party", sh.notifyName || notify?.companyName, notify)}
       ${alsoNotify ? `<div class="party"><div class="party-label">Also Notify Party</div>
         <div class="party-name">${_esc(alsoNotify.customerName)}</div>
       </div>` : ""}
     </div>
     <div class="shp-block"><div class="block-label">Transport Details</div>
       <div class="details-grid">${_detailGrid([
-        ["B/L Number", _esc(sh.blNumber || invNumber)], ["Release Type", _esc(sh.blReleaseType || "—")],
+        ["B/L Number", blNumber ? _esc(blNumber) : "Assigned at issue"], ["Release Type", _esc(sh.blReleaseType || "—")],
         ...(sh.masterBlNumber ? [["Master B/L Number", _esc(sh.masterBlNumber)]] : []),
         ...(nvocc ? [["Carrier of Record (NVOCC)", _esc(nvocc.customerName)]] : []),
         // ITN (Internal Transaction Number, TKT-6A7J45 story 1) — only present once the
@@ -194,54 +248,65 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
         // shipment with no filing (or one still Draft/Filed/Rejected) renders byte-identical
         // to today. A carrier is legally required to have this before loading export cargo.
         ...(exportFilingItn ? [["Export Filing ITN", _esc(exportFilingItn)]] : []),
-        ["No. of Originals", originalsLine], ["Booking Ref", _esc(sh.bookingRef || "—")],
-        ...(preCarrier ? [["Pre-carriage By", _esc(preCarrier.customerName)]] : []),
+        ["No. of Originals", originalsLine], ...(copies ? [["Copies", `${copies} (NOT NEGOTIABLE)`]] : []),
+        ["Carrier Booking", _esc(sh.bookingRef || "—")],
+        ...(routing?.preCarriageBy ? [["Pre-carriage By", _esc(carriageBy(routing.preCarriageBy))]] : preCarrier ? [["Pre-carriage By", _esc(preCarrier.customerName)]] : []),
         ["Place of Receipt", _esc(sh.placeOfReceipt || "—")],
-        ["Vessel", _esc(sh.vessel || "—")], ["Voyage", _esc(sh.voyage || "—")],
+        ["Ocean Vessel / Voyage", [first.vessel, first.voyage].filter(Boolean).map(_esc).join(" / ") || "—"],
         ["Port of Loading", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
+        ...transshipments.map((t, i) => [transshipments.length > 1 ? `Transshipment ${i + 1}` : "Transshipment", t]),
         ["Port of Discharge", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
+        ...(routing?.onCarriageBy ? [["On-carriage By", _esc(carriageBy(routing.onCarriageBy))]] : []),
         ["Place of Delivery", _esc(sh.placeOfDelivery || "—")],
         ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
         ["ETA", sh.eta ? new Date(sh.eta).toLocaleDateString("en-GB") : "—"],
         ["Carrier", _esc(sh.carrierCode || "—")], ["Incoterm", _esc(sh.incoterm || "—")],
-        ["Freight Terms", _esc(sh.freightTerms || "Prepaid")], ["Movement", _esc(sh.movementType || "FCL")],
+        ["Freight", `${houseBl && !withCharges ? `FREIGHT ${_esc(terms)} AS ARRANGED` : _esc(sh.freightTerms || "Prepaid")}${payableAt ? `, payable at ${_esc(payableAt)}` : ""}`],
+        ["Movement", _esc(sh.movementType || "FCL")],
         ["Declared Value", sh.declaredValue != null ? fmtCurr(sh.declaredValue, sh.declaredValueCurrency || "USD") : "—"],
       ])}</div>
     </div>
     <div class="section-label">Containers / Cargo</div>
     <table><thead><tr>
-      <th>Container #</th><th>Seal #</th><th>Type</th><th>Cargo Description</th>
-      <th style="text-align:right">Gross Weight</th><th style="text-align:right">Volume</th><th>HS Code</th>
+      <th>Container / Seal</th><th>Marks and Numbers</th><th>Packages</th><th>Cargo Description</th><th>HS Code</th>
+      <th style="text-align:right">Gross Weight</th><th style="text-align:right">Volume</th>
     </tr></thead><tbody>${rows}</tbody>
     ${containers.length > 0 ? `<tfoot><tr>
-      <td colspan="4" style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.5px">
+      <td colspan="5" style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.5px">
         ${containers.length} container${containers.length > 1 ? "s" : ""} total
       </td>
       <td class="num" style="font-weight:700">${totalWeight > 0 ? totalWeight.toLocaleString() + " kg" : "—"}</td>
       <td class="num" style="font-weight:700">${totalVolume > 0 ? totalVolume.toFixed(2) + " CBM" : "—"}</td>
-      <td></td>
     </tr></tfoot>` : ""}
     </table>
+    ${fcl ? `<div style="font-size:11px;font-weight:700;letter-spacing:.3px;margin:-8px 0 16px">SHIPPER'S LOAD, STOW AND COUNT · SAID TO CONTAIN</div>` : ""}
+    ${chargesTable}
+    ${version > 1 ? `<div style="display:inline-block;font-size:12px;font-weight:800;letter-spacing:.5px;border:2px solid #111827;border-radius:6px;padding:6px 10px;margin-bottom:16px">VERSION ${version} · AMENDED${amendsIssueDate ? ` · REPLACES THE B/L ISSUED ${fmtLong(amendsIssueDate).toUpperCase()}` : ""}</div>` : ""}
     <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:11px;color:#374151;line-height:1.7">
-      <strong>SHIPPED ON BOARD</strong> the above named vessel in apparent good order and condition,
-      weight, measure, marks, numbers, quality, contents and value unknown. Freight and charges payable as indicated.
-      In accepting this Bill of Lading, the shipper, consignee and holder agree to be bound by all stipulations,
-      exceptions and conditions stated herein.
+      <strong>${onBoard ? "SHIPPED ON BOARD" : "RECEIVED FOR SHIPMENT"}${statementDate ? ` ${fmtLong(statementDate)}` : ""}</strong>
+      ${onBoard ? "the above named vessel" : "for carriage on the above named vessel"} in apparent good order and condition unless otherwise noted,
+      the total number of containers or packages stated above, weight, measure, marks, numbers, quality, contents and value unknown,
+      for carriage subject to all the terms and conditions of the carrier's House Bill of Lading. Freight and charges payable as indicated.
+      ${sh.blReleaseType !== "Seaway Bill" ? "One of the original Bills of Lading being accomplished, the others to stand void." : ""}
+      In accepting this Bill of Lading, the shipper, consignee and holder agree to be bound by all its stipulations, exceptions and conditions.
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
       <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
         <div class="party-label">Place and Date of Issue</div>
-        <div style="font-size:12px;margin-top:4px">${_esc(sh.pol || "—")} / ${new Date(invDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" })}</div>
+        <div style="font-size:12px;margin-top:4px">${placeOfIssue} / ${fmtLong(invDate)}</div>
       </div>
       <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
         <div class="party-label">Signed for the Carrier</div>
-        <div style="height:48px"></div>
-        <div style="border-top:1px solid #d1d5db;padding-top:8px;font-size:11px;color:#6b7280">Authorised Signatory</div>
+        ${issuer?.entityName ? `<div style="font-size:12px;margin-top:4px;font-weight:700">${_esc(issuer.entityName)}, as carrier</div>` : ""}
+        <div style="height:${issuer?.entityName ? 28 : 48}px"></div>
+        <div style="border-top:1px solid #d1d5db;padding-top:8px;font-size:11px;color:#6b7280">${issuer?.signatory
+          ? `by ${_esc(issuer.signatory)}${issuer.officeName ? `, ${_esc(issuer.officeName)}` : ""}`
+          : "Authorised Signatory"}</div>
       </div>
     </div>
     ${notes ? `<div class="notes"><div class="notes-label">Notes / Special Instructions</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
 
-  return _invShell(`Bill of Lading — ${invNumber}`, "BILL OF LADING", invNumber, invDate, body);
+  return _invShell(`Bill of Lading — ${blNumber || "draft"}`, "BILL OF LADING", blNumber || "Assigned at issue", invDate, body);
 };
 
 // Master B/L — issued by the real vessel operator TO the NVOCC, a genuinely different document
@@ -967,6 +1032,48 @@ const buildDeliveryOrderHtml = ({ shipment: sh, invNumber, invDate, notes, conta
   return _invShell(`Delivery Order — ${invNumber}`, "DELIVERY ORDER", invNumber, invDate, body);
 };
 
+// VGM Declaration (VG01) — one container's SOLAS VI/2 declaration as it was sent to the carrier (DCSA VGM
+// 1.0), from its vgm_declarations record (api.vgm.declarations). Generated from the VGM page and filed
+// against that declaration; a re-declaration gets its own.
+const VGM_METHOD_TEXT = { SM1: "Method 1 — weighed", SM2: "Method 2 — calculated" };
+const VGM_METHOD_HOW = {
+  SM1: "weighing the packed and sealed container",
+  SM2: "weighing all packages and cargo items, with the packing, dunnage and securing material, and adding the container's tare mass",
+};
+const buildVgmDeclarationHtml = ({ shipment: sh, container: c, declaration: d, invNumber, invDate }) => {
+  const kg = n => (n === null || n === undefined ? "—" : `${Number(n).toLocaleString("en-GB")} kg`);
+  const body = `
+    <div class="parties" style="grid-template-columns:1fr 1fr">
+      <div class="party"><div class="party-label">Responsible party (shipper)</div>
+        <div class="party-name">${_esc(d.responsibleParty || sh.shipperName || "—")}</div>
+      </div>
+      <div class="party"><div class="party-label">Submitted by</div>
+        <div class="party-name">${_esc(d.submittingParty || "—")}</div>
+      </div>
+    </div>
+    <div class="shp-block"><div class="block-label">Verified Gross Mass</div>
+      <div class="details-grid">${_detailGrid([
+        ["Container", `<span class="code">${_esc(c?.containerNumber || d.containerNumber || "—")}</span>`],
+        ["Type", c ? `${_esc(c.size)}ft ${_esc(c.type)}` : "—"],
+        ["Seal", _esc(c?.sealNumber || "—")],
+        ["Verified gross mass", `<strong>${kg(d.weightKg)}</strong>`],
+        ["Method", _esc(VGM_METHOD_TEXT[d.method] || d.method || "—")],
+        ["Declared", d.declaredAt ? new Date(d.declaredAt).toLocaleString("en-GB") : "—"],
+        ["Carrier", _esc(sh.carrierCode || d.carrierCode || "—")],
+        ["Booking", _esc(sh.bookingRef || "—")],
+        ["Vessel / voyage", _esc([sh.vessel, sh.voyage].filter(Boolean).join(" ") || "—")],
+        ["Port of loading", _esc(sh.pol || "—")],
+        ["Declaration reference", `<span class="code">${_esc(d.declarationReference)}</span>`],
+      ])}</div>
+    </div>
+    <div class="notes"><div class="notes-label">Declaration</div><div class="notes-text">The verified gross mass above was obtained by
+      ${_esc(VGM_METHOD_HOW[d.method] || "the method stated")}, in accordance with SOLAS
+      Chapter VI, Regulation 2. Sent to ${_esc(sh.carrierCode || d.carrierCode || "the carrier")} as a DCSA VGM 1.0 declaration
+      (reference ${_esc(d.declarationReference)})${d.isMock ? " through the demo carrier" : ""}.</div></div>
+    <div class="notes"><div class="notes-label">Authorised signatory</div><div class="notes-text">${_esc(d.signatory || "—")}</div></div>`;
+  return _invShell(`VGM Declaration — ${invNumber}`, "VGM DECLARATION", invNumber, invDate, body);
+};
+
 const buildGenericDocHtml = ({ shipment: sh, invNumber, invDate, notes }) => {
   const body = `
     <div class="shp-block"><div class="block-label">Shipment Details</div>
@@ -1001,7 +1108,8 @@ const getMissingDocRequirements = (docCode, { shipment: sh, containers, shipper,
   const hasConsignee = !!(sh.consigneeName || consignee?.companyName);
   if (["BL01", "CI01", "CI02", "PL01", "CO01", "CD01", "DG01"].includes(docCode)) {
     if (!hasShipper) missing.push("Shipper");
-    if (!hasConsignee) missing.push("Consignee");
+    // A House B/L "to order" (of the shipper) names no consignee (TKT-C7EBU3 gap G11).
+    if (!hasConsignee && !(docCode === "BL01" && sh.blToOrder === "SHIPPER")) missing.push("Consignee");
   }
   if (["BL01", "CI01", "CI02", "PL01", "CO01", "CD01"].includes(docCode) && containers.length === 0) {
     missing.push("At least one container");
@@ -1087,5 +1195,5 @@ const dispatchDocBuilder = (code, data) => {
 
 export {
   DOC_TYPES, DOC_TYPE_MAP, docTypeLabel, FILE_ICON, fmtBytes, fmtDate, fmtAddrHtml,
-  dispatchDocBuilder, getMissingDocRequirements,
+  dispatchDocBuilder, getMissingDocRequirements, buildVgmDeclarationHtml,
 };

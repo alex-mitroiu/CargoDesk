@@ -26,6 +26,12 @@ import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "./shipmentDetailTheme";
 // governed by the House B/L lifecycle's own Surrender/Release actions, not a plain field edit.
 
 const DECLARED_VALUE_CURRENCIES = ["USD","EUR","GBP","CNY","JPY","AUD","CAD","CHF","SGD","HKD"];
+// Consignee on the House B/L (TKT-C7EBU3 gap G11, mockup https://claude.ai/artifact/CnuymDL2eUEnxnD8oDtj57).
+const BL_TO_ORDER_OPTIONS = [
+  { value: "", label: "Named consignee (straight B/L)" },
+  { value: "CONSIGNEE", label: "To order of the consignee" },
+  { value: "SHIPPER", label: "To order (blank, of the shipper)" },
+];
 
 const ConditionsEditForm = ({ shipment, onSave, onCancel }) => {
   const [f, setF] = useState({
@@ -37,6 +43,7 @@ const ConditionsEditForm = ({ shipment, onSave, onCancel }) => {
     placeOfDelivery:       shipment.placeOfDelivery       || "",
     blNumber:              shipment.blNumber              || "",
     blReleaseType:         shipment.blReleaseType         || "",
+    blToOrder:             shipment.blToOrder             || "",
   });
   const [isSaving, withSaving] = useSaving();
 
@@ -52,6 +59,7 @@ const ConditionsEditForm = ({ shipment, onSave, onCancel }) => {
   // Full-record PUT (same as PartiesEditForm) — every other field rides along unchanged.
   const handleSave = () => withSaving(() => onSave({
     ...shipment, ...f,
+    blToOrder: f.blReleaseType === "Seaway Bill" ? "" : f.blToOrder,
     declaredValue: (f.declaredValue !== "" && Number(f.declaredValue) >= 0) ? Number(f.declaredValue) : null,
   }));
 
@@ -84,10 +92,15 @@ const ConditionsEditForm = ({ shipment, onSave, onCancel }) => {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Inp label="B/L Number" value={f.blNumber} onChange={v => setF(p => ({ ...p, blNumber: v }))}
-          placeholder="MAEU123456789" mono />
-        <Sel label="B/L Release Type" value={f.blReleaseType} onChange={v => setF(p => ({ ...p, blReleaseType: v }))}
+        <Inp id="shpcond-edit-bl-number" label="B/L Number" value={f.blNumber} onChange={v => setF(p => ({ ...p, blNumber: v }))}
+          placeholder={shipment.emoOfficeName ? `Taken from the ${shipment.emoOfficeName} series at issue` : "Taken from the office series at issue"} mono
+          hint="Leave it empty and the House B/L takes the next number from its office's series when it is issued. Type one only for a B/L already issued on paper." />
+        <Sel id="shpcond-edit-bl-release-type" label="B/L Release Type" value={f.blReleaseType} onChange={v => setF(p => ({ ...p, blReleaseType: v }))}
           options={[{ value: "", label: "—" }, ...BL_RELEASE_TYPES.map(t => ({ value: t, label: t }))]} />
+        <Sel id="shpcond-edit-bl-to-order" label="Consignee on the B/L" value={f.blToOrder} onChange={v => setF(p => ({ ...p, blToOrder: v }))}
+          options={BL_TO_ORDER_OPTIONS} disabled={f.blReleaseType === "Seaway Bill"}
+          hint={f.blReleaseType === "Seaway Bill" ? "A Sea Waybill names its consignee: it can't be to order."
+            : "To order makes the B/L negotiable: the holder endorses it on. \"To order\" names no consignee."} />
       </div>
 
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
@@ -166,8 +179,19 @@ const ShipmentConditionsPage = ({ shipment, onUpdate }) => {
         </span>
       } />
       <Row id="shpcond-bl-number" label="B/L Number" node={
-        <span style={{ fontFamily: HZ_MONO, fontSize: 13, color: shipment.blNumber ? HZ.text : HZ.textFaint }}>
-          {shipment.blNumber || "—"}
+        <span style={{ fontFamily: HZ_MONO, fontSize: 13, color: shipment.blNumber ? HZ.text : HZ.textFaint, display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {shipment.blNumber || "Taken from the office series at issue"}
+          {shipment.blNumber && shipment.blNumberSource && (
+            <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: ".06em", padding: "2px 7px", borderRadius: 999,
+              color: shipment.blNumberSource === "SERIES" ? HZ.cyan : HZ.textMuted, border: `1px solid ${shipment.blNumberSource === "SERIES" ? HZ.cyan + "66" : HZ.borderStrong}` }}>
+              {shipment.blNumberSource}
+            </span>
+          )}
+        </span>
+      } />
+      <Row id="shpcond-bl-to-order" label="Consignee on B/L" node={
+        <span style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text }}>
+          {(BL_TO_ORDER_OPTIONS.find(o => o.value === (shipment.blToOrder || "")) || BL_TO_ORDER_OPTIONS[0]).label}
         </span>
       } />
       <Row id="shpcond-bl-release-type" label="B/L Release Type" node={

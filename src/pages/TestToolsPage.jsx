@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import DcsaCarrierPanel from "./DcsaCarrierPanel";
+import EblPlatformPanel from "./EblPlatformPanel";
 import { T } from "../tokens";
 import { api } from "../api";
 import { toast } from "../toast";
@@ -16,6 +17,8 @@ import { servicePageKey } from "../shipmentServicePages";
 // ─── Test Tools ────────────────────────────────────────────────────────────────
 // Reached both from Integration Board's sidebar and a header shortcut icon (App.jsx).
 // Three tools so far:
+//  - eBL Platform (EblPlatformPanel.jsx, Epic TKT-C7EBU3): plays the built-in eBL platform and the
+//    holders of House B/Ls issued as eBLs — issuance answers, endorsement, surrender requests.
 //  - DCSA Carrier (DcsaCarrierPanel.jsx, 2026-10-11): plays the carrier for bookings held by the
 //    built-in DCSA simulator — confirm, reject, amendments, cancellations — each sent back as a
 //    real DCSA notification. Replaced the old booking Message Simulator.
@@ -423,6 +426,7 @@ const TestToolsPage = ({ navigate }) => {
 
   const TABS = [
     { key: "carrier",   label: "DCSA Carrier", icon: IconBaseStation },
+    { key: "ebl",       label: "eBL Platform", icon: IconFileCertificate },
     { key: "generator",  label: "Schedule Generator", icon: IconAnchor },
     { key: "filings",    label: "Filing Simulator", icon: IconFileCertificate },
     { key: "vgm",        label: "VGM Simulator", icon: IconPackage },
@@ -451,6 +455,7 @@ const TestToolsPage = ({ navigate }) => {
       </div>
 
       {activeTab === "carrier" && <DcsaCarrierPanel navigate={navigate} />}
+      {activeTab === "ebl" && <EblPlatformPanel navigate={navigate} />}
 
       {activeTab === "generator" && (
         <div style={{ display: "flex", gap: 24 }}>

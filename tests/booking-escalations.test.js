@@ -141,6 +141,11 @@ const list = b => (Array.isArray(b) ? b : (b?.results ?? []));
 
     console.log("\nInstructions go back to OCC/BK");
     assert("an instruction without a sailing is refused (400)", (await act(esc.id, "cclco", { action: "instruct", instruction: { carrierCode: "HLCU" } })).status === 400);
+    // CMDU's quote can't go to HLCU, and a DCSA booking names a contract or quote (the DCSA review, 2026-10-27).
+    const noContract = await act(esc.id, "cclco", { action: "instruct", instruction: { carrierCode: "HLCU",
+      sailing: { vesselName: "DEMO BRAVURA", voyageNumber: "DM002W", etd: "2026-11-21", eta: "2026-12-05" } } });
+    assert("instructions for another carrier naming no contract are refused (400), saying so", noContract.status === 400
+      && /Name the HLCU contract/.test(noContract.body?.error), JSON.stringify(noContract.body));
     const instruction = { carrierCode: "HLCU", contractNumber: "EC-HLCU-NLAMS-USNYC", source: "contracts", rank: 1,
       sailing: { vesselName: "DEMO BRAVURA", voyageNumber: "DM002W", etd: "2026-11-21", eta: "2026-12-05", service: "DEMO SERVICE", transitDays: 14 } };
     r = await act(esc.id, "cclco", { action: "instruct", instruction, message: "HLCU has space a week later" });

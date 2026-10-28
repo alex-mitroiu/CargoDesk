@@ -6,6 +6,7 @@ import Spinner from "../components/primitives/Spinner";
 import Btn from "../components/primitives/Btn";
 import { IconRefresh } from "../components/primitives/Icon";
 import { dcsaLabel, CARRIER_ACTIONS } from "../utils/dcsaCodes";
+import { ShippingInstructionsTab, TrackTraceTab, VesselTimesTab } from "./DcsaCarrierTabs";
 
 // ─── Test Tools → DCSA Carrier ────────────────────────────────────────────────
 // Plays the carrier for every booking the built-in DCSA simulator holds (lib/dcsa-simulator; DCSA-
@@ -14,6 +15,10 @@ import { dcsaLabel, CARRIER_ACTIONS } from "../utils/dcsaCodes";
 // current DCSA state are offered (the simulator says which); each one is sent back to CargoDesk as a
 // signed DCSA notification, exactly as a real carrier's would be, so the shipment updates through the
 // same path. The demo carrier never answers on its own (decided by the user).
+// Since 2026-10-28 (DCSA phases 4–6, mockup VUTPKnRAjdPjfb8DntUxVs) the panel has tabs: Bookings (this file),
+// and Shipping Instructions & B/L, Track & Trace and Vessel times (DcsaCarrierTabs.jsx).
+
+const TABS = [["bookings", "Bookings"], ["si", "Shipping Instructions & B/L"], ["tnt", "Track & Trace"], ["ovs", "Vessel times"]];
 
 const STATE_TONE = {
   RECEIVED: "info", UPDATE_RECEIVED: "info", AMENDMENT_RECEIVED: "warn", CONFIRMED: "good", AMENDMENT_CONFIRMED: "good",
@@ -47,6 +52,27 @@ const StateBox = ({ title, code }) => (
 const fmtTime = iso => iso ? new Date(iso).toLocaleString([], { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
 
 export default function DcsaCarrierPanel({ navigate }) {
+  const [tab, setTab] = useState("bookings");
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%" }}>
+      <div role="tablist" aria-label="DCSA Carrier" style={{ display: "flex", flexWrap: "wrap", gap: 6, borderBottom: `1px solid ${T.border}`, paddingBottom: 8 }}>
+        {TABS.map(([id, label]) => (
+          <button key={id} type="button" role="tab" aria-selected={tab === id} data-testid={`dcsa-carrier-tab-${id}`} onClick={() => setTab(id)}
+            style={{ minHeight: 34, padding: "0 12px", borderRadius: 7, cursor: "pointer", fontFamily: T.body, fontSize: 12.5, fontWeight: tab === id ? 700 : 500,
+              border: `1px solid ${tab === id ? T.accent : T.border}`, background: tab === id ? T.accentBg : "transparent", color: T.text }}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "bookings" && <BookingsTab navigate={navigate} />}
+      {tab === "si" && <ShippingInstructionsTab navigate={navigate} />}
+      {tab === "tnt" && <TrackTraceTab />}
+      {tab === "ovs" && <VesselTimesTab />}
+    </div>
+  );
+}
+
+function BookingsTab({ navigate }) {
   const [bookings, setBookings] = useState(null); // null = loading
   const [error, setError] = useState("");
   const [selectedRef, setSelectedRef] = useState(null);

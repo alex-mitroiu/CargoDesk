@@ -42,6 +42,8 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
   const [linkModal,    setLinkModal]    = useState(false);
   const [genDocOpen,   setGenDocOpen]   = useState(false);
   const [blDocs,       setBlDocs]       = useState([]);
+  const masterDocs = blDocs.filter(d => d.docType === "MB01");
+  const linkedHouse = blDocs.find(d => d.docType === "BL01" && d.id === booking?.blDocumentId) || null;
   const [busy, setBusy] = useState(false);
   // Booking escalations (Epic TKT-ASIYFL): the shipment's escalation, what this user may do with it.
   const [escView,      setEscView]      = useState(null);
@@ -55,7 +57,9 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
     return Promise.all([
       api.carrierBooking.get(shipment.id).catch(() => null),
       api.ediMessages.list(shipment.id).catch(() => []),
-      api.documents.list(shipment.id).then(docs => docs.filter(d => d.docType === "BL01")).catch(() => []),
+      // The booking is the carrier's, so its B/L is the carrier's Master (MB01, TKT-C7EBU3 gap G22); a House
+      // B/L linked before then still shows until it's changed.
+      api.documents.list(shipment.id).then(docs => docs.filter(d => d.docType === "MB01" || d.docType === "BL01")).catch(() => []),
       api.escalations.get(shipment.id).catch(() => null),
     ]).then(([b, m, docs, ev]) => { setBooking(b); setMessages(m); setBlDocs(docs); setEscView(ev); }).finally(() => setLoading(false));
   }, [shipment.id]);
@@ -200,7 +204,7 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
           <div style={{ display: "flex", gap: 8 }}>
             {booking && (
               <Btn variant="secondary" onClick={() => setLinkModal(true)}>
-                <IconFile size={13} /> {booking.blDocumentId ? "Change Linked B/L" : "Link B/L Document"}
+                <IconFile size={13} /> {booking.blDocumentId ? "Change Master B/L" : "Link Master B/L"}
               </Btn>
             )}
             {status === "Confirmed" && (
@@ -343,25 +347,38 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
       )}
 
       {linkModal && (
-        <Modal title="Link B/L Document" onClose={() => !busy && setLinkModal(false)} width={420}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {blDocs.length === 0 ? (
+        <Modal title="Link Master B/L" onClose={() => !busy && setLinkModal(false)} width={460}>
+          <div data-testid="carrier-booking-link-bl-modal" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <p style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, margin: 0, lineHeight: 1.5 }}>
+              The booking is {booking?.carrierCode || shipment.carrierCode || "the carrier"}'s, so its B/L is the carrier's own: the Master Bill of Lading (MB01).
+              CargoDesk's House B/L is managed on Documents.
+            </p>
+            {masterDocs.length === 0 ? (
               <p style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted, margin: 0 }}>
-                No Bill of Lading (BL01) document has been generated for this shipment yet.
+                No Master B/L yet: upload the carrier's under Documents, type MB01.
               </p>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {blDocs.map(d => (
-                  <button key={d.id} onClick={() => doLinkBl(d.id)} disabled={busy}
+                {masterDocs.map(d => (
+                  <button key={d.id} data-testid={`carrier-booking-link-bl-${d.id}`} onClick={() => doLinkBl(d.id)} disabled={busy}
                     style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
                       background: d.id === booking?.blDocumentId ? HZ.cyanBg : HZ.bg,
                       border: `1px solid ${d.id === booking?.blDocumentId ? HZ.cyan + "66" : HZ.border}`,
                       borderRadius: 7, padding: "8px 12px", cursor: busy ? "default" : "pointer",
                       fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, textAlign: "left" }}>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.filename}</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <span style={{ fontFamily: HZ_MONO, fontSize: 10.5, fontWeight: 700, color: HZ.cyan, marginRight: 8 }}>MB01</span>{d.filename}
+                    </span>
                     {d.id === booking?.blDocumentId && <IconCheck size={13} color={HZ.cyan} />}
                   </button>
                 ))}
+              </div>
+            )}
+            {linkedHouse && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 3, padding: "9px 12px", borderRadius: 7, border: `1px solid ${HZ.border}`,
+                fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted }}>
+                <span><span style={{ fontFamily: HZ_MONO, fontSize: 10.5, fontWeight: 700, marginRight: 8 }}>BL01</span>{linkedHouse.filename}</span>
+                <span>Linked before Master B/Ls were required. It stays linked until you pick the Master B/L or unlink it.</span>
               </div>
             )}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>

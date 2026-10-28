@@ -122,7 +122,7 @@ const list = b => (Array.isArray(b) ? b : (b?.results ?? []));
     await carrierActs(request, token, D, "reject", "No space");
     const escD = (await request("POST", `/api/shipments/${D}/escalations`, { toRole: "occ_ay" }, occBk)).body.escalation;
     await request("POST", `/api/escalations/${escD.id}/actions`, { action: "instruct", message: "MSCU the same week",
-      instruction: { carrierCode: "MSCU", sailing: { vesselName: "DEMO ALLEGRO", voyageNumber: "DM001W", etd: "2026-11-18", eta: "2026-12-02" } } }, occAy);
+      instruction: { carrierCode: "MSCU", contractNumber: "MSCU-SC-2026-0118", source: "contracts", sailing: { vesselName: "DEMO ALLEGRO", voyageNumber: "DM001W", etd: "2026-11-18", eta: "2026-12-02" } } }, occAy);
     r = await request("POST", `/api/escalations/${escD.id}/book`, {}, occBk);
     assert("OCC/BK books MSCU as instructed", r.status === 200, JSON.stringify(r.body).slice(0, 200));
     await carrierActs(request, token, D, "confirmWithChanges");

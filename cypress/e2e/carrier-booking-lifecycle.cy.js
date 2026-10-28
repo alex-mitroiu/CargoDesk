@@ -87,10 +87,11 @@ describe("Carrier Booking Lifecycle Suite", () => {
   });
 
   before(() => {
-    // Plain (unsigned) upload route — real BL01 doc content isn't the point here, just
-    // need a real doc row of the right type for the link-bl-document picker to list.
+    // Plain (unsigned) upload route — real MB01 doc content isn't the point here, just
+    // need a real doc row of the right type for the link-bl-document picker to list. The booking
+    // links the carrier's Master B/L (TKT-C7EBU3 gap G22).
     api("POST", `/shipments/${shipmentId}/documents`, {
-      filename: "test-bl.pdf", mimeType: "application/pdf", docType: "BL01",
+      filename: "test-bl.pdf", mimeType: "application/pdf", docType: "MB01",
       data: btoa("fake bl content for cypress fixture"),
     }).then(res => {
       expect(res.status).to.eq(201);
@@ -164,13 +165,14 @@ describe("Carrier Booking Lifecycle Suite", () => {
     cy.contains(/confirmed/i).should("be.visible");
   });
 
-  it("links the BL01 document to the confirmed booking", () => {
+  it("links the carrier's Master B/L (MB01) to the confirmed booking", () => {
     gotoBookingReview();
-    cy.contains("button", "Link B/L Document", { timeout: 15000 }).click();
-    cy.contains("h2", "Link B/L Document").should("be.visible");
+    cy.contains("button", "Link Master B/L", { timeout: 15000 }).click();
+    cy.contains("h2", "Link Master B/L").should("be.visible");
+    cy.get('[data-testid="carrier-booking-link-bl-modal"]').should("contain", "Master Bill of Lading (MB01)");
     cy.contains("button", "test-bl.pdf").click();
-    cy.contains("h2", "Link B/L Document").should("not.exist");
-    cy.contains("button", "Change Linked B/L", { timeout: 8000 }).should("be.visible");
+    cy.contains("h2", "Link Master B/L").should("not.exist");
+    cy.contains("button", "Change Master B/L", { timeout: 8000 }).should("be.visible");
 
     cy.contains("Bookings on this Shipment").should("be.visible");
     cy.contains("Current").click();

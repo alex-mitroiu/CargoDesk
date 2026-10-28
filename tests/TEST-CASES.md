@@ -6,7 +6,8 @@
 Status legend: `PASS` | `FAIL` | `SKIP` | `BLOCKED`
 
 Areas 1–10 are the original v0.26.0 cases (2026-07-09). Area 11 was added on 2026-10-21 for Where to
-book (Epic TKT-KFGL81). Every case in it is automated, and the automated test is named in each case.
+book (Epic TKT-KFGL81), and Area 12 on 2026-10-27 for the DCSA message review. Every case in them is
+automated, and the automated test is named in each case.
 Features built between those dates are covered by the automated suites only (TEST-PLAN.md §0).
 
 ---
@@ -962,3 +963,255 @@ remove the line and the configurations afterwards. ARCHITECTURE.md §8.39.
 - The weekly row reads "4 TEU/wk" and its week
 
 **Status:** PASS (2026-10-21, automated: cypress/e2e/where-to-book.cy.js)
+
+---
+
+### TC-063: An issued House B/L only moves forward
+**Feature:** PATCH / DELETE /api/shipments/:id/documents/:docId (BL01), Epic TKT-C7EBU3 Story 1
+**Precondition:** A realistic NLRTM → USNYC shipment with a container and a confirmed MAEU booking
+**Steps:**
+1. Issue (confirm) a House B/L, then try to delete it and to set it back to draft
+2. Generate a second draft and try to issue it while the first is issued
+3. Void the first without a reason, then with one; try to issue it again and to delete it
+4. Issue the second; delete a fresh draft; confirm, un-confirm and delete a packing list
+
+**Expected Result:**
+- Delete and back-to-draft of the issued one: 409; issuing a second: 409; voiding without a reason: 400
+- Voided with a reason, kept on its VOIDED event; issuing or deleting it again: 409
+- The second can be issued once the first is voided; drafts and other document types keep their rules
+
+**Status:** PASS (2026-10-21, automated: tests/house-bl-issue-rules.test.js)
+
+---
+
+### TC-064: A regenerated House B/L draft replaces the earlier one; two issues racing
+**Feature:** POST /api/shipments/:id/documents/generate (BL01); `ux_shipment_documents_one_issued_house_bl`
+**Precondition:** As TC-063, with the booking linked to the first draft
+**Steps:**
+1. Generate a second draft
+2. Upload two BL01 files and issue both at the same moment
+
+**Expected Result:**
+- Only the second draft is left; the booking's linked B/L follows to it; the first has a REPLACED event
+- Exactly one of the racing pair is issued (200), the other refused (409)
+
+**Status:** PASS (2026-10-21, automated: tests/house-bl-issue-rules.test.js)
+
+---
+
+### TC-065: The House B/L record, readiness and loading
+**Feature:** lib/house-bl.js; GET /api/shipments/:id/house-bl; PATCH documents (BL01 confirm), Epic TKT-C7EBU3
+**Precondition:** A complete NLRTM → USNYC shipment (tests/helpers/house-bl.mjs): parties with addresses, a sealed 40' HC with 1,200 cartons, the booking confirmed by the carrier, loaded
+**Steps:**
+1. Save the container without the package fields, then with pallets, then with an unknown code and with 0
+2. Generate a shipped-on-board draft and issue it; read the record, its DCSA document and history
+3. On a second shipment, clear the seal and packages and try to issue
+4. On a shipment not loaded: issue an old-style draft; a typed future on-board date; a received-for-shipment draft; a typed today's date
+
+**Expected Result:**
+- Packages kept on a save without them; PX takes "Pallet"; bad code and 0 refused
+- DRAFT then ISSUED with today's date, place of issue, B/L number on the shipment; DCSA document with 1,200 CT, 45G1 and the seal, the consignee's LEI; B/L Issued done
+- Issue refused, naming seal number, number and kind of packages
+- Old-style refused ("Loading"); future date 400; received-for-shipment issued dated today; typed date issued as shipped on board, source Typed
+
+**Status:** PASS (2026-10-21, automated: tests/house-bl-record.test.js)
+
+---
+
+### TC-066: Release at destination
+**Feature:** PATCH …/bl-surrender, …/bl-release; DO01 generation
+**Precondition:** An issued Original House B/L; a collect telex-release shipment whose consignee is on credit hold
+**Steps:**
+1. Release before surrender; generate a Delivery Order; record the originals at destination; release; generate the Delivery Order
+2. On the collect shipment: surrender, then release; override without a reason; override with one
+
+**Expected Result:**
+- Release 409 (originals) and Delivery Order 409 before; after surrender, release 200, Cargo Released done, Delivery Order 201
+- Collect: 409 naming "OFR (not invoiced)" and the credit hold; override without reason 400; with reason 200, history names both checks
+
+**Status:** PASS (2026-10-21, automated: tests/house-bl-record.test.js)
+
+---
+
+### TC-067: The House B/L as an eBL
+**Feature:** POST /api/shipments/:id/house-bl/issue-ebl; /api/ebl/v3/*; Test Tools → eBL Platform
+**Precondition:** A scratch Rotterdam legal entity with address, VAT, SCAC, phone and email; shipments issued on paper
+**Steps:**
+1. Issue as eBL without, then with, the shipper's WAVE id; issue again while pending; the platform answers ISSU
+2. Endorse to the consignee; SREQ
+3. On a collect shipment: ISSU, SREQ, then AREQ
+4. Another: BREQ, then send again; a Sea Waybill; call the receivers without the platform credential
+
+**Expected Result:**
+- Refused naming Customers → Identifiers; then PENDING, the platform verifies the JWS manifest; second request 409; ISSU recorded
+- SURR: surrendered for delivery, released, Cargo Released done
+- SREJ with the collect charges reason, back to ISSUED; AREQ: surrendered for amendment, no live House B/L
+- BREQ back to paper with the reason, then pending again; Sea Waybill refused; 401 twice
+
+**Status:** PASS (2026-10-21, automated: tests/house-bl-ebl.test.js)
+
+---
+
+### TC-068: The House B/L screens
+**Feature:** HouseBlPanel (Documents), the container form's Packages fields, Test Tools → eBL Platform (Epic TKT-C7EBU3)
+**Precondition:** Three complete shipments; one with no packages on its container; one issued from a scratch export office whose legal entity has a SCAC, address and contact, its shipper with a WAVE id
+**Steps:**
+1. Documents of the first: Issue House B/L; Originals presented at destination; Release cargo
+2. Documents of the second: follow the readiness list's Cargo link, fill Packages 24 and Kind PX, save, go back
+3. Documents of the third: Issue; Issue as eBL → Send to WAVE; Test Tools → eBL Platform: ISSU, then SREQ; back to Documents
+
+**Expected Result:**
+- ISSUED, history "Issued, shipped on board"; SURRENDERED; the release dialog's checks OK; RELEASED, the Delivery Order unlocked
+- The readiness list named the packages; the Cargo row reads "24 PX"; the panel then says Ready to issue
+- eBL PENDING with the shipper's WAVE id; the platform row ISSUED, then SURR; the panel RELEASED · eBL, history "WAVE issued the eBL (ISSU)" and "eBL surrendered for delivery (SURR)"
+
+**Status:** PASS (2026-10-21, automated: cypress/e2e/house-bl.cy.js)
+
+---
+
+### TC-069: House B/L numbers, corrections and overdue tasks
+**Feature:** office number series, POST …/house-bl/number, surrender-for-amendment, ops-sweep task closing (Epic TKT-C7EBU3, G5, G6, G21; carrier booking → MB01, G22)
+**Precondition:** A scratch export office; complete NLRTM → USNYC shipments on it (tests/helpers/house-bl.mjs, some with `numbered: false`)
+**Steps:**
+1. Set the office prefix (a dash refused; another office can't take it); draft before the number exists, then try to issue it from the Documents list
+2. Take the number (POST …/number twice), save the shipment with a blank B/L number, issue; try to change the number
+3. A second shipment on the office; void the first and take its next number; type a number on a third, issue; type the same on a fourth
+4. Issue one, change its consignee's address, surrender it for amendment (without, then with a reason), draft and issue v2, surrender and release
+5. Set B/L Issued and SI Submitted overdue, run the ops sweep, issue the House B/L, complete SI Submitted by hand
+6. Link a BL01 and an MB01 to the carrier booking
+
+**Expected Result:**
+- `T<letters>` + year + 00001 shown as next; the early draft has no number and is refused (409)
+- The same number both times, kept on the shipment as SERIES, and the blank save keeps it; issued under it; changing it 409
+- 00002 for the next shipment; after the void the shipment's number is released and the next is 00003; the typed number is used (TYPED); the fourth is blocked ("already used by")
+- "Consignee" listed as changed; 400 without a reason; SURRENDERED_FOR_AMENDMENT with the reason, its BL01 voided; v2 amends v1 under the same number, nothing changed since; both versions on record; released; then no amendment (409)
+- The sweep opens an overdue task for each; issuing closes the B/L Issued one ("Closed automatically"), the SI one closes when completed
+- BL01 refused (400, "Master Bill of Lading"); MB01 linked
+
+**Status:** PASS (2026-10-24, automated: tests/house-bl-series.test.js, tests/carrier-booking.test.js)
+
+---
+
+### TC-070: What the House B/L says, and its originals
+**Feature:** to order, originals and copies, charges, carriage, reefer and DG, the originals log, the telex release notice (Epic TKT-C7EBU3, G11, G12, G14, G16, G17, G18)
+**Precondition:** A legal entity with SCAC, address, phone and email on a scratch export office (so each DCSA document can be checked whole); complete shipments on it
+**Steps:**
+1. Set to order: an unknown mode; to order of the consignee; to order (of the shipper); a Sea Waybill to order. Issue each valid one
+2. Draft with 0 originals; a Sea Waybill with 2; issue 3 originals and 2 copies with charges (OFR prepaid, DTHC collect); issue 2 originals as arranged
+3. Replace the legs with NLRTM → ESALG, ESALG → USNYC and a truck delivery (carrier's haulage); issue
+4. A 40' reefer at -18 °C; a class 3 container without a UN number, with "12A", with "UN 1263" PAINT; issue each
+5. Log handovers (no recipient, a courier without tracking, 4 of 3, then 3 by DHL); present the originals with who presented them; log another; surrender a telex release at origin twice
+
+**Expected Result:**
+- 400; DCSA isToOrder with the consignee; isToOrder with no consignee; readiness refuses the Sea Waybill to order
+- 400 (1 to 9 originals); 400 (no originals on a Sea Waybill); DCSA 3 originals and 2 copies with charges and both charges; without charges no charges block
+- Summary: two vessels, transshipment at ESALG, on-carriage TRUCK; DCSA FIRST_SEA_GOING then MOTHER, onCarriageBy TRUCK
+- activeReeferSettings −18 CEL; readiness asks for the UN number and proper shipping name; 400 for "12A"; saved as 1263; DCSA dangerousGoods UN 1263 PAINT class 3
+- 400, 400, 400, then logged with its tracking number in the history; "presented by" recorded; then 409; one High telex release task for the import office, linked from the record, once
+- Every DCSA document passes the eBL 3.0 spec
+
+**Status:** PASS (2026-10-24, automated: tests/house-bl-content.test.js)
+
+---
+
+### TC-071: The remaining House B/L screens
+**Feature:** HouseBlPanel (number, originals and copies, originals log, amendment, telex notice), Conditions (consignee on the B/L), Carrier Booking review (Master B/L) — mockup https://claude.ai/artifact/CnuymDL2eUEnxnD8oDtj57
+**Precondition:** Complete shipments; one with release type Telex Release; an MB01 uploaded on a booked shipment
+**Steps:**
+1. Documents: set originals 2 and copies 1, Issue; Record handover by courier; Surrender for amendment with a reason; Issue version 2
+2. Conditions → Edit → Consignee on the B/L: To order of the consignee → Save; Documents → Issue
+3. Documents of the telex release shipment: Issue; Surrendered at origin
+4. Carrier Booking → Review → Link Master B/L → pick the MB01
+
+**Expected Result:**
+- The number line says "(next)" from the series; ISSUED with "office series"; history "2 originals, 1 copy"; the originals log "2 of 2 by courier"; AMENDING · v2, "Version 2 replaces version 1", "Kept from version 1"; ISSUED again with the versions box (v1 surrendered for amendment, v2)
+- The Conditions row reads "To order of the consignee", the panel too; the record is issued to order (CONSIGNEE)
+- "Telex release notice sent to …", with a Kanban task of type telex_release_notice
+- The modal explains the Master B/L; the button then reads "Change Master B/L"
+
+**Status:** PASS (2026-10-24, automated: cypress/e2e/house-bl.cy.js, cypress/e2e/carrier-booking-lifecycle.cy.js)
+
+---
+
+## Area 12 — DCSA Carrier Messages (2026-10-27, the DCSA message review)
+
+### TC-072: The booking request as DCSA Booking 2.0
+**Feature:** Send Booking Request — the body as sent, Booking 2.0's condition rules, the carrier's local office (ARCHITECTURE.md §8.41)
+**Precondition:** A scratch legal entity with email and phone on a scratch export office; a complete Central NLRTM → USNYC MAEU shipment with contract MAEU-SC-2026-0418, a SEA leg (MAERSK KENSINGTON 444W), a sealed 40' HC and a Line Agent (Export) party with an address and contact
+**Steps:**
+1. Send the booking request; read the outbound message's raw and parsed payloads
+2. The carrier confirms (Test Tools → DCSA Carrier)
+3. A SPOT shipment with no contract or quote reference: send; then set the quote SPOT-Q-2026-0611 and send
+4. A shipment with no ETD and no SEA leg: send
+
+**Expected Result:**
+- 201. The raw payload validates against Booking 2.0 with no field the spec doesn't define; the parsed payload is CargoDesk's summary
+- `serviceContractReference` MAEU-SC-2026-0418 and no quotation reference; `carrierBookingOffice` = the Line Agent, UNLocationCode NLRTM, with its address and contact; `bookingAgent` = the legal entity with its email; the voyage with its vessel
+- Confirmed by the carrier
+- 400 naming the service contract number, nothing recorded; then 201 with `contractQuotationReference` SPOT-Q-2026-0611 alone
+- 400: "the ETD, or the vessel and voyage"
+
+**Status:** PASS (2026-10-27, automated: tests/dcsa-messages.test.js)
+
+---
+
+### TC-073: Shipping Instructions 3.0 and VGM 1.0 through the carrier
+**Feature:** Shipping Instructions submit / update / complete, VGM declare / re-declare / retract (ARCHITECTURE.md §8.41)
+**Precondition:** The confirmed shipment of TC-072; the no-ETD shipment of TC-072 (no booking) with a sealed container
+**Steps:**
+1. VGM: mark the container Submitted, Method 2, 12,350 kg; change the weight to 12,410; change only the cargo description; back to Pending; Submitted again with Method 1
+2. VGM on the unbooked shipment's container: Submitted, Method 1, no weight
+3. Shipping Instructions on the unbooked shipment: save a draft, submit
+4. Shipping Instructions on the confirmed shipment: save a draft, submit; the carrier asks for an update ("Consignee tax ID missing for US customs"); Reset to Draft; submit; the carrier completes them; submit again
+
+**Expected Result:**
+- One declaration at the carrier, 12,350 KGM SM2, for the booking number, shipper responsible, legal entity submitting, logged as sent (valid VGM 1.0, no undefined fields); replaced at 12,410; the description change sends nothing; retracted; un-retracted, SM1
+- 400 "verified gross mass", nothing declared
+- 400 naming the carrier's booking number
+- 201 with a SISIM- reference, the body valid Shipping Instructions 3.0 with no undefined fields (the booking number, shipper, consignee, the container); RECEIVED; Rejected with PENDING_UPDATE and the reason; Draft with the same reference; sent as an update (UpdateShippingInstructions, same reference), UPDATE_RECEIVED; Confirmed, COMPLETED; then 409
+
+**Status:** PASS (2026-10-27, automated: tests/dcsa-messages.test.js; the notification refusals in tests/carrier-integrations.test.js)
+
+---
+
+### TC-074: The carrier's Master B/L, VGM declarations and events (DCSA phases 4–6)
+**Feature:** Master B/L draft → approve → issue → surrender; Shipping Instructions update and cancel; House B/L in the Master's SI (G25); VGM declarations with evidence and VG01; Track & Trace 3.0 pushed and pulled; OVS vessel times; milestone DCSA events (ARCHITECTURE.md §8.42)
+**Precondition:** A scratch legal entity with email and phone on a scratch export office; complete NLRTM → USNYC MAEU shipments booked and confirmed through the demo carrier; the consignee with an LEI
+**Steps:**
+1. Submit the Shipping Instructions; the carrier drafts; read the Master B/L; approve it; the carrier issues it; send an update and cancel; the carrier surrenders it
+2. On another shipment: send an update, cancel the update, cancel the instructions, reset and submit again
+3. Issue a House B/L and submit the Master's instructions
+4. Declare a container's VGM, attach a weighbridge ticket, generate a VG01, re-declare, withdraw; file a document against another shipment's declaration; remove the declared container
+5. Report gate-ins, a corrected gate-in, an older copy, an estimated then actual departure, an arrival, customs release, a gate-out and its retraction; retract the actual departure; pull the events; push a departure naming only vessel and voyage
+6. Set the carrier's vessel times (estimated, then actual); check vessel times; let AIS report a departure; run the three poll sweeps
+7. Create a template milestone with a DCSA event that doesn't exist, then one that does; log the event
+
+**Expected Result:**
+- The draft is read and valid; the instructions show Confirmed; the review compares shipper, consignee, each container and seal, the ports; a review task opens, closes on approval; issued: the shipment takes the Master B/L number, B/L Issued completes; update and cancel 409; surrendered: the instructions COMPLETED
+- The update goes under the same reference; its cancellation leaves the instructions standing; the cancellation makes them Cancelled; reset sends new instructions under a new reference
+- The Master's instructions carry the House B/L under its number, valid DCSA with no undefined fields
+- One declaration, flagged "no evidence"; the ticket and VG01 filed against it clear the flag; the re-declaration is flagged again, the earlier keeps its files; the retraction is on record; 400 for the other shipment's declaration; 409 for the declared container
+- Container events and milestones from the events; the correction corrects, the older copy is ignored; the retraction removes the container event; the retracted departure falls back to the latest estimate and its Sailed events go; the pull adds and retracts nothing again; the vessel-only departure reaches the shipments on that voyage and not the next one
+- The estimates move the leg (carrier estimate), the actual confirms it and completes Vessel Departed; AIS leaves it; the sweeps answer 200
+- 400 for the unknown event; the valid one completes its milestone
+
+**Status:** PASS (2026-10-28, automated: tests/dcsa-documents-events.test.js)
+
+---
+
+### TC-075: The DCSA documents and events screens
+**Feature:** Master B/L card (foldable, critical facts first), VGM declarations with evidence and VG01, Milestones & Events (sea leg sources, milestone DCSA events, From the carrier), Test Tools → DCSA Carrier tabs — mockup https://claude.ai/artifact/VUTPKnRAjdPjfb8DntUxVs
+**Precondition:** A booked shipment with the demo carrier, Shipping Instructions drafted into a Master B/L, one container's VGM declared, gate-in and departures reported
+**Steps:**
+1. Shipping Instructions: read the card; Show all fields; fold and unfold; Approve draft; Cancel instructions then Keep them
+2. VGM: open a container's declarations; attach a weighbridge ticket; Generate VG01
+3. Milestones & Events: read the sea leg and the milestones; Sync carrier events
+4. Test Tools → DCSA Carrier: Shipping Instructions & B/L → Issue; Track & Trace → Loaded; Vessel times; back on Shipping Instructions
+
+**Expected Result:**
+- DRAFT · TO REVIEW, "No differences", the key facts; the field list opens with each container; folded, the body is gone; APPROVED and "Waiting for MAEU to issue it"; the cancel confirmation names the reference, Keep them closes it
+- "No evidence on file", then "Weighbridge ticket"; the evidence and VG01 chips; "Generate VG01 again"
+- ETD tagged ACTUAL; Vessel Departed tagged "Transport · Departed at POL", Delivered "Completed by hand"; the carrier's events with "Vessel Departed completed"; "Nothing new from MAEU"
+- Issued; "Loaded recorded for …"; the vessel-time form; the card ISSUED and the instructions locked
+
+**Status:** PASS (2026-10-28, automated: cypress/e2e/dcsa-documents-events.cy.js; src/components/shared/MasterBlPanel.test.jsx)

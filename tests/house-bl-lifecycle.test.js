@@ -10,7 +10,7 @@
  */
 
 import http from "node:http";
-import { ensureOffices } from "./helpers/offices.mjs";
+import { readyHouseBlShipment } from "./helpers/house-bl.mjs";
 
 const BASE = "http://localhost:3001";
 let passed = 0;
@@ -54,25 +54,14 @@ async function login() {
   return body.token;
 }
 
-let _defaultOffices = null;
-async function getDefaultOffices(token) {
-  if (_defaultOffices) return _defaultOffices;
-  _defaultOffices = await ensureOffices(token);
-  return _defaultOffices;
-}
-
+// A shipment whose House B/L can be issued (complete parties, a sealed container with packages, the
+// booking confirmed by the carrier, loaded; milestones initialised) — the issue readiness of
+// Epic TKT-C7EBU3 refuses anything less.
+const scratchCustomers = [];
 async function scratchShipment(token, blReleaseType = "Original") {
-  const { emoOfficeId, imoOfficeId } = await getDefaultOffices(token);
-  const res = await request("POST", "/api/shipments", {
-    pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU",
-    status: "Active", contractType: "SPOT", etd: "2026-09-01", blReleaseType,
-    emoOfficeId, imoOfficeId,
-  }, token);
-  const id = res.body.id;
-  // Milestones aren't auto-seeded at shipment creation — a shipment needs an explicit init call
-  // before shipment_milestones has any rows for it (routes/shipment-ops.js:834).
-  await request("POST", `/api/shipments/${id}/milestones/init`, {}, token);
-  return id;
+  const r = await readyHouseBlShipment(request, token, { tag: "LC", releaseType: blReleaseType });
+  scratchCustomers.push(r.shipper.id, r.consignee.id);
+  return r.shipment.id;
 }
 
 const SAMPLE_HTML = `<html><body><h1>House Bill of Lading (test fixture)</h1></body></html>`;
@@ -172,6 +161,7 @@ async function getDocumentEvents(docId, token) {
     console.log("\nCleanup");
     await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
     await request("DELETE", `/api/shipments/${shipment2Id}`, null, token);
+    for (const id of scratchCustomers) await request("DELETE", `/api/customers/${id}`, null, token);
 
     console.log(`\n${"─".repeat(50)}`);
     console.log(`Results: ${passed} passed, ${failed} failed`);

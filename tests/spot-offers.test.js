@@ -196,8 +196,12 @@ const offerBody = (over = {}) => ({
     const msgs = list((await request("GET", `/api/shipments/${Q}/edi-messages`, null, token)).body);
     const out = msgs.find(m => m.direction === "out" && m.messageType === "booking_request");
     let payload = {};
-    try { payload = JSON.parse(out?.rawPayload || "{}"); } catch { payload = {}; }
+    try { payload = JSON.parse(out?.parsedPayload || out?.rawPayload || "{}"); } catch { payload = {}; }
     assert("the request names the offer as its quotation reference", payload.quotationReference === A.offerRef && !payload.contractNumber, JSON.stringify(payload).slice(0, 200));
+    let sentBody = {};
+    try { sentBody = JSON.parse(out?.rawPayload || "{}"); } catch { sentBody = {}; }
+    assert("…and the DCSA booking sent carries it as contractQuotationReference, with no service contract (exactly one of the two)",
+      sentBody.contractQuotationReference === A.offerRef && !sentBody.serviceContractReference, JSON.stringify(sentBody).slice(0, 200));
     assert("the offer is booked on", (await request("GET", `/api/spot-offers/${A.id}`, null, token)).body.status === "Booked");
     await waitForCarrierReference(request, token, Q);
     r = await carrierActs(request, token, Q, "confirm");
