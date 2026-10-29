@@ -6,7 +6,8 @@
 Status legend: `PASS` | `FAIL` | `SKIP` | `BLOCKED`
 
 Areas 1–10 are the original v0.26.0 cases (2026-07-09). Area 11 was added on 2026-10-21 for Where to
-book (Epic TKT-KFGL81), and Area 12 on 2026-10-27 for the DCSA message review. Every case in them is
+book (Epic TKT-KFGL81), Area 12 on 2026-10-27 for the DCSA message review, and Area 13 on 2026-10-29 for the House
+B/L audit's fixes and dangerous goods in the booking. Every case in them is
 automated, and the automated test is named in each case.
 Features built between those dates are covered by the automated suites only (TEST-PLAN.md §0).
 
@@ -1215,3 +1216,125 @@ remove the line and the configurations afterwards. ARCHITECTURE.md §8.39.
 - Issued; "Loaded recorded for …"; the vessel-time form; the card ISSUED and the instructions locked
 
 **Status:** PASS (2026-10-28, automated: cypress/e2e/dcsa-documents-events.cy.js; src/components/shared/MasterBlPanel.test.jsx)
+
+### TC-076: Amending the issued Master B/L (DCSA eBL 3.0.3 amendment)
+**Feature:** Request amendment on an issued Master B/L — preview of what differs, the carrier's answer, the amended B/L — mockup https://claude.ai/code/artifact/1bf14417-6d13-4009-a277-ada52600d001
+**Precondition:** A shipment with the demo carrier whose Master B/L is issued; a container's seal changed on the shipment since
+**Steps:**
+1. Shipping Instructions → Master B/L card: Request amendment; read the preview; Send amendment to MAEU
+2. Cancel the amendment; request it again
+3. Test Tools → DCSA Carrier → Shipping Instructions & B/L: Decline the amendment (with a reason); request again; Accept the amendment
+4. Originals surrendered for amendment; Issue the amended B/L
+5. With nothing changed on the shipment, Request amendment
+
+**Expected Result:**
+- The preview lists the one seal change (on the B/L → shipment now); the card shows ISSUED · AMENDMENT REQUESTED and WAITING FOR MAEU
+- Withdrawn: nothing pending; a new request goes again
+- Declined: the reason on the card, a decline task on the Kanban (closed by the next request); accepted: "Return the 3 original B/Ls", a task until they're back, the amendment steps
+- The amended B/L under the same number, the card listing the change (was → now), History with the request, decline and amendment
+- "Nothing to amend"; a draft B/L points to Send update instead
+
+**Status:** PASS (2026-10-28, automated: tests/dcsa-amend-equip-arrival.test.js; cypress/e2e/dcsa-amend-equip-arrival.cy.js; src/components/shared/MasterBlPanel.test.jsx)
+
+### TC-077: Equipment by ISO 6346 code, 45' units, seals with who applied them
+**Feature:** DCSA phase 3 — containers carry their ISO code and a list of seals
+**Precondition:** A shipment with containers
+**Steps:**
+1. Cargo → a 40' high cube: read the equipment type; open the picker
+2. Add a 45' High Cube container; add a customs seal to a container (＋ Add seal, Applied by: Customs); save
+3. Send the booking, the Shipping Instructions and a VGM declaration
+
+**Expected Result:**
+- 45G1 shown first, "was 40HC"; the picker grouped 20/40/45 ft by ISO code
+- The 45' unit is L5G1 and counts 2 TEU; the cargo table shows each container's code and every seal with who applied it; History logs the seals
+- The booking asks for one line per ISO code (a 40' high-cube reefer stays 45R1, its set point on its line); the Shipping Instructions and the VGM list every seal with its source; the Shipping Instructions carry no reefer settings
+
+**Status:** PASS (2026-10-28, automated: tests/dcsa-amend-equip-arrival.test.js; cypress/e2e/dcsa-amend-equip-arrival.cy.js)
+
+### TC-078: The carrier's Arrival Notice and Port Call times
+**Feature:** DCSA Arrival Notice 1.0 on the import side (Booking & Routing → Arrival Notice); Port Call 2.0 berth times
+**Precondition:** A shipment whose Master B/L the demo carrier issued; one container with its own detention days; a THC accrual already on the shipment
+**Steps:**
+1. Test Tools → DCSA Carrier → Shipping Instructions & B/L: Publish Arrival Notice; open Arrival Notice on the shipment
+2. Use the carrier's days on the container that differs; Add as accruals
+3. Announce a second version (lightweight); Ask MAEU again
+4. Generate AN01 from it
+5. Test Tools → Vessel times: send an actual departure and an estimated, then actual, arrival as Port Call events; publish another Arrival Notice with a later date
+
+**Expected Result:**
+- Version 1: the vessel, the arrival, pickup and return points, release state; the ETA moved; empty free days FILLED; the differing one SAYS 10 DAYS with Keep / Use
+- The container takes the carrier's 7 days; the chosen charges become BUY accruals (collect), the one looking entered stays unticked; asking again adds nothing
+- Version 2 is current, both kept; nothing new on asking again
+- AN01 carries the carrier's ETA, last free day, pickup and return points
+- The leg's ETD and ETA are confirmed (ACTUAL); the later Arrival Notice estimate doesn't undo the arrival; a call for a voyage no shipment has is answered with a warning
+
+**Status:** PASS (2026-10-28, automated: tests/dcsa-amend-equip-arrival.test.js; cypress/e2e/dcsa-amend-equip-arrival.cy.js; src/pages/shipments/ShipmentArrivalNoticePage.test.jsx)
+
+---
+
+## Area 13 — The House B/L Audit's Fixes and Dangerous Goods (2026-10-29, epic TKT-J0SDVB)
+
+The server-side rules of the House B/L audit's fixes and the DG booking (ARCHITECTURE.md §8.44). The new controls on
+the House B/L panel and the customer's DG contact form wait for mockup 12f412e9; until they are built these cases run
+through the API.
+
+### TC-079: One title to the cargo: originals, void, eBL, telex release
+**Feature:** the originals log both ways, void rules, eBL and telex release guards (H1, H2, H3, M5, M6, L1)
+**Precondition:** A ready telex-release shipment on an export office whose legal entity has a SCAC and address; a second one for the eBL
+**Steps:**
+1. Issue the House B/L in 3 originals; hand all 3 to the shipper; try a 4th handover
+2. As admin, void it; surrender it at origin; issue it as an eBL
+3. Record 2 returned, then 2 more, then the last one
+4. As an operator, void it; as admin, surrender it at origin, then void it
+5. On the second shipment, issue an eBL on WAVE; mark it surrendered by hand; void it
+
+**Expected Result:**
+- 3 out; the 4th is refused (409, all out already)
+- Each is refused (409) while originals are out; the void and the surrender say 3 are still with the shipper
+- 1 still out; more than are out is refused (400); then none out
+- 403 for the operator; the surrender goes; the void is refused once surrendered for delivery (409)
+- Both refused (409): a live eBL is surrendered and voided only through its platform
+
+**Status:** PASS (2026-10-29, automated: tests/house-bl-audit-fixes.test.js)
+
+---
+
+### TC-080: Shipped on board, the issuer, the notation, approval, clauses, House vs Master
+**Feature:** M1, M2, M3, M4, L2, L3, L4
+**Precondition:** A ready shipment with two containers; its export office's legal entity first without a SCAC
+**Steps:**
+1. Load one container; read readiness. Load the second
+2. Issue with the legal entity lacking a SCAC; add the SCAC and issue
+3. Issue another as Received for shipment; add the on-board notation before loading, after loading, and again
+4. Add 11 clauses to a draft, then 2; send the draft for approval without an email, then to the shipper; record changes asked without saying what, then with; generate a new draft and record an answer; send again and approve
+5. Have the carrier draft its Master B/L; compare; replace a seal on the shipment and compare again
+
+**Expected Result:**
+- 1 of 2 loaded: not shipped on board, naming the container that isn't; with both, shipped on board dated by the last loading in Rotterdam's own day
+- Refused, asking for the issuer's SCAC; issued, dated in the office's own day
+- 409 before loading; then the notation on the same B/L (version 1), dated and in its DCSA document; 409 the second time
+- 400 for 11 clauses; the 2 are on the draft and in DCSA carrierClauses after the fixed ones; 400 without an email; recorded as sent; 400 without the change; recorded with the shipper's words; 409 (the answer belongs to the draft sent); approved
+- No Master: nothing to compare; then the House matches; after the seal change one difference (both seal values), on the House B/L and the Master B/L card
+
+**Status:** PASS (2026-10-29, automated: tests/house-bl-audit-fixes.test.js; src/utils/houseBlPrint.test.js)
+
+---
+
+### TC-081: Dangerous goods in the DCSA booking, the shipper's emergency contact, DG01
+**Feature:** DG in Booking 2.0 (TKT-K7ICYT finding) and the shipper's DG emergency contact (the user's call, 2026-10-29)
+**Precondition:** A shipper (a Rotterdam paint maker) with no DG emergency contact; its MAEU shipment with two 40' HC containers of paint (class 3, 80 drums each), one missing its UN number and proper shipping name, and one 20' container that isn't DG
+**Steps:**
+1. Send Booking Request
+2. Complete the container (UN 1263, PAINT); save the shipper's contact with a name but no phone; with a phone that isn't a number
+3. Save the contact: Van Wijk DG Desk, +31 10 437 2299, CHEMTREC, CCN-204417; save the profile again without it; send Booking Request
+4. Generate DG01; clear the contact (null) and generate it again
+5. Repeat step 3's saves with the customer service as the source (`customer_source=remote`)
+
+**Expected Result:**
+- 400, naming the container's missing UN number and proper shipping name and the shipper's missing contact, by the shipper's name
+- 400 (a name and a 24-hour phone are needed); 400 (it must be a phone number)
+- Saved with all four fields; kept by the save without it; sent: on the 45G1 line UN 1263 PAINT class 3, 32,400 kg in 160 DR, the emergency contact with all four fields, nothing on the 20' line; a valid Booking 2.0 request
+- DG01 prints the contact, the 24-hour phone, provider and reference, no CHEMTREC/CANUTEC hotline text; with no contact it isn't generated, saying to add it to the shipper's profile
+- The same through the customer service
+
+**Status:** PASS (2026-10-29, automated: tests/carrier-booking.test.js; tests/container-packages.test.js; tests/customer-service-toggle.test.js; src/utils/dgDeclaration.test.js)

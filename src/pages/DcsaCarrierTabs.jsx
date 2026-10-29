@@ -25,8 +25,13 @@ const SI_ACTIONS = [
   { key: "draft", label: si => (si.td ? "Redraft the Master B/L" : "Draft the Master B/L"), variant: "primary",
     when: (si, td) => (si.carrierState === "RECEIVED" || (si.carrierState === "PENDING_UPDATE" && si.carrierUpdatedState === "UPDATE_RECEIVED")) && ["", "DRAFT", "APPROVED"].includes(td) },
   { key: "requestUpdate", label: () => "Ask for an update", variant: "secondary", when: (si, td) => si.carrierState === "RECEIVED" && ["", "DRAFT", "APPROVED"].includes(td) },
-  { key: "issue", label: () => "Issue", variant: "secondary", when: (si, td) => ["DRAFT", "APPROVED"].includes(td) },
+  { key: "issue", label: si => (si.td?.transportDocumentStatus === "SURRENDERED_FOR_AMENDMENT" ? "Issue the amended B/L" : "Issue"), variant: "secondary",
+    when: (si, td) => ["DRAFT", "APPROVED"].includes(td) || (td === "SURRENDERED_FOR_AMENDMENT" && si.td?.amendedTransportDocumentStatus === "AMENDMENT_CONFIRMED") },
   { key: "surrender", label: () => "Surrender for delivery", variant: "secondary", when: (si, td) => td === "ISSUED" },
+  // An amendment CargoDesk asked for (Shipping Instructions → Master B/L → Request amendment).
+  { key: "confirmAmendment", label: () => "Accept the amendment", variant: "primary", when: si => si.td?.amendedTransportDocumentStatus === "AMENDMENT_RECEIVED" },
+  { key: "declineAmendment", label: () => "Decline the amendment", variant: "danger", when: si => si.td?.amendedTransportDocumentStatus === "AMENDMENT_RECEIVED" },
+  { key: "surrenderForAmendment", label: () => "Originals surrendered for amendment", variant: "secondary", when: (si, td) => td === "PENDING_SURRENDER_FOR_AMENDMENT" },
   { key: "decline", label: () => "Decline", variant: "danger", when: (si, td) => ["RECEIVED", "PENDING_UPDATE"].includes(si.carrierState) && ["", "DRAFT", "APPROVED", "VOIDED"].includes(td) },
   { key: "void", label: () => "Void", variant: "danger", when: (si, td) => td && !["VOIDED", "SURRENDERED_FOR_DELIVERY"].includes(td) },
 ];
@@ -50,6 +55,14 @@ export function ShippingInstructionsTab({ navigate }) {
   const si = (rows || []).find(r => r.siReference === selected) || null;
   const td = si?.td?.transportDocumentStatus || "";
 
+  const publishAn = async lightweight => {
+    setBusy(true);
+    try {
+      const r = await api.dcsaSim.publishArrivalNotice({ shipmentId: si.shipmentId, lightweight });
+      toast.success(`${si.carrierCode || "Carrier"}: Arrival Notice version ${r.versionLabel} ${lightweight ? "announced" : "sent"} to CargoDesk`);
+    } catch (e) { toast.error(e.message); }
+    setBusy(false);
+  };
   const act = async key => {
     setBusy(true);
     try {
@@ -99,6 +112,7 @@ export function ShippingInstructionsTab({ navigate }) {
             <dt style={{ fontFamily: T.body, color: T.textMuted }}>Master B/L</dt>
             <dd data-testid="dcsa-si-td" style={{ margin: 0, fontFamily: T.mono, color: T.text }}>
               {si.td ? `${si.td.transportDocumentReference} · ${si.td.transportDocumentStatus.toLowerCase().replace(/_/g, " ")}` : "not drafted"}
+              {si.td?.amendedTransportDocumentStatus ? ` · ${si.td.amendedTransportDocumentStatus.toLowerCase().replace(/_/g, " ")}` : ""}
             </dd>
           </dl>
           <div>
@@ -112,9 +126,17 @@ export function ShippingInstructionsTab({ navigate }) {
               return <Btn key={a.key} size="sm" variant={a.variant} disabled={busy || !ok} onClick={() => act(a.key)} data-testid={`dcsa-si-action-${a.key}`}>{a.label(si)}</Btn>;
             })}
           </div>
+          {["ISSUED", "PENDING_SURRENDER_FOR_DELIVERY", "SURRENDERED_FOR_DELIVERY"].includes(td) && (
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+              <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>Arrival Notice (DCSA 1.0):</span>
+              <Btn size="sm" variant="secondary" disabled={busy} onClick={() => publishAn(false)} data-testid="dcsa-an-publish">Publish Arrival Notice</Btn>
+              <Btn size="sm" variant="secondary" disabled={busy} onClick={() => publishAn(true)} data-testid="dcsa-an-announce">Announce it (lightweight)</Btn>
+            </div>
+          )}
           <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, lineHeight: 1.5 }}>
             Draft = the carrier accepts the instructions: CargoDesk shows the draft for review and approval. Issue and Surrender follow; the surrender
-            completes the Shipping Instructions.
+            completes the Shipping Instructions. An amendment CargoDesk asks for once the B/L is issued is accepted or declined here; once
+            accepted, the originals are surrendered for amendment and the amended B/L is issued.
           </div>
         </div>
       )}
@@ -248,6 +270,18 @@ export function VesselTimesTab() {
     } catch (e) { toast.error(e.message); }
     setBusy(false);
   };
+  // The same call as a Port Call 2.0 berth arrival/departure, pushed to CargoDesk at once (phase 8).
+  const sendPortCall = async () => {
+    const [kind, short] = form.kind.split("|");
+    setBusy(true);
+    try {
+      const r = await api.dcsaSim.reportPortCall({ vesselImo: form.vesselImo.trim(), vesselName: form.vesselName.trim(), voyage: form.voyage.trim(),
+        unLocationCode: form.unLocationCode.trim().toUpperCase(), kind, classifier: { PLN: "PLANNED", EST: "ESTIMATED", ACT: "ACTUAL" }[short],
+        dateTime: form.at ? new Date(form.at).toISOString() : "" });
+      toast[r.feedback?.length ? "warning" : "success"](r.feedback?.[0]?.message || "Port Call event sent: the shipments on that voyage have their leg time.");
+    } catch (e) { toast.error(e.message); }
+    setBusy(false);
+  };
 
   if (calls === null) return <Spinner size="sm" />;
   if (error) return errorText(error);
@@ -263,7 +297,10 @@ export function VesselTimesTab() {
         <div><label htmlFor="dcsa-ovs-when" style={lbl}>Date and time</label><input id="dcsa-ovs-when" type="datetime-local" value={form.at} onChange={set("at")} style={{ ...input, width: "100%" }} /></div>
       </div>
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <Btn size="sm" onClick={save} disabled={busy || !form.voyage || !form.unLocationCode || !form.at} data-testid="dcsa-ovs-save">{busy ? "Setting…" : "Set vessel time"}</Btn>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <Btn size="sm" variant="secondary" onClick={sendPortCall} disabled={busy || !form.vesselImo || !form.voyage || !form.unLocationCode || !form.at} data-testid="dcsa-portcall-send">Send as a Port Call event</Btn>
+          <Btn size="sm" onClick={save} disabled={busy || !form.voyage || !form.unLocationCode || !form.at} data-testid="dcsa-ovs-save">{busy ? "Setting…" : "Set vessel time"}</Btn>
+        </div>
       </div>
       {calls.length === 0 ? empty("No vessel times yet.") : (
         <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
@@ -280,6 +317,7 @@ export function VesselTimesTab() {
       )}
       <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>
         CargoDesk reads these with "Check vessel times" on the shipment's Milestones &amp; Events. The hourly check only asks carriers with an integration of their own.
+        "Send as a Port Call event" pushes the same berth arrival or departure as DCSA Port Call 2.0 instead (needs the IMO number).
       </div>
     </div>
   );

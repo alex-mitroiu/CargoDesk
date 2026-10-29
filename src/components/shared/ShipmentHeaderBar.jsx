@@ -329,7 +329,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
   }, [shipment.id]);
 
   const ctrs = containers.filter(c => c.shipmentId === shipment.id);
-  const teu = ctrs.reduce((n, c) => n + (c.size === "40" ? 2 : 1), 0);
+  const teu = ctrs.reduce((n, c) => n + (c.size === "40" || c.size === "45" ? 2 : 1), 0);
   const dgClasses = [...new Set(ctrs.filter(c => c.isDg).map(c => c.dgClass).filter(Boolean))];
   const isDg = ctrs.some(c => c.isDg);
   // Short "what this actually means" caption for the header's DG badge — real IMDG_CLASSES

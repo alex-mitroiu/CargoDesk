@@ -92,6 +92,11 @@ async function initSchema() {
       holiday_unlocode        TEXT DEFAULT ''
     )
   `);
+  // The shipper's dangerous-goods emergency contact (2026-10-29), as in the main app's lib/schema.js.
+  await query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS dg_emergency_contact TEXT DEFAULT ''`);
+  await query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS dg_emergency_phone TEXT DEFAULT ''`);
+  await query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS dg_emergency_provider TEXT DEFAULT ''`);
+  await query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS dg_emergency_reference TEXT DEFAULT ''`);
   await query(`
     CREATE TABLE IF NOT EXISTS customer_identifiers (
       id           TEXT PRIMARY KEY,
@@ -133,7 +138,7 @@ async function initSchema() {
 
 // ─── Mappers — local copies of lib/mappers.js's own. ───────────────────────────────────────────
 
-const mapCustomer = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at, screeningResult: r.screening_result || null, currency: r.currency || 'USD', creditLimit: r.credit_limit ?? null, creditTermsDays: r.credit_terms_days ?? null, invoiceDeadlineDays: r.invoice_deadline_days ?? null, reminderEnabled: r.reminder_enabled, reminderIntervalDays: r.reminder_interval_days ?? null, creditHold: r.credit_hold, creditHoldReason: r.credit_hold_reason || '', parentCustomerId: r.parent_customer_id || null, parentCustomerName: r.parent_customer_name || null, classifiedLocation: r.classified_location, latitude: r.latitude ?? null, longitude: r.longitude ?? null, isNvocc: r.is_nvocc, fmcNumber: r.fmc_number || '', billingByDay: r.billing_by_day ?? null, paymentSettlementDay: r.payment_settlement_day ?? null, holidayUnlocode: r.holiday_unlocode || '' });
+const mapCustomer = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at, screeningResult: r.screening_result || null, currency: r.currency || 'USD', creditLimit: r.credit_limit ?? null, creditTermsDays: r.credit_terms_days ?? null, invoiceDeadlineDays: r.invoice_deadline_days ?? null, reminderEnabled: r.reminder_enabled, reminderIntervalDays: r.reminder_interval_days ?? null, creditHold: r.credit_hold, creditHoldReason: r.credit_hold_reason || '', parentCustomerId: r.parent_customer_id || null, parentCustomerName: r.parent_customer_name || null, classifiedLocation: r.classified_location, latitude: r.latitude ?? null, longitude: r.longitude ?? null, isNvocc: r.is_nvocc, fmcNumber: r.fmc_number || '', billingByDay: r.billing_by_day ?? null, paymentSettlementDay: r.payment_settlement_day ?? null, holidayUnlocode: r.holiday_unlocode || '', dgEmergencyContact: r.dg_emergency_contact ? { contact: r.dg_emergency_contact, phone: r.dg_emergency_phone || '', provider: r.dg_emergency_provider || '', referenceNumber: r.dg_emergency_reference || '' } : null });
 const mapCustomerIdentifier = r => ({ id: r.id, customerId: r.customer_id, idType: r.id_type, idCode: r.id_code, countryIso2: r.country_iso2 || '', label: r.label || '', isPrimary: r.is_primary, createdAt: r.created_at });
 const mapCustomerScreening = r => ({ id: r.id, customerId: r.customer_id, screenedAt: r.screened_at, result: r.result, hits: JSON.parse(r.hits || '[]'), overriddenAt: r.overridden_at || null, overrideReason: r.override_reason || null });
 const mapCustomerContact = r => ({ id: r.id, customerId: r.customer_id, name: r.name, title: r.title || '', email: r.email || '', phone: r.phone || '', department: r.department || 'Other', isPrimary: r.is_primary, createdAt: r.created_at });
@@ -154,6 +159,22 @@ const COUNTRY_TO_CURRENCY = {
 
 const validCoord = (v, min, max) => v === null || v === undefined || v === ''
   ? true : Number.isFinite(Number(v)) && Number(v) >= min && Number(v) <= max;
+
+// Verbatim port of routes/customers.js's own. The shipper's 24-hour dangerous-goods emergency contact (2026-10-29, the user's call: on the shipper's own
+// profile, the only source — DCSA EmergencyContactDetails: contact, phone, provider, referenceNumber). Written
+// only when the body carries `dgEmergencyContact` (null or all blank clears it); a save without it keeps what
+// is stored. → null (unchanged) | { cols: [contact, phone, provider, reference] } | { error }
+const dgContactOf = body => {
+  if (!body || !Object.prototype.hasOwnProperty.call(body, "dgEmergencyContact")) return null;
+  const c = body.dgEmergencyContact || {};
+  const t = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+  const contact = t(c.contact, 255), phone = t(c.phone, 30), provider = t(c.provider, 255), reference = t(c.referenceNumber, 255);
+  if (!contact && !phone && !provider && !reference) return { cols: ["", "", "", ""] };
+  if (!contact || !phone) return { error: "A dangerous goods emergency contact needs a name and a 24-hour phone number" };
+  if (!/^\+?[0-9][0-9 ().\-\/]{5,29}$/.test(phone)) return { error: "The emergency phone must be a phone number: digits, with spaces or + ( ) - . / where needed" };
+  return { cols: [contact, phone, provider, reference] };
+};
+const DG_CONTACT_SQL = "UPDATE customers SET dg_emergency_contact=$1, dg_emergency_phone=$2, dg_emergency_provider=$3, dg_emergency_reference=$4 WHERE id=$5";
 
 // Self-contained — this service owns the full parent_customer_id chain itself, so cycle
 // detection (and everything else about referential integrity within this table) never needs a
@@ -282,6 +303,8 @@ app.post("/internal/customers", async (req, res) => {
   }
   if (!validCoord(latitude, -90, 90)) return err(res, "Latitude must be between -90 and 90");
   if (!validCoord(longitude, -180, 180)) return err(res, "Longitude must be between -180 and 180");
+  const dgContact = dgContactOf(req.body);
+  if (dgContact?.error) return err(res, dgContact.error);
   const id = `CUS-${uid()}`;
   const createdAt = new Date().toISOString();
   const ccU = countryIso2.toUpperCase().trim();
@@ -301,6 +324,7 @@ app.post("/internal/customers", async (req, res) => {
     [id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt, resolvedCurrency,
      cl, ctd, idd, creditHold, creditHold ? creditHoldReason.trim() : '', reminderEnabled, rid, parentCustomerId || null,
      classifiedLocation, lat, lng, isNvocc, isNvocc ? fmcNumber.trim() : '', bbd, psd, holidayUnlocode.trim().toUpperCase()]);
+  if (dgContact?.cols) await query(DG_CONTACT_SQL, [...dgContact.cols, id]);
   const [row] = await query(`${CUST_JOIN} WHERE c.id=$1`, [id]);
   ok(res, mapCustomer(row), 201);
 });
@@ -323,6 +347,8 @@ app.put("/internal/customers/:id", async (req, res) => {
   }
   if (!validCoord(latitude, -90, 90)) return err(res, "Latitude must be between -90 and 90");
   if (!validCoord(longitude, -180, 180)) return err(res, "Longitude must be between -180 and 180");
+  const dgContact = dgContactOf(req.body);
+  if (dgContact?.error) return err(res, dgContact.error);
   const ccU = countryIso2.toUpperCase().trim();
   const cl = creditLimit === null || creditLimit === '' ? null : Number(creditLimit);
   const ctd = creditTermsDays === null || creditTermsDays === '' ? null : parseInt(creditTermsDays, 10);
@@ -344,6 +370,7 @@ app.put("/internal/customers/:id", async (req, res) => {
      classifiedLocation, lat, lng, isNvocc, isNvocc ? fmcNumber.trim() : '',
      bbd, psd, holidayUnlocode.trim().toUpperCase(), req.params.id]);
   if (rows.length === 0) return err(res, "Not found", 404);
+  if (dgContact?.cols) await query(DG_CONTACT_SQL, [...dgContact.cols, req.params.id]);
   const [row] = await query(`${CUST_JOIN} WHERE c.id=$1`, [req.params.id]);
   ok(res, mapCustomer(row));
 });
@@ -528,7 +555,8 @@ app.post("/internal/customers/bulk-import", async (req, res) => {
         "country_iso2", "phone", "fax", "email", "website", "notes", "created_at", "currency", "credit_limit",
         "credit_terms_days", "credit_hold", "credit_hold_reason", "parent_customer_id", "classified_location",
         "latitude", "longitude", "is_nvocc", "fmc_number", "invoice_deadline_days", "reminder_enabled",
-        "reminder_interval_days", "billing_by_day", "payment_settlement_day", "holiday_unlocode"], customers);
+        "reminder_interval_days", "billing_by_day", "payment_settlement_day", "holiday_unlocode",
+        "dg_emergency_contact", "dg_emergency_phone", "dg_emergency_provider", "dg_emergency_reference"], customers);
       await run(client, "customerIdentifiers", "customer_identifiers", ["id", "customer_id", "id_type", "id_code", "country_iso2", "label", "is_primary", "created_at"], customerIdentifiers);
       await run(client, "customerContacts", "customer_contacts", ["id", "customer_id", "name", "title", "email", "phone", "department", "is_primary", "created_at"], customerContacts);
       await run(client, "customerScreenings", "customer_screenings", ["id", "customer_id", "screened_at", "result", "hits", "overridden_at", "override_reason"], customerScreenings);

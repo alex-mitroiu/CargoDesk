@@ -607,7 +607,7 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
             ))}
             {upcoming.map(s => {
               const carrier = carriers.find(c => c.code === s.carrierCode);
-              const teu     = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + (c.size === "40" ? 2 : 1), 0);
+              const teu     = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + (c.size === "40" || c.size === "45" ? 2 : 1), 0);
               return [
                 <div key={s.id+"id"} style={{ fontFamily: T.mono, fontSize: 12, color: T.textCode, fontWeight: 700, padding: "8px 0", borderTop: `1px solid ${T.border}22` }}>{s.id}</div>,
                 <div key={s.id+"pol"} style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 600, padding: "8px 0", borderTop: `1px solid ${T.border}22` }}>{s.pol}</div>,
@@ -751,7 +751,7 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
                 {reviewShipments.map(s => {
                   const car = carriers.find(c => c.code === s.carrierCode);
                   const teu = containers.filter(c => c.shipmentId === s.id)
-                    .reduce((acc, c) => acc + (c.size === "40" ? 2 : 1), 0);
+                    .reduce((acc, c) => acc + (c.size === "40" || c.size === "45" ? 2 : 1), 0);
                   return (
                     <div key={s.id} style={{ display: "grid",
                       gridTemplateColumns: "130px 70px 70px 1fr 90px 80px 36px",

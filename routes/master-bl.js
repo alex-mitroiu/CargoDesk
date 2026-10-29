@@ -11,10 +11,19 @@
 // DCSA states kept as they are on the row's status: DRAFT, APPROVED, ISSUED, PENDING_SURRENDER_FOR_* ,
 // SURRENDERED_FOR_*, VOIDED. A draft opens a "Review the carrier's draft Master B/L" task for the export
 // side; approving (or the carrier issuing it anyway) closes it.
+//
+// Once issued, the B/L is corrected by an amendment (eBL 3.0.3 Direct Transport Document amendment, optional
+// for carriers): the issued document with the shipment's current instructions worked in, sent only when
+// something differs. The carrier accepts it (the originals go back: PENDING_SURRENDER_FOR_AMENDMENT, a task
+// for the export side) and issues the amended B/L, or declines it (a task too). amended_status keeps the
+// carrier's AMENDMENT_* answer; a notification or GET that doesn't mention the amendment leaves it as it was.
 
-const { normalizeTransportDocumentState, TD_STATUS_SPELLING } = require("../lib/carrier-integrations/dcsa-ebl-v3");
+const { normalizeTransportDocumentState, TD_STATUS_SPELLING, amendedTransportDocument } = require("../lib/carrier-integrations/dcsa-ebl-v3");
 
 const REVIEW_TASK = "master_bl_draft";
+const ORIGINALS_TASK = "master_bl_amendment_originals";
+const DECLINED_TASK = "master_bl_amendment_declined";
+const AMENDABLE = ["ISSUED", "PENDING_SURRENDER_FOR_AMENDMENT"];
 const nowIso = () => new Date().toISOString();
 const parse = v => { try { return v ? JSON.parse(v) : null; } catch { return null; } };
 
@@ -77,8 +86,16 @@ module.exports = function masterBlRoutes(app, ctx) {
     carrierCode: r.carrier_code || "", shippingInstructionsReference: r.shipping_instructions_reference || "",
     amendedStatus: r.amended_status || "", carrierFeedback: r.carrier_feedback || "", isMock: !!r.is_mock,
     draftCount: r.draft_count || 0, approvedAt: r.approved_at || null, approvedBy: r.approved_by || "",
+    amendmentRequestedAt: r.amendment_requested_at || null, amendmentRequestedBy: r.amendment_requested_by || "",
     carrierStateAt: r.carrier_state_at || null, createdAt: r.created_at, updatedAt: r.updated_at,
   });
+  // The parts of a transport document the carrier decides (ports, vessel), compared with themselves.
+  const placesOf = doc => {
+    const vv = (doc?.transports?.vesselVoyages || [])[0];
+    return { pol: doc?.transports?.portOfLoading?.UNLocationCode, pod: doc?.transports?.portOfDischarge?.UNLocationCode,
+      vessel: vv?.vesselName, voyage: vv?.carrierExportVoyageNumber };
+  };
+  const amendmentSource = td => `${td.reference}@${td.amendment_requested_at || ""}`;
 
   async function tdEvent(td, type, from, to, detail = {}, actor = "") {
     await query(`INSERT INTO transport_document_events (id, transport_document_id, shipment_id, event_type, from_status, to_status, detail, actor, created_at)
@@ -121,7 +138,9 @@ module.exports = function masterBlRoutes(app, ctx) {
     const [existing] = await query("SELECT * FROM transport_documents WHERE shipment_id=$1 AND role='MASTER' AND reference=$2", [si.shipment_id, ref]);
     const payload = doc ? JSON.stringify(doc) : existing?.payload || null;
     const feedback = (state.feedbacks || []).map(f => f.message).filter(Boolean).join("; ");
-    if (existing && existing.status === status && (existing.payload || null) === payload && (existing.amended_status || "") === (state.amendedTransportDocumentStatus || ""))
+    // The document itself (a GET) doesn't say how an amendment stands: only a stated value changes it.
+    const amendedStatus = state.amendedTransportDocumentStatus || existing?.amended_status || "";
+    if (existing && existing.status === status && (existing.payload || null) === payload && (existing.amended_status || "") === amendedStatus)
       return { changed: false, masterBl: mapMaster(existing) };
     const now = nowIso();
     const facts = {
@@ -142,7 +161,7 @@ module.exports = function masterBlRoutes(app, ctx) {
         carrier_state_at=$13, updated_at=$13, draft_count=$14, issued_at=$15,
         approved_at=CASE WHEN $17 THEN NULL ELSE approved_at END, approved_by=CASE WHEN $17 THEN '' ELSE approved_by END WHERE id=$16`,
         [status, payload, facts.type_code, facts.is_electronic, facts.is_to_order, facts.is_shipped_on_board_type, facts.shipped_on_board_date,
-          facts.received_for_shipment_date, facts.issue_date, facts.place_of_issue, state.amendedTransportDocumentStatus || "", feedback, now,
+          facts.received_for_shipment_date, facts.issue_date, facts.place_of_issue, amendedStatus, feedback, now,
           (existing.draft_count || 0) + (redraft ? 1 : 0),
           status === "ISSUED" ? existing.issued_at || now : existing.issued_at, existing.id, redraft]);
       td = (await query("SELECT * FROM transport_documents WHERE id=$1", [existing.id]))[0];
@@ -154,7 +173,7 @@ module.exports = function masterBlRoutes(app, ctx) {
         VALUES ($1,$2,'MASTER',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$19,$19)`,
         [id, si.shipment_id, ref, status, facts.type_code, facts.is_electronic, facts.is_to_order, facts.is_shipped_on_board_type,
           facts.shipped_on_board_date, facts.received_for_shipment_date, facts.issue_date, facts.place_of_issue, payload,
-          si.carrier_code || "", si.si_reference || state.shippingInstructionsReference || "", state.amendedTransportDocumentStatus || "", feedback,
+          si.carrier_code || "", si.si_reference || state.shippingInstructionsReference || "", amendedStatus, feedback,
           !!simulated, now, status === "DRAFT" ? 1 : 0, status === "ISSUED" ? now : null]);
       td = (await query("SELECT * FROM transport_documents WHERE id=$1", [id]))[0];
     }
@@ -184,7 +203,40 @@ module.exports = function masterBlRoutes(app, ctx) {
       await query("UPDATE shipping_instructions SET transport_document_reference=$1 WHERE id=$2", [ref, si.id]);
     if (status !== "DRAFT" && existing?.status === "DRAFT")
       await resolveOpsTickets(REVIEW_TASK, [{ sourceId: reviewSource(existing), shipmentId: si.shipment_id, note: `the draft is ${status.toLowerCase()}` }]);
-    if (status === "ISSUED" && existing?.status !== "ISSUED") {
+    // ─── An amendment of the issued B/L ───
+    const amendmentChanged = existing && amendedStatus !== (existing.amended_status || "");
+    // The carrier issued the amended B/L (after the originals came back, or straight away).
+    const reissued = status === "ISSUED" && !!existing?.amendment_payload && amendedStatus === "AMENDMENT_CONFIRMED"
+      && (existing.status !== "ISSUED" || (existing.payload || null) !== payload);
+    if (amendmentChanged) {
+      await tdEvent(td, `MASTER_${amendedStatus}`, existing.amended_status || "", amendedStatus, { carrier: si.carrier_code, ...(feedback ? { feedback } : {}) }, carrier);
+      await logEvent(si.shipment_id, `MASTER_BL_${amendedStatus}`, "master_bl_amendment", existing.amended_status || "", amendedStatus,
+        JSON.stringify({ reference: ref, ...(feedback ? { feedback } : {}) }), carrier);
+      if (amendedStatus === "AMENDMENT_DECLINED")
+        await ensureOpsTicket(DECLINED_TASK, amendmentSource(td), { shipmentId: si.shipment_id, priority: "High",
+          title: `${carrier} declined the Master B/L ${ref} amendment`,
+          description: `${carrier} declined the amendment of Master B/L ${ref}${feedback ? `: ${feedback}` : ""}. The issued B/L stands as it was. Correct the shipment and request a new amendment (Shipping Instructions → Master B/L), or settle it with ${carrier} directly.` });
+      // Withdrawn by CargoDesk: nothing is pending any more.
+      if (amendedStatus === "AMENDMENT_CANCELLED") await query("UPDATE transport_documents SET amendment_payload=NULL WHERE id=$1", [td.id]);
+    }
+    if (status === "PENDING_SURRENDER_FOR_AMENDMENT" && existing?.status !== status)
+      await ensureOpsTicket(ORIGINALS_TASK, amendmentSource(td), { shipmentId: si.shipment_id, priority: "High",
+        title: `Return the Master B/L ${ref} originals to ${carrier}`,
+        description: td.is_electronic
+          ? `${carrier} accepted the amendment of Master B/L ${ref}. Surrender the electronic B/L for amendment on its eBL platform so ${carrier} can issue the amended one.`
+          : `${carrier} accepted the amendment of Master B/L ${ref}. Return the full set of original B/Ls to ${carrier} (surrender for amendment) so it can issue the amended one.` });
+    if (existing?.status === "PENDING_SURRENDER_FOR_AMENDMENT" && status !== existing.status)
+      await resolveOpsTickets(ORIGINALS_TASK, [{ sourceId: amendmentSource(existing), shipmentId: si.shipment_id, note: `the B/L is ${status.toLowerCase().replace(/_/g, " ")}` }]);
+    if (reissued) {
+      // What the amended B/L changed against the one issued before (new value "sent", old "carrier").
+      const changes = compareDraft(doc, parse(existing.payload), placesOf(doc)).filter(r => r.changed);
+      await query("UPDATE transport_documents SET amendment_payload=NULL, issued_at=$1 WHERE id=$2", [now, td.id]);
+      await tdEvent(td, "MASTER_AMENDED", existing.status, "ISSUED", { carrier: si.carrier_code, issueDate: facts.issue_date,
+        changes: changes.map(r => ({ key: r.key, label: r.label, was: r.carrier, now: r.sent })) }, carrier);
+      await logEvent(si.shipment_id, "MASTER_BL_AMENDED", "master_bl", existing.status, "ISSUED",
+        JSON.stringify({ reference: ref, changes: changes.map(r => r.label.trim()) }), carrier);
+      td = (await query("SELECT * FROM transport_documents WHERE id=$1", [td.id]))[0];
+    } else if (status === "ISSUED" && existing?.status !== "ISSUED") {
       const [had] = await query("SELECT master_bl_number FROM shipments WHERE id=$1", [si.shipment_id]);
       await query("UPDATE shipments SET master_bl_number=$1 WHERE id=$2", [ref, si.shipment_id]);
       await logEvent(si.shipment_id, "MASTER_BL_ISSUED", "master_bl_number", had?.master_bl_number || "", ref, JSON.stringify({ issueDate: facts.issue_date }), carrier);
@@ -207,8 +259,36 @@ module.exports = function masterBlRoutes(app, ctx) {
     const doc = parse(td.payload);
     const events = await query("SELECT * FROM transport_document_events WHERE transport_document_id=$1 ORDER BY created_at", [td.id]);
     const [shipment] = await query("SELECT pol, pod, vessel, voyage FROM shipments WHERE id=$1", [shipmentId]);
+    const amended = parse(td.amendment_payload);
     return { ...mapMaster(td), document: doc, comparison: compareDraft(await sentInstructions(shipmentId), doc, shipment || {}),
+      // The amendment asked for and not yet issued (or declined): what it changes, "sent" = requested, "carrier" = issued.
+      amendment: amended ? { status: td.amended_status || "", requestedAt: td.amendment_requested_at, requestedBy: td.amendment_requested_by || "",
+        changes: compareDraft(amended, doc, placesOf(amended)).filter(r => r.changed) } : null,
+      // The House B/L against this Master (the House B/L audit's M3): containers, seals, weights, packages.
+      houseCheck: ctx.houseBl ? await ctx.houseBl.houseVsMaster(shipmentId) : null,
       events: events.map(e => ({ id: e.id, eventType: e.event_type, fromStatus: e.from_status, toStatus: e.to_status, detail: parse(e.detail) || {}, actor: e.actor, createdAt: e.created_at })) };
+  }
+
+  // The amendment the shipment calls for now: the issued B/L with the current instructions worked in.
+  // → { document, changes, missing } (changes: compareDraft rows that differ; "sent" = the shipment now).
+  async function amendmentFor(shipment, td) {
+    const doc = parse(td.payload);
+    if (!doc) return { missing: [`the issued Master B/L itself (Ask ${td.carrier_code || "the carrier"} again)`] };
+    const [si] = await query("SELECT si_reference FROM shipping_instructions WHERE shipment_id=$1", [shipment.id]);
+    const { body, missing } = await ctx.shippingInstructionsFor(shipment, { reference: si?.si_reference || "" });
+    if (missing.length) return { missing };
+    const document = amendedTransportDocument(doc, body);
+    return { document, changes: compareDraft(document, doc, placesOf(document)).filter(r => r.changed), missing: [] };
+  }
+
+  // The carrier's own account of the amendment (GET …/amendment) worked into the record, for a refresh or
+  // the poll: the transport document's GET doesn't carry it.
+  async function readAmendment(integ, td, si) {
+    if (!integ?.adapter.getTransportDocumentAmendment || !(td.amendment_payload || td.amended_status === "AMENDMENT_RECEIVED")) return;
+    const a = await integ.adapter.getTransportDocumentAmendment(integ.config, td.reference);
+    if (!a.ok || !a.amendment?.status || a.amendment.status === td.amended_status) return;
+    await applyTransportDocumentState(si, { transportDocumentReference: td.reference, transportDocumentStatus: td.status, amendedTransportDocumentStatus: a.amendment.status },
+      { source: "poll", raw: a.raw, simulated: !!integ.row.is_simulator });
   }
 
   app.get("/api/shipments/:id/master-bl", auth(), async (req, res) => {
@@ -253,8 +333,94 @@ module.exports = function masterBlRoutes(app, ctx) {
     if (!integ?.adapter.getTransportDocument) return err(res, `No DCSA connection for ${td.carrier_code || shipment.carrier_code}`, 400);
     const r = await integ.adapter.getTransportDocument(integ.config, td.reference);
     if (!r.ok) return err(res, `${td.carrier_code} could not be asked for the Master B/L (${r.error})`, 502);
-    await applyTransportDocumentState(si || { shipment_id: shipment.id, carrier_code: td.carrier_code, si_reference: td.shipping_instructions_reference, status: "" },
-      r.state, { document: r.document, source: "poll", raw: r.raw, simulated: !!integ.row.is_simulator });
+    const siRow = si || { shipment_id: shipment.id, carrier_code: td.carrier_code, si_reference: td.shipping_instructions_reference, status: "" };
+    await applyTransportDocumentState(siRow, r.state, { document: r.document, source: "poll", raw: r.raw, simulated: !!integ.row.is_simulator });
+    await readAmendment(integ, await masterOf(shipment.id), siRow);
+    ok(res, await view(shipment.id));
+  });
+
+  // ─── Amending the issued B/L ───────────────────────────────────────────────
+  const amendableOr409 = (res, td, carrier) => {
+    if (!td) { err(res, `${carrier} hasn't drafted the Master B/L yet`, 404); return false; }
+    if (["DRAFT", "APPROVED"].includes(td.status)) { err(res, `Master B/L ${td.reference} isn't issued yet: correct it with Send update on the Shipping Instructions`, 409); return false; }
+    if (!AMENDABLE.includes(td.status)) { err(res, `Master B/L ${td.reference} is ${td.status.toLowerCase().replace(/_/g, " ")}: it can't be amended`, 409); return false; }
+    return true;
+  };
+
+  // What an amendment would send now, without sending it.
+  app.get("/api/shipments/:id/master-bl/amendment-preview", auth(), async (req, res) => {
+    const shipment = await shipmentFor(req, res);
+    if (!shipment) return;
+    const td = await masterOf(shipment.id);
+    if (!amendableOr409(res, td, td?.carrier_code || shipment.carrier_code || "The carrier")) return;
+    const a = await amendmentFor(shipment, td);
+    ok(res, { changes: a.changes || [], missing: a.missing });
+  });
+
+  // Ask the carrier to amend the issued B/L. Sent only when the shipment differs from it; a new request
+  // replaces one still pending (the spec's own rule). Nothing is recorded unless the carrier accepts it (202).
+  app.post("/api/shipments/:id/master-bl/amend", write, async (req, res) => {
+    const shipment = await shipmentFor(req, res, { forWrite: true });
+    if (!shipment) return;
+    const td = await masterOf(shipment.id);
+    const carrier = td?.carrier_code || shipment.carrier_code || "The carrier";
+    if (!amendableOr409(res, td, carrier)) return;
+    const a = await amendmentFor(shipment, td);
+    if (a.missing.length) return err(res, `Can't amend the Master B/L yet: add ${a.missing.join("; ")}`, 400);
+    if (!a.changes.length) return err(res, `Nothing to amend: the shipment says what Master B/L ${td.reference} says. Correct the shipment first.`, 409);
+    const integ = await carrierIntegrationFor(carrier, "shipping-instructions");
+    if (!integ?.adapter.amendTransportDocument) return err(res, `No DCSA connection for ${carrier} to amend the Master B/L with`, 400);
+    const now = nowIso(), who = req.user?.name || req.user?.email || "";
+    // Recorded before sending (the carrier's AMENDMENT_RECEIVED can arrive before this request returns), put
+    // back if the carrier doesn't take it.
+    await query("UPDATE transport_documents SET amendment_payload=$1, amendment_requested_at=$2, amendment_requested_by=$3, amended_status='', updated_at=$2 WHERE id=$4",
+      [JSON.stringify(a.document), now, who, td.id]);
+    const r = await integ.adapter.amendTransportDocument(integ.config, td.reference, a.document);
+    if (!r.ok) {
+      await query("UPDATE transport_documents SET amendment_payload=$1, amendment_requested_at=$2, amendment_requested_by=$3, amended_status=$4 WHERE id=$5",
+        [td.amendment_payload, td.amendment_requested_at, td.amendment_requested_by || "", td.amended_status || "", td.id]);
+      if ([404, 405, 501].includes(r.status))
+        return err(res, `${carrier} doesn't take Master B/L amendments through DCSA (it answered ${r.status}). Nothing was sent: ask ${carrier} directly.`, 409);
+      return err(res, r.invalid ? `Can't send the amendment: ${String(r.error).replace(/^Not sent: /, "")}`
+        : `${carrier} did not accept the amendment (${r.error}). Nothing was changed — try again.`, r.invalid ? 400 : 502);
+    }
+    await query(`INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, parsed_payload, status,
+      correlation_id, is_mock, created_at, processed_at) VALUES ($1,$2,$3,'out','transport_document_amendment','JSON',$4,$5,'sent',$6,$7,$8,$8)`,
+      [`EDI-${uid()}`, shipment.id, carrier, JSON.stringify(a.document),
+        JSON.stringify({ transportDocumentReference: td.reference, changes: a.changes.map(c => c.label.trim()) }), td.id, !!integ.row.is_simulator, now]);
+    const fresh = await masterOf(shipment.id);
+    await tdEvent(fresh, "MASTER_AMENDMENT_SENT", td.status, td.status,
+      { changes: a.changes.map(c => ({ key: c.key, label: c.label, was: c.carrier, now: c.sent })) }, who);
+    await logEvent(shipment.id, "MASTER_BL_AMENDMENT_REQUESTED", "master_bl_amendment", td.amended_status || "", "requested",
+      JSON.stringify({ reference: td.reference, changes: a.changes.map(c => c.label.trim()) }), who);
+    if (td.amended_status === "AMENDMENT_DECLINED")
+      await resolveOpsTickets(DECLINED_TASK, [{ sourceId: amendmentSource(td), shipmentId: shipment.id, note: `a new amendment was sent by ${who || "the export side"}` }]);
+    for (let i = 0; i < 20; i++) {
+      if ((await masterOf(shipment.id)).amended_status) break;
+      await new Promise(r2 => setTimeout(r2, 100));
+    }
+    ok(res, await view(shipment.id), 201);
+  });
+
+  // Withdraw an amendment the carrier hasn't worked on yet (AMENDMENT_RECEIVED).
+  app.post("/api/shipments/:id/master-bl/amendment/cancel", write, async (req, res) => {
+    const shipment = await shipmentFor(req, res, { forWrite: true });
+    if (!shipment) return;
+    const td = await masterOf(shipment.id);
+    const carrier = td?.carrier_code || shipment.carrier_code || "The carrier";
+    if (!td?.amendment_payload || td.amended_status !== "AMENDMENT_RECEIVED")
+      return err(res, td?.amended_status ? `The amendment is ${td.amended_status.replace(/^AMENDMENT_/, "").toLowerCase()}: only one ${carrier} hasn't worked on yet can be cancelled` : "There is no amendment waiting at the carrier", 409);
+    const integ = await carrierIntegrationFor(carrier, "shipping-instructions");
+    if (!integ?.adapter.cancelTransportDocumentAmendment) return err(res, `No DCSA connection for ${carrier}`, 400);
+    const r = await integ.adapter.cancelTransportDocumentAmendment(integ.config, td.reference);
+    if (!r.ok) return err(res, `${carrier} did not accept the cancellation (${r.error}). Nothing was changed.`, r.status === 400 ? 409 : 502);
+    const who = req.user?.name || req.user?.email || "";
+    await tdEvent(td, "MASTER_AMENDMENT_CANCELLATION_SENT", td.status, td.status, { reference: td.reference }, who);
+    await logEvent(shipment.id, "MASTER_BL_AMENDMENT_CANCELLATION_SENT", "master_bl_amendment", td.amended_status, "cancel requested", JSON.stringify({ reference: td.reference }), who);
+    for (let i = 0; i < 20; i++) {
+      if ((await masterOf(shipment.id)).amended_status !== "AMENDMENT_RECEIVED") break;
+      await new Promise(r2 => setTimeout(r2, 100));
+    }
     ok(res, await view(shipment.id));
   });
 
@@ -263,7 +429,7 @@ module.exports = function masterBlRoutes(app, ctx) {
   async function pollTransportDocumentsSweep({ olderThanMinutes = TD_POLL_MINUTES } = {}) {
     const cutoff = new Date(Date.now() - olderThanMinutes * 60000).toISOString();
     const rows = await query(`SELECT t.*, si.id AS si_id FROM transport_documents t JOIN shipping_instructions si ON si.shipment_id = t.shipment_id
-      WHERE t.role='MASTER' AND t.status IN ('DRAFT','APPROVED','ISSUED','PENDING_SURRENDER_FOR_DELIVERY','PENDING_SURRENDER_FOR_AMENDMENT')
+      WHERE t.role='MASTER' AND t.status IN ('DRAFT','APPROVED','ISSUED','PENDING_SURRENDER_FOR_DELIVERY','PENDING_SURRENDER_FOR_AMENDMENT','SURRENDERED_FOR_AMENDMENT')
         AND (t.carrier_state_at IS NULL OR t.carrier_state_at <= $1)`, [cutoff]);
     const summary = { polled: 0, changed: 0, failed: 0 };
     for (const td of rows) {
@@ -275,6 +441,7 @@ module.exports = function masterBlRoutes(app, ctx) {
       const [si] = await query("SELECT * FROM shipping_instructions WHERE id=$1", [td.si_id]);
       if ((await applyTransportDocumentState(si, r.state, { document: r.document, source: "poll", raw: r.raw, simulated: !!integ.row.is_simulator })).changed) summary.changed++;
       else await query("UPDATE transport_documents SET carrier_state_at=$1 WHERE id=$2", [new Date().toISOString(), td.id]);
+      await readAmendment(integ, (await query("SELECT * FROM transport_documents WHERE id=$1", [td.id]))[0], si);
     }
     return summary;
   }

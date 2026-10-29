@@ -99,6 +99,8 @@ module.exports = function shippingInstructionsRoutes(app, ctx) {
     });
     return { body, missing };
   }
+  // The Master B/L amendment (routes/master-bl.js) works the same instructions into the issued B/L.
+  ctx.shippingInstructionsFor = shippingInstructionsFor;
 
   // ─── The carrier's answer (notification or poll) ───────────────────────────
   const LABEL = { RECEIVED: "received", PENDING_UPDATE: "update_requested", COMPLETED: "completed", DECLINED: "rejected", CANCELLED: "cancelled",

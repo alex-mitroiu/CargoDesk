@@ -22,36 +22,67 @@ const { validateRequest, errorsText, specVersion } = require("../lib/dcsa/valida
 module.exports = function carrierWebhooksRoutes(app, ctx) {
   const { query, ok, err, getCarrierAdapter, getSettings, dcsaSimulator } = ctx;
 
-  // ─── Track & Trace 3.0 pushed events (2026-10-28) ────────────────────────────
-  // The carrier POSTs { events } here, signed like its notifications. Each event goes to the shipments it
-  // is about (lib/track-trace.js shipmentsFor) and is applied as a pulled one would be. DCSA answers 200
-  // with feedbackElements: one WARN per event that matched no shipment.
-  app.post("/api/carrier-webhooks/:integrationId/events", async (req, res) => {
-    res.setHeader("API-Version", specVersion("tnt"));
-    // PostEventsError: { feedbackElements } (with `error` kept for CargoDesk's own tools).
-    const err = (r, message, status) => r.status(status).json({ error: message, feedbackElements: [{ severity: "ERROR", message }] });
+  // ─── Pushes from a carrier's DCSA publisher (2026-10-28) ────────────────────────
+  // Track & Trace 3.0 events, Arrival Notice 1.0 notices and notifications, Port Call 2.0 events: signed
+  // like the notifications, checked against the standard's own request schema, answered 200 with the
+  // spec's { feedbackElements } (errors too: `error` is kept for CargoDesk's own tools).
+  //   spec, specPath — the standard and the spec's path for the request; capability — the simulator's;
+  //   list — the property holding the items; handle(items, { carrierCode, simulated, integration, adapter, config })
+  //   → { feedbackElements }.
+  async function signedPush(req, res, { spec, specPath, capability, list, label, handle }) {
+    res.setHeader("API-Version", specVersion(spec));
+    const fail = (message, status) => res.status(status).json({ error: message, feedbackElements: [{ severity: "ERROR", message }] });
     const simulated = req.params.integrationId === dcsaSimulator.INTEGRATION_ID;
     let integration, config;
     if (simulated) {
-      if (!(await dcsaSimulator.allowed())) return err(res, "Integration not found or inactive", 404);
-      ({ row: integration, config } = dcsaSimulator.integration("", "tracking"));
+      if (!(await dcsaSimulator.allowed())) return fail("Integration not found or inactive", 404);
+      ({ row: integration, config } = dcsaSimulator.integration("", capability));
     } else {
-      if ((await getSettings()).api_carrier_integrations_enabled === 'false') return err(res, "Carrier integrations are currently disabled", 503);
+      if ((await getSettings()).api_carrier_integrations_enabled === 'false') return fail("Carrier integrations are currently disabled", 503);
       [integration] = await query("SELECT * FROM carrier_integrations WHERE id=$1 AND is_active=TRUE", [req.params.integrationId]);
-      if (!integration) return err(res, "Integration not found or inactive", 404);
+      if (!integration) return fail("Integration not found or inactive", 404);
       config = { baseUrl: integration.base_url, authHeaderName: integration.auth_header_name, credential: integration.credential, webhookSecret: integration.webhook_secret };
     }
     const adapter = getCarrierAdapter(integration.adapter_key);
-    if (!adapter) return err(res, "No adapter registered for this integration", 500);
+    if (!adapter) return fail("No adapter registered for this integration", 500);
     const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body || {}));
-    if (!adapter.verifyCallback(rawBody, req.headers, config)) return err(res, "Invalid or missing webhook signature", 401);
+    if (!adapter.verifyCallback(rawBody, req.headers, config)) return fail("Invalid or missing webhook signature", 401);
     let body;
-    try { body = JSON.parse(rawBody.toString("utf8")); } catch { return err(res, "Malformed body — expected valid JSON", 400); }
-    const valid = validateRequest("tnt", "post", "/events", body);
-    if (!valid.ok || !Array.isArray(body?.events)) return err(res, `Not a valid DCSA Track & Trace ${specVersion("tnt")} event list: ${valid.ok ? "no events" : errorsText(valid.errors, 4)}`, 400);
-    const r = await ctx.trackTrace.receive(body.events, { carrierCode: simulated ? "" : integration.carrier_code, simulated });
-    res.status(200).json({ feedbackElements: r.feedbackElements });
-  });
+    try { body = JSON.parse(rawBody.toString("utf8")); } catch { return fail("Malformed body — expected valid JSON", 400); }
+    const valid = validateRequest(spec, "post", specPath, body);
+    if (!valid.ok || !Array.isArray(body?.[list])) return fail(`Not a valid DCSA ${label} ${specVersion(spec)}: ${valid.ok ? `no ${list}` : errorsText(valid.errors, 4)}`, 400);
+    const r = await handle(body[list], { carrierCode: simulated ? "" : integration.carrier_code, simulated, integration, adapter, config });
+    res.status(200).json({ feedbackElements: r.feedbackElements || [] });
+  }
+
+  // Track & Trace 3.0: each event goes to the shipments it is about (lib/track-trace.js shipmentsFor) and is
+  // applied as a pulled one would be; one WARN per event that matched no shipment.
+  app.post("/api/carrier-webhooks/:integrationId/events", (req, res) => signedPush(req, res, {
+    spec: "tnt", specPath: "/events", capability: "tracking", list: "events", label: "Track & Trace event list",
+    handle: (events, o) => ctx.trackTrace.receive(events, o) }));
+
+  // Arrival Notice 1.0 (phase 8): the notices themselves, each to the shipment whose Master or House B/L it
+  // names (lib/arrival-notices.js) …
+  app.post("/api/carrier-webhooks/:integrationId/arrival-notices", (req, res) => signedPush(req, res, {
+    spec: "an", specPath: "/arrival-notices", capability: "arrival-notice", list: "arrivalNotices", label: "Arrival Notice list",
+    handle: (notices, o) => ctx.arrivalNotices.receive(notices, { ...o, source: "push" }) }));
+  // … or lightweight notifications naming the B/L: CargoDesk asks the publisher for the notices.
+  app.post("/api/carrier-webhooks/:integrationId/arrival-notice-notifications", (req, res) => signedPush(req, res, {
+    spec: "an", specPath: "/arrival-notice-notifications", capability: "arrival-notice", list: "arrivalNoticeNotifications",
+    label: "Arrival Notice notification list",
+    handle: async (notifications, o) => {
+      const refs = [...new Set(notifications.map(n => n.transportDocumentReference).filter(Boolean))];
+      const got = o.adapter.getArrivalNotices ? await o.adapter.getArrivalNotices(o.config, { transportDocumentReferences: refs }) : null;
+      if (!got?.ok) return { feedbackElements: [{ severity: "WARN", message: `CargoDesk couldn't read the arrival notices for ${refs.join(", ")} (${got?.error || "no Arrival Notice API"})` }] };
+      return ctx.arrivalNotices.receive(got.arrivalNotices, { ...o, source: "notification" });
+    } }));
+
+  // Port Call 2.0 (phase 8): timestamps of the vessel's call (arrival, departure at berth), a vessel-time
+  // source next to the carrier's schedule (lib/port-calls.js). Its own path: Port Call's POST /events is
+  // not Track & Trace's.
+  app.post("/api/carrier-webhooks/:integrationId/port-call/events", (req, res) => signedPush(req, res, {
+    spec: "portCall", specPath: "/events", capability: "port-call", list: "events", label: "Port Call event list",
+    handle: (events, o) => ctx.portCalls.receive(events, o) }));
 
   app.post("/api/carrier-webhooks/:integrationId", async (req, res) => {
     const simulated = req.params.integrationId === dcsaSimulator.INTEGRATION_ID;

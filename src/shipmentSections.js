@@ -11,7 +11,7 @@
 // → Schedules → Cargo → Milestones & Events → Documents, then Accounting (hardcoded
 // in App.jsx, not listed here), then History (SHIPMENT_SECTIONS_AFTER_ACCOUNTING).
 
-import { IconGroup, IconPackage, IconFlag, IconFileCertificate, IconFile, IconTime, IconAnchor, IconClipboard } from "./components/primitives/Icon";
+import { IconGroup, IconPackage, IconFlag, IconFileCertificate, IconFile, IconTime, IconAnchor, IconClipboard, IconMailUnread } from "./components/primitives/Icon";
 
 export const SHIPMENT_SECTIONS = [
   { id: "shp-conditions", suffix: "conditions", pageKey: "shipment-conditions", icon: IconFileCertificate, label: "Conditions" },
@@ -20,6 +20,8 @@ export const SHIPMENT_SECTIONS = [
   // Nested under "Booking & Routing" (ShipmentDetailSidebar.jsx), same "filtered out of the
   // flat list, placed manually as a child" idiom as shp-schedules above — not a top-level row.
   { id: "shp-shipping-instructions", suffix: "shipping-instructions", pageKey: "shipment-shipping-instructions", icon: IconClipboard, label: "Shipping Instructions" },
+  // The carrier's DCSA Arrival Notice (phase 8, 2026-10-28), import side; also a child of "Booking & Routing".
+  { id: "shp-arrival-notice", suffix: "arrival-notice", pageKey: "shipment-arrival-notice", icon: IconMailUnread, label: "Arrival Notice" },
   { id: "shp-cargo",      suffix: "containers", pageKey: "shipment-containers", icon: IconPackage, label: "Cargo" },
   { id: "shp-milestones", suffix: "milestones", pageKey: "shipment-milestones", icon: IconFlag,  label: "Milestones & Events" },
   { id: "shp-documents",  suffix: "documents",  pageKey: "shipment-documents",  icon: IconFile, label: "Documents" },

@@ -22,7 +22,7 @@ import { onLegsScheduleChanged } from "../../legsScheduleBus";
 import Btn from "../../components/primitives/Btn";
 import Spinner from "../../components/primitives/Spinner";
 import Badge from "../../components/primitives/Badge";
-import {Inp, Sel, BtnToggle} from "../../components/primitives/Form";
+import {Inp, Sel, BtnToggle, inputBase} from "../../components/primitives/Form";
 import { PACKAGE_CODES } from "../../utils/dcsaCodes";
 import { HsCodeCombobox } from "../../components/shared/HsCodeCombobox";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
@@ -108,6 +108,40 @@ const fToC = f => Math.round(((f - 32) * 5 / 9) * 10) / 10;
 
 // ─── Container form ───────────────────────────────────────────────────────────
 
+// A container's seals as DCSA Seals (phase 3, 2026-10-28; mockup 1bf14417): each number with who affixed it
+// (DCSA's own list: carrier, shipper, customs, veterinary). The first one is the container's seal number.
+const SEAL_SOURCES = [["", "Not known"], ["CAR", "Carrier"], ["SHI", "Shipper"], ["CUS", "Customs"], ["VET", "Veterinary"]];
+const SealsEditor = ({ seals, onChange }) => {
+  const setSeal = (i, patch) => onChange(seals.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  return (
+    <div data-testid="shipment-containers-form-seals" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".05em" }}>Seals</div>
+      {seals.length === 0 && <div style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textFaint }}>No seals yet. The Shipping Instructions need at least one.</div>}
+      {seals.map((x, i) => (
+        <div key={i} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.3fr) minmax(0, 1fr) auto", gap: 8, alignItems: "center" }}>
+          <input id={`shpctr-seal-${i}-number`} data-testid={i === 0 ? "shipment-containers-form-seal-number-field" : undefined}
+            aria-label={`Seal ${i + 1} number`} value={x.number} maxLength={15} placeholder="SL1234567"
+            onChange={e => setSeal(i, { number: e.target.value.toUpperCase().replace(/\s/g, "") })}
+            style={{ ...inputBase, fontFamily: HZ_MONO, fontSize: 13 }} />
+          <select id={`shpctr-seal-${i}-source`} aria-label={`Seal ${i + 1} applied by`} value={x.source}
+            onChange={e => setSeal(i, { source: e.target.value })} style={{ ...inputBase, fontFamily: HZ_BODY, fontSize: 13, cursor: "pointer" }}>
+            {SEAL_SOURCES.map(([v, l]) => <option key={v} value={v}>{v ? l : `Applied by: ${l.toLowerCase()}`}</option>)}
+          </select>
+          <button type="button" id={`shpctr-seal-${i}-remove`} aria-label={`Remove seal ${x.number || i + 1}`}
+            onClick={() => onChange(seals.filter((_, j) => j !== i))}
+            style={{ background: "none", border: "none", color: HZ.textMuted, cursor: "pointer", fontSize: 15, padding: "0 6px" }}>✕</button>
+        </div>
+      ))}
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+        <button type="button" id="shpctr-seal-add" onClick={() => onChange([...seals, { number: "", source: seals.length ? "" : "CAR" }])}
+          style={{ minHeight: 30, padding: "0 12px", borderRadius: 7, border: `1px solid ${HZ.borderStrong}`, background: "transparent",
+            color: HZ.text, fontFamily: HZ_BODY, fontSize: 12.5, cursor: "pointer" }}>＋ Add seal</button>
+        <span style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textFaint }}>The Shipping Instructions, the VGM and the B/L list every seal with who applied it.</span>
+      </div>
+    </div>
+  );
+};
+
 // forwardRef + useImperativeHandle exposes trySave() to a parent page's navigation
 // guard (TKT-OJYO71, src/navigationGuard.js) — attempting away-navigation while this
 // form is open and dirty auto-validates + auto-saves rather than silently discarding
@@ -115,7 +149,9 @@ const fToC = f => Math.round(((f - 32) * 5 / 9) * 10) / 10;
 export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyChange, dgPolicy = null, existingContainerNumbers = [] }, ref) => {
   const initSnap = useRef({
     containerNumber:  init.containerNumber  || "",
-    sealNumber:       init.sealNumber       || "",
+    seals:            (init.seals?.length ? init.seals : init.sealNumber ? [{ number: init.sealNumber, source: "" }] : [])
+                        .map(x => ({ number: x.number || "", source: x.source || "" })),
+    isoEquipmentCode: init.isoEquipmentCode || "",
     size:             init.size             || "",
     type:             init.type             || "",
     hsCode:           init.hsCode           || "",
@@ -149,8 +185,8 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
   // Notify parent when form diverges from its initial values
   useEffect(() => {
     const s = initSnap.current;
-    const dirty = f.containerNumber !== s.containerNumber || f.sealNumber !== s.sealNumber ||
-      f.size !== s.size ||
+    const dirty = f.containerNumber !== s.containerNumber || JSON.stringify(f.seals) !== JSON.stringify(s.seals) ||
+      f.size !== s.size || f.isoEquipmentCode !== s.isoEquipmentCode ||
       f.type !== s.type || f.hsCode !== s.hsCode || f.cargoDescription !== s.cargoDescription ||
       f.marksAndNumbers !== s.marksAndNumbers ||
       f.numberOfPackages !== s.numberOfPackages || f.packageCode !== s.packageCode ||
@@ -210,7 +246,9 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
   useHorizonFonts();
 
   const buildPayload = () => ({
-    containerNumber: f.containerNumber, sealNumber: f.sealNumber, size: f.size, type: f.type,
+    // Every seal with who applied it; the first is also sent as sealNumber (older readers).
+    containerNumber: f.containerNumber, seals: f.seals.filter(x => x.number.trim()), sealNumber: f.seals.find(x => x.number.trim())?.number || "",
+    size: f.size, type: f.type, ...(f.isoEquipmentCode ? { isoEquipmentCode: f.isoEquipmentCode } : {}),
     hsCode: f.hsCode, cargoDescription: f.cargoDescription, marksAndNumbers: f.marksAndNumbers,
     // Packages on the House B/L (Epic TKT-C7EBU3): optional here, required only to issue the B/L.
     numberOfPackages: f.numberOfPackages ? parseInt(f.numberOfPackages, 10) : null,
@@ -280,19 +318,17 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
             hint="ISO 6346 container ID" />
           <FieldErr show={dupeConflict} msg="Already used by another container on this shipment" />
         </div>
-        <div data-testid="shipment-containers-form-seal-number-field">
-          <Inp label="Seal Number" value={f.sealNumber}
-            onChange={v => set("sealNumber")(v.toUpperCase().replace(/\s/g, ""))}
-            placeholder="SL1234567" mono
-            hint="Carrier or shipper seal" />
+        <div data-testid="shipment-containers-form-type-field">
+          <ContainerTypeField
+            size={f.size} type={f.type} isoCode={f.isoEquipmentCode} required
+            onChange={opt => setF(p => ({ ...p, size: opt?.size || "", type: opt?.type || "", isoEquipmentCode: opt?.iso || "" }))} />
+          <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textFaint, marginTop: 4 }}>
+            The ISO 6346 code the carrier, the VGM and the B/L use; the label is for people.
+          </div>
         </div>
       </div>
 
-      <div data-testid="shipment-containers-form-type-field">
-        <ContainerTypeField
-          size={f.size} type={f.type} required
-          onChange={opt => setF(p => ({ ...p, size: opt?.size || "", type: opt?.type || "" }))} />
-      </div>
+      <SealsEditor seals={f.seals} onChange={v => setF(p => ({ ...p, seals: v }))} />
 
       {/* ② Cargo Details */}
       <SectionHeader n="②" title="Cargo Details" />

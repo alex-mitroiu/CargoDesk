@@ -206,11 +206,11 @@ module.exports = function ediRoutes(app, ctx) {
     // per-container — a carrier booking request states quantities per equipment type, not
     // individual container numbers (those aren't assigned until the carrier responds).
     const containerRows = await query(
-      "SELECT id, size, type, gross_weight_kg, volume_cbm, is_dg, dg_class, set_temperature_c FROM containers WHERE shipment_id=$1", [shipment.id]
+      "SELECT id, size, type, iso_equipment_code, gross_weight_kg, volume_cbm, is_dg, dg_class, set_temperature_c FROM containers WHERE shipment_id=$1", [shipment.id]
     );
     const equipmentByType = {};
     for (const c of containerRows) {
-      const key = `${c.size}${c.type}`;
+      const key = c.iso_equipment_code || `${c.size}${c.type}`;
       const entry = equipmentByType[key] || (equipmentByType[key] = { type: key, count: 0, totalWeightKg: 0, totalVolumeCbm: 0 });
       entry.count += 1;
       entry.totalWeightKg += c.gross_weight_kg || 0;
@@ -240,7 +240,7 @@ module.exports = function ediRoutes(app, ctx) {
       const classes = new Set(packClasses);
       if (c.dg_class) classes.add(c.dg_class);
       classes.delete('');
-      const key = `${c.size}${c.type}`;
+      const key = c.iso_equipment_code || `${c.size}${c.type}`;
       const entry = dgByType[key] || (dgByType[key] = { type: key, dgClass: [...classes].join('/'), count: 0 });
       entry.count += 1;
     }
@@ -252,8 +252,10 @@ module.exports = function ediRoutes(app, ctx) {
     const reeferByKey = {};
     for (const c of containerRows) {
       if (c.type !== 'RF' || c.set_temperature_c == null) continue;
-      const key = `${c.size}${c.type}_${c.set_temperature_c}`;
-      const entry = reeferByKey[key] || (reeferByKey[key] = { type: `${c.size}${c.type}`, setTemperatureC: c.set_temperature_c, count: 0 });
+      // Keyed like the equipment lines above (the ISO code), so the booking puts the set point on its line.
+      const type = c.iso_equipment_code || `${c.size}${c.type}`;
+      const key = `${type}_${c.set_temperature_c}`;
+      const entry = reeferByKey[key] || (reeferByKey[key] = { type, setTemperatureC: c.set_temperature_c, count: 0 });
       entry.count += 1;
     }
 
@@ -345,7 +347,31 @@ module.exports = function ediRoutes(app, ctx) {
     const [lineAgent] = await query("SELECT customer_id, customer_name FROM shipment_parties WHERE shipment_id=$1 AND role='Line Agent (Export)'", [shipment.id]);
     const agentRow = lineAgent?.customer_id ? await getCustomerRow(lineAgent.customer_id).catch(() => null) : null;
     const [commodity] = shipment.commodity_code ? await query("SELECT description FROM commodities WHERE code=$1", [shipment.commodity_code]) : [];
-    const ctrs = await query("SELECT hs_code, cargo_description FROM containers WHERE shipment_id=$1", [shipment.id]);
+    const ctrs = await query("SELECT * FROM containers WHERE shipment_id=$1 ORDER BY container_number, id", [shipment.id]);
+    // Dangerous goods (2026-10-29: the booking audit found the request carried none): each DG container —
+    // flagged itself, or holding a DG package — with its UN number, proper shipping name, class, weight and
+    // packages, on its equipment line (the ISO code), and the company's DG emergency contact. What's missing
+    // is said before anything is sent (dgMissing): a carrier can't accept DG cargo it isn't told about.
+    const dgPacks = new Set((await query(`SELECT DISTINCT cp.container_id FROM container_packages cp JOIN containers c ON c.id = cp.container_id
+      WHERE c.shipment_id=$1 AND cp.is_dg=TRUE`, [shipment.id])).map(r => r.container_id));
+    const dgMissing = [];
+    const dangerousGoods = [];
+    for (const c of ctrs.filter(x => x.is_dg || dgPacks.has(x.id))) {
+      const un = String(c.dg_un_number || "").trim().replace(/^UN\s*/i, ""), psn = String(c.dg_proper_shipping_name || "").trim();
+      const gaps = [!/^\d{4}$/.test(un) && "UN number", !psn && "proper shipping name", !c.dg_class && "IMO class",
+        !(Number(c.gross_weight_kg) > 0) && "gross weight"].filter(Boolean);
+      if (gaps.length) { dgMissing.push(`container ${c.container_number || `${c.size}' ${c.type}`} (dangerous goods${c.is_dg ? "" : " in its packages: mark it Dangerous Goods"}): ${gaps.join(", ")}`); continue; }
+      dangerousGoods.push({ type: c.iso_equipment_code || `${c.size}${c.type}`, UNNumber: un, properShippingName: psn, imoClass: String(c.dg_class).trim(),
+        grossWeightKg: Number(c.gross_weight_kg), packages: Number(c.number_of_packages) || 0, packageCode: c.package_code || "",
+        packageDescription: c.package_description || "", hsCode: String(c.hs_code || "").replace(/\D/g, "") });
+    }
+    // The emergency contact is the shipment's shipper's own (2026-10-29, the user's call): the shipper knows the
+    // goods. No fallback — not the forwarder's, not a hotline.
+    const shipperRow = dangerousGoods.length && shipment.shipper_id ? await getCustomerRow(shipment.shipper_id).catch(() => null) : null;
+    const dgEmergencyContact = shipperRow?.dgEmergencyContact || null;
+    if (dangerousGoods.length && !dgEmergencyContact) dgMissing.push(shipperRow
+      ? `the shipper's dangerous goods emergency contact: add a name and a 24-hour phone to ${shipperRow.companyName}'s customer profile`
+      : "a shipper with a dangerous goods emergency contact on its customer profile");
     const loop = await shipmentLoopCode(shipment.id).catch(() => "");
     return {
       serviceType: shipment.service_type || "Port-to-Port", movementType: shipment.movement_type || "FCL",
@@ -361,6 +387,7 @@ module.exports = function ediRoutes(app, ctx) {
       commodityDescription: commodity?.description || ctrs.map(c => c.cargo_description).find(Boolean) || "",
       hsCodes: [...new Set(ctrs.map(c => c.hs_code).filter(Boolean))],
       ...(loop ? { service: loop } : {}),
+      dangerousGoods, dgEmergencyContact, dgMissing,
     };
   }
 
@@ -450,7 +477,9 @@ module.exports = function ediRoutes(app, ctx) {
     // Built and checked against DCSA Booking 2.0 before anything is recorded: a request the carrier
     // would answer 400 is refused here, with the reasons, instead of becoming a "sent" message and a
     // Pending booking that was never sent.
-    const dcsaPayload = integ.adapter.buildBookingRequest(shipment, { ...requestPayload, ...(await dcsaBookingExtras(shipment)) });
+    const extras = await dcsaBookingExtras(shipment);
+    if (extras.dgMissing.length) return fail(400, `Can't send the booking request: the carrier needs the dangerous goods declared — add ${extras.dgMissing.join("; ")}`);
+    const dcsaPayload = integ.adapter.buildBookingRequest(shipment, { ...requestPayload, ...extras });
     const check = validateOutbound("bkg", "post", "/v2/bookings", dcsaPayload);
     if (!check.ok) {
       // The two gaps people actually hit, said plainly; anything else names the spec's own reasons.
@@ -641,7 +670,9 @@ module.exports = function ediRoutes(app, ctx) {
     if (!integ?.adapter.updateBooking) return err(res, `No active booking integration for ${booking.carrier_code}`, 409);
 
     const requestPayload = await bookingRequestPayload(shipment, req.body);
-    const dcsaPayload = integ.adapter.buildBookingRequest(shipment, { ...requestPayload, ...(await dcsaBookingExtras(shipment)) });
+    const extras = await dcsaBookingExtras(shipment);
+    if (extras.dgMissing.length) return err(res, `Can't send the update: the carrier needs the dangerous goods declared — add ${extras.dgMissing.join("; ")}`, 400);
+    const dcsaPayload = integ.adapter.buildBookingRequest(shipment, { ...requestPayload, ...extras });
     const result = await integ.adapter.updateBooking(integ.config, booking.carrier_booking_request_reference, dcsaPayload);
     if (!result.ok && result.invalid) return err(res, `Can't send the update: ${result.error.replace(/^Not sent: /, "")}`, 400);
     if (!result.ok) return err(res, `${booking.carrier_code} did not accept the update (${result.error}). Nothing was changed — try again.`, 502);

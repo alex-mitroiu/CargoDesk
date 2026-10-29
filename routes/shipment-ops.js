@@ -1424,6 +1424,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           return err(res, "An issued House B/L can't go back to draft — void it, then issue a new one", 409);
         if (doc.status === "confirmed" && status === "voided" && !String(voidReason).trim())
           return err(res, "Give a reason to void an issued House B/L", 400);
+        // An issued House B/L is a title: admin only, and not while originals are out, an eBL is live, or after
+        // a surrender or the cargo's release (the House B/L audit, H1 + M6, 2026-10-29).
+        if (doc.status === "confirmed" && status === "voided") {
+          const block = await ctx.houseBl.voidBlock(doc, req.user);
+          if (block) return err(res, block.error, block.status);
+        }
         if (status === "confirmed") {
           const [issued] = await query("SELECT filename FROM shipment_documents WHERE shipment_id=$1 AND doc_type=$2 AND status='confirmed' AND id<>$3",
             [doc.shipment_id, HOUSE_BL, doc.id]);
@@ -1516,6 +1522,14 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const live = await ctx.houseBl.liveHouse(req.params.shipmentId);
     const atDestination = (live?.release_type || shipmentForSurrender?.bl_release_type) === "Original";
     if (shipmentForSurrender && (await blockIfWrongSide(req, res, shipmentForSurrender, atDestination ? 'import' : 'export'))) return;
+    // A live eBL is surrendered on its platform (the holder's surrender request), never by hand (audit H3).
+    if (live?.is_electronic && ["PENDING", "ISSU"].includes(live.ebl_issuance_status))
+      return err(res, `This House B/L is an eBL on ${live.ebl_platform || "its platform"}: it is surrendered there (the holder's surrender request), not here`, 409);
+    // A telex release at origin needs every original that went out back first (audit M5).
+    if (live && !atDestination && live.status === "ISSUED") {
+      const o = await ctx.houseBl.originalsOut(live);
+      if (o.outstanding) return err(res, `${o.outstanding} original${o.outstanding === 1 ? " is" : "s are"} still with ${o.holder || "the holder"}: record them returned before the surrender at origin`, 409);
+    }
     if (!doc.bl_surrendered_at) {
       const now = new Date().toISOString();
       const actor = req.user?.name || req.user?.email || "";
@@ -1927,10 +1941,10 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     legs:          await getScheduleLegs(r.id),
   });
 
-  // TEU for a shipment's linked-shipments summary row — same size='40'→2 else 1 convention
+  // TEU for a shipment's linked-shipments summary row — 20' is 1, 40' and 45' are 2
   // used everywhere else this app computes TEU (e.g. the notification bell, SpaceConfigurationsPage).
   const teuForShipment = async shipmentId => {
-    const [{ teu }] = await query("SELECT COALESCE(SUM(CASE WHEN size='40' THEN 2 ELSE 1 END), 0) AS teu FROM containers WHERE shipment_id=$1", [shipmentId]);
+    const [{ teu }] = await query("SELECT COALESCE(SUM(CASE WHEN size='20' THEN 1 ELSE 2 END), 0) AS teu FROM containers WHERE shipment_id=$1", [shipmentId]);
     return Number(teu);
   };
 

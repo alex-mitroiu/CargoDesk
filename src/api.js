@@ -145,6 +145,18 @@ export const api = {
     get:     (shipmentId) => req("GET",  `/shipments/${shipmentId}/master-bl`),
     approve: (shipmentId) => req("POST", `/shipments/${shipmentId}/master-bl/approve`, {}),
     refresh: (shipmentId) => req("POST", `/shipments/${shipmentId}/master-bl/refresh`, {}),
+    // Amending the issued B/L: what it would change now, send it, withdraw it while the carrier hasn't worked on it.
+    amendmentPreview: (shipmentId) => req("GET", `/shipments/${shipmentId}/master-bl/amendment-preview`),
+    amend:            (shipmentId) => req("POST", `/shipments/${shipmentId}/master-bl/amend`, {}),
+    cancelAmendment:  (shipmentId) => req("POST", `/shipments/${shipmentId}/master-bl/amendment/cancel`, {}),
+  },
+  // The carrier's DCSA Arrival Notice on the shipment (import side): the current one, ask again, settle a
+  // free-time difference ({ containerId, kind: DEM | DET, use }), add charges as BUY accruals ({ indices }).
+  arrivalNotice: {
+    get:        (shipmentId)         => req("GET",  `/shipments/${shipmentId}/arrival-notice`),
+    refresh:    (shipmentId)         => req("POST", `/shipments/${shipmentId}/arrival-notice/refresh`, {}),
+    freeTime:   (shipmentId, body)   => req("POST", `/shipments/${shipmentId}/arrival-notice/free-time`, body),
+    accrue:     (shipmentId, indices) => req("POST", `/shipments/${shipmentId}/arrival-notice/accruals`, { indices }),
   },
   vgm: {
     // Every declaration made (DCSA VGM 1.0), newest first, each with its evidence (VG02) and VG01 document.
@@ -577,6 +589,10 @@ export const api = {
     // Operational Vessel Schedules 3.0: the demo carrier's vessel times.
     vesselCalls:   (p = {})          => req("GET",  `/test-tools/dcsa-sim/vessel-calls?${new URLSearchParams(p)}`),
     setVesselCall: (data)            => req("POST", "/test-tools/dcsa-sim/vessel-calls", data),
+    // Arrival Notice 1.0 / Port Call 2.0 (phase 8): publish a notice for a demo booking's B/L; a berth call.
+    publishArrivalNotice: (data)     => req("POST", "/test-tools/dcsa-sim/arrival-notices", data),
+    arrivalNotices: (tdRef = "")     => req("GET",  `/test-tools/dcsa-sim/arrival-notices${tdRef ? `?tdRef=${encodeURIComponent(tdRef)}` : ""}`),
+    reportPortCall: (data)           => req("POST", "/test-tools/dcsa-sim/port-calls", data),
   },
   // Test Tools: play the built-in eBL platform and the holders (Epic TKT-C7EBU3, lib/ebl-platform-simulator.js).
   // act: ISSU | BREQ | REFU ({ reason }), endorse ({ partyName, partyCode }), SREQ | AREQ.

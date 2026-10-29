@@ -280,10 +280,12 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
     </tr></tfoot>` : ""}
     </table>
     ${fcl ? `<div style="font-size:11px;font-weight:700;letter-spacing:.3px;margin:-8px 0 16px">SHIPPER'S LOAD, STOW AND COUNT · SAID TO CONTAIN</div>` : ""}
+    ${(houseBl?.clauses || []).length ? `<div data-bl-clauses style="font-size:11px;font-weight:700;letter-spacing:.3px;margin:-8px 0 16px">${houseBl.clauses.map(c => _esc(c)).join("<br>")}</div>` : ""}
     ${chargesTable}
     ${version > 1 ? `<div style="display:inline-block;font-size:12px;font-weight:800;letter-spacing:.5px;border:2px solid #111827;border-radius:6px;padding:6px 10px;margin-bottom:16px">VERSION ${version} · AMENDED${amendsIssueDate ? ` · REPLACES THE B/L ISSUED ${fmtLong(amendsIssueDate).toUpperCase()}` : ""}</div>` : ""}
     <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:11px;color:#374151;line-height:1.7">
       <strong>${onBoard ? "SHIPPED ON BOARD" : "RECEIVED FOR SHIPMENT"}${statementDate ? ` ${fmtLong(statementDate)}` : ""}</strong>
+      ${!onBoard && houseBl?.onBoardNotationDate ? `<div style="display:inline-block;margin:6px 0;font-size:12px;font-weight:800;letter-spacing:.5px;border:2px solid #111827;border-radius:6px;padding:4px 10px">SHIPPED ON BOARD ${fmtLong(houseBl.onBoardNotationDate)}</div><br>` : ""}
       ${onBoard ? "the above named vessel" : "for carriage on the above named vessel"} in apparent good order and condition unless otherwise noted,
       the total number of containers or packages stated above, weight, measure, marks, numbers, quality, contents and value unknown,
       for carriage subject to all the terms and conditions of the carrier's House Bill of Lading. Freight and charges payable as indicated.
@@ -802,8 +804,11 @@ const buildInsuranceCertHtml = ({ shipment: sh, invNumber, invDate, notes, conta
   return _invShell(`Insurance Certificate — ${invNumber}`, "INSURANCE CERTIFICATE", invNumber, invDate, body);
 };
 
-const buildDGDeclHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee, dgCompliance }) => {
+const buildDGDeclHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
   const dgCtrs = containers.filter(c => c.isDg);
+  // The shipper's own 24-hour emergency contact, from its customer profile (2026-10-29; it replaced the
+  // org-wide App Settings one): the same contact the DCSA booking sends.
+  const ec = shipper?.dgEmergencyContact || null;
   const rows = dgCtrs.length === 0
     ? `<tr><td colspan="7" style="text-align:center;color:#dc2626;padding:16px;font-weight:600">No containers flagged as DG — verify cargo details</td></tr>`
     : dgCtrs.map(c => `<tr>
@@ -862,14 +867,13 @@ const buildDGDeclHtml = ({ shipment: sh, invNumber, invDate, notes, containers, 
       <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
         <div class="party-label">Emergency Contact</div>
         <div style="font-size:11px;color:#374151;margin-top:6px;line-height:1.8">
-          ${dgCompliance && (dgCompliance.contactName || dgCompliance.phone || dgCompliance.email || dgCompliance.address)
-            ? [
-                dgCompliance.contactName && _esc(dgCompliance.contactName),
-                dgCompliance.phone       && `Phone: ${_esc(dgCompliance.phone)}`,
-                dgCompliance.email       && `Email: ${_esc(dgCompliance.email)}`,
-                dgCompliance.address     && _esc(dgCompliance.address),
+          ${ec ? [
+                _esc(ec.contact),
+                `24-hour phone: ${_esc(ec.phone)}`,
+                ec.provider        && `Provider: ${_esc(ec.provider)}`,
+                ec.referenceNumber && `Reference: ${_esc(ec.referenceNumber)}`,
               ].filter(Boolean).join("<br>")
-            : `24hr Emergency: ___________<br>CHEMTREC: +1 703-527-3887<br>CANUTEC: +1 613-996-6666`}
+            : `24-hour phone: ___________`}
         </div>
       </div>
     </div>
@@ -936,23 +940,40 @@ const buildCustomsDeclHtml = ({ shipment: sh, invNumber, invDate, notes, contain
 // Carrier/forwarder -> notify party: "your container arrives on X, free time starts" — one of
 // the highest-frequency documents on any import file, previously only reachable via the
 // free-text "Other" doc type with none of the right fields auto-populated (TKT-Q13HBD).
-const buildArrivalNoticeHtml = ({ shipment: sh, invNumber, invDate, notes, containers, consignee, parties }) => {
+// carrierArrivalNotice — the carrier's DCSA Arrival Notice when it sent one (GET …/arrival-notice): its arrival
+// date, its last free day per container, where to pick up and return, and what's released go on this notice
+// in place of CargoDesk's own estimates (phase 8, 2026-10-28).
+const buildArrivalNoticeHtml = ({ shipment: sh, invNumber, invDate, notes, containers, consignee, parties, carrierArrivalNotice: can = null }) => {
   const alsoNotify = partyByRole(parties, "Also Notify Party");
-  const eta = sh.eta ? new Date(sh.eta) : null;
-  // Estimated, not authoritative — the real deadline is whatever the container compliance
-  // badges compute once Discharged is actually logged (container_events); this is a heads-up
-  // for the notify party ahead of that, so every value it's built from is explicitly an estimate.
-  const lastFreeDay = (eta && containers.length > 0 && containers[0].destFreeTimeDays != null)
-    ? new Date(eta.getTime() + containers[0].destFreeTimeDays * 86400000)
-    : null;
+  const facts = can?.facts || {};
+  const eta = facts.arrival?.date ? new Date(`${facts.arrival.date}T12:00:00Z`) : sh.eta ? new Date(sh.eta) : null;
+  const long = d => d.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  // The carrier's last free day (demurrage) when it gave one; otherwise an estimate from the ETA and the
+  // container's free days — the real deadline is whatever the container compliance badges compute once
+  // Discharged is logged.
+  const carrierLastFree = (can?.freeTime || []).filter(f => f.kind === "DEM" && f.lastFreeDate).map(f => f.lastFreeDate).sort()[0] || null;
+  const lastFreeDay = carrierLastFree ? new Date(`${carrierLastFree}T12:00:00Z`)
+    : (eta && containers.length > 0 && containers[0].destFreeTimeDays != null) ? new Date(eta.getTime() + containers[0].destFreeTimeDays * 86400000) : null;
+  const yesNo = v => (v === true ? "Yes" : v === false ? "Not yet" : "—");
   const rows = containers.length === 0
     ? `<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
     : containers.map(c => `<tr>
         <td><span class="code">${_esc(c.containerNumber || "TBC")}</span></td>
-        <td>${_esc(c.size)}ft ${_esc(c.type)}</td>
-        <td>${_esc(c.sealNumber || "—")}</td>
+        <td>${c.isoEquipmentCode ? `${_esc(c.isoEquipmentCode)} · ` : ""}${_esc(c.size)}ft ${_esc(c.type)}</td>
+        <td>${_esc((c.seals || []).map(x => x.number).join(", ") || c.sealNumber || "—")}</td>
         <td class="num">${c.grossWeightKg != null ? Number(c.grossWeightKg).toLocaleString() + " kg" : "—"}</td>
       </tr>`).join("");
+  const carrierBlock = can ? `
+    <div class="shp-block"><div class="block-label">From the carrier's Arrival Notice${can.version ? ` (version ${_esc(can.version)})` : ""}</div>
+      <div class="details-grid" style="grid-template-columns:repeat(2,1fr)">${_detailGrid([
+        ["Pick up at", _esc([facts.pickup?.location?.name, facts.pickup?.location?.unLocationCode].filter(Boolean).join(" · ") || "—")],
+        ["Pickup number", _esc(facts.pickup?.number || "—")],
+        ["Return empties to", _esc([facts.returnTo?.location?.name, facts.returnTo?.reference].filter(Boolean).join(" · ") || "—")],
+        ["Freight released", yesNo(facts.release?.freight)],
+        ["Original B/L received", yesNo(facts.release?.originalBl)],
+        ["Customs released", yesNo(facts.release?.customs)],
+      ])}</div>
+    </div>` : "";
 
   const body = `
     <div class="shp-block"><div class="block-label">Notify</div>
@@ -968,10 +989,11 @@ const buildArrivalNoticeHtml = ({ shipment: sh, invNumber, invDate, notes, conta
         ["Vessel", _esc(sh.vessel || "—")], ["Voyage", _esc(sh.voyage || "—")],
         ["Carrier", _esc(sh.carrierCode || "—")],
         ["Port of Discharge", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
-        ["ETA", eta ? eta.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" }) : "—"],
-        ["Est. Last Free Day", lastFreeDay ? lastFreeDay.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" }) : "To be confirmed on discharge"],
+        ["ETA", eta ? long(eta) : "—"],
+        [carrierLastFree ? "Last Free Day (carrier)" : "Est. Last Free Day", lastFreeDay ? long(lastFreeDay) : "To be confirmed on discharge"],
       ])}</div>
     </div>
+    ${carrierBlock}
     <div class="section-label">Containers</div>
     <table><thead><tr>
       <th>Container #</th><th>Type</th><th>Seal #</th><th style="text-align:right">Gross Weight</th>
@@ -1102,7 +1124,7 @@ const buildGenericDocHtml = ({ shipment: sh, invNumber, invDate, notes }) => {
 // either free-text, backed by a dedicated page with its own validation (LoadingServicePage.jsx),
 // or (per dispatchDocBuilder's own comment above) intentionally allowed to render a
 // blank-template fallback from this generic modal.
-const getMissingDocRequirements = (docCode, { shipment: sh, containers, shipper, consignee, costLines, dgCompliance, parties, booking, si }) => {
+const getMissingDocRequirements = (docCode, { shipment: sh, containers, shipper, consignee, costLines, parties, booking, si }) => {
   const missing = [];
   const hasShipper   = !!(sh.shipperName || shipper?.companyName);
   const hasConsignee = !!(sh.consigneeName || consignee?.companyName);
@@ -1155,9 +1177,7 @@ const getMissingDocRequirements = (docCode, { shipment: sh, containers, shipper,
   }
   if (docCode === "DG01") {
     if (containers.filter(c => c.isDg).length === 0) missing.push("At least one container flagged as Dangerous Goods");
-    if (!dgCompliance?.contactName && !dgCompliance?.phone && !dgCompliance?.email) {
-      missing.push("DG Compliance Contact (Application Settings → Compliance)");
-    }
+    if (!shipper?.dgEmergencyContact) missing.push("The shipper's dangerous goods emergency contact (on the shipper's customer profile)");
   }
   if ((docCode === "FR01" || docCode === "FR02") && costLines.length === 0) {
     missing.push("At least one valid SELL charge line");

@@ -46,7 +46,6 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
         return;
       }
       const needsCostLines = docCode === "FR01" || docCode === "FR02";
-      const needsDgSettings = docCode === "DG01";
       // ITN (TKT-6A7J45 story 1) — only House/Master B/L carry it, no reason to fetch
       // customs filings for every other document type. BC01 (Booking Confirmation) is a
       // direct sibling of BR01 and shows the same reference fields.
@@ -64,17 +63,20 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
       // reference/cutoff on the document and to gate generation until a real Submit has
       // actually happened (see getMissingDocRequirements below).
       const needsSi = docCode === "SI01";
-      const [ctrsRaw, shipper, consignee, costLines, orgSettings, parties, filings, rateSnapshots, booking, si] = await Promise.all([
+      // The carrier's DCSA Arrival Notice — AN01 only: its ETA, last free days, pickup and return points
+      // and release state go on CargoDesk's own arrival notice (phase 8, 2026-10-28).
+      const needsCarrierAn = docCode === "AN01";
+      const [ctrsRaw, shipper, consignee, costLines, parties, filings, rateSnapshots, booking, si, carrierAn] = await Promise.all([
         api.containers.list(),
         shipment.shipperId   ? api.customers.get(shipment.shipperId).catch(() => null)   : Promise.resolve(null),
         shipment.consigneeId ? api.customers.get(shipment.consigneeId).catch(() => null) : Promise.resolve(null),
         needsCostLines ? api.costLines.list(shipment.id).then(ls => ls.filter(l => l.type === "SELL")) : Promise.resolve([]),
-        needsDgSettings ? api.settings.get().catch(() => null) : Promise.resolve(null),
         api.shipmentParties.list(shipment.id).catch(() => []),
         needsExportFiling ? api.customsFilings.list(shipment.id).catch(() => []) : Promise.resolve([]),
         needsRateSnapshot ? api.costLines.rateSnapshots(shipment.id).catch(() => []) : Promise.resolve([]),
         needsBooking ? api.carrierBooking.get(shipment.id).catch(() => null) : Promise.resolve(null),
         needsSi ? api.shippingInstructions.get(shipment.id).catch(() => null) : Promise.resolve(null),
+        needsCarrierAn ? api.arrivalNotice.get(shipment.id).catch(() => null) : Promise.resolve(null),
       ]);
       const rateSnapshotId = rateSnapshots[0]?.id || null;
       const exportFilingItn = filings.find(f => f.filingType === "AES_EEI" && f.status === "Accepted")?.confirmationNumber || null;
@@ -87,15 +89,6 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
       const containers = needsPackages
         ? await Promise.all(containersBase.map(async c => ({ ...c, packages: await api.containerPackages.list(shipment.id, c.id).catch(() => []) })))
         : containersBase;
-      // Org-wide DG compliance address (TKT-DPLQTV) — pulled onto the DG01 declaration's
-      // emergency-contact line in place of a hand-filled blank; falls back to the generic
-      // CHEMTREC/CANUTEC hotlines if the org hasn't filled its own compliance address in yet.
-      const dgCompliance = orgSettings ? {
-        contactName: orgSettings.dg_compliance_contact_name || "",
-        phone:       orgSettings.dg_compliance_phone         || "",
-        email:       orgSettings.dg_compliance_email         || "",
-        address:     orgSettings.dg_compliance_address       || "",
-      } : null;
       // Document Template Editor — an office+carrier-scoped custom layout, BL01 pilot only.
       // A match renders through the saved template instead of the hardcoded builder and skips
       // getMissingDocRequirements entirely (the template's own placed fields ARE the
@@ -111,14 +104,15 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
       const taxInfo = (docCode === "FR01" || docCode === "FR02") ? await resolveInvoiceTaxInfo(shipment) : null;
 
       const dataBag = {
-        shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines, dgCompliance, parties, exportFilingItn, rateSnapshotId, booking, si, taxInfo,
+        shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines, parties, exportFilingItn, rateSnapshotId, booking, si, taxInfo,
+        carrierArrivalNotice: carrierAn,
       };
 
       let html;
       if (template) {
         html = renderTemplateHtml(template, dataBag);
       } else {
-        const missing = getMissingDocRequirements(docCode, { shipment, containers, shipper, consignee, costLines, dgCompliance, parties, booking, si });
+        const missing = getMissingDocRequirements(docCode, { shipment, containers, shipper, consignee, costLines, parties, booking, si });
         if (missing.length > 0) {
           toast.error(`Cannot generate ${docTypeLabel(docCode)} — missing:\n${missing.map(m => `• ${m}`).join("\n")}`);
           setLoading(false);

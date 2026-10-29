@@ -11,12 +11,41 @@ import { ensureOffices } from "./offices.mjs";
 import { bookThroughCarrier } from "./dcsa-sim.mjs";
 
 const inDays = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+const asList = b => (Array.isArray(b) ? b : (b?.results ?? []));
+
+// The House B/L names its issuer (lib/house-bl.js readiness, the House B/L audit's M2, 2026-10-29): the export
+// office's legal entity, with a SCAC, a street address and a city. Provisions it where the test database
+// has none (a fresh CI database's fixture office has no legal entity at all) or an incomplete one —
+// realistic data, as the shipments are. Idempotent: a complete legal entity is left as it is.
+export async function ensureIssuingEntity(request, token, officeId) {
+  const office = asList((await request("GET", "/api/offices", null, token)).body).find(o => o.id === officeId);
+  if (!office) throw new Error(`ensureIssuingEntity: office ${officeId} not found`);
+  if (office.branchId) {
+    const b = (await request("GET", `/api/branches/${office.branchId}`, null, token)).body;
+    if (b?.scac && b.address && b.city && b.countryCode) return b.id;
+    const r = await request("PUT", `/api/branches/${office.branchId}`, { ...b, scac: b.scac || "CDHB",
+      address: b.address || "Wilhelminakade 909", city: b.city || "Rotterdam", phone: b.phone || "+31 10 555 0142",
+      email: b.email || "documentation@cargodesk.example" }, token);
+    if (r.status !== 200) throw new Error(`ensureIssuingEntity: branch ${office.branchId}: ${r.status} ${JSON.stringify(r.body)}`);
+    return office.branchId;
+  }
+  const code = `HB${String(officeId).replace(/[^A-Z0-9]/gi, "").slice(-6).toUpperCase()}`;
+  const existing = asList((await request("GET", "/api/branches", null, token)).body).find(x => x.code === code);
+  const branch = existing || (await request("POST", "/api/branches", { code, name: `CargoDesk Logistics ${office.name || code} BV`, countryCode: "NL",
+    city: "Rotterdam", address: "Wilhelminakade 909", locode: "NLRTM", currency: "EUR", email: "documentation@cargodesk.example",
+    phone: "+31 10 555 0142", scac: "CDHB", taxRegistrationNumber: "NL004495445B01" }, token)).body;
+  if (!branch?.id) throw new Error(`ensureIssuingEntity: no legal entity for ${officeId}: ${JSON.stringify(branch)}`);
+  const r = await request("PUT", `/api/offices/${officeId}`, { branchId: branch.id }, token);
+  if (r.status !== 200) throw new Error(`ensureIssuingEntity: office ${officeId}: ${r.status} ${JSON.stringify(r.body)}`);
+  return branch.id;
+}
 
 export async function readyHouseBlShipment(request, token, { tag = "", releaseType = "Original", freightTerms = "Prepaid", loaded = true, numbered = true,
   emoOfficeId: emoOverride = null } = {}) {
   const rand = `${tag}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
   const offices = await ensureOffices(token);
   const emoOfficeId = emoOverride || offices.emoOfficeId, imoOfficeId = offices.imoOfficeId;
+  await ensureIssuingEntity(request, token, emoOfficeId);
   const customer = async (companyName, address1, postalCode, city, countryIso2) =>
     (await request("POST", "/api/customers", { companyName, address1, postalCode, city, countryIso2 }, token)).body;
   const shipper = await customer(`Van Leeuwen Furniture ${rand} BV`, "Waalhaven Oostzijde 81", "3087 BM", "Rotterdam", "NL");

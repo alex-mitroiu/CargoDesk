@@ -117,6 +117,14 @@ async function setSource(token, value) {
 
     const updateRemote = await request("PUT", `/api/customers/${remoteCustId}`, { companyName: "Renamed Remote Co", currency: "JPY" }, token);
     assert("remote customer update applies", updateRemote.body.companyName === "Renamed Remote Co");
+    // The shipper's DG emergency contact (2026-10-29): validated and kept by the service just as in local mode.
+    const remoteDg = { contact: "Osaka Coatings DG Desk", phone: "+81 6 6123 4567", provider: "CHEMTREC", referenceNumber: "CCN-778812" };
+    const dgSet = await request("PUT", `/api/customers/${remoteCustId}`, { companyName: "Renamed Remote Co", currency: "JPY", dgEmergencyContact: remoteDg }, token);
+    assert("remote: the DG emergency contact saves with all four fields", JSON.stringify(dgSet.body?.dgEmergencyContact) === JSON.stringify(remoteDg), JSON.stringify(dgSet.body));
+    const dgKeep = await request("PUT", `/api/customers/${remoteCustId}`, { companyName: "Renamed Remote Co", currency: "JPY" }, token);
+    assert("remote: a save without it keeps it", dgKeep.body?.dgEmergencyContact?.phone === "+81 6 6123 4567", JSON.stringify(dgKeep.body?.dgEmergencyContact));
+    const dgBad = await request("PUT", `/api/customers/${remoteCustId}`, { companyName: "Renamed Remote Co", currency: "JPY", dgEmergencyContact: { contact: "Osaka DG" } }, token);
+    assert("remote: a contact with no phone is refused (400)", dgBad.status === 400, JSON.stringify(dgBad.body));
 
     const listRemote = await request("GET", "/api/customers", null, token);
     assert("remote list includes the remote customer, not the local one",

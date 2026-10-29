@@ -53,6 +53,9 @@ const PackageTreeNode = ({ pkg, allPackages, containerId, depth, navOpen, onTogg
 // right here. Explicitly a ballpark tool (see the disclaimer the endpoint itself returns), not
 // a customs broker's system of record — real per-country tariff data is a data-business gap,
 // not a code gap (same caveat already applied to carrier networks, v0.69.0 competitive analysis).
+// Who applied a seal (DCSA Seal.source).
+const SEAL_SOURCE_LABEL = { CAR: "carrier", SHI: "shipper", CUS: "customs", VET: "veterinary" };
+
 const CARGO_VALUE_SOURCE_LABEL = {
   "pack-items": "Based on real priced cargo line items",
   "shipment-declared-value": "Based on the shipment's single declared value (no cargo line items priced yet)",
@@ -376,8 +379,15 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
                           )}
                         </div>
                       </td>
-                      <td style={{ padding: "10px 14px", fontFamily: HZ_MONO, fontSize: 12, color: HZ.textMuted }}>
+                      {/* The ISO 6346 code and every seal with who applied it (DCSA phase 3, 2026-10-28). */}
+                      <td data-testid={`shipment-containers-row-${c.id}-equipment`} style={{ padding: "10px 14px", fontFamily: HZ_MONO, fontSize: 12, color: HZ.textMuted }}>
+                        {c.isoEquipmentCode && <span style={{ color: HZ.cyan, fontWeight: 700, marginRight: 6 }}>{c.isoEquipmentCode}</span>}
                         {c.size}ft {c.type}
+                        {(c.seals || []).length > 0 && (
+                          <div data-testid={`shipment-containers-row-${c.id}-seals`} style={{ fontSize: 10.5, color: HZ.textFaint, marginTop: 2 }}>
+                            {c.seals.length === 1 ? "seal " : "seals "}
+                            {c.seals.map(x => `${x.number}${x.source ? ` (${SEAL_SOURCE_LABEL[x.source] || x.source})` : ""}`).join(", ")}
+                          </div>)}
                       </td>
                       {/* Packages on the House B/L (Epic TKT-C7EBU3) — the container's own count and kind,
                           not the manifest below it (decided 2026-10-21). */}

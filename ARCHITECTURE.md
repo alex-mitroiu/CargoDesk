@@ -95,7 +95,7 @@ this document covers *how it's built*.
 ---
 
 ## Table of Contents
-_(§8.42 added 2026-10-28 (DCSA phases 4–6, with §6 and §14); §8.41 added 2026-10-27 (the DCSA message review, with §6 and §14); §8.40 added 2026-10-21 (House B/L, Story 1) and completed 2026-10-24 (the remaining gaps, with §6 and §14); §8.33–8.39 added 2026-09-30 → 2026-10-21, with the §6 table count and groupings and the §14
+_(§8.44 added 2026-10-29 (the House B/L audit's fixes, dangerous goods in the DCSA booking and the shipper's DG emergency contact, with §6 and §14); §8.43 added 2026-10-28 (the remaining DCSA phases: Master B/L amendments, equipment, Arrival Notice, Port Call, with §6 and §14); §8.42 added 2026-10-28 (DCSA phases 4–6, with §6 and §14); §8.41 added 2026-10-27 (the DCSA message review, with §6 and §14); §8.40 added 2026-10-21 (House B/L, Story 1) and completed 2026-10-24 (the remaining gaps, with §6 and §14); §8.33–8.39 added 2026-09-30 → 2026-10-21, with the §6 table count and groupings and the §14
 write-triggered side effects brought up to date on 2026-10-21 (§8.39, Where to book); §8.28–8.32, the full §5 `routes/` re-measure and the §4/§6/§8.5/§8.6/§11/§14 updates added
 2026-09-29 (v0.91.9 + unreleased); §8.26–8.27 and the §4/§6/§11 updates added 2026-09-25 (v0.91.8); §8.25 added 2026-09-20 (v0.91.6);
 §8.23–8.24 added 2026-09-19 (v0.91.5); §8.15 extended 2026-08-29 (v0.87.0); §8.21 added 2026-08-29
@@ -573,10 +573,24 @@ and 25 indexes now exist beyond primary keys (§11 — this resolves the old "no
 
 ## 6. Data Model
 
-**126 tables** in the monolith's own database, plus the Contract Management service's own 4-table
+**129 tables** in the monolith's own database, plus the Contract Management service's own 4-table
 copy (`contracts`/`contract_legs`/`contract_rates`/`contract_routings`) when
 `contract_source='remote'` (§8.1) — never both populated as the live source at once.
 
+- **2026-10-29 (the House B/L audit's fixes and the shipper's DG contact, §8.44):** columns only, still 129 tables.
+  - `transport_documents`: `on_board_notation_date`, `on_board_notation_at`, `on_board_notation_by`, `extra_clauses`
+    (JSON list), `approval_status`, `approval_document_id`, `approval_sent_to`, `approval_sent_at`, `approval_sent_by`,
+    `approval_emailed`, `approval_answered_at`, `approval_answered_by`, `approval_comment`;
+  - `customers` (and the customer service's copy): `dg_emergency_contact`, `dg_emergency_phone`,
+    `dg_emergency_provider`, `dg_emergency_reference`;
+  - `app_settings`: the `dg_compliance_*` keys are no longer seeded (rows already there are left, unread).
+- **2026-10-28 (the remaining DCSA phases, §8.43):** +3 — `arrival_notices`, `port_call_events` and the built-in carrier's
+  `dcsa_sim_arrival_notices`. Columns added:
+  - `containers`: `iso_equipment_code` (ISO 6346), `seals` (JSON DCSA Seals `[{ number, source }]`; `seal_number` stays
+    the first one); the size CHECK allows `'45'`;
+  - `container_type_definitions`: `iso_code` (and a seeded 45HC row, L5G1);
+  - `transport_documents` (Master): `amendment_payload`, `amendment_requested_at`, `amendment_requested_by`;
+  - `dcsa_sim_transport_documents`: `amended_status`, `amendment_json`.
 - **2026-10-28 (DCSA phases 4–6, §8.42):** +5 — `vgm_declarations`, `carrier_events`, and the built-in carrier's
   `dcsa_sim_transport_documents`, `dcsa_sim_events` and `dcsa_sim_vessel_calls`. Columns added:
   - `transport_documents` (Master B/L rows, `role='MASTER'`): `carrier_code`, `shipping_instructions_reference`,
@@ -3990,6 +4004,167 @@ screens from the approved mockup (https://claude.ai/artifact/VUTPKnRAjdPjfb8DntU
   - Vitest: `MasterBlPanel` (4).
   - Cypress: `dcsa-documents-events` (4).
 
+### 8.43 The remaining DCSA phases: Master B/L amendments, equipment and seals, Arrival Notice, Port Call (2026-10-28)
+
+The user asked to "take up next the remaining phases" of the DCSA-everywhere plan. Their decisions: **phase 2 is
+skipped** (the shipment's own terms stay CargoDesk values mapped at the wire; the carrier's booking states stay in
+`carrier_bookings.carrier_state`); **phase 7 was already done** under the House B/L epic (§8.40: eBL issuance and
+surrender; PINT dropped by decision D4); the **Arrival Notice's charges are shown and added on a click**. The
+screens follow the approved mockup https://claude.ai/code/artifact/1bf14417-6d13-4009-a277-ada52600d001.
+
+- **Amending the issued Master B/L (eBL 3.0.3 Direct Transport Document amendment, `routes/master-bl.js`).**
+  Send update stops once the carrier issues; corrections after that go as an amendment.
+  - **What is sent.** `amendedTransportDocument(doc, instructions)` (`dcsa-ebl-v3.js`) takes the issued document
+    and replaces what the shipper decides with the instructions as they are now (`ctx.shippingInstructionsFor`):
+    shipper, consignee, notify parties, cargo, equipment and seals, originals and copies, references. Everything
+    the carrier decides (reference, terms, transports, dates, reefer settings) stays as issued.
+  - **Only what differs.** `GET …/master-bl/amendment-preview` lists the differences (`compareDraft`); a
+    request with none is refused (409, "Nothing to amend"). A draft is corrected with Send update (409 here).
+  - **The exchange.** `PUT …/amendment` (202); the carrier answers `AMENDMENT_RECEIVED`; while it hasn't worked
+    on it, `POST …/amendment/cancel` sends `DELETE …/amendment` (`AMENDMENT_CANCELLED`). It then declines it
+    (`AMENDMENT_DECLINED`, task `master_bl_amendment_declined`) or accepts it (`AMENDMENT_CONFIRMED`, the
+    document `PENDING_SURRENDER_FOR_AMENDMENT`, task `master_bl_amendment_originals` until the originals are
+    back) and issues the amended B/L; its changes are kept (`MASTER_AMENDED`, was → now) and logged
+    (`MASTER_BL_AMENDED`). The shipment keeps its Master B/L number.
+  - **The amendment's status** is only on the notification or `GET …/amendment` (the document itself doesn't
+    carry it): a GET of the document leaves it as it was. Refresh and the 15-minute poll also read
+    `GET …/amendment` while one is pending. A carrier that doesn't take amendments (404/405/501) is said so.
+- **Equipment and seals (phase 3).** Parties were already DCSA-shaped (structured address and
+  `customer_identifiers`); equipment wasn't.
+  - **ISO 6346 on the container.** `containers.iso_equipment_code` from the type registry's `iso_code` (or the
+    standard mapping), or given (`isoEquipmentCode`; size and type follow from it when not given, and its
+    length must match). A container whose type didn't change keeps its code (a 40' high-cube reefer stays
+    45R1). Existing rows are converted on start-up; size and type stay.
+  - **45' units** (L5G1, a seeded 45HC type) are allowed and count 2 TEU, as a 40' does (my default, stated
+    on the mockup): `TEU_EXPR`, the linked-shipments summary and the client counts.
+  - **Seals** are a list of DCSA Seals with who applied them (CAR, SHI, CUS, VET — DCSA has no
+    phytosanitary): `containers.seals`, 15 characters each. `seal_number` stays the first seal; a client that
+    sends only `sealNumber` (or changes it beside an old list) replaces the first seal and keeps the rest.
+  - **Everything sent reads them** (`containerIso`, `dcsaSeals` in `lib/dcsa/codes.js`): the booking (one line
+    per ISO code, its reefer set point on that line), the Shipping Instructions, VGM, the House B/L and Track &
+    Trace. History logs the code and the seals.
+- **The carrier's Arrival Notice (AN 1.0, `lib/arrival-notices.js` as `ctx.arrivalNotices`, phase 8).**
+  - **Arrives** pushed (`POST …/arrival-notices`), announced (`POST …/arrival-notice-notifications`, then
+    `GET /arrival-notices` by B/L number, `dcsa-an-v1.js`) or asked for ("Ask the carrier again"). It lands on the
+    shipment whose Master or House B/L it names; one naming no shipment is answered with a WARN.
+  - **Versions.** Every version is kept (`arrival_notices`); the newest by `issueDateTime` is current, an older
+    one is kept and not applied.
+  - **What it does.** Its arrival date moves the sea leg's ETA (`applyVesselTime`: an estimate never undoes a
+    confirmed arrival). Its free time fills a container's empty days (DEM → destination free days, DET →
+    destination detention days; the most specific line: by container number, ISO code or group, or all);
+    a container that says otherwise is shown, and a person keeps theirs or uses the carrier's
+    (`POST …/arrival-notice/free-time`).
+  - **Charges** are shown with CargoDesk's charge code; one that looks already entered (same amount and
+    currency, or the same named code) is flagged. "Add as accruals" (`POST …/arrival-notice/accruals`) makes the
+    chosen ones BUY lines, source `arrival_notice`, collect or prepaid as the carrier says, each once.
+  - **AN01** takes the carrier's ETA, last free day, pickup and return points and release state.
+- **Port Call 2.0 (`lib/port-calls.js` as `ctx.portCalls`, push only, phase 8).** A forwarder isn't a party to
+  the port call; it takes the vessel's BERTH arrival and departure (ARRI/DEPA; planned, estimated or actual) at
+  `POST …/port-call/events` (its own path: Port Call's `/events` isn't Track & Trace's). Each reaches the sea legs
+  with that vessel (IMO) and voyage at that port and moves them through `applyVesselTime`; the newest copy of an
+  event wins (`port_call_events`). Everything else (pilotage, towage, moves, requested times) is acknowledged.
+- **One receiver for carrier pushes.** `routes/carrier-webhooks.js` `signedPush`: the integration (or the demo
+  carrier), its signature, the standard's request schema, the answer `{ feedbackElements }` with `API-Version`.
+  Track & Trace, Arrival Notice and Port Call all use it.
+- **Found and fixed on the way.**
+  - The Shipping Instructions sent reefer settings, which SI 3.0 doesn't define ("there are no Reefer info in
+    the Shipping Instructions"), so a reefer with a set temperature could never be submitted. They stay on
+    the booking; the demo carrier takes them from there.
+  - The booking's reefer set points had to follow the equipment lines' new key (the ISO code), or every reefer
+    booking would have lost its temperature.
+  - Port Call's ids are UUIDs (the demo carrier derives them from the call, so a later estimate replaces the
+    earlier one).
+- **The built-in carrier** also plays: amendments (`PUT/GET/DELETE …/amendment`; Test Tools: accept, decline,
+  originals surrendered for amendment, issue the amended B/L); Arrival Notices (`arrival-notices.js`: publish or
+  announce a version, `GET /arrival-notices`); berth calls as Port Call events. Its capabilities add
+  `arrival-notice` and `port-call`.
+- **Screens.**
+  - **Shipping Instructions → Master B/L card:** "Request amendment" previews what differs ("Keep the issued B/L" /
+    "Send amendment to …"); the amendment's state (waiting, with Cancel the amendment; accepted, return the
+    originals; declined, with the reason); "Amended" with each change; amendment steps.
+  - **Cargo:** the equipment type by its ISO code ("was 40HC"), the picker grouped 20/40/45 ft; the seals as a
+    list with who applied each (`＋ Add seal`); the cargo table shows the code and every seal.
+  - **Arrival Notice (Booking & Routing, import side, `ShipmentArrivalNoticePage.jsx`):** the key facts, the ETA
+    change, free time against the containers (Keep / Use), the charges (Add as accruals), Ask the carrier again,
+    Generate AN01 from it.
+  - **Test Tools → DCSA Carrier:** amendment actions and Publish / Announce Arrival Notice (Shipping Instructions &
+    B/L); "Send as a Port Call event" (Vessel times).
+- **Tests.**
+  - Backend: `dcsa-amend-equip-arrival` (53, new); `dcsa-standards` (55, the seal sources).
+  - Vitest: `MasterBlPanel` (7), `ShipmentArrivalNoticePage` (4, new).
+  - Cypress: `dcsa-amend-equip-arrival` (3, new).
+
+### 8.44 The House B/L audit's fixes, dangerous goods in the DCSA booking, the shipper's DG emergency contact (2026-10-29)
+
+The House B/L audit (report https://claude.ai/code/artifact/71144ea4-cd7a-4e3b-b20d-07ad17076ecd, epic TKT-J0SDVB,
+one ticket per finding) found 3 high, 6 medium and 5 low findings; the user said "fix all findings". Scoping the
+carrier booking audit (epic TKT-K7ICYT, not started) confirmed one more: the DCSA booking sent no dangerous goods.
+The server side of every finding is built; the new controls (originals returned, on-board notation, House vs
+Master, the shipper's approval, clauses, Void disabled with its reason, the customer's DG contact form, App
+Settings' Compliance tab removed) wait for the mockup https://claude.ai/code/artifact/12f412e9-21fb-4f1d-b9f5-a9940db68c44.
+L5 (several House B/Ls under one Master) is not done: it is the consolidation/LCL work deliberately not scheduled.
+
+- **One title to the cargo (H1, H2, H3, M5, M6, L1; `lib/house-bl.js`).**
+  - **The originals log counts both ways.** `ORIGINALS_HANDED_OVER` and the new `ORIGINALS_RETURNED`
+    (`POST …/house-bl/originals-returned`: how many, from whom, how, when) are `transport_document_events`;
+    `originalsOut(td)` → `{ out, back, outstanding, holder }`. A handover can't put out more than were issued and
+    aren't out already (L1).
+  - **Void of an issued House B/L** (`voidBlock(doc, user)`, called by the document void in
+    `routes/shipment-ops.js`): admin only (M6); refused while originals are outstanding, for a live eBL (PENDING
+    or ISSU: it comes back through its platform), after surrender for delivery, and once the cargo was released
+    against it (H1). A draft voids freely, as before.
+  - **An eBL isn't issued while paper originals are out** (`lib/ebl.js`, H2). **"Mark surrendered" refuses a
+    live eBL** (H3): it is surrendered only on its platform, through its SREQ. **A telex release at origin needs
+    every original back** (M5).
+- **Shipped on board means every container (M1, L2).** `onBoardFacts(shipmentId)` takes each container's first
+  Loaded (or Sailed) event; the B/L is shipped on board only once every container has one, dated by the last, in
+  the POL's local day (`localDay(unlocode)`, `lib/timezones`). Readiness says which containers aren't loaded. The
+  issue date is the issuing office's local day.
+- **The issuer must be complete (M2).** Readiness asks for the export office's legal entity's SCAC and street
+  address (the DCSA document names its issuer by them); `prepareIssue` refuses a DCSA document with errors instead
+  of issuing it. Tests provision a complete entity with `ensureIssuingEntity` (`tests/helpers/house-bl.mjs`).
+- **The on-board notation (M4).** `POST …/house-bl/on-board-notation` on an issued received-for-shipment House B/L
+  once every container is aboard: the dated notation (UCP 600 art. 20) on the same B/L, no new version
+  (`transport_documents.on_board_notation_date/_at/_by`); the DCSA document and the BL01 print carry it; History
+  logs `HOUSE_BL_ON_BOARD_NOTATION`. Refused for an eBL (the notation is made on its platform).
+- **House against Master (M3).** `houseVsMaster(shipmentId)` compares, per container, seals, gross weight and
+  packages of the carrier's Master B/L (`role='MASTER'`) with the House (as issued, or as the draft would issue
+  now). GET `…/house-bl` returns it as `houseVsMaster`, GET `…/master-bl` as `houseCheck`. It warns; it doesn't
+  block (a difference is a classic ICS2/AMS hold at destination).
+- **The shipper's approval of the draft (L3).** `POST …/house-bl/approval/send` emails the draft PDF through the
+  export office's SMTP (`ctx.sendViaOffice`), or records it as sent with a note when the office has none or the
+  email fails; `POST …/approval/answer` records approved or changes asked (with what). The approval belongs to
+  the draft it was sent with: a newer draft reads `STALE`. My default, stated on the mockup: issuing without
+  approval asks to confirm rather than blocking.
+- **Clauses (L4).** Up to 10 clauses added to the draft (`transport_documents.extra_clauses`, JSON list), printed
+  under the fixed FCL clauses and sent in the DCSA document's `carrierClauses`.
+- **Dangerous goods in the DCSA booking** (`routes/edi.js` `dcsaBookingExtras`, `dcsa-bkg-v2.js`
+  `dgCommodities`). A DG container (`is_dg`, or with a DG package) needs a UN number, proper shipping name, IMO
+  class and gross weight; they go as `outerPackaging.dangerousGoods` on the equipment line of its ISO code, merged
+  by UN number; Booking 2.0's yes/no flags CargoDesk doesn't record go as `false`. Anything missing refuses the
+  send and the update (400), naming the container and what it lacks.
+- **The emergency contact is the shipper's own (the user's call, 2026-10-29: "Shipper only", "All four DCSA
+  fields").**
+  - **Stored on the customer**: `customers.dg_emergency_contact`, `_phone`, `_provider`, `_reference`, in the main
+    app and in the customer service (`services/customers/server.js`, bulk import included); `mapCustomer` →
+    `dgEmergencyContact` `{ contact, phone, provider, referenceNumber }` or null.
+  - **Written only when the body carries `dgEmergencyContact`** (`dgContactOf`, the same in both places): a save
+    without it keeps what is stored (customer writes replace the whole row); null or all blank clears it; a name
+    and a 24-hour phone are required together, the phone must be a phone number, the lengths are DCSA's.
+  - **Used by** the booking (`emergencyContactDetails`, all four fields) and DG01 (`buildDGDeclHtml`). It is the
+    shipment's `shipper_id`, even when an NVOCC is the Master's shipper. **No fallback**: without it a DG booking
+    is refused and DG01 isn't generated, both saying to add it to the shipper's profile; the old CHEMTREC/CANUTEC
+    text is gone.
+  - **App Settings' DG Compliance Address is retired** (TKT-DPLQTV, 2026-08): its `dg_compliance_*` keys are no
+    longer seeded or read. Rows already saved stay in `app_settings`, unread and not copied to any customer.
+- **Tests.**
+  - Backend: `house-bl-audit-fixes` (36, new); `carrier-booking` (168: the DG declaration, the shipper's
+    contact, refusals); `container-packages` (46: the customer's DG contact round trip replaces the settings one);
+    `customer-service-toggle` (54: the same through the customer service).
+  - Vitest: `houseBlPrint` (13: clauses, the notation), `dgDeclaration` (3, new).
+  - Cypress: `house-bl` (6) now provisions a complete legal entity for the default export office itself, as
+    `ensureIssuingEntity` does; CI's empty database has no SCAC on it.
+
 ## 9. Data Flow Diagrams
 
 The four diagrams in this section (shipment creation with auto-screening; contract recalculation;
@@ -4700,6 +4875,27 @@ here:
 - **`pollShippingInstructionsSweep()`** (routes/shipping-instructions.js). Every 15 minutes it asks the carrier for
   the state of Shipping Instructions sent and not heard from since, and applies it through
   `applyShippingInstructionsState`. A repeat of the same state records nothing.
+
+**Added 2026-10-28 (the remaining DCSA phases, §8.43).**
+
+- **`applyTransportDocumentState`, amendments** (routes/master-bl.js). An `amendedTransportDocumentStatus` change logs
+  `MASTER_BL_AMENDMENT_*`; DECLINED opens `master_bl_amendment_declined` (closed by the next request); the document
+  reaching `PENDING_SURRENDER_FOR_AMENDMENT` opens `master_bl_amendment_originals` (closed when it moves on); the
+  amended B/L issued records its changes and clears the pending amendment. The poll also reads `GET …/amendment`.
+- **`ctx.arrivalNotices.apply(shipmentId, notice)`** (lib/arrival-notices.js). Triggers: the carrier's
+  `POST …/arrival-notices`, a lightweight notification (followed by a GET), "Ask the carrier again". Moves the ETA,
+  fills empty free days. Idempotent: a version already held changes nothing; an older one is kept, not applied.
+- **`ctx.portCalls.receive(events)`** (lib/port-calls.js). Trigger: `POST …/port-call/events`. Berth arrivals and
+  departures move the legs; an older copy of an event does nothing.
+
+**Added 2026-10-29 (the House B/L audit's fixes, §8.44).** No new timer or sweep. Writes with side effects elsewhere:
+
+- **`ctx.houseBl.addOnBoardNotation`** (`POST …/house-bl/on-board-notation`). Rebuilds the stored DCSA document
+  (`transport_documents.payload`) with the notation and logs `HOUSE_BL_ON_BOARD_NOTATION` in the shipment's History.
+- **`ctx.houseBl.sendForApproval`** (`POST …/house-bl/approval/send`). Emails the draft PDF through the export office's
+  SMTP when it has one. A newer draft makes the recorded approval `STALE` (computed on read, nothing written).
+- **The document void** (`routes/shipment-ops.js`). For an issued House B/L it asks `ctx.houseBl.voidBlock` first;
+  `bl-surrender` asks `originalsOut` (origin) and refuses a live eBL.
 
 ---
 

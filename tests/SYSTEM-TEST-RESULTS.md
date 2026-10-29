@@ -917,3 +917,55 @@ worked in yet (PENDING_UPDATE) shown as Submitted, events applied out of order (
 retraction that left its leg time and container event behind, a redraft that kept the old approval, Cargo Released
 completed by a release document as well as the B/L, a boot crash when old BL01 rows break the new unique index, and
 the VGM history lost when a container was removed.
+
+### 2026-10-29: The remaining DCSA phases (Master B/L amendment, equipment and seals, Arrival Notice, Port Call; ARCHITECTURE.md §8.43)
+
+| Check | Result |
+|---|---|
+| New `tests/dcsa-amend-equip-arrival.test.js` (the amendment round trip; ISO codes, 45' units, seals with their source, the booking by ISO code with its reefer set point, the SI with no reefer settings; the Arrival Notice pushed and announced, versions, ETA, free time filled and settled, accruals; Port Call berth times) | **53/53** |
+| `dcsa-standards` (+ the seal sources against eBL 3.0's Seal.source) | **55/55** |
+| `carrier-booking` (the booking's equipment and DG lines now keyed by ISO code: 45G1, 22G1) | **161/161** (first pass 157/161, the old keys) |
+| Full backend suite, file by file (CI rate-limit settings, all services up) | **115/115** files |
+| Vitest | **378/378** in 33 files (`MasterBlPanel` 7, new `ShipmentArrivalNoticePage` 4) |
+| Full Cypress suite | **293/293** in 37 specs (new `dcsa-amend-equip-arrival` 3); see below |
+| Build | OK |
+
+The full Cypress run first ended 291/293: `carrier-booking-negative` hit the License Agreement startup-gate race (the
+modal covering the page). It touches none of the new screens and passed 5/5 on its own straight after.
+
+Found and fixed on the way:
+- The Shipping Instructions sent reefer settings, which SI 3.0 doesn't define, so a reefer with a set temperature
+  could never be submitted. They stay on the booking.
+- The booking's reefer set points and DG summary had to follow the equipment lines' new key (the ISO code); the
+  reefer one would otherwise have dropped every set point.
+- A client re-sending a container with its old seal list and a changed `sealNumber` kept the old seal; the changed
+  number now replaces the first seal.
+- Port Call ids are UUIDs (the spec says so).
+- CLAUDE.md had lost the §8.42 routes entries and patterns paragraph (a slip in that day's update): restored with §8.43's.
+
+### 2026-10-29: The House B/L audit's fixes, dangerous goods in the DCSA booking, the shipper's DG emergency contact (ARCHITECTURE.md §8.44)
+
+| Check | Result |
+|---|---|
+| New `tests/house-bl-audit-fixes.test.js` (originals out and back and what they block; void admin only and its refusals; a live eBL; shipped on board by every container and the local day; the issuer's SCAC; the on-board notation; the shipper's approval and STALE; clauses; House vs Master) | **36/36** |
+| `carrier-booking` (DG declared per ISO line, refusals naming what's missing, the shipper's contact with all four fields, a valid Booking 2.0 request) | **168/168** |
+| `container-packages` (the customer's DG contact round trip: kept, refused, cleared) | **46/46** |
+| `customer-service-toggle` (the same through the customer service, remote mode) | **54/54** |
+| Full backend suite, file by file (CI rate-limit settings, all services up) | **116/116** files |
+| Vitest | **383/383** in 34 files (new `dgDeclaration` 3; `houseBlPrint` 13) |
+| `house-bl.cy.js` with the default export office's SCAC blanked first (as on CI's empty database) | **6/6**; the spec's own setup put the SCAC back |
+| Full Cypress suite | **293/293** in 37 specs, first run |
+| Build | OK |
+
+Found and fixed on the way:
+- The readiness rule for the issuer's SCAC would have failed `house-bl.cy.js` on CI: it passed locally only because a
+  backend test had already given the dev database's Rotterdam Branch a SCAC. The spec now provisions a complete legal
+  entity itself, like `ensureIssuingEntity`.
+- The User Manual said any user could void an issued House B/L, that the first loaded container dates it, and that a
+  telex release needs no originals back; corrected to the new rules.
+- `customer-hierarchy` failed 2 checks once in a batch run and passed 17/17 on its own straight after and in the full run;
+  it doesn't touch the changed code.
+
+Not covered yet: the new controls (originals returned, the on-board notation, House vs Master, the shipper's approval,
+clauses, Void disabled with its reason, the customer's DG contact form, App Settings without its Compliance tab) wait for
+mockup 12f412e9; until then their rules are tested through the API only.

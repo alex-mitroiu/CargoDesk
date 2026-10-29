@@ -57,6 +57,7 @@ import ShipmentAccountingGpPage from "./pages/shipments/ShipmentAccountingGpPage
 import ShipmentCarrierBookingPage from "./pages/shipments/ShipmentCarrierBookingPage";
 import ShipmentCustomsFilingPage from "./pages/shipments/ShipmentCustomsFilingPage";
 import ShipmentShippingInstructionsPage from "./pages/shipments/ShipmentShippingInstructionsPage";
+import ShipmentArrivalNoticePage from "./pages/shipments/ShipmentArrivalNoticePage";
 import ShipmentHistoryPage from "./pages/shipments/ShipmentHistoryPage";
 import ShipmentHeaderBar from "./components/shared/ShipmentHeaderBar";
 import DashboardPage       from "./pages/DashboardPage";
@@ -2360,6 +2361,10 @@ function App() {
 
         {page === "shipment-shipping-instructions" && selectedShipment && (
           <ShipmentShippingInstructionsPage shipment={selectedShipment} containers={containers} />
+        )}
+
+        {page === "shipment-arrival-notice" && selectedShipment && (
+          <ShipmentArrivalNoticePage shipment={selectedShipment} navigate={navigate} />
         )}
 
         {page === "kanban"      && isEnabled("kanban")    && (

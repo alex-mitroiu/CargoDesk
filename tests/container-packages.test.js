@@ -176,24 +176,25 @@ async function login() {
     const afterDelete = await request("GET", `/api/shipments/${shipmentId}/containers/${containerId}/packages`, null, token);
     assert("tree is empty after cascade delete", Array.isArray(afterDelete.body) && afterDelete.body.length === 0);
 
-    console.log("\nDG Compliance Address settings (org-wide, TKT-DPLQTV)");
-    const settingsBefore = await request("GET", "/api/settings", null, token);
-    assert("settings GET returns 200", settingsBefore.status === 200);
-    assert("dg_compliance_* keys are seeded", "dg_compliance_contact_name" in settingsBefore.body
-      && "dg_compliance_phone" in settingsBefore.body && "dg_compliance_email" in settingsBefore.body
-      && "dg_compliance_address" in settingsBefore.body);
-    const savedContactName = settingsBefore.body.dg_compliance_contact_name;
-    const savedPhone       = settingsBefore.body.dg_compliance_phone;
-    const settingsPut = await request("PUT", "/api/settings",
-      { dg_compliance_contact_name: "Test DG Contact", dg_compliance_phone: "+1 555-0100" }, token);
-    assert("settings PUT returns 200", settingsPut.status === 200);
-    const settingsAfter = await request("GET", "/api/settings", null, token);
-    assert("dg_compliance_contact_name round-trips", settingsAfter.body.dg_compliance_contact_name === "Test DG Contact");
-    assert("dg_compliance_phone round-trips", settingsAfter.body.dg_compliance_phone === "+1 555-0100");
-    // Restore to avoid leaving test data in a shared setting that other sessions/manual
-    // verification depend on.
-    await request("PUT", "/api/settings",
-      { dg_compliance_contact_name: savedContactName || "", dg_compliance_phone: savedPhone || "" }, token);
+    // The DG emergency contact is the shipper's own, on its customer profile (2026-10-29, the user's call); the
+    // org-wide App Settings one (TKT-DPLQTV) is gone.
+    console.log("\nThe shipper's DG emergency contact, on its customer profile");
+    const dgShipperBase = { companyName: `Hamburg Chemie Export GmbH ${Date.now()}`, address1: "Reiherstieg 18", city: "Hamburg",
+      postalCode: "21107", countryIso2: "DE", email: "versand@hamburgchemie.example" };
+    const dgShipper = await request("POST", "/api/customers", { ...dgShipperBase,
+      dgEmergencyContact: { contact: "Hamburg Chemie Notfall", phone: "+49 40 7533 9100", provider: "NRC Germany", referenceNumber: "HC-DG-0091" } }, token);
+    assert("created with its DG emergency contact (201)", dgShipper.status === 201
+      && dgShipper.body.dgEmergencyContact?.contact === "Hamburg Chemie Notfall" && dgShipper.body.dgEmergencyContact?.provider === "NRC Germany", JSON.stringify(dgShipper.body));
+    const dgKept = await request("PUT", `/api/customers/${dgShipper.body.id}`, { ...dgShipperBase, phone: "+49 40 7533 0" }, token);
+    assert("a profile save that doesn't mention it keeps it", dgKept.status === 200
+      && dgKept.body.dgEmergencyContact?.phone === "+49 40 7533 9100" && dgKept.body.dgEmergencyContact?.referenceNumber === "HC-DG-0091", JSON.stringify(dgKept.body?.dgEmergencyContact));
+    const dgBadPhone = await request("PUT", `/api/customers/${dgShipper.body.id}`, { ...dgShipperBase, dgEmergencyContact: { contact: "Notfall", phone: "call the office" } }, token);
+    assert("a phone that isn't a phone number is refused (400)", dgBadPhone.status === 400 && /phone number/.test(dgBadPhone.body?.error), JSON.stringify(dgBadPhone.body));
+    const dgNoName = await request("PUT", `/api/customers/${dgShipper.body.id}`, { ...dgShipperBase, dgEmergencyContact: { phone: "+49 40 7533 9100", provider: "NRC Germany" } }, token);
+    assert("a contact with no name is refused (400)", dgNoName.status === 400, JSON.stringify(dgNoName.body));
+    const dgCleared = await request("PUT", `/api/customers/${dgShipper.body.id}`, { ...dgShipperBase, dgEmergencyContact: null }, token);
+    assert("null clears it", dgCleared.status === 200 && dgCleared.body.dgEmergencyContact === null, JSON.stringify(dgCleared.body?.dgEmergencyContact));
+    await request("DELETE", `/api/customers/${dgShipper.body.id}`, null, token);
 
     console.log("\nCleanup");
     await request("DELETE", `/api/shipments/${shipmentId}`, null, token);

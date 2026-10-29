@@ -508,6 +508,23 @@ module.exports = function customersRoutes(app, ctx) {
     return false;
   }
 
+
+  // The shipper's 24-hour dangerous-goods emergency contact (2026-10-29, the user's call: on the shipper's own
+  // profile, the only source — DCSA EmergencyContactDetails: contact, phone, provider, referenceNumber). Written
+  // only when the body carries `dgEmergencyContact` (null or all blank clears it); a save without it keeps what
+  // is stored. → null (unchanged) | { cols: [contact, phone, provider, reference] } | { error }
+  const dgContactOf = body => {
+    if (!body || !Object.prototype.hasOwnProperty.call(body, "dgEmergencyContact")) return null;
+    const c = body.dgEmergencyContact || {};
+    const t = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+    const contact = t(c.contact, 255), phone = t(c.phone, 30), provider = t(c.provider, 255), reference = t(c.referenceNumber, 255);
+    if (!contact && !phone && !provider && !reference) return { cols: ["", "", "", ""] };
+    if (!contact || !phone) return { error: "A dangerous goods emergency contact needs a name and a 24-hour phone number" };
+    if (!/^\+?[0-9][0-9 ().\-\/]{5,29}$/.test(phone)) return { error: "The emergency phone must be a phone number: digits, with spaces or + ( ) - . / where needed" };
+    return { cols: [contact, phone, provider, reference] };
+  };
+  const DG_CONTACT_SQL = "UPDATE customers SET dg_emergency_contact=$1, dg_emergency_phone=$2, dg_emergency_provider=$3, dg_emergency_reference=$4 WHERE id=$5";
+
   app.post("/api/customers", auth(), customerWrite, async (req, res) => {
     if (await isRemote()) {
       try {
@@ -532,6 +549,8 @@ module.exports = function customersRoutes(app, ctx) {
       return err(res, "Parent customer not found");
     if (!validCoord(latitude, -90, 90)) return err(res, "Latitude must be between -90 and 90");
     if (!validCoord(longitude, -180, 180)) return err(res, "Longitude must be between -180 and 180");
+    const dgContact = dgContactOf(req.body);
+    if (dgContact?.error) return err(res, dgContact.error);
     const id = `CUS-${uid()}`;
     const createdAt = new Date().toISOString();
     const ccU = countryIso2.toUpperCase().trim();
@@ -555,6 +574,7 @@ module.exports = function customersRoutes(app, ctx) {
       [id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt, resolvedCurrency,
            cl, ctd, idd, !!creditHold, creditHold ? creditHoldReason.trim() : '', !!reminderEnabled, rid, parentCustomerId || null,
            !!classifiedLocation, lat, lng, !!isNvocc, isNvocc ? fmcNumber.trim() : '', bbd, psd, holidayUnlocode.trim().toUpperCase()]);
+    if (dgContact?.cols) await query(DG_CONTACT_SQL, [...dgContact.cols, id]);
     if (sanctionsMap.size > 0) await screenCustomer(id);
     const [row] = await query(`${CUST_JOIN} WHERE c.id=$1`, [id]);
     ok(res, mapCustomer(row), 201);
@@ -594,6 +614,8 @@ module.exports = function customersRoutes(app, ctx) {
     }
     if (!validCoord(latitude, -90, 90)) return err(res, "Latitude must be between -90 and 90");
     if (!validCoord(longitude, -180, 180)) return err(res, "Longitude must be between -180 and 180");
+    const dgContact = dgContactOf(req.body);
+    if (dgContact?.error) return err(res, dgContact.error);
     // Credit Control Depth, third pass (TKT-GLWMFP) — releasing a credit_hold is exclusively
     // the shipment's own lane trade_manager's call, never admin/operator, no exception. The
     // generic PUT is otherwise the normal, unrestricted profile-edit path (SETTING a hold, or
@@ -625,6 +647,7 @@ module.exports = function customersRoutes(app, ctx) {
            !!classifiedLocation, lat, lng, !!isNvocc, isNvocc ? fmcNumber.trim() : '',
            bbd, psd, holidayUnlocode.trim().toUpperCase(), req.params.id]);
     if (updated.length === 0) return err(res, "Not found", 404);
+    if (dgContact?.cols) await query(DG_CONTACT_SQL, [...dgContact.cols, req.params.id]);
     if (sanctionsMap.size > 0) await screenCustomer(req.params.id);
     const [row] = await query(`${CUST_JOIN} WHERE c.id=$1`, [req.params.id]);
     ok(res, mapCustomer(row));

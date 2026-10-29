@@ -50,7 +50,7 @@ export const teuOf = (size, type, defsByKey) => {
     const override = defsByKey.get(`${size}|${type}`);
     if (override != null) return override;
   }
-  return size === "40" ? 2 : 1;
+  return size === "40" || size === "45" ? 2 : 1;
 };
 // Built once from GET /api/container-type-definitions (fetched at App.jsx's top level alongside
 // carriers/shipments/containers/allocations) and passed down wherever teuOf needs the 3rd arg.
@@ -60,6 +60,10 @@ export const buildTeuLookup = (defs = []) => {
   return m;
 };
 
+// Each CargoDesk type's ISO 6346 code (DCSA phase 3, 2026-10-28; lib/dcsa/codes.js holds the same), for
+// the static fallback list below — the Equipment registry's own isoCode wins when it's reachable.
+const ISO_OF_CODE = { "20DC": "22G1", "40DC": "42G1", "40HC": "45G1", "20RF": "22R1", "40RF": "42R1", "20OT": "22U1", "40OT": "42U1",
+  "20FR": "22P1", "40FR": "42P1", "20TK": "22T1", "40TK": "42T1", "45HC": "L5G1" };
 export const CONTAINER_OPTIONS = [
   { code: "20DC", size: "20", type: "DC", teu: 1, label: "20ft Dry Container", desc: "Standard dry cargo — general goods, non-temperature-sensitive" },
   { code: "40DC", size: "40", type: "DC", teu: 2, label: "40ft Dry Container", desc: "Standard dry cargo — general goods, non-temperature-sensitive" },
@@ -72,7 +76,8 @@ export const CONTAINER_OPTIONS = [
   { code: "40FR", size: "40", type: "FR", teu: 2, label: "40ft Flat Rack",     desc: "Collapsible ends — heavy machinery, vehicles, oversized loads" },
   { code: "20TK", size: "20", type: "TK", teu: 1, label: "20ft Tank",          desc: "Liquid bulk — chemicals, food-grade liquids, petroleum products" },
   { code: "40TK", size: "40", type: "TK", teu: 2, label: "40ft Tank",          desc: "Liquid bulk — chemicals, food-grade liquids, petroleum products" },
-];
+  { code: "45HC", size: "45", type: "HC", teu: 2, label: "45ft High Cube",     desc: "Extra length and height (45ft × 9ft 6in) — high-volume, light cargo" },
+].map(o => ({ ...o, iso: ISO_OF_CODE[o.code] || "" }));
 
 export const TIMEZONES = [
   "UTC",

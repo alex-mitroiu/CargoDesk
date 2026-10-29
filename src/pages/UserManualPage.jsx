@@ -294,14 +294,23 @@ const UserManualPage = () => {
         <Step n={1}>Add a container by hand</Step>
         <StepBody>
           <P>Open <Tag>Cargo</Tag> in the shipment's sidebar and click <Tag>+ Add Container</Tag>.
-            Give it a container number, size (20ft = 1 TEU, 40ft = 2 TEU), and equipment type
-            (DC, RF, OT, FR, TK).</P>
+            Give it a container number and an equipment type. Each type shows its ISO 6346 code first
+            (45G1 for a 40ft high cube, L5G1 for a 45ft high cube, 22R1 for a 20ft reefer) — the code the
+            carrier, the VGM and the B/L use — with CargoDesk's own code (40HC) beside it. 20ft is 1 TEU;
+            40ft and 45ft are 2.</P>
+          <P>Add its seals under <Tag>Seals</Tag>: each number with who applied it (carrier, shipper,
+            customs or veterinary). <Tag>＋ Add seal</Tag> adds another, for example when customs reseal a
+            container after an inspection. The Shipping Instructions, the VGM and the B/L list every
+            seal.</P>
         </StepBody>
         <Step n={2}>Describe what's inside</Step>
         <StepBody>
           <P>Click into a container and add the cargo itself — pallets, boxes, or crates, each with
             a description, quantity, and (once you know it) a declared value. This is also where
-            you flag a container as Dangerous Goods and set its IMDG class if it needs one.</P>
+            you flag a container as Dangerous Goods and set its IMDG class if it needs one. A
+            booking request for dangerous goods also needs each DG container's UN number, proper
+            shipping name and gross weight, and the shipper's 24-hour emergency contact; the
+            request is refused, saying what's missing, until they're there.</P>
           <Screenshot src={imgCargoList} alt="The Cargo page showing a container tree" caption="The Cargo page — every container on the shipment on the left, its own cargo breakdown underneath it. Both '+ Add Container' and '⬆ Import Containers' sit right above the list." />
         </StepBody>
         <Step n={3}>Or import a whole spreadsheet at once</Step>
@@ -856,15 +865,20 @@ const UserManualPage = () => {
           consignee reads <em>"TO ORDER OF {"{NVOCC}"}"</em>, and each document's generated HTML
           cross-references the other's B/L number, exactly matching how the two are used in practice.</P>
         <P>An issued House B/L is a document of title, so it only moves forward. Confirming a BL01 issues
-          it; after that it can't be deleted or set back to draft. If it's wrong, click{" "}
-          <strong>Void</strong> on the Documents page and give a reason: it stays on record, marked
-          Voided, and you can issue a new one. A shipment has one issued House B/L at a time, and
+          it; after that it can't be deleted or set back to draft. If it's wrong, an admin clicks{" "}
+          <strong>Void</strong> on the Documents page and gives a reason: it stays on record, marked
+          Voided, and you can issue a new one. Void is refused while any original is still out
+          (record them returned first), for a live eBL (it comes back through its platform), and
+          once the B/L was surrendered for delivery or the cargo released against it, so two
+          titles to the same cargo never exist. A shipment has one issued House B/L at a time, and
           generating a new draft replaces the previous draft.</P>
         <P>Issuing checks the B/L is complete first and, if not, lists what is missing: parties with
           their addresses, a notify party, vessel and voyage, the carrier's confirmed booking, the
-          release type, and per container the seal, the number and kind of packages, the weight,
-          description and HS code. A B/L that says <em>Shipped on board</em> needs the container's
-          Loaded event; before loading, issue it as <em>Received for shipment</em>. At destination,
+          release type, the issuing legal entity's SCAC and address, and per container the seal, the
+          number and kind of packages, the weight, description and HS code. A B/L that says{" "}
+          <em>Shipped on board</em> needs every container loaded and is dated by the last one's
+          loading, in the port's own date; until then, issue it as <em>Received for shipment</em>. An
+          eBL isn't issued while paper originals are out. At destination,
           Mark Released waits until the originals are surrendered, collect charges are paid and the
           consignee isn't on credit hold; an admin or finance user can override with a reason. The
           Delivery Order can only be generated once the cargo is released.</P>
@@ -872,12 +886,12 @@ const UserManualPage = () => {
         <P>The top of a shipment's <Tag>Documents</Tag> page shows the House B/L: where it is (Draft,
           Issued, Surrendered, Released), its record and history, and the next step.</P>
         <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
-          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Before issue</strong> — what is still missing, each with a link to the page where you fix it. Choose what the B/L says: <em>Shipped on board</em> (dated by the container's Loaded event, or a date you type) or <em>Received for shipment</em>; how many originals and non-negotiable copies; and whether the freight shows as <em>as arranged</em> or with the shipment's charges. <Tag>Generate draft</Tag> makes a copy to check or send for approval (it says the number is assigned at issue); <Tag>Issue House B/L</Tag> takes the number, prints it dated today and issues it.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Before issue</strong> — what is still missing, each with a link to the page where you fix it. Choose what the B/L says: <em>Shipped on board</em> (dated by the last container's loading, or a date you type) or <em>Received for shipment</em>; how many originals and non-negotiable copies; and whether the freight shows as <em>as arranged</em> or with the shipment's charges. <Tag>Generate draft</Tag> makes a copy to check or send for approval (it says the number is assigned at issue); <Tag>Issue House B/L</Tag> takes the number, prints it dated today and issues it.</li>
           <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>The B/L number</strong> — taken from the issuing office's series when you issue (e.g. RTMHBL2600123: the prefix, the year, a sequence). An admin sets the prefix under Organisation → Offices → Edit. A voided number is never used again. For a B/L already issued on paper, type its number on <Tag>Conditions</Tag> first.</li>
-          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>After issue, on paper</strong> — log who received the originals (<Tag>＋ Record handover</Tag>: to whom, in person, by courier with its tracking number, or by mail). Record them as presented at destination (an Original B/L, with who presented them) or surrendered at origin (a telex release: the import office gets a task telling it to release without originals), then <Tag>Release cargo</Tag>. The release dialog shows its three checks; an admin or finance user can override with a reason.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>After issue, on paper</strong> — log who received the originals (<Tag>＋ Record handover</Tag>: to whom, in person, by courier with its tracking number, or by mail). Record them as presented at destination (an Original B/L, with who presented them) or surrendered at origin (a telex release, once every original handed over is back: the import office gets a task telling it to release without originals), then <Tag>Release cargo</Tag>. A live eBL is surrendered only on its platform. The release dialog shows its three checks; an admin or finance user can override with a reason.</li>
           <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Corrections</strong> — if the shipment changes after issue, the panel says what no longer matches. <Tag>Surrender for amendment</Tag> records the originals coming back, with the reason; then issue version 2, which keeps the same number and prints "VERSION 2 · AMENDED". An eBL is corrected by its holder asking on the platform.</li>
           <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Or electronic</strong> — <Tag>Issue as eBL</Tag> sends it to an eBL platform, issued to the shipper by its platform id (Customers → Identifiers, type WAVE, CARX…). The issuing legal entity needs a SCAC, a street address and a phone or email (Organisation → Branches). The holder endorses it on the platform; when the consignee asks to surrender it for delivery, CargoDesk checks payment and credit and releases the cargo.</li>
-          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Void, with a reason</strong> — takes an issued House B/L out of use; it stays on record and a new one can be issued.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Void, with a reason</strong> (admin only) — takes an issued House B/L out of use; it stays on record and a new one can be issued. Refused while originals are out, for a live eBL, and after surrender for delivery or release.</li>
         </ul>
         <P>Packages for the B/L are entered on each container (Cargo): <strong>Packages</strong> (how many) and
           <strong> Kind of packages</strong> (carton, pallet, …). They are separate from the cargo manifest
@@ -969,6 +983,22 @@ const UserManualPage = () => {
           advance filing needs House-level data (EU ICS2, US AMS, Mercosur). Its packages then need their
           package code, and its HS code the destination tariff's digits; the submit tells you if either is
           missing.</P>
+        <H3>Amending the issued Master B/L</H3>
+        <P>Once the carrier has issued the Master B/L, <Tag>Send update</Tag> is closed. To correct it, fix
+          the shipment first (say customs replaced a seal, or the notify party changed), then click 
+          <Tag>Request amendment</Tag> on the card. CargoDesk shows what differs between the issued B/L and the
+          shipment now; nothing is sent if nothing does. <Tag>Send amendment</Tag> sends the issued B/L with
+          your corrections; everything the carrier decides stays as issued.</P>
+        <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Waiting:</strong> until the carrier works on it, <Tag>Cancel the amendment</Tag>
+            withdraws it.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Declined:</strong> the card shows the carrier's reason and a task goes to the export
+            office. Correct the shipment again and request a new amendment, or settle it with the carrier.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Accepted:</strong> return the original B/Ls to the carrier (a task reminds the export
+            office until it has them). The carrier then issues the amended B/L under the same number, and the
+            card lists what changed.</li>
+        </ul>
+        <P>A carrier that doesn't take amendments through DCSA is named as such; ask it directly.</P>
         <Callout type="tip">The Container/Seal Detail table on this page flags, in amber, any
           container still missing a seal number, marks & numbers, or cargo description — worth a
           glance before you submit, since those fields render blank on the generated document
@@ -1003,8 +1033,31 @@ const UserManualPage = () => {
           container shows its reason and a one-click <Tag>Reset</Tag> back to Pending for correction. The
           page's own Message Thread shows every declaration and response for the shipment in one place.</P>
         <Callout type="note">Once every container on a shipment has reached Submitted VGM (or, more
-          precisely now, once Shipping Instructions is actually submitted), the shipment's{" "}
+          precisely now, once Shipping Instructions is actually submitted), the shipment's 
           <Tag>SI Submitted</Tag> milestone auto-completes — whichever of the two happens first.</Callout>
+
+        <H2>The carrier's Arrival Notice</H2>
+        <P>On the import side, <Tag>Booking &amp; Routing → Arrival Notice</Tag> shows the carrier's DCSA Arrival
+          Notice for the shipment's Master or House B/L. It arrives on its own when the carrier publishes it; 
+          <Tag>Ask the carrier again</Tag> fetches it by the B/L number. A new version replaces the old one, and
+          History keeps both.</P>
+        <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Key facts:</strong> the vessel, when it arrives, where to pick up (with the pickup
+            number), where to return the empties, and whether freight, the original B/L and customs are
+            released. The arrival date moves the shipment's ETA, unless the vessel has already been reported
+            as arrived.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Free time:</strong> the carrier's demurrage and detention days for each container.
+            Empty free days on a container are filled in. Where the container already says something else,
+            the row shows both: <Tag>Keep</Tag> yours or <Tag>Use</Tag> the carrier's.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Charges:</strong> what the carrier will collect at destination. Tick the ones to add and
+            click <Tag>Add as accruals</Tag>: each becomes a BUY cost from the carrier. A charge that looks
+            already entered (same amount, or the same charge) is flagged and starts unticked.</li>
+        </ul>
+        <P><Tag>Generate AN01 from it</Tag> builds CargoDesk's own arrival notice to the consignee with the
+          carrier's arrival date, last free day, pickup and return points.</P>
+        <Callout type="tip">The vessel's arrival and departure at the berth can also come from the port call
+          (DCSA Port Call). They move the shipment's sea leg like the carrier's own times do, and never undo a
+          confirmed one.</Callout>
       </div>
     ),
     mdm: (

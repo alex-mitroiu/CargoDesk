@@ -21,10 +21,11 @@ const { mainLegIndex } = require("./lib/mainLeg");
 const isoWeek = require("./lib/iso-week");
 // The generic DCSA adapter: Booking 2.0, Track & Trace 3.0 and Commercial Schedules (dcsa-bkg-v2), with
 // Shipping Instructions and the transport document 3.0 (dcsa-ebl-v3), VGM 1.0 (dcsa-vgm-v1) and Operational
-// Vessel Schedules 3.0 (dcsa-ovs-v3) under the same key, so one carrier integration row speaks every
-// standard its capabilities name.
+// Vessel Schedules 3.0 (dcsa-ovs-v3) and Arrival Notice 1.0 (dcsa-an-v1) under the same key, so one carrier
+// integration row speaks every standard its capabilities name.
 const dcsaBkgV2Adapter = { ...require("./lib/carrier-integrations/dcsa-bkg-v2"), ...require("./lib/carrier-integrations/dcsa-ebl-v3"),
-  ...require("./lib/carrier-integrations/dcsa-vgm-v1"), ...require("./lib/carrier-integrations/dcsa-ovs-v3") };
+  ...require("./lib/carrier-integrations/dcsa-vgm-v1"), ...require("./lib/carrier-integrations/dcsa-ovs-v3"),
+  ...require("./lib/carrier-integrations/dcsa-an-v1") };
 registerCarrierAdapter(dcsaBkgV2Adapter.adapterKey, dcsaBkgV2Adapter);
 const demoSpotV1Adapter = require("./lib/carrier-integrations/demo-spot-v1");
 registerCarrierAdapter(demoSpotV1Adapter.adapterKey, demoSpotV1Adapter);
@@ -645,7 +646,9 @@ const SETTING_DEFAULTS = {
   // defaults but were missed when SETTING_DEFAULTS was first ported over during the server.js
   // core conversion — caught live via the full test-suite pass (container-packages.test.js's own
   // "dg_compliance_* keys are seeded" assertion has nothing to find on a genuinely fresh
-  // database). Restored verbatim from that array rather than re-guessed.
+  // database). Restored verbatim from that array rather than re-guessed. The four dg_compliance_*
+  // keys among them went on 2026-10-29: the DG emergency contact is now the shipper's own, on its
+  // customer profile (the user's call), and nothing reads them any more.
   login_max_attempts:     '5',
   login_lockout_minutes:  '30',
   jwt_lifetime_hours:     '8',
@@ -662,10 +665,6 @@ const SETTING_DEFAULTS = {
   // MFA/Conditional Access/group-assignment policy is the only real door in.
   sso_enforce_exclusive:  '0',
   shipment_sidebar_order: '[]',
-  dg_compliance_contact_name: '',
-  dg_compliance_phone:        '',
-  dg_compliance_email:        '',
-  dg_compliance_address:      '',
   demo_schedules_enabled: 'true',
   api_ais_enabled:        'false',
   ais_provider:           'aisstream',
@@ -739,11 +738,14 @@ async function seedRegistryDefaults() {
       ['ctd-40fr', '40FR', '40', 'FR', 2, '40ft Flat Rack', 'Collapsible ends — heavy machinery, vehicles, oversized loads', 90],
       ['ctd-20tk', '20TK', '20', 'TK', 1, '20ft Tank', 'Liquid bulk — chemicals, food-grade liquids, petroleum products', 100],
       ['ctd-40tk', '40TK', '40', 'TK', 2, '40ft Tank', 'Liquid bulk — chemicals, food-grade liquids, petroleum products', 110],
+      // 45' High Cube (DCSA phase 3, 2026-10-28): 2 TEU, as a 40' against allocations.
+      ['ctd-45hc', '45HC', '45', 'HC', 2, '45ft High Cube', 'Extra length and height (45ft × 9ft 6in) — high-volume, light cargo', 120],
     ];
+    const { isoEquipmentCode } = require("./lib/dcsa/codes");
     for (const [id, code, size, type, teu, label, description, sortOrder] of containerTypes) {
       await tx.query(
-        "INSERT INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9) ON CONFLICT (id) DO NOTHING",
-        [id, code, size, type, teu, label, description, sortOrder, now]
+        "INSERT INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at,iso_code) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$10) ON CONFLICT (id) DO NOTHING",
+        [id, code, size, type, teu, label, description, sortOrder, now, isoEquipmentCode(code) || ""]
       );
     }
 
@@ -2823,6 +2825,8 @@ const TRACKED_CTR_FIELDS = {
   container_number:  'Container Number',
   size:              'Size',
   type:              'Equipment Type',
+  iso_equipment_code: 'ISO Equipment Code',
+  seals:             'Seals',
   hs_code:           'HS Code',
   cargo_description: 'Cargo Description',
   gross_weight_kg:   'Gross Weight (kg)',
@@ -3636,7 +3640,7 @@ const TEU_EXPR = (containersAlias = "containers") => {
   const c = `${containersAlias}.`;
   return `COALESCE(
     (SELECT ctd.teu FROM container_type_definitions ctd WHERE ctd.size=${c}size AND ctd.type=${c}type AND ctd.is_active=TRUE LIMIT 1),
-    CASE WHEN ${c}size='20' THEN 1 WHEN ${c}size='40' THEN 2 ELSE 0 END
+    CASE WHEN ${c}size='20' THEN 1 WHEN ${c}size IN ('40','45') THEN 2 ELSE 0 END
   )`;
 };
 
@@ -4354,6 +4358,8 @@ ctx.whereToBook = require('./lib/where-to-book')(ctx);
 ctx.houseBl = require('./lib/house-bl')(ctx);
 // Track & Trace 3.0 events, pulled or pushed (DCSA-everywhere phase 6): lib/track-trace.js.
 ctx.trackTrace = require('./lib/track-trace')(ctx);
+ctx.arrivalNotices = require('./lib/arrival-notices')(ctx);
+ctx.portCalls = require('./lib/port-calls')(ctx);
 schemaReadyPromise = schemaReadyPromise.then(() => ctx.houseBl.migrateLegacyHouseBls());
 // …and as an eBL (gap G24): CargoDesk as issuer, and the built-in eBL platform it talks to.
 ctx.ebl = require('./lib/ebl')(ctx);
@@ -4380,6 +4386,7 @@ require('./routes/vessel-schedules')(app, ctx);
 require('./routes/customs-filing')(app, ctx);
 require('./routes/shipping-instructions')(app, ctx);
 require('./routes/master-bl')(app, ctx);
+require('./routes/arrival-notices')(app, ctx);
 require('./routes/customers')(app, ctx);
 require('./routes/contracts')(app, ctx);
 require('./routes/charge-default-setups')(app, ctx);

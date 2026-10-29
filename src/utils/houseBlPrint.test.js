@@ -33,6 +33,16 @@ describe("BL01, the printed House B/L", () => {
     const h = dispatchDocBuilder("BL01", { shipment, invNumber: "X", invDate: "2026-10-21", notes: "", containers, parties: [] });
     expect(h).toMatch(/<strong>SHIPPED ON BOARD<\/strong>/);
   });
+  // The House B/L audit's fixes (2026-10-29): clauses added to the B/L (L4), the on-board notation (M4).
+  it("prints the clauses added to it, under the fixed ones", () => {
+    const h = html({ houseBl: { shippedOnBoard: true, onBoardDate: "2026-10-20", clauses: ["FREIGHT PREPAID AS ARRANGED", "L/C NO. 4471-2026 <ABN AMRO>"] } });
+    expect(h).toContain("FREIGHT PREPAID AS ARRANGED<br>L/C NO. 4471-2026 &lt;ABN AMRO&gt;");
+  });
+  it("prints the on-board notation on a received-for-shipment B/L", () => {
+    const h = html({ houseBl: { shippedOnBoard: false, receivedDate: "2026-10-19", onBoardNotationDate: "2026-10-22" } });
+    expect(h).toContain("RECEIVED FOR SHIPMENT 19 October 2026");
+    expect(h).toContain("SHIPPED ON BOARD 22 October 2026");
+  });
   it("prints the packages, marks and the FCL clauses", () => {
     const h = html({ houseBl: { shippedOnBoard: true, onBoardDate: "2026-10-20" } });
     expect(h).toContain("1,200 CT");

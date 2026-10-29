@@ -5,7 +5,7 @@
 // one place screens ask how a carrier is connected (GET /api/carrier-connections/:carrierCode), which
 // replaced eAdapter's "bookable carriers" list when eAdapter was retired (2026-10-11).
 
-const { isoEquipmentCode } = require("../lib/dcsa/codes");
+const { containerIso, dcsaSeals } = require("../lib/dcsa/codes");
 
 module.exports = function dcsaSimulatorRoutes(app, ctx) {
   const { query, ok, err, auth, requireRole, dcsaSimulator, carrierIntegrationFor, mapCarrierBooking, mapShippingInstructions } = ctx;
@@ -65,7 +65,8 @@ module.exports = function dcsaSimulatorRoutes(app, ctx) {
 
   // The carrier's decisions on Shipping Instructions and the Master B/L it drafts from them (2026-10-28):
   // requestUpdate, decline, draft (accept: draft the transport document, or redraft after an update),
-  // issue, surrender (the B/L handed in at destination: the instructions become COMPLETED), void.
+  // issue, surrender (the B/L handed in at destination: the instructions become COMPLETED), void; and an
+  // amendment CargoDesk asked for: confirmAmendment, declineAmendment, surrenderForAmendment, then issue.
   // { message } is the carrier's feedback text, optional.
   app.post("/api/test-tools/dcsa-sim/shipping-instructions/:ref/:action", write, async (req, res) => {
     if (!(await dcsaSimulator.allowed())) return err(res, "The DCSA carrier simulator is off (App Settings → Demo carrier)", 409);
@@ -98,13 +99,13 @@ module.exports = function dcsaSimulatorRoutes(app, ctx) {
     if (!shipment) return err(res, "Shipment not found", 404);
     const [cb] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
     if (!cb?.is_mock) return err(res, "Only a booking made with the demo carrier can be reported on here", 409);
-    const containers = await query("SELECT container_number, size, type FROM containers WHERE shipment_id=$1 ORDER BY container_number", [shipment.id]);
+    const containers = await query("SELECT container_number, size, type, iso_equipment_code FROM containers WHERE shipment_id=$1 ORDER BY container_number", [shipment.id]);
     const legs = await query("SELECT * FROM shipment_legs WHERE shipment_id=$1 AND (leg_type='SEA' OR (COALESCE(leg_type,'')='' AND mot='SEA')) ORDER BY leg_order", [shipment.id]);
     const atPod = ["arrived", "discharged", "customsReleased", "gateOut", "emptyReturn", "released"].includes(kind);
     const leg = (atPod ? [...legs].reverse().find(l => l.pod === shipment.pod) : legs.find(l => l.pol === shipment.pol)) || legs[0] || {};
     const [master] = await query("SELECT reference FROM transport_documents WHERE shipment_id=$1 AND role='MASTER' AND status<>'VOIDED' ORDER BY created_at DESC LIMIT 1", [shipment.id]);
     const r = await dcsaSimulator.trackTrace.report(kind, { carrierCode: cb.carrier_code, bookingRef: cb.booking_ref,
-      containers: containers.map(c => ({ number: c.container_number, iso: isoEquipmentCode(`${c.size}${c.type}`) })),
+      containers: containers.map(c => ({ number: c.container_number, iso: containerIso(c) })),
       pol: shipment.pol, pod: shipment.pod, vessel: { imo: leg.vessel_imo || "", name: leg.vessel || "" }, voyage: leg.voyage || "",
       dateTime, classifier, tdRef: master?.reference || "", updatedAt, routeBy });
     if (!r.ok) return err(res, r.error, r.status || 400);
@@ -123,6 +124,48 @@ module.exports = function dcsaSimulatorRoutes(app, ctx) {
   app.get("/api/test-tools/dcsa-sim/events", write, async (req, res) => {
     if (await offOrNot(res)) return;
     ok(res, await dcsaSimulator.trackTrace.list({ bookingRef: String(req.query.bookingRef || "") }));
+  });
+
+  // ─── Arrival Notice 1.0 and Port Call 2.0 (phase 8, 2026-10-28) ──
+  // The demo carrier publishes an arrival notice for the B/L it issued on one of its bookings: { shipmentId,
+  // eta, classifier, freeDays, detentionDays, charges, released: { freight, obl, customs }, lightweight }.
+  // Defaults: the shipment's ETA, 4 days' demurrage and 7 days' detention, three destination charges.
+  app.post("/api/test-tools/dcsa-sim/arrival-notices", write, async (req, res) => {
+    if (await offOrNot(res)) return;
+    const b = req.body || {};
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [b.shipmentId || ""]);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    const [cb] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
+    if (!cb?.is_mock) return err(res, "Only a booking made with the demo carrier can get its arrival notice here", 409);
+    const [master] = await query("SELECT reference FROM transport_documents WHERE shipment_id=$1 AND role='MASTER' AND status<>'VOIDED' ORDER BY created_at DESC LIMIT 1", [shipment.id]);
+    const [house] = await query("SELECT reference FROM transport_documents WHERE shipment_id=$1 AND role='HOUSE' AND status NOT IN ('DRAFT','VOIDED') ORDER BY created_at DESC LIMIT 1", [shipment.id]);
+    const legs = await query("SELECT * FROM shipment_legs WHERE shipment_id=$1 AND (leg_type='SEA' OR (COALESCE(leg_type,'')='' AND mot='SEA')) ORDER BY leg_order", [shipment.id]);
+    const leg = [...legs].reverse().find(l => l.pod === shipment.pod) || legs[legs.length - 1] || {};
+    const containers = await query("SELECT * FROM containers WHERE shipment_id=$1 ORDER BY container_number", [shipment.id]);
+    const r = await dcsaSimulator.arrivalNotices.publish({ carrierCode: cb.carrier_code, tdRef: master?.reference || shipment.master_bl_number || "",
+      houseRefs: [house?.reference || shipment.bl_number].filter(Boolean), pol: shipment.pol, pod: shipment.pod,
+      vessel: { imo: leg.vessel_imo || "", name: leg.vessel || shipment.vessel || "" }, voyage: leg.voyage || shipment.voyage || "",
+      eta: String(b.eta || leg.eta || shipment.eta || "").slice(0, 10), classifier: b.classifier || "ESTIMATED",
+      containers: containers.map(c => ({ number: c.container_number, iso: containerIso(c), seals: dcsaSeals(c) })),
+      freeDays: b.freeDays === undefined ? undefined : Number(b.freeDays), detentionDays: b.detentionDays === undefined ? undefined : Number(b.detentionDays),
+      charges: Array.isArray(b.charges) ? b.charges : undefined, released: b.released || {}, lightweight: !!b.lightweight });
+    if (!r.ok) return err(res, r.error, r.status || 400);
+    if (!r.delivery?.delivered)
+      return err(res, `The simulator published it, but CargoDesk didn't take it (${r.delivery?.status || "no answer"}: ${r.delivery?.body?.error || r.delivery?.error || "unknown"})`, 502);
+    ok(res, { versionLabel: r.arrivalNotice.versionLabel, feedback: r.delivery.body?.feedbackElements || [], arrivalNotice: await ctx.arrivalNotices.view(shipment.id) }, 201);
+  });
+  app.get("/api/test-tools/dcsa-sim/arrival-notices", write, async (req, res) => {
+    if (await offOrNot(res)) return;
+    ok(res, await dcsaSimulator.arrivalNotices.list({ tdRef: String(req.query.tdRef || "") }));
+  });
+  // A berth arrival or departure as a Port Call event: { vesselImo, vesselName, voyage, unLocationCode,
+  // kind: ARRI | DEPA, classifier, dateTime }.
+  app.post("/api/test-tools/dcsa-sim/port-calls", write, async (req, res) => {
+    if (await offOrNot(res)) return;
+    const r = await dcsaSimulator.arrivalNotices.reportPortCall(req.body || {});
+    if (!r.ok) return err(res, r.error, r.status || 400);
+    if (!r.delivery?.delivered) return err(res, `The simulator reported it, but CargoDesk didn't take it (${r.delivery?.status || "no answer"})`, 502);
+    ok(res, { eventID: r.event.eventID, feedback: r.delivery.body?.feedbackElements || [] }, 201);
   });
 
   // ─── Operational Vessel Schedules 3.0: the demo carrier's vessel times (2026-10-28) ──

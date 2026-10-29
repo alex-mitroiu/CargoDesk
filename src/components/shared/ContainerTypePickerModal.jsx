@@ -7,7 +7,8 @@ import { IconSearch } from "../primitives/Icon";
 import { api } from "../../api";
 
 // ─── ContainerTypePickerModal ─────────────────────────────────────────────────
-// Visual equipment picker grouped by 20ft / 40ft.
+// Visual equipment picker grouped by 20ft / 40ft / 45ft. Each type is shown by its ISO 6346 code (what the
+// carrier, the VGM and the B/L use; DCSA phase 3, mockup 1bf14417), with CargoDesk's own code beside it.
 // Props:
 //   current  — currently selected code string (e.g. "40DC") — highlights the row
 //   options  — the equipment list to show (same shape as CONTAINER_OPTIONS) — defaults to the
@@ -20,20 +21,21 @@ export const ContainerTypePickerModal = ({ current, onSelect, onClose, options =
   const groups = [
     { size: "20", teu: 1, items: options.filter(o => o.size === "20") },
     { size: "40", teu: 2, items: options.filter(o => o.size === "40") },
-  ];
+    { size: "45", teu: 2, items: options.filter(o => o.size === "45") },
+  ].filter(g => g.items.length);
 
   return (
     <Modal title="Select Equipment Type" onClose={onClose} width={560}>
       {/* TEU info banner */}
       <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
-        {[{ size: "20", teu: 1 }, { size: "40", teu: 2 }].map(({ size, teu }) => (
+        {groups.map(({ size, teu }) => (
           <div key={size} style={{ flex: 1, background: T.bg, border: `1px solid ${T.border}`,
             borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 12 }}>
             <span style={{ fontFamily: T.mono, fontSize: 22, fontWeight: 800, color: T.accent }}>{size}ft</span>
             <div>
               <div style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>{teu} TEU</div>
               <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                {size === "20" ? "Standard 20ft unit" : "Standard 40ft unit"}
+                {size === "20" ? "Standard 20ft unit" : size === "40" ? "Standard 40ft unit" : "45ft unit, counted as a 40ft"}
               </div>
             </div>
           </div>
@@ -60,7 +62,7 @@ export const ContainerTypePickerModal = ({ current, onSelect, onClose, options =
                     onClick={() => { onSelect(opt); onClose(); }}
                     onMouseEnter={() => setHovered(opt.code)}
                     onMouseLeave={() => setHovered(null)}
-                    style={{ display: "grid", gridTemplateColumns: "64px 160px 1fr",
+                    style={{ display: "grid", gridTemplateColumns: "64px 150px 1fr auto",
                       alignItems: "center", gap: 12, padding: "10px 14px",
                       borderRadius: 8, cursor: "pointer",
                       background: isSelected ? T.accent + "18" : isHovered ? T.surfaceHover : T.surface,
@@ -68,7 +70,7 @@ export const ContainerTypePickerModal = ({ current, onSelect, onClose, options =
                       transition: "background .1s, border-color .1s" }}>
                     <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 800,
                       color: isSelected ? T.accent : T.text }}>
-                      {opt.code}
+                      {opt.iso || opt.code}
                     </span>
                     <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text }}>
                       {opt.label}
@@ -76,6 +78,7 @@ export const ContainerTypePickerModal = ({ current, onSelect, onClose, options =
                     <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, lineHeight: 1.4 }}>
                       {opt.desc}
                     </span>
+                    <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>{opt.iso ? `was ${opt.code}` : ""}</span>
                   </div>
                 );
               })}
@@ -98,7 +101,9 @@ export const ContainerTypePickerModal = ({ current, onSelect, onClose, options =
 // static CONTAINER_OPTIONS list whenever the registry is empty or unreachable, so this field
 // never breaks even before that table has any rows (or if the request fails).
 
-export const ContainerTypeField = ({ size, type, onChange, required = false, label = "Equipment Type" }) => {
+// isoCode — the container's own ISO code when it has one of its own (a 40' high-cube reefer is 45R1, not the
+// 40RF type's 42R1); otherwise the type's.
+export const ContainerTypeField = ({ size, type, isoCode = "", onChange, required = false, label = "Equipment Type" }) => {
   const [query,       setQuery]       = useState("");
   const [dropOpen,    setDropOpen]    = useState(false);
   const [highlighted, setHighlighted] = useState(-1);
@@ -112,16 +117,18 @@ export const ContainerTypeField = ({ size, type, onChange, required = false, lab
     api.containerTypes.list()
       .then(defs => {
         if (!defs || defs.length === 0) return;
-        setOptions(defs.map(d => ({ code: d.code, size: d.size, type: d.type, teu: d.teu, label: d.label, desc: d.description })));
+        setOptions(defs.map(d => ({ code: d.code, iso: d.isoCode || "", size: d.size, type: d.type, teu: d.teu, label: d.label, desc: d.description })));
       })
       .catch(() => {});
   }, []);
 
   const selected = options.find(o => o.size === size && o.type === type) || null;
+  const shownIso = isoCode || selected?.iso || "";
 
   const filtered = query.trim()
     ? options.filter(o =>
         o.code.toUpperCase().includes(query.toUpperCase()) ||
+        (o.iso || "").toUpperCase().includes(query.toUpperCase()) ||
         o.label.toLowerCase().includes(query.toLowerCase()) ||
         o.size.includes(query) ||
         o.type.toUpperCase().includes(query.toUpperCase()))
@@ -182,9 +189,9 @@ export const ContainerTypeField = ({ size, type, onChange, required = false, lab
         // ── Selected chip ─────────────────────────────────────────────────────
         <div style={{ ...inputBase, display: "flex", alignItems: "center", gap: 8,
           border: `1px solid ${T.accent}55`, padding: "7px 10px" }}>
-          <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent,
+          <span data-testid="container-type-iso" style={{ fontFamily: T.mono, fontSize: 13, color: T.accent,
             fontWeight: 700, flexShrink: 0 }}>
-            {selected.code}
+            {shownIso || selected.code}
           </span>
           <span style={{ fontFamily: T.body, fontSize: 13, color: T.text, flex: 1,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -195,6 +202,7 @@ export const ContainerTypeField = ({ size, type, onChange, required = false, lab
             padding: "1px 7px", flexShrink: 0 }}>
             {selected.teu} TEU
           </span>
+          {shownIso && <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, flexShrink: 0 }}>was {selected.code}</span>}
           <button type="button" onClick={() => setPickerOpen(true)}
             title="Browse equipment types"
             style={{ background: "none", border: "none", cursor: "pointer",
@@ -220,7 +228,7 @@ export const ContainerTypeField = ({ size, type, onChange, required = false, lab
               onChange={e => handleInput(e.target.value)}
               onFocus={openDrop}
               onKeyDown={handleKeyDown}
-              placeholder="Type code or name (40DC, reefer…)"
+              placeholder="Type a code or name (45G1, 40HC, reefer…)"
               autoComplete="off"
               style={{ ...inputBase, fontFamily: T.body, fontSize: 13,
                 paddingRight: 36, width: "100%", boxSizing: "border-box" }}
@@ -260,8 +268,9 @@ export const ContainerTypeField = ({ size, type, onChange, required = false, lab
                     border: "none", borderBottom: `1px solid ${T.border}22`,
                     cursor: "pointer", textAlign: "left" }}>
                   <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent,
-                    fontWeight: 700, flexShrink: 0, width: 44 }}>{opt.code}</span>
+                    fontWeight: 700, flexShrink: 0, width: 44 }}>{opt.iso || opt.code}</span>
                   <span style={{ fontFamily: T.body, fontSize: 13, color: T.text, flex: 1 }}>{opt.label}</span>
+                  {opt.iso && <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, flexShrink: 0 }}>{opt.code}</span>}
                   <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
                     background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
                     padding: "1px 6px", flexShrink: 0 }}>{opt.teu} TEU</span>

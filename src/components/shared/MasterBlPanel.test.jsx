@@ -81,6 +81,58 @@ describe("MasterBlPanel", () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
+  // Amending the issued B/L (DCSA eBL 3.0.3, mockup 1bf14417): preview → send → the carrier's answer.
+  const sealChange = { key: "seal:MSKU7743220", label: "  Seal", sent: "ML-4471183 CBP-0091877", carrier: "ML-4471183", changed: true };
+  it("previews an amendment of the issued B/L, then sends it", async () => {
+    const issued = masterBl({ status: "ISSUED", issueDate: "2026-10-28" });
+    api.masterBl.get.mockResolvedValue(issued);
+    api.masterBl.amendmentPreview.mockResolvedValue({ changes: [sealChange], missing: [] });
+    api.masterBl.amend.mockResolvedValue({ ...issued, amendment: { status: "AMENDMENT_RECEIVED", requestedAt: "2026-11-05T09:14:00Z", requestedBy: "Claude", changes: [sealChange] } });
+    render(<MasterBlPanel shipment={shipment} canEdit />);
+    fireEvent.click(await screen.findByRole("button", { name: "Request amendment" }));
+    expect(await screen.findByText("The shipment differs from the issued B/L")).toBeInTheDocument();
+    expect(screen.getByText("Container MSKU7743220 · Seal")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send amendment to MAEU" }));
+    await waitFor(() => expect(api.masterBl.amend).toHaveBeenCalledWith("SHP-AQ1FIM"));
+    expect(await screen.findByText("ISSUED · AMENDMENT REQUESTED")).toBeInTheDocument();
+    expect(screen.getByText("WAITING FOR MAEU")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel the amendment" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Request amendment" })).toBeNull();
+  });
+
+  it("says when there's nothing to amend, and shows a declined amendment with the carrier's reason", async () => {
+    api.masterBl.get.mockResolvedValue(masterBl({ status: "ISSUED" }));
+    api.masterBl.amendmentPreview.mockResolvedValue({ changes: [], missing: [] });
+    const { unmount } = render(<MasterBlPanel shipment={shipment} canEdit />);
+    fireEvent.click(await screen.findByRole("button", { name: "Request amendment" }));
+    expect(await screen.findByText(/Nothing to amend/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Send amendment/ })).toBeNull();
+    unmount();
+    api.masterBl.get.mockResolvedValue(masterBl({ status: "ISSUED", carrierFeedback: "Too late to change the seal",
+      amendment: { status: "AMENDMENT_DECLINED", requestedAt: "2026-11-05T09:14:00Z", requestedBy: "Claude", changes: [sealChange] } }));
+    render(<MasterBlPanel shipment={shipment} canEdit />);
+    expect(await screen.findByText("ISSUED · AMENDMENT DECLINED")).toBeInTheDocument();
+    expect(screen.getByText(/declined the amendment: “Too late to change the seal”/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Request a new amendment" })).toBeInTheDocument();
+  });
+
+  it("shows the originals being due back, then what the amended B/L changed", async () => {
+    api.masterBl.get.mockResolvedValue(masterBl({ status: "PENDING_SURRENDER_FOR_AMENDMENT", carrierFeedback: "",
+      amendment: { status: "AMENDMENT_CONFIRMED", requestedAt: "2026-11-05T09:14:00Z", requestedBy: "Claude", changes: [sealChange] } }));
+    const { unmount } = render(<MasterBlPanel shipment={shipment} canEdit />);
+    expect(await screen.findByText(/Return the 3 original B\/Ls to MAEU/)).toBeInTheDocument();
+    expect(screen.getByText("Surrender for amendment")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel the amendment" })).toBeNull();
+    unmount();
+    api.masterBl.get.mockResolvedValue(masterBl({ status: "ISSUED", amendment: null, events: [
+      { eventType: "MASTER_ISSUED", createdAt: "2026-10-28T14:05:00Z" },
+      { eventType: "MASTER_AMENDED", createdAt: "2026-11-07T10:00:00Z", detail: { issueDate: "2026-11-07", changes: [{ key: "seal:MSKU7743220", label: "  Seal", was: "ML-4471183", now: "ML-4471183 CBP-0091877" }] } }] }));
+    render(<MasterBlPanel shipment={shipment} canEdit />);
+    expect(await screen.findByText("ISSUED · AMENDED")).toBeInTheDocument();
+    expect(screen.getByText("1 CHANGE")).toBeInTheDocument();
+    expect(screen.getByText("Container MSKU7743220 · Seal")).toBeInTheDocument();
+  });
+
   it("offers no actions to someone who can't edit, and shows nothing before the carrier drafts", async () => {
     api.masterBl.get.mockResolvedValue(masterBl());
     const { unmount } = render(<MasterBlPanel shipment={shipment} canEdit={false} />);

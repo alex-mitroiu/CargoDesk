@@ -4,22 +4,22 @@
 **Author:** QA Engineering (Claude Code)
 **Server Under Test:** http://localhost:3001 (Express + node:sqlite)
 **Frontend Under Test:** http://localhost:5173 (React 18 + Vite)
-**Last updated:** 2026-10-28. §0 describes the suite as it is today. §1–§9 are the original v0.26.0
+**Last updated:** 2026-10-29. §0 describes the suite as it is today. §1–§9 are the original v0.26.0
 plan, kept for history: it describes node:sqlite and 3 suites, long since replaced.
 
 ---
 
-## 0. The test suite today (2026-10-28)
+## 0. The test suite today (2026-10-29)
 
 Three layers, all automated. Every feature ships with tests in each layer it touches; the new
 behaviour of an epic is described in its ARCHITECTURE.md §8 section, with the test files named there.
 
 | Layer | Where | How many | Run with |
 |---|---|---|---|
-| Backend API tests | `tests/*.test.js` (plain Node, `fetch` against the running monolith) | 124 files; 114 in the `npm test` chain, the rest in the per-service `test:*-toggle` scripts | `npm test`, or one file: `node tests/<name>.test.js` |
+| Backend API tests | `tests/*.test.js` (plain Node, `fetch` against the running monolith) | 126 files; 116 in the `npm test` chain, the rest in the per-service `test:*-toggle` scripts | `npm test`, or one file: `node tests/<name>.test.js` |
 | Microservice tests | `services/*/tests/*.test.js` | per service | `npm run test:contract-service`, `test:mdm-service`, `test:kanban-service`, `test:customer-service`, `test:screening-service`, `test:distribution-service` |
-| Frontend unit tests | `src/**/*.test.js(x)` (Vitest + Testing Library) | 32 files, 371 tests | `npm run test:frontend` |
-| Browser tests | `cypress/e2e/*.cy.js` | 36 specs, 290 tests | `npx cypress run` (from this VS Code shell: `env -u ELECTRON_RUN_AS_NODE npx cypress run`) |
+| Frontend unit tests | `src/**/*.test.js(x)` (Vitest + Testing Library) | 34 files, 383 tests | `npm run test:frontend` |
+| Browser tests | `cypress/e2e/*.cy.js` | 37 specs, 293 tests | `npx cypress run` (from this VS Code shell: `env -u ELECTRON_RUN_AS_NODE npx cypress run`) |
 
 **How to run a full pass**
 1. Start the stack (`npm run dev`), or restart only the monolith. Stop it with
@@ -47,10 +47,18 @@ behaviour of an epic is described in its ARCHITECTURE.md §8 section, with the t
 - The carrier's Master B/L, Track & Trace events and vessel times (since 2026-10-28) come from the built-in
   carrier too, which persists vessel calls and events between runs: give each run its own voyage numbers,
   as `tests/dcsa-documents-events.test.js` does, or an earlier run's ACTUAL time outranks this run's estimate.
+- A House B/L is issued only by a complete legal entity (since 2026-10-29: a SCAC and a street address).
+  Provision one for the export office: `ensureIssuingEntity` in `tests/helpers/house-bl.mjs` (called by
+  `readyHouseBlShipment`), and its twin in `cypress/e2e/house-bl.cy.js`. Voiding an issued House B/L needs an
+  admin and no originals out.
+- A dangerous goods booking needs every DG container's UN number, proper shipping name, class and weight, and
+  a shipper with its own DG emergency contact (`dgEmergencyContact` on the customer); there is no fallback.
 
-**Latest full run:** 2026-10-28. Backend 114/114 files, Vitest 371/371, Cypress 290/290 (two specs passed on a
-rerun, see SYSTEM-TEST-RESULTS.md). The manual test cases for Where to book are Area 11 of TEST-CASES.md, and for
-the DCSA carrier messages, the Master B/L, VGM declarations and carrier events Area 12.
+**Latest full run:** 2026-10-29, later (the House B/L audit's fixes and the DG booking). Backend 116/116 files,
+Vitest 383/383, Cypress 293/293 on the first run (see SYSTEM-TEST-RESULTS.md). The manual test cases for Where to
+book are Area 11 of TEST-CASES.md; for the DCSA carrier messages, the Master B/L and its amendment, VGM
+declarations, carrier events, equipment and seals, and the Arrival Notice Area 12; for the House B/L audit's fixes
+and dangerous goods in the booking Area 13.
 
 ---
 

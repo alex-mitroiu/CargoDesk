@@ -75,6 +75,11 @@ module.exports = function houseBlRoutes(app, ctx) {
       routing: d.routing,
       charges: d.charges,
       handoverMethods: hb.HANDOVER_METHODS,
+      // The originals both ways (audit 2026-10-29), and the House against the carrier's Master B/L (M3).
+      originals: live ? await hb.originalsOut(live) : null,
+      houseVsMaster: await hb.houseVsMaster(req.params.id),
+      // What voiding the issued one would need (H1, M6): null when it can be voided by this user.
+      voidBlock: live?.document_id ? await hb.voidBlock({ id: live.document_id }, req.user) : null,
     });
   });
 
@@ -103,6 +108,37 @@ module.exports = function houseBlRoutes(app, ctx) {
     const r = await ctx.houseBl.recordOriginalsHandover(req.params.id, req.user, req.body || {});
     if (r.error) return err(res, r.error, r.status || 409);
     ok(res, { handover: r.detail }, 201);
+  });
+
+  // Originals coming back (audit 2026-10-29): { count, from, method, returnedOn, note }.
+  app.post("/api/shipments/:id/house-bl/originals-returned", write, async (req, res) => {
+    if (!(await exportSide(req, res))) return;
+    const r = await ctx.houseBl.recordOriginalsReturned(req.params.id, req.user, req.body || {});
+    if (r.error) return err(res, r.error, r.status || 409);
+    ok(res, { returned: r.detail, outstanding: r.outstanding }, 201);
+  });
+
+  // The on-board notation on a received-for-shipment House B/L (audit M4).
+  app.post("/api/shipments/:id/house-bl/on-board-notation", write, async (req, res) => {
+    if (!(await exportSide(req, res))) return;
+    const r = await ctx.houseBl.addOnBoardNotation(req.params.id, req.user);
+    if (r.error) return err(res, r.error, r.status || 409);
+    ok(res, ctx.houseBl.mapTransportDocument(r.td));
+  });
+
+  // The shipper's approval of the draft (audit L3): send it { to, message }, then record the answer
+  // { approved, comment }.
+  app.post("/api/shipments/:id/house-bl/approval/send", write, async (req, res) => {
+    if (!(await exportSide(req, res))) return;
+    const r = await ctx.houseBl.sendForApproval(req.params.id, req.user, req.body || {});
+    if (r.error) return err(res, r.error, r.status || 409);
+    ok(res, { draft: ctx.houseBl.mapTransportDocument(r.td), emailed: r.emailed, note: r.note });
+  });
+  app.post("/api/shipments/:id/house-bl/approval/answer", write, async (req, res) => {
+    if (!(await exportSide(req, res))) return;
+    const r = await ctx.houseBl.recordApproval(req.params.id, req.user, req.body || {});
+    if (r.error) return err(res, r.error, r.status || 409);
+    ok(res, ctx.houseBl.mapTransportDocument(r.td));
   });
 
   app.get("/api/shipments/:id/house-bl/:tdId/dcsa", auth(), async (req, res) => {

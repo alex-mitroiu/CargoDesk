@@ -318,11 +318,12 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
   // below instead of as its own top-level row.
   const sections = [
     { id: "shp-overview", icon: "◎", label: "Overview" },
-    ...SHIPMENT_SECTIONS.filter(s => s.id !== "shp-schedules" && s.id !== "shp-shipping-instructions")
+    ...SHIPMENT_SECTIONS.filter(s => !["shp-schedules", "shp-shipping-instructions", "shp-arrival-notice"].includes(s.id))
       .map(s => s.id === "shp-cargo" ? { ...s, badge: ctrCount || null, locked: sideLocked("export") } : s),
   ];
   const schedulesSection = SHIPMENT_SECTIONS.find(s => s.id === "shp-schedules");
   const siSection = SHIPMENT_SECTIONS.find(s => s.id === "shp-shipping-instructions");
+  const anSection = SHIPMENT_SECTIONS.find(s => s.id === "shp-arrival-notice");
   // Groups the booking pipeline — what & when (Schedules) → booked with the carrier
   // (Carrier Booking) → Shipping Instructions/Customs Filing (pre-departure filings) →
   // physically arranged (Pickup/Delivery, once ordered) — under one parent, same NavRow
@@ -335,6 +336,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
       badge: bookingBadge?.text, badgeColor: bookingBadge?.color, locked: sideLocked("export") },
     { id: siSection.id, icon: siSection.icon, label: siSection.label,
       badge: siBadge?.text, badgeColor: siBadge?.color, locked: sideLocked("export") },
+    { id: anSection.id, icon: anSection.icon, label: anSection.label, locked: sideLocked("import") },
     { id: "shp-customs-filing", icon: IconFileCertificate, label: "Customs Filing",
       badge: filingBadge?.text, badgeColor: filingBadge?.color },
     ...(importTypes.includes("Delivery")
@@ -342,7 +344,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
   ];
   const BOOKING_ROUTING_ROUTES = [
     "shipment-schedules", "shipment-carrier-booking-details", "shipment-carrier-booking-review",
-    "shipment-shipping-instructions",
+    "shipment-shipping-instructions", "shipment-arrival-notice",
     "shipment-customs-filing-details", "shipment-customs-filing-review",
     ...(importTypes.includes("Delivery") ? [servicePageKey("Import", "Delivery")] : []),
   ];

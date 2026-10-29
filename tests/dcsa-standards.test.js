@@ -107,7 +107,7 @@ const CHECKS = [
   ["SURRENDER_RESPONSE", "eblSurrender", "action"], ["PINT_RESPONSE", "pint", "responseCode"],
   ["RECEIPT_DELIVERY_TYPE", "bkg", "receiptTypeAtOrigin"], ["CARGO_MOVEMENT_TYPE", "bkg", "cargoMovementTypeAtOrigin"],
   ["PAYMENT_TERM", "bkg", "freightPaymentTermCode"], ["TEMPERATURE_UNIT", "bkg", "temperatureUnit"],
-  ["VGM_METHOD", "vgm", "method"], ["BOOKING_LOCATION_TYPE", "bkg", "locationTypeCode"],
+  ["VGM_METHOD", "vgm", "method"], ["BOOKING_LOCATION_TYPE", "bkg", "locationTypeCode"], ["SEAL_SOURCE", "ebl", "source", "Seal"],
   ["EVENT_TYPE", "tnt", "eventType"], ["EVENT_CLASSIFIER", "tnt", "eventClassifier"],
   ["EQUIPMENT_EVENT_TYPE", "tnt", "equipmentEventType"], ["TRANSPORT_EVENT_TYPE", "tnt", "transportEventType"],
   ["SHIPMENT_EVENT_TYPE", "tnt", "shipmentEventType"], ["EMPTY_INDICATOR", "tnt", "emptyIndicator"],

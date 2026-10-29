@@ -15,6 +15,8 @@
  */
 
 import http from "node:http";
+import { createRequire } from "node:module";
+const { validateOutbound, errorsText } = createRequire(import.meta.url)("../lib/dcsa/validate.js");
 import { ensureOffices } from "./helpers/offices.mjs";
 import { carrierActs, bookThroughCarrier, waitForCarrierReference, addContainer } from "./helpers/dcsa-sim.mjs";
 
@@ -80,11 +82,11 @@ async function getDefaultOffices(token) {
 // A DCSA booking needs requested equipment, so a scratch shipment gets one container unless the
 // test counts containers itself, and the carrier's quote reference (a DCSA booking names a contract or
 // a quote) unless the test is about having none.
-async function scratchShipment(token, carrierCode, { container = true, contractRef = "SPOT-Q-2026-0418" } = {}) {
+async function scratchShipment(token, carrierCode, { container = true, contractRef = "SPOT-Q-2026-0418", extra = {} } = {}) {
   const { emoOfficeId, imoOfficeId } = await getDefaultOffices(token);
   const res = await request("POST", "/api/shipments", {
     pol: "NLRTM", pod: "USNYC", carrierCode,
-    status: "Active", contractType: "SPOT", contractRef, etd: "2026-09-01", emoOfficeId, imoOfficeId,
+    status: "Active", contractType: "SPOT", contractRef, etd: "2026-09-01", emoOfficeId, imoOfficeId, ...extra,
   }, token);
   if (container && res.body?.id) await addContainer(request, token, res.body.id);
   return res.body.id;
@@ -318,13 +320,14 @@ async function testEquipmentSummary(token) {
   assert("the message log keeps the DCSA booking as sent (2026-10-27)", Array.isArray(sentBody.requestedEquipments) && !!sentBody.receiptTypeAtOrigin
     && sentBody.containerCount === undefined, JSON.stringify(sentBody).slice(0, 200));
   assert("containerCount is 3", payload.containerCount === 3);
-  assert("equipment has 2 groups (40HC, 20GP)", Array.isArray(payload.equipment) && payload.equipment.length === 2);
-  const hc = payload.equipment.find(e => e.type === "40HC");
-  assert("40HC group has count 2", hc?.count === 2);
-  assert("40HC group sums weight correctly", hc?.totalWeightKg === 17000);
-  assert("40HC group sums volume correctly", hc?.totalVolumeCbm === 150);
-  const gp = payload.equipment.find(e => e.type === "20GP");
-  assert("20GP group has count 1", gp?.count === 1);
+  // One line per ISO 6346 code since 2026-10-28 (§8.43): 40HC is 45G1, 20GP is 22G1.
+  assert("equipment has 2 groups (45G1, 22G1)", Array.isArray(payload.equipment) && payload.equipment.length === 2);
+  const hc = payload.equipment.find(e => e.type === "45G1");
+  assert("45G1 (40HC) group has count 2", hc?.count === 2);
+  assert("45G1 (40HC) group sums weight correctly", hc?.totalWeightKg === 17000);
+  assert("45G1 (40HC) group sums volume correctly", hc?.totalVolumeCbm === 150);
+  const gp = payload.equipment.find(e => e.type === "22G1");
+  assert("22G1 (20GP) group has count 1", gp?.count === 1);
 
   await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
 }
@@ -703,25 +706,64 @@ async function testExtendedPayloadFields(token) {
 async function testDgCargoSummary(token) {
   console.log("\nBooking-request payload includes a DG cargo declaration");
 
-  const shipmentId = await scratchShipment(token, "MAEU", { container: false });
-  await request("POST", "/api/containers", { shipmentId, size: "40", type: "HC", isDg: true, dgClass: "3" }, token);
-  await request("POST", "/api/containers", { shipmentId, size: "40", type: "HC", isDg: true, dgClass: "3" }, token);
-  await request("POST", "/api/containers", { shipmentId, size: "20", type: "GP" }, token); // not DG
+  // The shipper, a Rotterdam paint maker; its DG emergency contact is on its customer profile (2026-10-29, the
+  // user's call: the shipper's own, no fallback), not set yet.
+  const shipperBase = { companyName: `Van Wijk Coatings B.V. ${Date.now()}`, address1: "Vlaardingweg 62", city: "Rotterdam",
+    postalCode: "3044 CK", countryIso2: "NL", phone: "+31 10 437 2200", email: "export@vanwijkcoatings.example" };
+  const shipper = (await request("POST", "/api/customers", shipperBase, token)).body;
+  const shipmentId = await scratchShipment(token, "MAEU", { container: false, extra: { shipperId: shipper.id, shipperName: shipper.companyName } });
+  // Paint in steel drums: UN 1263, class 3 — what a carrier needs to accept DG cargo (2026-10-29: the DCSA
+  // booking used to carry no dangerous goods at all, the booking audit's first finding).
+  const paint = { size: "40", type: "HC", isDg: true, dgClass: "3", grossWeightKg: 16200, numberOfPackages: 80, packageCode: "DR",
+    hsCode: "320890", cargoDescription: "Paint, solvent based" };
+  const first = (await request("POST", "/api/containers", { shipmentId, ...paint }, token)).body;
+  await request("POST", "/api/containers", { shipmentId, ...paint, dgUnNumber: "1263", dgProperShippingName: "PAINT" }, token);
+  await request("POST", "/api/containers", { shipmentId, size: "20", type: "GP", grossWeightKg: 9000 }, token); // not DG
+
+  const refused = await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
+  assert("a DG container without its UN number and proper shipping name, and a shipper with no DG emergency contact: refused (400), saying what's missing and where",
+    refused.status === 400 && /UN number, proper shipping name/.test(refused.body?.error) && /emergency contact/.test(refused.body?.error)
+      && refused.body.error.includes(shipper.companyName), JSON.stringify(refused.body));
+  await request("PUT", `/api/shipments/${shipmentId}/containers/${first.id}`, { ...first, seals: undefined, dgUnNumber: "1263", dgProperShippingName: "PAINT" }, token);
+  const half = await request("PUT", `/api/customers/${shipper.id}`, { ...shipperBase, dgEmergencyContact: { contact: "Van Wijk DG Desk", phone: "" } }, token);
+  assert("a DG emergency contact with no 24-hour phone is refused (400)", half.status === 400 && /24-hour phone/.test(half.body?.error), JSON.stringify(half.body));
+  const contact = { contact: "Van Wijk DG Desk", phone: "+31 10 437 2299", provider: "CHEMTREC", referenceNumber: "CCN-204417" };
+  const saved = await request("PUT", `/api/customers/${shipper.id}`, { ...shipperBase, dgEmergencyContact: contact }, token);
+  assert("the shipper's DG emergency contact saves with all four DCSA fields",
+    saved.status === 200 && JSON.stringify(saved.body.dgEmergencyContact) === JSON.stringify(contact), JSON.stringify(saved.body?.dgEmergencyContact));
 
   const send = await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
-  assert("booking-request returns 201", send.status === 201);
+  assert("booking-request returns 201", send.status === 201, JSON.stringify(send.body).slice(0, 300));
   const messages = await request("GET", `/api/shipments/${shipmentId}/edi-messages`, null, token);
   const payload = JSON.parse(messages.body.find(m => m.direction === "out" && m.messageType === "booking_request").parsedPayload);
 
   assert("containerCount still counts all 3 containers", payload.containerCount === 3);
-  assert("equipment still has 2 groups (40HC, 20GP)", payload.equipment.length === 2);
+  assert("equipment still has 2 groups (45G1, 22G1)", payload.equipment.length === 2);
   assert("dgCargo has exactly 1 group (only the DG containers)", payload.dgCargo.length === 1);
   const dg = payload.dgCargo[0];
-  assert("dgCargo group type is 40HC", dg?.type === "40HC");
+  assert("dgCargo group type is 45G1 (40HC)", dg?.type === "45G1");
   assert("dgCargo group dgClass is 3", dg?.dgClass === "3");
   assert("dgCargo group count is 2 (the two DG containers, not the clean one)", dg?.count === 2);
+  // The DCSA booking as sent declares them: on the 45G1 line, UN 1263 PAINT class 3, both containers' weight
+  // and drums, the emergency contact; a valid Booking 2.0 request.
+  const sentBody = JSON.parse(messages.body.find(m => m.direction === "out" && m.messageType === "booking_request").rawPayload);
+  const line = (sentBody.requestedEquipments || []).find(e => e.ISOEquipmentCode === "45G1");
+  const dgItem = (line?.commodities || []).find(c => c.outerPackaging?.dangerousGoods?.length);
+  const decl = dgItem?.outerPackaging.dangerousGoods[0];
+  assert("the DCSA booking declares the dangerous goods on the 40' HC line: UN 1263 PAINT, class 3, 32,400 kg in 160 drums, the emergency contact",
+    decl?.UNNumber === "1263" && decl.properShippingName === "PAINT" && decl.imoClass === "3" && decl.grossWeight?.value === 32400
+      && dgItem.outerPackaging.numberOfPackages === 160 && dgItem.outerPackaging.packageCode === "DR" && !!decl.emergencyContactDetails?.phone,
+    JSON.stringify(line?.commodities));
+  assert("…the emergency contact is the shipper's: name, 24-hour phone, provider and reference",
+    JSON.stringify(decl?.emergencyContactDetails) === JSON.stringify({ contact: "Van Wijk DG Desk", phone: "+31 10 437 2299", provider: "CHEMTREC", referenceNumber: "CCN-204417" }),
+    JSON.stringify(decl?.emergencyContactDetails));
+  assert("…and nothing on the 20' line, which carries none",
+    !((sentBody.requestedEquipments || []).find(e => e.ISOEquipmentCode === "22G1")?.commodities || []).some(c => c.outerPackaging?.dangerousGoods));
+  const v = validateOutbound("bkg", "post", "/v2/bookings", sentBody);
+  assert("…a valid DCSA Booking 2.0 request, no undefined fields", v.ok, v.ok ? "" : errorsText(v.errors, 4));
 
   await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
+  await request("DELETE", `/api/customers/${shipper.id}`, null, token);
 }
 
 async function testLinkBlDocument(token) {

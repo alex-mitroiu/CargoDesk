@@ -71,6 +71,33 @@ describe("House B/L screens", () => {
   before(() => {
     ensureOffices(api).then(res => { emoOfficeId = res.emoOfficeId; imoOfficeId = res.imoOfficeId; });
   });
+  // The issuer must be complete (House B/L audit M2, 2026-10-29): the export office's legal entity needs a SCAC and a
+  // street address. The twin of tests/helpers/house-bl.mjs ensureIssuingEntity, so CI's empty database issues too.
+  before(() => {
+    const complete = { address: "Wilhelminakade 909", city: "Rotterdam", phone: "+31 10 555 0142", email: "documentation@cargodesk.example" };
+    const asList = b => (Array.isArray(b) ? b : b?.results || []);
+    api("GET", "/offices").then(res => {
+      const office = asList(res.body).find(o => o.id === emoOfficeId);
+      expect(office, `export office ${emoOfficeId}`).to.exist;
+      if (office.branchId) {
+        return api("GET", `/branches/${office.branchId}`).then(({ body: b }) => {
+          if (b?.scac && b.address && b.city && b.countryCode) return;
+          api("PUT", `/branches/${office.branchId}`, { ...b, scac: b.scac || "CDHB", address: b.address || complete.address,
+            city: b.city || complete.city, phone: b.phone || complete.phone, email: b.email || complete.email })
+            .then(r => expect(r.status, JSON.stringify(r.body)).to.eq(200));
+        });
+      }
+      const code = `HB${String(emoOfficeId).replace(/[^A-Z0-9]/gi, "").slice(-6).toUpperCase()}`;
+      return api("GET", "/branches")
+        .then(({ body }) => {
+          const existing = asList(body).find(x => x.code === code);
+          return existing ? cy.wrap(existing) : api("POST", "/branches", { code, name: `CargoDesk Logistics ${office.name || code} BV`, countryCode: "NL",
+            locode: "NLRTM", currency: "EUR", scac: "CDHB", taxRegistrationNumber: "NL004495445B01", ...complete }).then(r => r.body);
+        })
+        .then(branch => api("PUT", `/offices/${emoOfficeId}`, { branchId: branch.id }))
+        .then(r => expect(r.status, JSON.stringify(r.body)).to.eq(200));
+    });
+  });
   before(() => {
     // The eBL's issuing carrier: a scratch legal entity with SCAC, address and contact, on its own export office.
     const letters = Array.from({ length: 3 }, () => String.fromCharCode(65 + Math.floor(Math.random() * 26))).join("");

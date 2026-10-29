@@ -367,7 +367,7 @@ function AiChatPanel() {
 // ─── Shipment preview modal (R/O, custom dark overlay) ───────────────────────
 function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
   const ctrs    = containers.filter(c => c.shipmentId === s.id);
-  const teu     = ctrs.reduce((n, c) => n + (c.size === "40" ? 2 : 1), 0);
+  const teu     = ctrs.reduce((n, c) => n + (c.size === "40" || c.size === "45" ? 2 : 1), 0);
   const carrier = carriers.find(c => c.code === s.carrierCode);
 
   const row = (label, value) => value ? (
@@ -907,14 +907,14 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
   ].filter(s => s.value > 0);
 
   // Containers count
-  const totalTEU = containers.reduce((n,c) => n + (c.size === "40" ? 2 : 1), 0);
+  const totalTEU = containers.reduce((n,c) => n + (c.size === "40" || c.size === "45" ? 2 : 1), 0);
 
   // TEU per carrier (from shipments + containers)
   const teuByCarrier = {};
   shipments.forEach(s => {
     if (!s.carrierCode) return;
     const teu = containers.filter(c => c.shipmentId === s.id)
-      .reduce((n, c) => n + (c.size === "40" ? 2 : 1), 0);
+      .reduce((n, c) => n + (c.size === "40" || c.size === "45" ? 2 : 1), 0);
     teuByCarrier[s.carrierCode] = (teuByCarrier[s.carrierCode] || 0) + teu;
   });
 
@@ -1027,7 +1027,7 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
   // TEU helper per shipment
   const shipTEU = sid => containers
     .filter(c => c.shipmentId === sid)
-    .reduce((n, c) => n + (c.size === "40" ? 2 : 1), 0);
+    .reduce((n, c) => n + (c.size === "40" || c.size === "45" ? 2 : 1), 0);
 
   const STATUS_DOT = { Active:"#22c55e", Pending:"#fab219", "Requires Review":"#f0526b" };
 

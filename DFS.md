@@ -5,7 +5,8 @@ work after it — DCSA booking with the built-in demo carrier, booking escalatio
 the main vessel and Requested-vs-Carrier comparison, SPOT rates and margin rules; §5.12 brought up to
 date 2026-10-27 for the DCSA message review: Shipping Instructions and VGM as DCSA, the carrier's local
 office on the booking; and 2026-10-28 for the carrier's Master B/L, VGM declarations with their evidence, and
-the carrier's events and vessel times). **Scope**:
+the carrier's events and vessel times; 2026-10-29 for the House B/L audit's rules (§5.9), dangerous goods in
+the booking (§5.12) and the shipper's DG emergency contact (§5.8)). **Scope**:
 whole application, at the level of its major
 functional domains and system-to-system data flows — not an exhaustive per-route specification.
 **Companion documents**: [`ARCHITECTURE.md`](ARCHITECTURE.md) (technical architecture, module
@@ -386,7 +387,11 @@ on company, role and city/country, free-text search, sort, server-side paging �
 Customers / Service Providers switch on top (the shared table system, ARCHITECTURE.md §8.23). A Credit
 Overrides queue lists every shipment currently blocked by a credit hold or an over-limit customer, with
 the same filtering, search and sort applied in the browser; only the shipment's own lane trade manager
-can release or approve.
+can release or approve. A shipper of dangerous goods carries its own 24-hour **DG emergency contact** on
+its profile (2026-10-29): the contact, the 24-hour phone, and optionally its provider (e.g. CHEMTREC) and
+its reference number with that provider. It is sent with every dangerous goods booking and printed on
+the DG Declaration (DG01); it replaces the org-wide DG Compliance Address in App Settings. (The profile
+fields follow the pending mockup; the rules are in place.)
 **Roles**: operator, admin (write); trade_manager (credit override, within their lane).
 **Primary data**: owned by the Customer/Organization Service when `customer_source=remote`.
 **Business rules**: credit-hold/over-limit override authority belongs exclusively to the
@@ -410,6 +415,14 @@ number. The B/L can be issued to order, in a chosen number of originals and copi
 arranged"; it prints every vessel and the on-carriage, a reefer's temperature and dangerous goods. The originals
 handed over are logged, and a telex release surrendered at origin sends the import office a task. All of it is run
 from the House B/L panel at the top of the shipment's Documents page; Test Tools plays the eBL platform.
+**One title to the cargo** (the House B/L audit, 2026-10-29): the originals are logged going out and coming back; an
+issued House B/L is voided only by an admin, and never while originals are out, for a live eBL, or after it was
+surrendered or the cargo released; no eBL is issued while paper originals are out; a live eBL is surrendered only on
+its platform; a telex release at origin needs every original back. "Shipped on board" needs every container loaded and
+is dated by the last, in the port's own date; a received-for-shipment B/L gets a dated on-board notation once all are
+aboard. The issuer's legal entity needs a SCAC and address. The House is compared with the carrier's Master (seals,
+weights, packages; a warning), the draft can go to the shipper for approval (an answer belongs to the draft it was sent
+with), and clauses can be added to it. (The new controls follow the pending mockup; the rules are in place.)
 **Roles**: operator, occ_bk (generate/send); all roles (view/download, scope-permitting).
 **Primary data**: `shipment_documents`; delivery state owned by the Document Distribution Service.
 **Business rules**: PDF Render is stateless by design — no document content is ever persisted
@@ -491,6 +504,19 @@ facts, with the full field list behind a button. It approves the draft, or corre
 update. The carrier issues it (B/L Issued completes), and its surrender for delivery completes the
 instructions. An issued House B/L travels in the Master's instructions where the destination's advance
 filing needs House-level data (EU ICS2, US AMS, Mercosur).
+**Amending the issued Master B/L** (2026-10-28): after the carrier has issued it, a correction to the shipment
+(a seal replaced at an inspection, a changed notify party) goes to the carrier as an amendment of the issued
+B/L. The user first sees what differs; nothing is sent when nothing does. The carrier declines it (a task, with
+its reason) or accepts it: the originals go back (a task until they do) and it issues the amended B/L under the
+same number, with the changes on record. Until the carrier works on it, the request can be withdrawn.
+**Equipment and seals** (2026-10-28): each container carries its ISO 6346 equipment code (45G1, L5G1…) — the code
+the booking, the instructions, the VGM and the B/L send — and 45' containers are allowed (2 TEU). A container
+holds several seals, each with who applied it (carrier, shipper, customs, veterinary).
+**The carrier's Arrival Notice** (2026-10-28, import side): it lands on the shipment whose Master or House B/L
+it names, every version kept. It moves the ETA, fills the containers' empty free days and shows where they
+differ (the user keeps theirs or takes the carrier's), and lists the carrier's destination charges, which the
+user adds as accruals with one click (one that looks entered starts unticked). AN01 is built from it. The
+vessel's berth arrival and departure can also come as DCSA Port Call events; they move the legs' times.
 **VGM declarations** are kept, every one, each with its evidence (the weighbridge ticket for Method 1, the
 weight calculation for Method 2) and a generated VG01 VGM Declaration. A declaration with no evidence is
 flagged.
@@ -501,7 +527,8 @@ fills in). The carrier's vessel schedules (DCSA OVS 3.0) can be asked for the sa
 trade_ay, trade_manager (escalation steps by side and lane); admin and trade_manager only (Lane
 Steering); admin only (the escalation settings).
 **Primary data**: `carrier_bookings` (with the carrier's DCSA confirmation), `edi_messages`, `shipping_instructions`,
-`transport_documents` (the Master B/L), `vgm_declarations`, `carrier_events`,
+`transport_documents` (the Master B/L, its amendment), `vgm_declarations`, `carrier_events`, `arrival_notices`,
+`port_call_events`, `containers` (ISO code, seals),
 `booking_escalations`, `booking_escalation_steps`, `lane_steerings`, `lane_steering_options`,
 `dcsa_sim_bookings`.
 **Business rules**: a detail DCSA doesn't carry is "Not stated", never "changed". Rebooking elsewhere
@@ -516,8 +543,12 @@ carrier drops the old carrier's contract and quote, so instructions for another 
   the user is told what's missing.
 - **No connection.** Shipping Instructions and VGM need a DCSA connection to the carrier (its own, or
   the demo carrier); there is no manual path.
+- **Dangerous goods** (2026-10-29). A booking declares its dangerous goods on the equipment line they
+  travel in: UN number, proper shipping name, IMO class, weight, packages and the shipper's 24-hour
+  emergency contact. A DG container missing any of them, or a shipper with no emergency contact on its
+  profile, refuses the booking, saying what's missing. There is no fallback contact.
 
-See ARCHITECTURE.md §8.34–§8.37, §8.41 and §8.42.
+See ARCHITECTURE.md §8.34–§8.37 and §8.41–§8.44.
 
 ### 5.13 Spot Rates & Margins (P2 / P3)
 **Purpose**: price a shipment the carrier sells at the day's market rate — what was bought, on which

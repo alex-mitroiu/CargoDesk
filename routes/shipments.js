@@ -3,7 +3,7 @@ const ExcelJS = require("exceljs");
 const { mainLegIndex } = require("../lib/mainLeg");
 const { PACKAGE_CODES, TO_ORDER_MODES } = require("../lib/house-bl");
 const { buildVgmDeclaration, retraction: vgmRetraction, vgmProblems } = require("../lib/carrier-integrations/dcsa-vgm-v1");
-const { CONTAINER_EVENT_DCSA } = require("../lib/dcsa/codes");
+const { CONTAINER_EVENT_DCSA, ISO_CODE_PATTERN, isoLengthFt, isoEquipmentCode, sizeTypeOfIso, SEAL_SOURCE, containerSeals } = require("../lib/dcsa/codes");
 // Consignee on the House B/L (TKT-C7EBU3 gap G11): "" named, CONSIGNEE "to order of", SHIPPER "to order".
 const toOrderError = v => (TO_ORDER_MODES.includes(v) ? null : 'blToOrder must be "" (a named consignee), CONSIGNEE (to order of the consignee) or SHIPPER (to order)');
 
@@ -1192,7 +1192,55 @@ module.exports = function shipmentsRoutes(app, ctx) {
     }));
   });
 
-  const CONTAINER_SIZES = ["20", "40"]; // matches the DB-level CHECK(size IN ('20','40')) on containers.size
+  const CONTAINER_SIZES = ["20", "40", "45"]; // matches the DB-level CHECK(size IN ('20','40','45')) on containers.size
+
+  // DCSA equipment (phase 3, 2026-10-28): the container's ISO 6346 code and its seals, from what was sent.
+  //  - isoEquipmentCode given: checked, and size/type follow from it when they aren't given (its length must
+  //    match a size that is); otherwise the container-type registry's code for size+type (else the standard
+  //    mapping) — and a container whose size/type didn't change keeps the code it had.
+  //  - seals [{ number, source }] given: the whole list (source CAR/SHI/VET/CUS or none; 15 characters, DCSA's
+  //    limit); otherwise sealNumber replaces the first seal (the others and its source kept).
+  // → { size, type, iso, seals, sealNumber } | { error }
+  async function equipmentOf(body = {}, old = null) {
+    const has = k => Object.prototype.hasOwnProperty.call(body, k);
+    let size = has("size") && body.size ? String(body.size) : old?.size || "";
+    let type = has("type") && body.type ? String(body.type) : old?.type || "";
+    let iso = String(body.isoEquipmentCode || "").toUpperCase().replace(/\s+/g, "");
+    if (iso) {
+      if (!ISO_CODE_PATTERN.test(iso)) return { error: "isoEquipmentCode must be an ISO 6346 size/type code (e.g. 45G1)" };
+      const st = sizeTypeOfIso(iso);
+      if (!(has("size") && body.size) || !(has("type") && body.type)) {
+        if (!st) return { error: `size and type are needed with ${iso} (CargoDesk has no type for it)` };
+        size = st.size; type = st.type;
+      } else if (String(isoLengthFt(iso)) !== size) return { error: `isoEquipmentCode ${iso} is a ${isoLengthFt(iso)}' unit, not ${size}'` };
+    } else if (old && old.size === size && old.type === type && old.iso_equipment_code) iso = old.iso_equipment_code;
+    else if (size && type) {
+      const [d] = await query("SELECT iso_code FROM container_type_definitions WHERE size=$1 AND type=$2 AND iso_code<>'' AND is_active=TRUE ORDER BY sort_order LIMIT 1", [size, type]);
+      iso = d?.iso_code || isoEquipmentCode(`${size}${type}`) || "";
+    }
+    let seals;
+    if (has("seals")) {
+      if (!Array.isArray(body.seals)) return { error: "seals must be a list of { number, source }" };
+      seals = [];
+      for (const x of body.seals) {
+        const number = String(x?.number ?? "").toUpperCase().replace(/\s+/g, "");
+        if (!number || seals.some(s => s.number === number)) continue;
+        if (number.length > 15) return { error: `Seal ${number} is longer than 15 characters (DCSA's limit)` };
+        const source = String(x?.source || "").toUpperCase();
+        if (source && !SEAL_SOURCE.some(c => c.code === source)) return { error: `A seal's source must be one of ${SEAL_SOURCE.map(c => `${c.code} (${c.label})`).join(", ")}` };
+        seals.push({ number, source });
+      }
+      // A client that read the container and changed only its sealNumber sends both: the changed number
+      // is the first seal (a new seal, so who applied it isn't known).
+      const first = has("sealNumber") ? String(body.sealNumber ?? "").toUpperCase().replace(/\s+/g, "") : "";
+      if (first && seals[0]?.number !== first) seals = [{ number: first, source: "" }, ...seals.slice(1).filter(s => s.number !== first)];
+    } else {
+      const prev = containerSeals(old);
+      const first = String(has("sealNumber") ? body.sealNumber ?? "" : old?.seal_number || "").trim();
+      seals = first ? [{ number: first, source: prev[0]?.number === first ? prev[0].source : "" }, ...prev.slice(1)] : prev.slice(1);
+    }
+    return { size, type, iso, seals, sealNumber: seals[0]?.number || "" };
+  }
   // Accepted/Rejected are simulate-only (VGM Simulator, mirrors customs filing/carrier booking's
   // own Accepted/Rejected — never settable through a generic write route) — the generic
   // container create/update routes below only ever accept Pending/Submitted directly.
@@ -1303,13 +1351,16 @@ module.exports = function shipmentsRoutes(app, ctx) {
   });
 
   app.post("/api/containers", shipmentWrite, async (req, res) => {
-    const { shipmentId, containerNumber = "", sealNumber = "", size, type,
+    const { shipmentId, containerNumber = "",
             hsCode = "", cargoDescription = "", marksAndNumbers = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
             vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", vgmMethod = "", cyCutoff = "",
             originFreeTimeDays = null, destFreeTimeDays = null,
             originDetentionFreeDays = null, destDetentionFreeDays = null,
             setTemperatureC = null } = req.body;
-    if (!shipmentId || !size || !type) return err(res, "shipmentId, size, type required");
+    const eq = await equipmentOf(req.body, null);
+    if (eq.error) return err(res, eq.error);
+    const { size, type, sealNumber } = eq;
+    if (!shipmentId || !size || !type) return err(res, "shipmentId, size, type (or isoEquipmentCode) required");
     const pkg = packagesOf(req.body, null);
     if (pkg.error) return err(res, pkg.error);
     if (!CONTAINER_SIZES.includes(size)) return err(res, `size must be one of: ${CONTAINER_SIZES.join(", ")}`);
@@ -1334,19 +1385,19 @@ module.exports = function shipmentsRoutes(app, ctx) {
       return err(res, `Container number ${cnU} is already used on this shipment`, 409);
     let recordVgm = null;
     if (vgmStatus === "Submitted") {
-      const sentVgm = await sendVgm(shipmentRowForGate, { id, container_number: cnU, seal_number: sealNumber, size, type,
-        vgm_weight_kg: vgmWeightKg, vgm_method: vgmMethod || "" }, req.user);
+      const sentVgm = await sendVgm(shipmentRowForGate, { id, container_number: cnU, seal_number: sealNumber, seals: JSON.stringify(eq.seals), size, type,
+        iso_equipment_code: eq.iso, vgm_weight_kg: vgmWeightKg, vgm_method: vgmMethod || "" }, req.user);
       if (!sentVgm.ok) return err(res, sentVgm.error, sentVgm.status);
       recordVgm = sentVgm.record;
     }
     await query(`INSERT INTO containers (id,shipment_id,container_number,seal_number,size,type,hs_code,cargo_description,marks_and_numbers,gross_weight_kg,volume_cbm,is_dg,dg_class,
                 vgm_weight_kg,vgm_status,vgm_cutoff,vgm_method,cy_cutoff,origin_free_time_days,dest_free_time_days,origin_detention_free_days,dest_detention_free_days,set_temperature_c,
-                number_of_packages,package_code,package_description,dg_un_number,dg_proper_shipping_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
+                number_of_packages,package_code,package_description,dg_un_number,dg_proper_shipping_name,iso_equipment_code,seals) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)`,
       [id, shipmentId, cnU, sealNumber, size, type, hsCode, cargoDescription, marksAndNumbers, grossWeightKg, volumeCbm, !!isDg, dgClass,
            vgmWeightKg, vgmStatus, vgmCutoff || null, vgmMethod || "", cyCutoff || null, originFreeTimeDays, destFreeTimeDays, originDetentionFreeDays, destDetentionFreeDays, setTemperatureC,
-           pkg.number_of_packages, pkg.package_code, pkg.package_description, pkg.dg_un_number, pkg.dg_proper_shipping_name]);
+           pkg.number_of_packages, pkg.package_code, pkg.package_description, pkg.dg_un_number, pkg.dg_proper_shipping_name, eq.iso, JSON.stringify(eq.seals)]);
     if (recordVgm) await recordVgm();
-    const ctrRow = { id, shipment_id: shipmentId, container_number: cnU, seal_number: sealNumber, size, type, hs_code: hsCode, cargo_description: cargoDescription, marks_and_numbers: marksAndNumbers, gross_weight_kg: grossWeightKg, volume_cbm: volumeCbm, is_dg: !!isDg, dg_class: dgClass,
+    const ctrRow = { id, shipment_id: shipmentId, container_number: cnU, seal_number: sealNumber, seals: JSON.stringify(eq.seals), iso_equipment_code: eq.iso, size, type, hs_code: hsCode, cargo_description: cargoDescription, marks_and_numbers: marksAndNumbers, gross_weight_kg: grossWeightKg, volume_cbm: volumeCbm, is_dg: !!isDg, dg_class: dgClass,
       number_of_packages: pkg.number_of_packages, package_code: pkg.package_code, package_description: pkg.package_description,
       dg_un_number: pkg.dg_un_number, dg_proper_shipping_name: pkg.dg_proper_shipping_name,
       vgm_weight_kg: vgmWeightKg, vgm_status: vgmStatus, vgm_cutoff: vgmCutoff || null, vgm_method: vgmMethod || "", cy_cutoff: cyCutoff || null,
@@ -1362,7 +1413,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
   });
 
   app.put("/api/shipments/:shipmentId/containers/:id", shipmentWrite, async (req, res) => {
-    const { containerNumber = "", sealNumber = "", size, type,
+    const { containerNumber = "",
             hsCode = "", cargoDescription = "", marksAndNumbers = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
             vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", vgmMethod = "", cyCutoff = "",
             originFreeTimeDays = null, destFreeTimeDays = null,
@@ -1373,7 +1424,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!oldCtr) return err(res, "Not found", 404);
     const [shipmentRowForGate] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
     if (await blockIfWrongSide(req, res, shipmentRowForGate, 'export')) return;
-    if (!size || !type) return err(res, "size, type required");
+    // A full-row save without size/type was refused before; it still is (isoEquipmentCode alone will do).
+    if (!(req.body.size && req.body.type) && !req.body.isoEquipmentCode) return err(res, "size, type required");
+    const eq = await equipmentOf(req.body, oldCtr);
+    if (eq.error) return err(res, eq.error);
+    const { size, type, sealNumber } = eq;
     const pkg = packagesOf(req.body, oldCtr);
     if (pkg.error) return err(res, pkg.error);
     if (!CONTAINER_SIZES.includes(size)) return err(res, `size must be one of: ${CONTAINER_SIZES.join(", ")}`);
@@ -1397,21 +1452,24 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const vgmRetract = wasDeclared && vgmStatus === "Pending";
     let recordVgm = null;
     if (vgmSend || vgmRetract) {
-      const sentVgm = await sendVgm(shipmentRowForGate, { ...oldCtr, container_number: cnU, seal_number: sealNumber, size, type,
-        vgm_weight_kg: vgmWeightKg, vgm_method: vgmMethod || "" }, req.user, { retract: vgmRetract });
+      const sentVgm = await sendVgm(shipmentRowForGate, { ...oldCtr, container_number: cnU, seal_number: sealNumber, seals: JSON.stringify(eq.seals), size, type,
+        iso_equipment_code: eq.iso, vgm_weight_kg: vgmWeightKg, vgm_method: vgmMethod || "" }, req.user, { retract: vgmRetract });
       if (!sentVgm.ok) return err(res, sentVgm.error, sentVgm.status);
       recordVgm = sentVgm.record;
     }
     const updated = await query(`UPDATE containers SET container_number=$1, seal_number=$2, size=$3, type=$4, hs_code=$5, cargo_description=$6, marks_and_numbers=$7, gross_weight_kg=$8, volume_cbm=$9, is_dg=$10, dg_class=$11,
                 vgm_weight_kg=$12, vgm_status=$13, vgm_cutoff=$14, vgm_method=$15, cy_cutoff=$16, origin_free_time_days=$17, dest_free_time_days=$18, origin_detention_free_days=$19, dest_detention_free_days=$20, set_temperature_c=$21,
-                number_of_packages=$23, package_code=$24, package_description=$25, dg_un_number=$26, dg_proper_shipping_name=$27 WHERE id=$22 RETURNING id`,
+                number_of_packages=$23, package_code=$24, package_description=$25, dg_un_number=$26, dg_proper_shipping_name=$27,
+                iso_equipment_code=$28, seals=$29 WHERE id=$22 RETURNING id`,
       [cnU, sealNumber, size, type, hsCode, cargoDescription, marksAndNumbers, grossWeightKg, volumeCbm, !!isDg, dgClass,
            vgmWeightKg, vgmStatus, vgmCutoff || null, vgmMethod || "", cyCutoff || null, originFreeTimeDays, destFreeTimeDays,
            originDetentionFreeDays, destDetentionFreeDays, setTemperatureC, req.params.id,
-           pkg.number_of_packages, pkg.package_code, pkg.package_description, pkg.dg_un_number, pkg.dg_proper_shipping_name]);
+           pkg.number_of_packages, pkg.package_code, pkg.package_description, pkg.dg_un_number, pkg.dg_proper_shipping_name,
+           eq.iso, JSON.stringify(eq.seals)]);
     if (updated.length === 0) return err(res, "Not found", 404);
     if (recordVgm) await recordVgm();
-    const newVals = { container_number: cnU, size, type, hs_code: hsCode,
+    const newVals = { container_number: cnU, size, type, iso_equipment_code: eq.iso, seal_number: sealNumber,
+      seals: eq.seals.map(x => `${x.number}${x.source ? ` (${x.source})` : ""}`).join(", "), hs_code: hsCode,
       cargo_description: cargoDescription, marks_and_numbers: marksAndNumbers, gross_weight_kg: grossWeightKg,
       volume_cbm: volumeCbm, is_dg: !!isDg, dg_class: dgClass,
       vgm_weight_kg: vgmWeightKg, vgm_status: vgmStatus, vgm_cutoff: vgmCutoff || null, vgm_method: vgmMethod || "", cy_cutoff: cyCutoff || null,
@@ -1419,8 +1477,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
       origin_detention_free_days: originDetentionFreeDays, dest_detention_free_days: destDetentionFreeDays,
       set_temperature_c: setTemperatureC };
     const meta = JSON.stringify({ containerNumber: cnU });
+    const oldVals = { ...oldCtr, iso_equipment_code: oldCtr.iso_equipment_code || eq.iso,
+      seals: containerSeals(oldCtr).map(x => `${x.number}${x.source ? ` (${x.source})` : ""}`).join(", ") };
     for (const [col] of Object.entries(TRACKED_CTR_FIELDS)) {
-      const o = String(oldCtr[col] ?? ''), n = String(newVals[col] ?? '');
+      const o = String(oldVals[col] ?? ''), n = String(newVals[col] ?? '');
       if (o !== n && !(o === '' && n === '')) {
         await logEvent(oldCtr.shipment_id, 'CONTAINER_UPDATED', col, o, n, meta, req.user?.name || req.user?.email || "");
       }
@@ -1585,6 +1645,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
     return {
       data: { containerNumber, sealNumber, typeCode, size: typeDef?.size || "", type: typeDef?.type || "",
+        iso: typeDef?.iso_code || isoEquipmentCode(typeCode) || "",
         hsCode, cargoDescription, marksAndNumbers, grossWeightKg, volumeCbm, isDg, dgClass, setTemperatureC },
       errors,
     };
@@ -1717,11 +1778,13 @@ module.exports = function shipmentsRoutes(app, ctx) {
         for (const { data } of revalidated) {
           const id = `CTR-${uid()}`;
           await tx.query(`INSERT INTO containers (id,shipment_id,container_number,seal_number,size,type,hs_code,cargo_description,marks_and_numbers,gross_weight_kg,volume_cbm,is_dg,dg_class,
-                    vgm_weight_kg,vgm_status,vgm_cutoff,cy_cutoff,origin_free_time_days,dest_free_time_days,origin_detention_free_days,dest_detention_free_days,set_temperature_c) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+                    vgm_weight_kg,vgm_status,vgm_cutoff,cy_cutoff,origin_free_time_days,dest_free_time_days,origin_detention_free_days,dest_detention_free_days,set_temperature_c,
+                    iso_equipment_code,seals) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
             [id, req.params.id, data.containerNumber, data.sealNumber, data.size, data.type, data.hsCode, data.cargoDescription, data.marksAndNumbers,
                  data.grossWeightKg, data.volumeCbm, !!data.isDg, data.dgClass,
-                 null, "Pending", null, null, null, null, null, null, data.setTemperatureC]);
-          const ctrRow = { id, shipment_id: req.params.id, container_number: data.containerNumber, seal_number: data.sealNumber,
+                 null, "Pending", null, null, null, null, null, null, data.setTemperatureC,
+                 data.iso, data.sealNumber ? JSON.stringify([{ number: data.sealNumber, source: "" }]) : ""]);
+          const ctrRow = { id, shipment_id: req.params.id, container_number: data.containerNumber, seal_number: data.sealNumber, iso_equipment_code: data.iso,
             size: data.size, type: data.type, hs_code: data.hsCode, cargo_description: data.cargoDescription, marks_and_numbers: data.marksAndNumbers,
             gross_weight_kg: data.grossWeightKg, volume_cbm: data.volumeCbm, is_dg: !!data.isDg, dg_class: data.dgClass,
             vgm_weight_kg: null, vgm_status: "Pending", vgm_cutoff: null, cy_cutoff: null,
