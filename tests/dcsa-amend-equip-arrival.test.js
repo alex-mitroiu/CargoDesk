@@ -329,6 +329,31 @@ const inDays = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
     const stray = await pc("ARRI", "ESTIMATED", "USNYC", `${inDays(14)}T06:00:00Z`, { voyage: "999X" });
     assert("a call for a voyage no shipment has is acknowledged with a warning", stray.status === 201 && /No shipment has vessel 9333022 voyage 999X/.test(stray.body?.feedback?.[0]?.message || ""),
       JSON.stringify(stray.body));
+
+    // ─── Release audit R3, R4 (2026-10-29) ───────────────────────────────────
+    console.log("\nOnly the carrier's shipments, only open ones (release audit R3, R4)");
+    // R3: a shipment booked elsewhere that names the same Master B/L gets nothing from the demo carrier's notice.
+    const X = (await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "Central",
+      contractRef: "MAEU-SC-2026-0418", etd: inDays(5), eta: inDays(17), incoterm: "FOB", commodityCode: "9999", freightTerms: "Prepaid",
+      masterBlNumber: mN.reference, shipperId: shipper.id, shipperName: shipper.companyName, consigneeId: consignee.id, consigneeName: consignee.companyName,
+      principalId: shipper.id, principalName: shipper.companyName, emoOfficeId: office.id, imoOfficeId }, token)).body;
+    if (X?.id) cleanup.shipments.push(X.id);
+    const pub3 = await request("POST", "/api/test-tools/dcsa-sim/arrival-notices", { shipmentId: N.id, eta: inDays(19) }, token);
+    const versionsN = pub3.body?.arrivalNotice?.versions?.length || 0;
+    assert("R3: the demo carrier's notice reaches its own booking only; a shipment booked elsewhere naming the same Master B/L gets nothing",
+      !!X?.id && pub3.status === 201 && versionsN >= 4 && (await request("GET", `/api/shipments/${X.id}/arrival-notice`, null, token)).body === null,
+      JSON.stringify({ x: X?.id, s: pub3.status, v: versionsN }));
+    // R4: a Completed shipment is locked: the next notice and a berth call leave it alone, and the carrier is told.
+    const done = await request("PUT", `/api/shipments/${N.id}`, { status: "Completed" }, token);
+    const pub4 = await request("POST", "/api/test-tools/dcsa-sim/arrival-notices", { shipmentId: N.id, eta: inDays(21) }, token);
+    const anDone = (await request("GET", `/api/shipments/${N.id}/arrival-notice`, null, token)).body;
+    assert("R4: a Completed shipment takes no new Arrival Notice, and the carrier is told why", done.status === 200 && pub4.status === 201
+      && anDone?.versions?.length === versionsN && /is Completed: not changed/.test(JSON.stringify(pub4.body?.feedback || [])),
+      JSON.stringify({ done: done.status, s: pub4.status, v: anDone?.versions?.length, f: pub4.body?.feedback }));
+    const pcDone = await pc("ARRI", "ACTUAL", "USNYC", `${inDays(15)}T08:00:00Z`);
+    leg = await seaN();
+    assert("R4: nor does a berth arrival move its leg (still the arrival of day 14)", pcDone.status === 201 && String(leg.eta).startsWith(inDays(14)),
+      JSON.stringify({ s: pcDone.status, eta: leg?.eta, f: pcDone.body?.feedback }));
   } catch (e) {
     console.error("\nFatal:", e.message);
     failed++;

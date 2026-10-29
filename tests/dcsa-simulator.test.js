@@ -78,11 +78,19 @@ const rand = Math.random().toString(36).slice(2, 7).toUpperCase();
     const conn = (await request("GET", "/api/carrier-connections/MAEU", null, token)).body;
     assert("MAEU (no integration) books through the simulator, flagged demo", conn?.capabilities?.booking?.via === "simulator" && conn.capabilities.booking.demo === true, JSON.stringify(conn));
 
+    // The demo carrier's own API needs its token (release audit R2, 2026-10-29); an admin gets it from the status.
+    const sim = status.body.accessToken;
+    assert("an admin gets the demo carrier's token", typeof sim === "string" && sim.length >= 32);
+    const anon = await request("GET", "/dcsa-sim/v3/service-schedules");
+    const wrong = await request("GET", "/dcsa-sim/v3/service-schedules", null, "dcsa-simulator");
+    assert("R2: the demo carrier's API refuses a call with no token, or the wrong one (401)", anon.status === 401 && wrong.status === 401,
+      JSON.stringify({ anon: anon.status, wrong: wrong.status }));
+
     console.log("\nThe simulator is a DCSA Booking 2.0 carrier");
-    const bad = await request("POST", "/dcsa-sim/v2/bookings", { receiptTypeAtOrigin: "CY" });
+    const bad = await request("POST", "/dcsa-sim/v2/bookings", { receiptTypeAtOrigin: "CY" }, sim);
     assert("an invalid booking is refused 400 with DCSA's ErrorResponse", bad.status === 400 && bad.body?.statusCode === 400
       && Array.isArray(bad.body.errors) && bad.body.errors.length > 0 && !!bad.body.httpMethod && !!bad.body.errorDateTime, JSON.stringify(bad.body).slice(0, 300));
-    const unknown = await request("GET", "/dcsa-sim/v2/bookings/SIM-NOPE");
+    const unknown = await request("GET", "/dcsa-sim/v2/bookings/SIM-NOPE", null, sim);
     assert("an unknown booking is 404", unknown.status === 404);
 
     console.log("\nBooking request → RECEIVED → carrier confirms");
@@ -97,7 +105,7 @@ const rand = Math.random().toString(36).slice(2, 7).toUpperCase();
     let b = await waitForCarrierReference(request, token, A);
     const ref = b?.carrierBookingRequestReference;
     assert("the simulator issued a SIM- reference and said RECEIVED; booking flagged demo", /^SIM-/.test(ref || "") && b.lastResponseStatus === "received" && b.isMock === true, JSON.stringify(b).slice(0, 200));
-    const got = await request("GET", `/dcsa-sim/v2/bookings/${ref}`);
+    const got = await request("GET", `/dcsa-sim/v2/bookings/${ref}`, null, sim);
     const shape = validateResponse("bkg", "get", "/v2/bookings/{bookingReference}", 200, got.body);
     assert("the simulator's GET answer is a valid DCSA Booking", got.status === 200 && shape.ok, JSON.stringify(shape.errors).slice(0, 300));
     assert("it kept the request as CargoDesk sent it (carrierCode MAEU, ISO 45G1)", got.body.carrierCode === "MAEU" && got.body.requestedEquipments?.[0]?.ISOEquipmentCode === "45G1");
@@ -140,7 +148,7 @@ const rand = Math.random().toString(36).slice(2, 7).toUpperCase();
     const delC = await request("DELETE", `/api/shipments/${C}`, null, token);
     const after = (await request("GET", "/api/test-tools/dcsa-sim/bookings", null, token)).body;
     assert("the carrier keeps its copy, but Test Tools no longer lists it (nothing left to answer)",
-      delC.status === 200 && (await request("GET", `/dcsa-sim/v2/bookings/${refC}`)).status === 200
+      delC.status === 200 && (await request("GET", `/dcsa-sim/v2/bookings/${refC}`, null, sim)).status === 200
       && Array.isArray(after) && !after.some(x => x.carrierBookingRequestReference === refC) && after.every(x => !!x.shipmentId), JSON.stringify({ del: delC.status, refC }));
 
     console.log("\nThe Demo carrier switch is admin-only");

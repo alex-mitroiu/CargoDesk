@@ -29,7 +29,10 @@ module.exports = function dcsaSimulatorRoutes(app, ctx) {
   // shows no switch; in production it follows the dcsa_demo_carrier_enabled setting.
   app.get("/api/dcsa-simulator/status", auth(), async (req, res) => {
     const production = process.env.NODE_ENV === "production";
-    ok(res, { production, available: await dcsaSimulator.allowed(), capabilities: [...dcsaSimulator.CAPABILITIES] });
+    // An admin also gets the token the demo carrier's own API requires (release audit R2), to call it directly.
+    const admin = (req.user?.roles || [req.user?.role]).includes("admin");
+    ok(res, { production, available: await dcsaSimulator.allowed(), capabilities: [...dcsaSimulator.CAPABILITIES],
+      ...(admin && { accessToken: dcsaSimulator.accessToken() }) });
   });
 
   // ─── Test Tools: play the carrier ───────────────────────────────────────────

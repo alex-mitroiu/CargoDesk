@@ -310,7 +310,11 @@ const UserManualPage = () => {
             you flag a container as Dangerous Goods and set its IMDG class if it needs one. A
             booking request for dangerous goods also needs each DG container's UN number, proper
             shipping name and gross weight, and the shipper's 24-hour emergency contact; the
-            request is refused, saying what's missing, until they're there.</P>
+            request is refused, saying what's missing, until they're there. The contact is the
+            shipper's own: open the shipper under <Tag>Customers</Tag>, and on <Tag>Profile</Tag> tick{" "}
+            <em>Ships dangerous goods</em>, then give the contact and its 24-hour phone, and the
+            provider (e.g. CHEMTREC) and the shipper's reference with it if it has one. The Dangerous
+            Goods Declaration (DG01) prints the same contact.</P>
           <Screenshot src={imgCargoList} alt="The Cargo page showing a container tree" caption="The Cargo page — every container on the shipment on the left, its own cargo breakdown underneath it. Both '+ Add Container' and '⬆ Import Containers' sit right above the list." />
         </StepBody>
         <Step n={3}>Or import a whole spreadsheet at once</Step>
@@ -870,7 +874,8 @@ const UserManualPage = () => {
           Voided, and you can issue a new one. Void is refused while any original is still out
           (record them returned first), for a live eBL (it comes back through its platform), and
           once the B/L was surrendered for delivery or the cargo released against it, so two
-          titles to the same cargo never exist. A shipment has one issued House B/L at a time, and
+          titles to the same cargo never exist. For the same reason a shipment holding an issued
+          House B/L can't be deleted: cancel it instead. A shipment has one issued House B/L at a time, and
           generating a new draft replaces the previous draft.</P>
         <P>Issuing checks the B/L is complete first and, if not, lists what is missing: parties with
           their addresses, a notify party, vessel and voyage, the carrier's confirmed booking, the

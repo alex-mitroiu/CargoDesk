@@ -390,8 +390,9 @@ the same filtering, search and sort applied in the browser; only the shipment's 
 can release or approve. A shipper of dangerous goods carries its own 24-hour **DG emergency contact** on
 its profile (2026-10-29): the contact, the 24-hour phone, and optionally its provider (e.g. CHEMTREC) and
 its reference number with that provider. It is sent with every dangerous goods booking and printed on
-the DG Declaration (DG01); it replaces the org-wide DG Compliance Address in App Settings. (The profile
-fields follow the pending mockup; the rules are in place.)
+the DG Declaration (DG01); it replaces the org-wide DG Compliance Address, and App Settings no longer has a
+Compliance tab. It is entered under Profile → Dangerous goods ("Ships dangerous goods"); a name and a
+24-hour phone are needed together, and unticking clears it.
 **Roles**: operator, admin (write); trade_manager (credit override, within their lane).
 **Primary data**: owned by the Customer/Organization Service when `customer_source=remote`.
 **Business rules**: credit-hold/over-limit override authority belongs exclusively to the
@@ -417,7 +418,8 @@ handed over are logged, and a telex release surrendered at origin sends the impo
 from the House B/L panel at the top of the shipment's Documents page; Test Tools plays the eBL platform.
 **One title to the cargo** (the House B/L audit, 2026-10-29): the originals are logged going out and coming back; an
 issued House B/L is voided only by an admin, and never while originals are out, for a live eBL, or after it was
-surrendered or the cargo released; no eBL is issued while paper originals are out; a live eBL is surrendered only on
+surrendered or the cargo released, and a shipment holding one can't be deleted (it is cancelled instead); no eBL is
+issued while paper originals are out; a live eBL is surrendered only on
 its platform; a telex release at origin needs every original back. "Shipped on board" needs every container loaded and
 is dated by the last, in the port's own date; a received-for-shipment B/L gets a dated on-board notation once all are
 aboard. The issuer's legal entity needs a SCAC and address. The House is compared with the carrier's Master (seals,
@@ -543,6 +545,10 @@ carrier drops the old carrier's contract and quote, so instructions for another 
   the user is told what's missing.
 - **No connection.** Shipping Instructions and VGM need a DCSA connection to the carrier (its own, or
   the demo carrier); there is no manual path.
+- **What a carrier's push may change** (2026-10-29). A carrier's events, Arrival Notices and port call
+  times change only open shipments (never a Completed or Cancelled one), and an event or Arrival Notice
+  only that carrier's shipments. The demo carrier's own API answers only CargoDesk. A VGM is Submitted
+  to the carrier and isn't "accepted": DCSA VGM has no such answer.
 - **Dangerous goods** (2026-10-29). A booking declares its dangerous goods on the equipment line they
   travel in: UN number, proper shipping name, IMO class, weight, packages and the shipper's 24-hour
   emergency contact. A DG container missing any of them, or a shipper with no emergency contact on its

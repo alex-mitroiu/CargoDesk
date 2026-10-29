@@ -150,7 +150,9 @@ const list = b => (Array.isArray(b) ? b : (b?.results ?? []));
     assert("a new CMDU request went out, under a new reference", after?.status === "Pending" && after.carrierBookingRequestReference && after.carrierBookingRequestReference !== before.carrierBookingRequestReference,
       JSON.stringify({ before: before?.carrierBookingRequestReference, after: after?.carrierBookingRequestReference }));
     const sim = list((await request("GET", "/api/test-tools/dcsa-sim/bookings", null, token)).body);
-    const oldAtCarrier = (await request("GET", `/dcsa-sim/v2/bookings/${before.carrierBookingRequestReference}`)).body;
+    // The demo carrier's own API needs its token (release audit R2); an admin gets it from the status.
+    const simToken = (await request("GET", "/api/dcsa-simulator/status", null, token)).body.accessToken;
+    const oldAtCarrier = (await request("GET", `/dcsa-sim/v2/bookings/${before.carrierBookingRequestReference}`, null, simToken)).body;
     assert("the first request was withdrawn at CMDU (CANCELLED)", oldAtCarrier?.bookingStatus === "CANCELLED", JSON.stringify(oldAtCarrier?.bookingStatus));
     assert("…and only the new one is offered to play", sim.some(x => x.carrierBookingRequestReference === after.carrierBookingRequestReference) && !sim.some(x => x.carrierBookingRequestReference === before.carrierBookingRequestReference && x.shipmentId === C), "");
   } catch (e) {

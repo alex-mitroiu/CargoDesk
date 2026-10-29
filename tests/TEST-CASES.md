@@ -1274,9 +1274,9 @@ remove the line and the configurations afterwards. ARCHITECTURE.md §8.39.
 
 ## Area 13 — The House B/L Audit's Fixes and Dangerous Goods (2026-10-29, epic TKT-J0SDVB)
 
-The server-side rules of the House B/L audit's fixes and the DG booking (ARCHITECTURE.md §8.44). The new controls on
-the House B/L panel and the customer's DG contact form wait for mockup 12f412e9; until they are built these cases run
-through the API.
+The server-side rules of the House B/L audit's fixes and the DG booking (ARCHITECTURE.md §8.44). The customer's DG
+contact form is built (mockup 12f412e9, screen 5); the new controls on the House B/L panel wait for screens 1–4, so
+TC-079 and TC-080 run through the API until they are built.
 
 ### TC-079: One title to the cargo: originals, void, eBL, telex release
 **Feature:** the originals log both ways, void rules, eBL and telex release guards (H1, H2, H3, M5, M6, L1)
@@ -1325,16 +1325,39 @@ through the API.
 **Precondition:** A shipper (a Rotterdam paint maker) with no DG emergency contact; its MAEU shipment with two 40' HC containers of paint (class 3, 80 drums each), one missing its UN number and proper shipping name, and one 20' container that isn't DG
 **Steps:**
 1. Send Booking Request
-2. Complete the container (UN 1263, PAINT); save the shipper's contact with a name but no phone; with a phone that isn't a number
-3. Save the contact: Van Wijk DG Desk, +31 10 437 2299, CHEMTREC, CCN-204417; save the profile again without it; send Booking Request
-4. Generate DG01; clear the contact (null) and generate it again
+2. Complete the container (UN 1263, PAINT). Customers → the shipper → Profile: tick Ships dangerous goods; give a name but no phone; then a phone that isn't a number
+3. Give the contact: Van Wijk DG Desk, +31 10 437 2299, CHEMTREC, CCN-204417; Save Profile; save the customer again through the API without the contact field; send Booking Request
+4. Generate DG01; untick Ships dangerous goods, Save Profile, and generate it again
 5. Repeat step 3's saves with the customer service as the source (`customer_source=remote`)
+6. Open App Settings
 
 **Expected Result:**
 - 400, naming the container's missing UN number and proper shipping name and the shipper's missing contact, by the shipper's name
-- 400 (a name and a 24-hour phone are needed); 400 (it must be a phone number)
+- The form says a name and a 24-hour phone are needed, then that it must be a phone number, and holds Save; the API answers 400 for both
 - Saved with all four fields; kept by the save without it; sent: on the 45G1 line UN 1263 PAINT class 3, 32,400 kg in 160 DR, the emergency contact with all four fields, nothing on the 20' line; a valid Booking 2.0 request
 - DG01 prints the contact, the 24-hour phone, provider and reference, no CHEMTREC/CANUTEC hotline text; with no contact it isn't generated, saying to add it to the shipper's profile
 - The same through the customer service
+- No Compliance tab: the org-wide DG Compliance Address is gone
 
-**Status:** PASS (2026-10-29, automated: tests/carrier-booking.test.js; tests/container-packages.test.js; tests/customer-service-toggle.test.js; src/utils/dgDeclaration.test.js)
+**Status:** PASS (2026-10-29, automated: tests/carrier-booking.test.js; tests/container-packages.test.js; tests/customer-service-toggle.test.js; src/utils/dgDeclaration.test.js; cypress/e2e/customer-dg-contact.cy.js)
+
+---
+
+### TC-082: The 0.91.12 release audit's fixes
+**Feature:** release audit R1–R5 (epic TKT-KT4QIC, ARCHITECTURE.md §8.44)
+**Precondition:** A shipment with an issued House B/L whose 3 originals are with the shipper; another issued as a live eBL on WAVE; a demo-carrier shipment N with an issued Master B/L and a sea leg on MAERSK KENSINGTON
+**Steps:**
+1. Delete each of the two House B/L shipments
+2. Call the demo carrier's API (`/dcsa-sim/v3/service-schedules`) with no token, with `dcsa-simulator`, and with the token from `GET /api/dcsa-simulator/status` (admin)
+3. Create shipment X, not booked with the demo carrier, naming N's Master B/L; publish an Arrival Notice for N
+4. Mark N Completed; publish another Arrival Notice; send an actual berth arrival for its voyage on another day
+5. Post to the old `…/containers/:id/vgm/simulate-response` for a Submitted VGM; open Test Tools
+
+**Expected Result:**
+- 409 both times ("an issued House B/L" / "a live eBL", cancel instead); the House B/L and its originals log are still there
+- 401, 401, 200
+- N gets the new version; X gets no Arrival Notice
+- No new version on N; the carrier is told N "is Completed: not changed"; the leg keeps its arrival
+- 404, the VGM stays Submitted; Test Tools has no VGM Simulator tab
+
+**Status:** PASS (2026-10-29, automated: tests/house-bl-audit-fixes.test.js; tests/dcsa-simulator.test.js; tests/dcsa-amend-equip-arrival.test.js; tests/dcsa-messages.test.js)

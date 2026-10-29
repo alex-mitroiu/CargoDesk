@@ -969,3 +969,26 @@ Found and fixed on the way:
 Not covered yet: the new controls (originals returned, the on-board notation, House vs Master, the shipper's approval,
 clauses, Void disabled with its reason, the customer's DG contact form, App Settings without its Compliance tab) wait for
 mockup 12f412e9; until then their rules are tested through the API only.
+
+### 2026-10-29, later: the shipper's DG contact form, the 0.91.12 release audit's fixes (ARCHITECTURE.md §8.44), the release run
+
+| Check | Result |
+|---|---|
+| New `cypress/e2e/customer-dg-contact.cy.js` (Profile → Dangerous goods: the name-and-phone and phone rules hold Save, all four fields saved, unticking clears; App Settings has no Compliance tab) | **2/2** |
+| `house-bl-audit-fixes` (+ R1: no delete of a shipment with an issued House B/L or a live eBL) | **38/38** |
+| `dcsa-simulator` (+ R2: the demo carrier's API refuses no token and the wrong one) | **26/26** |
+| `dcsa-amend-equip-arrival` (+ R3: a notice reaches only the demo carrier's own booking; R4: a Completed shipment takes no notice and no berth time) | **56/56** |
+| `dcsa-messages` (+ R5: the retired VGM Simulator is gone) | **40/40** |
+| Full backend suite, file by file (CI rate-limit settings, all services up) | **116/116** files (see below) |
+| Vitest | **383/383** in 34 files |
+| Full Cypress suite | **295/295** in 38 specs, first run |
+| Build | OK |
+
+The backend run first ended 102/116: 14 consecutive files failed with `ECONNRESET` or a 90-second timeout, then every
+later file passed. The helper services had been started from a shell that had exited, and those 14 files go through
+them. With every service restarted, the 14 passed (customer credit control 83, compliance screening 26, hierarchy 17,
+carrier agents 41, classified locations 32, password reset 30, rate limiting 6, contract improvements 39, carrier
+mismatch 33, export fields 19, workflow 26, contract routings 55, commodity codes 12, space config lines 30).
+
+Still open: R6 (Test Tools' demo lists aren't filtered by the user's shipment access) and R7 (two unused exports). The
+House B/L panel's new controls wait for screens 1–4 of mockup 12f412e9.

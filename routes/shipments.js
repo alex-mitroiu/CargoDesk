@@ -1091,6 +1091,15 @@ module.exports = function shipmentsRoutes(app, ctx) {
       return err(res, `This shipment's charges are on ${onStatements.length === 1 ? "statement" : "statements"} ${onStatements.map(s => s.id).join(", ")}. `
         + (confirmed.length ? "Cancel the shipment instead; a confirmed statement stays on record." : `Void the draft statement${drafts.length === 1 ? "" : "s"} first.`), 409);
     }
+    // An issued House B/L is a document of title (release audit R1, 2026-10-29): deleting the shipment would take it,
+    // its originals log and its number with it, around every rule that keeps one title to the cargo. Refused like
+    // issued invoices; a draft or a voided one goes with the shipment.
+    const [title] = await query(`SELECT reference, status, is_electronic, ebl_issuance_status FROM transport_documents
+      WHERE shipment_id=$1 AND role='HOUSE' AND status NOT IN ('DRAFT','VOIDED') ORDER BY created_at DESC LIMIT 1`, [req.params.id]);
+    if (title) {
+      const what = title.is_electronic && ["PENDING", "ISSU"].includes(title.ebl_issuance_status) ? "a live eBL" : "an issued House B/L";
+      return err(res, `This shipment has ${what} (${title.reference || "no number"}, ${title.status.toLowerCase().replace(/_/g, " ")}). Cancel the shipment instead; an issued B/L stays on record.`, 409);
+    }
 
     // What's left is drafts and non-billing documents (packing lists, photos, …). They go with the
     // shipment — rows and files — instead of being orphaned as they used to be.
@@ -1241,9 +1250,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
     }
     return { size, type, iso, seals, sealNumber: seals[0]?.number || "" };
   }
-  // Accepted/Rejected are simulate-only (VGM Simulator, mirrors customs filing/carrier booking's
-  // own Accepted/Rejected — never settable through a generic write route) — the generic
-  // container create/update routes below only ever accept Pending/Submitted directly.
+  // A container's VGM is Pending or Submitted (sent to the carrier as DCSA VGM 1.0, which has no acceptance
+  // answer). Accepted/Rejected are older values a row may still hold; the home-made VGM Simulator that set them
+  // was retired with its route (release audit R5, 2026-10-29), as the DCSA plan said.
   const DIRECT_VGM_STATUSES = ["Pending", "Submitted"];
   // Packages on the House B/L (gap G10, ARCHITECTURE.md §8.40): count, UN/ECE Rec. 21 code, description.
   // An omitted field keeps the stored value, since the Cargo form saves whole rows and doesn't send these yet.
@@ -1372,7 +1381,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (lockedMsg) return res.status(409).json({ error: lockedMsg, code: "SHIPMENT_LOCKED" });
     if (grossWeightKg !== null && grossWeightKg !== undefined && Number(grossWeightKg) < 0) return err(res, "grossWeightKg cannot be negative");
     if (volumeCbm !== null && volumeCbm !== undefined && Number(volumeCbm) < 0) return err(res, "volumeCbm cannot be negative");
-    if (!DIRECT_VGM_STATUSES.includes(vgmStatus)) return err(res, "vgmStatus must be Pending or Submitted — Accepted/Rejected only happen via the VGM Simulator");
+    if (!DIRECT_VGM_STATUSES.includes(vgmStatus)) return err(res, "vgmStatus must be Pending or Submitted");
     if (vgmStatus === "Submitted" && !vgmMethod) return err(res, "A VGM method (Method 1 or Method 2) is required before marking VGM as Submitted");
     const dgErr = await checkDgPolicy(shipmentId, isDg, dgClass);
     if (dgErr) return err(res, dgErr, 422);
@@ -1441,7 +1450,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // already was — only reject an actual attempted TRANSITION into Accepted/Rejected, not an
     // already-Accepted/Rejected container being saved for something else entirely.
     if (vgmStatus !== oldCtr.vgm_status && !DIRECT_VGM_STATUSES.includes(vgmStatus))
-      return err(res, "vgmStatus must be Pending or Submitted — Accepted/Rejected only happen via the VGM Simulator");
+      return err(res, "vgmStatus must be Pending or Submitted");
     if (vgmStatus === "Submitted" && !vgmMethod) return err(res, "A VGM method (Method 1 or Method 2) is required before marking VGM as Submitted");
     const dgErr = await checkDgPolicy(oldCtr.shipment_id, isDg, dgClass);
     if (dgErr) return err(res, dgErr, 422);
@@ -1502,58 +1511,6 @@ module.exports = function shipmentsRoutes(app, ctx) {
       }
     }
     ok(res, { ...mapContainer(row), ...deriveFreeTime(row, g.byType, g.latest) });
-  });
-
-  // ─── VGM Simulator (direct follow-up to the VGM declaration transmittal above) ─────────────
-  // A submitted VGM declaration previously had no response cycle at all — unlike carrier
-  // booking/customs filing/shipping instructions, which all let a Test Tools simulator
-  // accept/reject a pending submission. Same shape here, scoped to one container at a time
-  // (VGM is declared per-container, not per-shipment).
-  app.post("/api/shipments/:shipmentId/containers/:id/vgm/simulate-response", shipmentWrite, async (req, res) => {
-    const [ctr] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
-    if (!ctr) return err(res, "Not found", 404);
-    const [shipmentRowForGate] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
-    if (await blockIfWrongSide(req, res, shipmentRowForGate, 'export')) return;
-    const { outcome, reason } = req.body || {};
-    if (outcome !== "accepted" && outcome !== "rejected") return err(res, 'outcome must be "accepted" or "rejected"');
-    if (ctr.vgm_status !== "Submitted") return err(res, "This container's VGM has no pending submission to respond to", 409);
-    const now = new Date().toISOString();
-    const newStatus = outcome === "accepted" ? "Accepted" : "Rejected";
-    const rejReason = outcome === "rejected" ? (reason?.trim() || "VGM rejected — weight declaration did not pass terminal validation.") : "";
-    await query("UPDATE containers SET vgm_status=$1, vgm_rejection_reason=$2 WHERE id=$3", [newStatus, rejReason, ctr.id]);
-    const msgId = `EDI-${uid()}`;
-    await query(`INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type,
-      format, raw_payload, status, correlation_id, is_mock, created_at, processed_at)
-      VALUES ($1,$2,$3,'in',$4,'JSON',$5,$6,$7,true,$8,$8)`,
-      [msgId, ctr.shipment_id, "", outcome === "accepted" ? "vgm_acceptance" : "vgm_rejection",
-           JSON.stringify({
-             containerNumber: ctr.container_number,
-             ...(outcome === "rejected" ? { reason: rejReason } : {}),
-             note: "Simulated via Test Tools → VGM Simulator.",
-           }), outcome, ctr.id, now]);
-    await logEvent(ctr.shipment_id, 'CONTAINER_UPDATED', 'vgm_status', 'Submitted', newStatus,
-      JSON.stringify({ containerNumber: ctr.container_number, source: 'vgm_simulator' }), req.user?.name || req.user?.email || "");
-    const [row] = await query("SELECT * FROM containers WHERE id=$1", [ctr.id]);
-    const evRows = await query("SELECT container_id, event_type, location, occurred_at FROM container_events WHERE container_id=$1 ORDER BY occurred_at ASC", [ctr.id]);
-    const g = groupContainerEvents(evRows)[ctr.id] || { byType: {}, latest: null };
-    const [msgRow] = await query("SELECT * FROM edi_messages WHERE id=$1", [msgId]);
-    ok(res, { sent: mapEdiMessage(msgRow), container: { ...mapContainer(row), ...deriveFreeTime(row, g.byType, g.latest) } }, 201);
-  });
-
-  // Cross-shipment list for the Test Tools VGM Simulator picker — mirrors GET /api/customs-filings.
-  app.get("/api/vgm-submissions", auth(), async (req, res) => {
-    const { status } = req.query;
-    const rawRows = status
-      ? await query("SELECT * FROM containers WHERE vgm_status=$1 ORDER BY container_number ASC", [status])
-      : await query("SELECT * FROM containers WHERE vgm_status != 'Pending' ORDER BY container_number ASC");
-    if (rawRows.length === 0) return ok(res, []);
-    const shipmentIds = [...new Set(rawRows.map(r => r.shipment_id))];
-    const ph = shipmentIds.map((_, i) => `$${i + 1}`).join(",");
-    const shipmentRows = await query(`SELECT * FROM shipments WHERE id IN (${ph})`, shipmentIds);
-    const allowedShipments = await applyShipmentAccessFilter(shipmentRows.map(mapShipment), req.user, req);
-    const shipmentById = new Map(allowedShipments.map(s => [s.id, s]));
-    ok(res, rawRows.filter(r => shipmentById.has(r.shipment_id))
-      .map(r => ({ ...mapContainer(r), shipment: shipmentById.get(r.shipment_id) })));
   });
 
   app.delete("/api/shipments/:shipmentId/containers/:id", shipmentWrite, async (req, res) => {

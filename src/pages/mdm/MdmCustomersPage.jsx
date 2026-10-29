@@ -113,9 +113,27 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
     longitude:          init.longitude != null ? String(init.longitude) : "",
     isNvocc:            init.isNvocc || false,
     fmcNumber:          init.fmcNumber || "",
+    // The shipper's 24-hour dangerous goods emergency contact (2026-10-29, approved mockup
+    // https://claude.ai/code/artifact/12f412e9-21fb-4f1d-b9f5-a9940db68c44, screen 5): sent with every DG
+    // booking and printed on DG01, with no fallback. The checkbox isn't stored: unticking clears it.
+    dgOn:        !!init.dgEmergencyContact,
+    dgContact:   init.dgEmergencyContact?.contact || "",
+    dgPhone:     init.dgEmergencyContact?.phone || "",
+    dgProvider:  init.dgEmergencyContact?.provider || "",
+    dgReference: init.dgEmergencyContact?.referenceNumber || "",
   });
   const set   = k => v => setF(p => ({ ...p, [k]: v }));
-  const valid = f.companyName.trim().length > 0;
+  // The same rule the server applies (dgContactOf, routes/customers.js).
+  const dgProblem = !f.dgOn ? ""
+    : !f.dgContact.trim() || !f.dgPhone.trim() ? "A dangerous goods emergency contact needs a name and a 24-hour phone number."
+    : !/^\+?[0-9][0-9 ().\-/]{5,29}$/.test(f.dgPhone.trim()) ? "The emergency phone must be a phone number: digits, with spaces or + ( ) - . / where needed."
+    : "";
+  const valid = f.companyName.trim().length > 0 && !dgProblem;
+  const save = () => {
+    const { dgOn, dgContact, dgPhone, dgProvider, dgReference, ...rest } = f;
+    onSave({ ...rest, dgEmergencyContact: dgOn
+      ? { contact: dgContact.trim(), phone: dgPhone.trim(), provider: dgProvider.trim(), referenceNumber: dgReference.trim() } : null });
+  };
 
   // Country -> currency auto-suggestion (TKT-O5I4NK) — only while adding a brand-new
   // customer, and only until the operator actually touches Currency themselves. Never
@@ -259,6 +277,40 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
           hint="FMC-issued NVOCC number (or the equivalent registration outside the US)" />
       )}
 
+      <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
+        textTransform: "uppercase", letterSpacing: ".12em", marginBottom: -6 }}>Dangerous goods</div>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+        fontFamily: T.body, fontSize: 13, color: T.text, width: "fit-content" }}>
+        <input type="checkbox" data-testid="cust-dg-on" checked={f.dgOn}
+          onChange={e => set("dgOn")(e.target.checked)} />
+        Ships dangerous goods — has a 24-hour emergency contact
+      </label>
+      {f.dgOn && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Inp id="cust-dg-contact" label="Emergency Contact" value={f.dgContact} onChange={set("dgContact")}
+              placeholder="e.g. Van Wijk DG Desk" required
+              hint="Who answers for these goods, day and night: the shipper's own desk or its provider" />
+            <Inp id="cust-dg-phone" label="24-Hour Phone" value={f.dgPhone} onChange={set("dgPhone")}
+              placeholder="+31 10 437 2299" mono required hint="Digits, with spaces or + ( ) - . / where needed" />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Inp id="cust-dg-provider" label="Provider (optional)" value={f.dgProvider} onChange={set("dgProvider")}
+              placeholder="e.g. CHEMTREC, NRC, Carechem" hint="The emergency response service the shipper contracts, if any" />
+            <Inp id="cust-dg-reference" label="Reference Number (optional)" value={f.dgReference} onChange={set("dgReference")}
+              placeholder="e.g. CCN-204417" mono hint="The shipper's contract or account number with that provider" />
+          </div>
+          {dgProblem && (
+            <div data-testid="cust-dg-error" style={{ fontFamily: T.body, fontSize: 12, color: T.danger, marginTop: -6 }}>{dgProblem}</div>
+          )}
+        </>
+      )}
+      <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, marginTop: -8 }}>
+        Sent with every dangerous goods booking and printed on the Dangerous Goods Declaration (DG01).
+        Unticking clears it.
+      </div>
+
       {init.id && (
         <>
           <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
@@ -278,7 +330,7 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
       )}
 
       <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 4 }}>
-        <Btn disabled={!valid || saving} onClick={() => onSave(f)}>
+        <Btn disabled={!valid || saving} onClick={save}>
           {saving ? "Saving…" : "Save Profile"}
         </Btn>
       </div>

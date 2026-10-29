@@ -196,9 +196,9 @@ const VgmRow = ({ shipment, container, declarations, canEdit, saving, onSave, on
         </select>
       </td>
       <td style={{ padding: "8px 10px", width: 150 }}>
-        {/* Accepted/Rejected only ever come from the VGM Simulator (Test Tools) — same
-            simulate-only invariant as customs filing/carrier booking's own Accepted/Rejected,
-            never a raw dropdown option here. */}
+        {/* Accepted/Rejected are older values a container may still hold: DCSA VGM 1.0 has no acceptance
+            answer, and the home-made VGM Simulator that set them is retired (release audit R5,
+            2026-10-29). Never a dropdown option here. */}
         {status === "Accepted" ? (
           <Badge variant="success">Accepted</Badge>
         ) : status === "Rejected" ? (
@@ -428,8 +428,7 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
         )}
       </div>
 
-      {/* VGM declaration/response thread — Accepted/Rejected only ever arrive here via
-          Test Tools → VGM Simulator (no live SOLAS VGM EDI integration). */}
+      {/* The VGM messages sent to the carrier (DCSA VGM 1.0 declarations and retractions). */}
       <div id="svcvgm-thread-section" style={{ marginTop: 18 }}>
         <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
           textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Message Thread</div>

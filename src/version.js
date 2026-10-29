@@ -2,12 +2,18 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.91.11";
-export const BUILD     = "2026-10-21";
-export const CODENAME  = "Helmsman";
-export const BUILD_FINGERPRINT = "0a0d863a";
+export const VERSION   = "0.91.12";
+export const BUILD     = "2026-10-29";
+export const CODENAME  = "Endorsement";
+export const BUILD_FINGERPRINT = "70a9a986";
 
 export const CHANGELOG = [
+  {
+    version:  "0.91.12",
+    date:     "2026-10-29",
+    codename: "Endorsement",
+    summary:  "Bundled release — everything built since v0.91.11: the House B/L as a DCSA transport document and eBL, every carrier message on DCSA, the House B/L audit's fixes, dangerous goods in the booking, and the pre-release audit's fixes.\n\n**House B/L** (Epic TKT-C7EBU3) — issued only when complete, under the issuing office's number series, as a DCSA transport document: shipped on board or received for shipment, to order, originals and copies, charges or \"as arranged\", every vessel and the on-carriage, reefer and dangerous goods; corrections as version 2 under the same number; the originals log and the telex release notice; release only once the originals are back, collect charges paid and no credit hold. Also issued and surrendered as an eBL (DCSA eBL Issuance and Surrender 3.0, played by the built-in eBL platform).\n\n**DCSA everywhere** — the booking follows Booking 2.0's conditions and goes to the carrier's local office; Shipping Instructions 3.0 and VGM 1.0 go to the carrier; the carrier's Master B/L is drafted from the instructions, reviewed against them, approved, issued and, once issued, amended (only what differs); each VGM declaration is kept with its evidence and a VG01; the carrier's Track & Trace 3.0 events drive container events and milestones, and OVS 3.0 vessel times come before AIS; each container carries its ISO 6346 code (45' units too) and its seals with who applied them; the carrier's Arrival Notice 1.0 moves the ETA, fills free time and lists its charges to add as accruals, and Port Call 2.0 berth times move the legs. Every outbound message is refused if it isn't valid DCSA. Phase 2 was skipped by the user's choice.\n\n**One title to the cargo** (House B/L audit, TKT-J0SDVB) — the originals are logged out and back; an issued House B/L is voided only by an admin and never while originals are out, for a live eBL, or after surrender or release; no eBL while paper originals are out; a telex release needs every original back; shipped on board only once every container is loaded, dated in the port's own day; the issuer needs a SCAC and address; the on-board notation, House vs Master comparison, the shipper's approval and added clauses are in place on the server (their screens follow).\n\n**Dangerous goods** — the DCSA booking declares them per equipment line (UN number, name, class, weight, packages) with the shipper's own 24-hour emergency contact, entered on its customer profile (Profile → Dangerous goods); DG01 prints the same contact; App Settings' Compliance tab is gone.\n\n**Pre-release audit** (TKT-KT4QIC) — fixed: a shipment holding an issued House B/L can't be deleted; the demo carrier's own API needs its token; an Arrival Notice reaches only that carrier's shipments; Arrival Notices and Port Call leave Completed and Cancelled shipments alone; the old VGM Simulator is gone. Open: Test Tools' demo lists aren't filtered by the user's access, and two unused exports.\n\n**Verification** — backend 116/116 files (CI rate-limit settings, all services up), Vitest 383/383, Cypress 295/295 (38 specs, first run), locally, on 2026-10-29; the pre-release audit TKT-KT4QIC ran and its five main findings were fixed before the release.",
+  },
   {
     version:  "0.91.11",
     date:     "2026-10-21",

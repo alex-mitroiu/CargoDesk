@@ -173,6 +173,12 @@ const checkOutbound = (method, apiPath, key, body) => { const v = validateOutbou
     const v2 = await putVgm(A, ctr, { vgmStatus: "Submitted", vgmMethod: "Method 2", vgmWeightKg: 12410 });
     d = await declared(ctr.containerNumber);
     assert("a corrected weight is declared again, replacing the first", v2.status === 200 && d.length === 1 && d[0].declaration?.VGM?.weight?.value === 12410, JSON.stringify(d).slice(0, 200));
+    // Release audit R5 (2026-10-29): the home-made VGM Simulator, which could mark this real-looking declaration
+    // Accepted with an invented answer, is retired; VGM 1.0 has no acceptance.
+    const oldSim = await request("POST", `/api/shipments/${A}/containers/${ctr.id}/vgm/simulate-response`, { outcome: "accepted" }, token);
+    assert("R5: the retired VGM Simulator is gone (404), and the VGM stays Submitted", oldSim.status === 404
+      && (await request("GET", `/api/containers?shipmentId=${A}`, null, token)).body?.find?.(c => c.id === ctr.id)?.vgmStatus !== "Accepted",
+      JSON.stringify({ s: oldSim.status }));
     const v3 = await putVgm(A, ctr, { vgmStatus: "Submitted", vgmMethod: "Method 2", vgmWeightKg: 12410, cargoDescription: "Wooden dining furniture, flat-packed (120 cartons)" });
     assert("an unrelated change sends nothing", v3.status === 200 && (await vgmMessages(A)).length === 2, `${(await vgmMessages(A)).length}`);
     const v4 = await putVgm(A, ctr, { vgmStatus: "Pending", vgmMethod: "Method 2", vgmWeightKg: 12410 });

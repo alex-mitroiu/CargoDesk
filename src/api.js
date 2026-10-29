@@ -161,8 +161,6 @@ export const api = {
   vgm: {
     // Every declaration made (DCSA VGM 1.0), newest first, each with its evidence (VG02) and VG01 document.
     declarations:     (shipmentId)                 => req("GET",  `/shipments/${shipmentId}/vgm-declarations`),
-    simulateResponse: (shipmentId, containerId, d) => req("POST", `/shipments/${shipmentId}/containers/${containerId}/vgm/simulate-response`, d),
-    listSubmissions:  (params={})                  => req("GET",  `/vgm-submissions?${new URLSearchParams(params)}`),
   },
   legs: {
     list:   (shipmentId)              => req("GET",    `/shipments/${shipmentId}/legs`),

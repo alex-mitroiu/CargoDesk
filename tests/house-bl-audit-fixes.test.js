@@ -90,6 +90,11 @@ const inDays = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
       JSON.stringify({ o: hb.originals, v: hb.voidBlock }));
     const v1 = await patchDoc(t.shipment.id, tIssued.doc.id, { status: "voided", voidReason: "Consignee address wrong" });
     assert("H1: voiding it while the originals are out is refused (409)", v1.status === 409 && /record them returned before voiding/.test(v1.body?.error), JSON.stringify(v1.body));
+    // Release audit R1 (2026-10-29): nor can the shipment be deleted with it, which took the House B/L along.
+    const del1 = await request("DELETE", `/api/shipments/${t.shipment.id}`, null, token);
+    assert("R1: the shipment can't be deleted with an issued House B/L (409, cancel it instead), and the B/L is still there",
+      del1.status === 409 && /an issued House B\/L .*Cancel the shipment instead/.test(del1.body?.error) && (await house(t.shipment.id)).originals?.outstanding === 3,
+      JSON.stringify(del1.body));
     const s1 = await surrender(t.shipment.id, tIssued.doc.id);
     assert("M5: the surrender at origin is refused while originals are out (409)", s1.status === 409 && /record them returned before the surrender at origin/.test(s1.body?.error), JSON.stringify(s1.body));
     await request("POST", `/api/customers/${t.shipper.id}/identifiers`, { idType: "WAVE", idCode: `WAVE-VLF-${rand}`, countryIso2: "NL" }, token);
@@ -133,6 +138,8 @@ const inDays = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
     assert("H3: a live eBL isn't surrendered by hand (409)", eSur.status === 409 && /surrendered there/.test(eSur.body?.error), JSON.stringify(eSur.body));
     const eVoid = await patchDoc(e.shipment.id, eLive.documentId, { status: "voided", voidReason: "Wrong consignee" });
     assert("H1: a live eBL isn't voided here (409)", eVoid.status === 409 && /eBL on WAVE/.test(eVoid.body?.error), JSON.stringify(eVoid.body));
+    const eDel = await request("DELETE", `/api/shipments/${e.shipment.id}`, null, token);
+    assert("R1: nor is its shipment deleted (409, a live eBL)", eDel.status === 409 && /a live eBL/.test(eDel.body?.error), JSON.stringify(eDel.body));
 
     // ─── Shipped on board once every container is (M1), the issuer (M2), the issue date (L2) ───
     console.log("\nShipped on board, the issuer, the issue date");

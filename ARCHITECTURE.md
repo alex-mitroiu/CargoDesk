@@ -1,10 +1,14 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.91.11 "Helmsman" · **Date:** 2026-10-21
+**Version:** 0.91.12 "Endorsement" · **Date:** 2026-10-29
 **Audience:** Software architects, senior engineers, technical reviewers
 **See also:** [`DFS.md`](DFS.md) — the Design & Functional Specification (data flow diagrams,
 per-domain functional scope, roles) covers *what* the system does and *how data moves through it*;
 this document covers *how it's built*.
 
+> **2026-10-29 (v0.91.12 "Endorsement") — release.** §8.40–§8.44 (the House B/L, the DCSA message review, DCSA phases 4–6 and the remaining
+> phases, the House B/L audit's fixes, dangerous goods in the booking, and the pre-release audit TKT-KT4QIC with its fixes) were
+> written as the work landed and ship in v0.91.12; the audit is logged in §11.
+>
 > **2026-10-21 (v0.91.11 "Helmsman") — release, no new documentation pass.** §8.36–§8.39 (booking escalations
 > and Lane Steering, the main vessel and Requested vs Carrier, SPOT rates, Where to book) and the M12 date picker
 > update were written as the work landed and ship in v0.91.11. Nothing else was re-verified for this note.
@@ -3850,7 +3854,8 @@ were recorded in home-made formats and sent nowhere, and Track & Trace was still
   - **Refusals.** The container save is refused when there is no weight or method, no DCSA connection,
     or the carrier refuses the declaration (an ERROR in `feedbackElements`).
   - The VGM Simulator's accept / reject in Test Tools remains a terminal-validation stand-in, because
-    VGM 1.0 defines no answer message.
+    VGM 1.0 defines no answer message. _(Removed 2026-10-29, release audit R5 (§8.44): it answered real carriers'
+    declarations too and wasn't closed in production; a carrier's view of a VGM shows in its events.)_
 - **Track & Trace 3.0.** `getEvents` pulls `GET /events` (`eventTypes`, cursor paging through
   `Next-Page-Cursor`). `tnt-mapping.js` reads the v3 `eventClassification` and maps it to the flat codes
   the mapping already used (GATED_IN → GTIN, LOADED → LOAD, DEPARTED → DEPA, ACTUAL → ACT, …). It
@@ -4099,9 +4104,10 @@ screens follow the approved mockup https://claude.ai/code/artifact/1bf14417-6d13
 The House B/L audit (report https://claude.ai/code/artifact/71144ea4-cd7a-4e3b-b20d-07ad17076ecd, epic TKT-J0SDVB,
 one ticket per finding) found 3 high, 6 medium and 5 low findings; the user said "fix all findings". Scoping the
 carrier booking audit (epic TKT-K7ICYT, not started) confirmed one more: the DCSA booking sent no dangerous goods.
-The server side of every finding is built; the new controls (originals returned, on-board notation, House vs
-Master, the shipper's approval, clauses, Void disabled with its reason, the customer's DG contact form, App
-Settings' Compliance tab removed) wait for the mockup https://claude.ai/code/artifact/12f412e9-21fb-4f1d-b9f5-a9940db68c44.
+The server side of every finding is built. Of the mockup https://claude.ai/code/artifact/12f412e9-21fb-4f1d-b9f5-a9940db68c44
+the user approved screen 5 (the customer's DG contact, App Settings without its Compliance tab), which is built; the
+House B/L panel's new controls (originals returned, on-board notation, House vs Master, the shipper's approval,
+clauses, Void disabled with its reason) wait for screens 1–4.
 L5 (several House B/Ls under one Master) is not done: it is the consolidation/LCL work deliberately not scheduled.
 
 - **One title to the cargo (H1, H2, H3, M5, M6, L1; `lib/house-bl.js`).**
@@ -4156,14 +4162,41 @@ L5 (several House B/Ls under one Master) is not done: it is the consolidation/LC
     is refused and DG01 isn't generated, both saying to add it to the shipper's profile; the old CHEMTREC/CANUTEC
     text is gone.
   - **App Settings' DG Compliance Address is retired** (TKT-DPLQTV, 2026-08): its `dg_compliance_*` keys are no
-    longer seeded or read. Rows already saved stay in `app_settings`, unread and not copied to any customer.
+    longer seeded or read, and the Compliance tab (which held only that panel) is gone. Rows already saved stay in
+    `app_settings`, unread and not copied to any customer.
+  - **The screen** (`MdmCustomersPage.jsx` ProfileTab, mockup screen 5): Customers → Profile → Dangerous goods. "Ships
+    dangerous goods" reveals the contact, 24-hour phone, provider and reference; the same name-and-phone and phone
+    rules as the server, shown under the fields and holding Save; unticking sends `dgEmergencyContact: null`. The
+    checkbox isn't stored: it reads whether a contact is.
+- **The 0.91.12 release audit (epic TKT-KT4QIC, report https://claude.ai/code/artifact/a08cf4f7-710e-4b5d-93e7-95d92dba25b0).**
+  The pre-release audit of everything else in 0.91.12 found 1 high, 4 medium and 2 low; the user had R1–R5 fixed
+  before the release.
+  - **R1, a shipment with an issued House B/L can't be deleted** (`DELETE /api/shipments/:id`, 409, "cancel the shipment
+    instead"): any House B/L that isn't a draft or voided, or a live eBL. The delete used to cascade it away, around
+    every rule above. A draft or voided one goes with the shipment.
+  - **R2, the demo carrier's API needs its token.** `/dcsa-sim/*` sits outside the `/api` login guard; it now requires
+    `Authorization: Bearer <token>`, a random token made per process (`dcsaSimulator.accessToken()`), which the demo
+    carrier's integration config sends. An admin reads it from `GET /api/dcsa-simulator/status` (`accessToken`), as
+    tests that call the demo carrier directly do.
+  - **R3, an Arrival Notice reaches only the pushing carrier's shipments** (`lib/arrival-notices.js` `shipmentsFor`):
+    the shipment's carrier, or for the demo carrier a shipment booked with it. Anything else is answered with a WARN.
+  - **R4, Arrival Notices and Port Call leave Completed and Cancelled shipments alone** (both receivers; the Arrival
+    Notice answers why). Track & Trace already did.
+  - **R5, the home-made VGM Simulator is gone** (`POST …/containers/:id/vgm/simulate-response`, `GET
+    /api/vgm-submissions`, its Test Tools tab): it marked any VGM Accepted or Rejected, a real carrier's too. VGM 1.0
+    has no acceptance answer; `vgm_status` is Pending or Submitted (older rows may still say Accepted/Rejected).
+  - Open: R6 (Test Tools' demo-carrier lists aren't filtered by the user's shipment access) and R7 (two unused
+    exports in `dcsa-ebl-v3.js`).
 - **Tests.**
+  - Release audit: `house-bl-audit-fixes` (+2, R1), `dcsa-simulator` (+2, R2), `dcsa-amend-equip-arrival` (+3, R3, R4),
+    `dcsa-messages` (+1, R5), `booking-escalation-book` (the demo carrier's token).
   - Backend: `house-bl-audit-fixes` (36, new); `carrier-booking` (168: the DG declaration, the shipper's
     contact, refusals); `container-packages` (46: the customer's DG contact round trip replaces the settings one);
     `customer-service-toggle` (54: the same through the customer service).
   - Vitest: `houseBlPrint` (13: clauses, the notation), `dgDeclaration` (3, new).
   - Cypress: `house-bl` (6) now provisions a complete legal entity for the default export office itself, as
-    `ensureIssuingEntity` does; CI's empty database has no SCAC on it.
+    `ensureIssuingEntity` does; CI's empty database has no SCAC on it. `customer-dg-contact` (2, new): the
+    profile section end to end, and no Compliance tab in App Settings.
 
 ## 9. Data Flow Diagrams
 
@@ -4427,6 +4460,7 @@ continues; don't rewrite history once an item's checked.
 | 2026-09-29 | Contract routing ids, checked while planning space configurations that reference routings (§8.31 follow-up). | **Real bug, dormant in current data, fixed same day; uncommitted.** | `saveRoutings` (`routes/contracts.js` and `services/contract-management/server.js`) deleted and re-inserted every `contract_routings` row on each contract save, so every routing got a new id. `shipments.contract_routing_id` then pointed at nothing, and `resolveLiveContractRates` (server.js) fell back to the contract-wide rates only: after any save of a contract with named routings, Update Carrier Costs / Reconcile on its shipments would silently lose the routing's own charges (e.g. its ocean freight). Only one contract has a named routing today (EC-HLCU-NLAMS-USNYC / REF00404, one shipment on it) and it had not been re-saved, so no data was affected. **Fixed**: routings sent back with their id are updated in place, new ones inserted, removed ones deleted; legs/rates may also name their routing by a surviving id. Removing a routing a non-cancelled shipment uses is now refused (409, naming the shipments), in local and remote mode. `tests/contract-routings.test.js` 34 → 50 (ids survive re-save, rename and add; Update Carrier Costs still sees the routing's 2450 OF after a save; in-use removal refused and nothing changed; unused removal clean). Remote mode verified by script, and a real-browser save of REF00404 kept CRTG-6QH95Z. `contract-improvements` 39, `contract-service-toggle` 20, `contracts-gaps` 23, `rate-reconciliation` 53, `contract-auto-import` 27, `allocations-crud` 51, `contract-carrier-mismatch` 33 re-run green. |
 | 2026-10-09 | **TKT-SQVGJ2 audit, everything in v0.91.10**: routing lines, commodity codes, space configurations on lines, the consumption dashboard, the SHP-WIRHFD mismatch fix, reconcile choices, VAT, finance epic TKT-XV4UHD and TKT-1V9GYU. Method: read the code, confirm live by API and browser, file each finding under the epic. | **11 findings, all fixed (4 after the user's decisions the same day); uncommitted. The 11 tickets that were waiting In Testing were re-verified and Released.** | **Sound:** routing-line normalization and stable ids, commodity-code validation, and CI #121 (fully green, Cypress included, on CI's empty database, so the startup migrations hold there). Finance agreed to the cent end to end in one scripted run: a shipment with standard, zero-rated and reverse-charged lines, billed through a USD invoice, an EUR invoice and a statement, then credit status (AR, aging, exposure), VAT Liability (with self-assessment), GL export (balanced, AR = gross) and FX unrealized. **Fixed:** (1) TKT-FQ21BF: a shipment cancelled before it was ever booked kept its TEU as "pending" on its space configuration in every consumption figure; now a Cancelled shipment is left out of `loadTeuBuckets`, the badge's sibling query, `contractConsumption.js` and the Dashboard's `consumedMap`. (2) TKT-4YGFRI: FX Revaluation realized a part-payment against the whole booking (the unpaid rest showed as a loss) and dropped the document from unrealized; the paid share is now realized against its own share and the rest stays unrealized. (3) TKT-D9S6LQ: Invoice Collections showed only each shipment's most recent invoice while the sweep chases every confirmed one; now one row per confirmed invoice. (4) TKT-DLKCTD: a shipment billed through a confirmed statement has no FR01/FR02, so Invoice Collections, Billing Performance and the invoice-deadline overdue list all called it never invoiced; one shared query (`STATEMENT_BILLED_SHIPMENTS_SQL`, lib/mappers.js) now counts it as billed in all three. **Decided by the user and built:** TKT-8RC5E2 (the dashboard counted a configuration's whole TEU but only shipments with ETD in the range, showing 200 TEU free on ALC-70ZFOI for October where the picker showed 170 → now every booking on an active configuration counts; verified live: 170), TKT-4JU8C8 (the Space Exceeded badge ignored pending → counts pending for a not-yet-confirmed shipment, confirmed-only for a confirmed one; pool recompute on container/booking changes; `tests/space-badge.test.js`), TKT-3WX973 (the 90-day cap was form-only and blocked four live 91-day configurations → dropped), TKT-IRH7WX (confirmed statements were AR but never dunned or chased → chased like invoices through their main export office, owned by whoever confirmed them, overridable by a TM of any of their lanes, with rows in Billing Performance and Invoice Collections; `tests/statement-collections.test.js`). **Also fixed:** TKT-XU38KY (master data had no ZA/ZM/ZW, so ZA ports got no trade lane, and no SGSIN port → added, lane SAF, to both sample DBs, the MDM service DB, `data/seaports.csv` and the dev DB; `tests/mdm-reference-data.test.js`), TKT-1QBVF9 (the contract service's startup migration lacked the routing-in-use guard → it now leaves a contract alone when a stored routing would be dropped; `droppedRoutingIds`), TKT-WW88OU (`RoutingLinesEditor` had no test → 13 component tests). Adding ZA/ZM/ZW exposed that `mdm-crud`, `organization` and `mdm-service-toggle` tests used scratch country codes that can be real (Z?/Y?, "TG" = Togo) and delete them — one run deleted Zimbabwe (restored); all now use ISO user-assigned codes and stop if the scratch create is refused. **Re-verified and Released:** the finance epic TKT-XV4UHD and its seven children, TKT-1V9GYU, TKT-NU524E, TKT-198GZH — TKT-2F19XD's one-line-one-document rule probed live in both directions. |
 | 2026-10-09 | Shipment status lock and cancellation rules (TKT-SPXTGR, decided by the user the same day). | **Built; uncommitted.** | Completed and Cancelled shipments are locked (`server.js` `shipmentStatusLock`, an `app.param` guard on every `/api/shipments/:id/<section>` write, plus `PUT /api/shipments/:id`, `POST /api/containers` and `DELETE /api/schedules/:id`, each 409 `SHIPMENT_LOCKED`). Cancelled is final and Completed can't be left either. Still open: cost lines, credit override, documents, messages, milestones, container events, edit lock, share link and screening. Cancelling needs the carrier booking (Pending/Confirmed) and every submitted filing (Filed/Accepted) cancelled first, else 409 `ACTIVE_ITEMS` with the list, which `App.jsx` shows in a pop-up (from the detail pages and the Edit Shipment form). A submitted filing can be cancelled with a reason (`POST .../customs-filings/:filingId/cancel`, `customs_filings.cancelled_at/by/cancel_reason`) and reset to Draft from there. On the way: TKT-LXQNQG's update path still accepted a negative Declared Value (fixed), and every failed Edit Shipment save left an unhandled promise rejection (caught). Tests: `tests/shipment-status-lock.test.js` (52), `tests/shipment-integrity.test.js` (21, pins TKT-HZOAE0/FH5Q94/LXQNQG), `src/utils/shipmentLock.test.js`, `ShipmentHeaderBar.test.jsx`; a real-browser pass 17/17. |
+| 2026-10-29 | **0.91.12 release audit (TKT-KT4QIC)**: everything 0.91.12 adds apart from the House B/L, which had its own audit the same morning (TKT-J0SDVB): the DCSA message review, the Master B/L and its amendment, VGM declarations, carrier events and vessel times, equipment and seals, the Arrival Notice, Port Call, DG in the booking and the shipper's DG contact. Method: a read by risk class (scope and roles on every new route, endpoints outside the login guard, carrier pushes, delete paths, retired paths, unused exports, one rule in two places), live probes. Report https://claude.ai/code/artifact/a08cf4f7-710e-4b5d-93e7-95d92dba25b0. | **7 findings (1 high, 4 medium, 2 low); R1–R5 fixed before the release by the user's call, R6–R7 open.** | **Sound:** every new per-shipment route behind the scope guard and a role; carrier pushes signed (no secret, refused); the eBL endpoints' per-process secret; Track & Trace scoped to the carrier and open shipments; the print and the record agree on shipped on board; the DG contact's rules the same in both services. **Fixed (§8.44):** R1 TKT-Z9GE5C a shipment with an issued House B/L could be deleted, taking the B/L with it (confirmed live: an operator, 3 originals out) → refused; R2 TKT-NFHNIK `/dcsa-sim` answered with no credentials (confirmed live: a transport document with parties) → a per-process token; R3 TKT-H1H7RN an Arrival Notice matched by B/L number alone, any carrier → the pushing carrier's shipments only; R4 TKT-EV4W5Y Arrival Notices and Port Call changed Completed/Cancelled shipments → skipped; R5 TKT-A794HR the retired VGM Simulator still answered any VGM → removed. **Open:** R6 TKT-58E1KT Test Tools' demo lists unscoped; R7 TKT-1ZMR6N two unused exports. |
 
 ### Low / Enhancement
 
