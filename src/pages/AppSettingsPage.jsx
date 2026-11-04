@@ -1171,8 +1171,8 @@ function AiAgentSettingsPanel({ settings, onChange }) {
     width: 180, flexShrink: 0, textTransform: "uppercase", letterSpacing: ".06em", paddingTop: 6 };
 
   const PROVIDERS = [
-    { label: "Anthropic Claude API", endpoint: "https://api.anthropic.com/v1/messages", model: "claude-haiku-4-5-20251001" },
-    { label: "OpenRouter",           endpoint: "https://openrouter.ai/api/v1/chat/completions", model: "anthropic/claude-haiku-4-5" },
+    { label: "Anthropic Claude API", endpoint: "https://api.anthropic.com/v1/messages", model: "claude-haiku-5-5" },
+    { label: "OpenRouter",           endpoint: "https://openrouter.ai/api/v1/chat/completions", model: "anthropic/claude-haiku-5.5" },
     { label: "Custom / Local",       endpoint: "", model: "" },
   ];
 
@@ -1256,7 +1256,7 @@ function AiAgentSettingsPanel({ settings, onChange }) {
       <div style={row}>
         <div style={lbl}>Model</div>
         <div style={{ flex: 1 }}>
-          <input type="text" value={s.ai_model || ''} placeholder="claude-haiku-4-5-20251001"
+          <input type="text" value={s.ai_model || ''} placeholder="claude-haiku-5-5"
             onChange={e => onChange("ai_model", e.target.value)}
             style={{ ...inp(), width: "100%" }} />
         </div>

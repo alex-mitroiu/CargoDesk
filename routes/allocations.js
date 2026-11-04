@@ -456,4 +456,17 @@ module.exports = function allocationsRoutes(app, ctx) {
     }
     ok(res, { exact, linked });
   });
+
+  // One space configuration, with its consumption — the same row GET /api/allocations returns for it
+  // (no per-user scope, as on that list). Registered after /match and /conflicts, so ":id" never
+  // swallows those literal paths. The AI Assistant's get_allocation reads it (Epic TKT-IYOYA5).
+  app.get("/api/allocations/:id", async (req, res) => {
+    const [r] = await query("SELECT * FROM allocations WHERE id = $1", [req.params.id]);
+    if (!r) return err(res, "Space configuration not found", 404);
+    const buckets = await loadTeuBuckets();
+    const routingIds = await routingIdsByAllocation([r.id]);
+    const onDate = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || "")) ? req.query.date : "";
+    const base = mapAllocation(r), entry = buckets.get(r.id);
+    ok(res, { ...withBuckets(base, entry, onDate), ...weeksOf(base, entry), routingIds: routingIds.get(r.id) || [] });
+  });
 };

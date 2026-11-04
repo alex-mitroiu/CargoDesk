@@ -1,0 +1,1522 @@
+{
+ "version": 1,
+ "sources": [
+  "src/pages/UserManualPage.jsx",
+  "src/tokens.js",
+  "DFS.md"
+ ],
+ "chunks": [
+  {
+   "id": "manual:welcome:1",
+   "source": "User Manual",
+   "section": "welcome",
+   "sectionLabel": "Welcome",
+   "heading": "Welcome to CargoDesk",
+   "anchor": "",
+   "text": "CargoDesk is where you plan, book, and track ocean freight shipments — from the first price you quote a customer to the last invoice you reconcile. This guide walks you through processing one shipment from start to finish, in the order you'd actually do it."
+  },
+  {
+   "id": "manual:welcome:2",
+   "source": "User Manual",
+   "section": "welcome",
+   "sectionLabel": "Welcome",
+   "heading": "Step 1: Sign in",
+   "anchor": "sign-in",
+   "text": "Sign in with the email and password your administrator gave you. If you ever forget your password, use the Forgot password? link on the sign-in screen — don't ask a colleague to share theirs."
+  },
+  {
+   "id": "manual:welcome:3",
+   "source": "User Manual",
+   "section": "welcome",
+   "sectionLabel": "Welcome",
+   "heading": "Step 2: Get your bearings",
+   "anchor": "get-your-bearings",
+   "text": "Once you're in, the sidebar on the left is where every chapter in this guide begins:\n• Quotes — price a shipment for a customer before it's booked (Chapter 1)\n• Shipments — every shipment you've created or are working on (Chapter 2 onward)\n• Dashboard — how much container space you've used against what carriers gave you\n• Integration Board — the internal task board the CargoDesk team uses, not customer-facing\n• Schedule Search — a standalone sailing lookup, outside of any one shipment\n• AI Assistant — ask it about any shipment, contract, or allocation in plain English (Getting Help)\nThe home screen itself is worth a glance every morning: it shows your fleet-wide shipment counts, overdue milestones, and departures coming up in the next 7 days.\nTip: This guide follows one shipment from a quote all the way to a reconciled invoice — the same order you'd work it in real life. Skip ahead to whichever chapter matches where your own shipment actually is."
+  },
+  {
+   "id": "manual:quote:1",
+   "source": "User Manual",
+   "section": "quote",
+   "sectionLabel": "1. Get a Quote",
+   "heading": "1. Get a Quote",
+   "anchor": "",
+   "text": "Not every shipment starts here — if you already know exactly what you're booking, skip straight to Chapter 2. But if a customer has asked \"how much to ship 2 containers to New York,\" a Quote is where you answer that without committing to a real, numbered shipment yet. (An even earlier, less-committed stage — Opportunities — exists for tracking a lead before it's even worth pricing; converting a Qualified Opportunity creates a Draft quote pre-filled with its customer/route and a starting price line, with a link back to the Opportunity it came from.)\n(Screen: The Quotes list — every quote you've priced, with its route, carrier, valid-until date, and status at a glance. '+ New Quote' is top right.)\nStep 1: Open Quotes and start a new one: Click Quotes in the sidebar, then + New Quote. Fill in the customer, route (POL/POD), cargo basics, and — if you already know it — the carrier."
+  },
+  {
+   "id": "manual:quote:2",
+   "source": "User Manual",
+   "section": "quote",
+   "sectionLabel": "1. Get a Quote",
+   "heading": "Step 2: Price it",
+   "anchor": "price-it",
+   "text": "You have two ways to fill in the Quote Lines table at the bottom:\n• Type each charge in yourself — a service code like OF for Ocean Freight, a description, and a rate.\n• Click Find Matching Contracts to pull rates from a contract already on file for that route and carrier, then adjust them — the contract rate is usually your cost, so add your margin before saving.\nSet a Valid Until date too — a quote needs one before you can send it, since an open-ended price isn't a real offer."
+  },
+  {
+   "id": "manual:quote:3",
+   "source": "User Manual",
+   "section": "quote",
+   "sectionLabel": "1. Get a Quote",
+   "heading": "Step 3: Send it, then track the answer",
+   "anchor": "send-it-then-track-the-answer",
+   "text": "Save the quote — it starts as a Draft, which you can still edit freely. Once it's ready, send it to the customer; it locks and moves to Sent. When they get back to you, mark it Accepted or Declined — a Sent quote left untouched past its Valid Until date expires on its own, with a heads-up in the notification bell a few days ahead of time so it doesn't catch you by surprise."
+  },
+  {
+   "id": "manual:quote:4",
+   "source": "User Manual",
+   "section": "quote",
+   "sectionLabel": "1. Get a Quote",
+   "heading": "Step 4: Fill in Consignee, Principal, and Notify Party too",
+   "anchor": "fill-in-consignee-principal-and-notify-party-too",
+   "text": "If you already know them at quoting time, set the Consignee, Principal, and Notify Party fields on the quote itself, alongside Declared Value and Freight Terms — all of these carry straight through to the shipment on conversion, the same way the customer already did."
+  },
+  {
+   "id": "manual:quote:5",
+   "source": "User Manual",
+   "section": "quote",
+   "sectionLabel": "1. Get a Quote",
+   "heading": "Step 5: Bought on a carrier's spot offer? Put it on the quote",
+   "anchor": "bought-on-a-carrier-s-spot-offer-put-it-on-the-quote",
+   "text": "When there's no contract for the move, you buy space at the carrier's spot price — a quote from its pricing desk (a classic quote, valid days or weeks) or an instant offer from its online tool (a digital spot offer such as Maersk Spot, Hapag-Lloyd Quick Quotes Spot or CMA CGM SpotOn, valid only hours and priced per departure). In the quote, click ＋ Add spot offer and either:\n• Type it in — the carrier's quotation number, until when it can be booked, when the price locks, each charge (per container or per B/L, in the price or subject to at shipment) and the penalty terms (cancellation, no-show, amendment fees).\n• Pick an existing offer someone already entered for this carrier and route.\n• Get offers from the carrier — one priced offer per departure, straight from the carrier (or CargoDesk's demo carrier, marked DEMO CARRIER, where the carrier isn't connected yet).\nThe quote then shows Buy (the offer), Sell (your quote lines) and the Margin. If a Margin Rule covers this customer and lane (Master Data), it appears too: Apply to the sell lines prices your lines from the offer plus the rule, and a margin under the rule's minimum turns red. You can still send it — the History records that it went out below the minimum. While the offer is on the quote, the carrier and route follow it."
+  },
+  {
+   "id": "manual:quote:6",
+   "source": "User Manual",
+   "section": "quote",
+   "sectionLabel": "1. Get a Quote",
+   "heading": "Step 6: Convert it to a real shipment",
+   "anchor": "convert-it-to-a-real-shipment",
+   "text": "Once a quote is Accepted, click Convert to Shipment. CargoDesk creates a real, numbered shipment and carries everything the quote captured straight in — your quoted price as the SELL side of its cost lines, every party you set, Declared Value, Freight Terms, and even real Cargo containers built from the quote's own per-container line items (e.g. two 40HC lines at the same type become two real containers, not four — CargoDesk recognizes they're describing the same physical boxes). You don't re-type anything.\nNote: A quote's price doesn't have to match what you eventually pay the carrier. When the shipment converts, the SELL side comes from your quote and the BUY side comes from the actual contract, or from the spot offer the quote was bought on (the shipment then books with the offer's quotation number) — CargoDesk keeps them independent so your margin stays visible."
+  },
+  {
+   "id": "manual:shipment:1",
+   "source": "User Manual",
+   "section": "shipment",
+   "sectionLabel": "2. Create the Shipment",
+   "heading": "2. Create the Shipment",
+   "anchor": "",
+   "text": "A shipment is the one record everything else in this guide hangs off — cargo, booking, parties, documents, and money all attach to it.\nStep 1: Starting from an accepted quote: If you followed Chapter 1, you already have one — Convert to Shipment did this for you. Skip to Step 3."
+  },
+  {
+   "id": "manual:shipment:2",
+   "source": "User Manual",
+   "section": "shipment",
+   "sectionLabel": "2. Create the Shipment",
+   "heading": "Step 2: Starting from scratch",
+   "anchor": "starting-from-scratch",
+   "text": "From Shipments, click + New Shipment. At minimum you need a Port of Loading, Port of Discharge, carrier, and contract type — everything else (dates, booking reference, B/L number, vessel, voyage) can be filled in later."
+  },
+  {
+   "id": "manual:shipment:3",
+   "source": "User Manual",
+   "section": "shipment",
+   "sectionLabel": "2. Create the Shipment",
+   "heading": "Step 3: Know your shipment's home screen",
+   "anchor": "know-your-shipment-s-home-screen",
+   "text": "Whichever path you took, you'll land on the shipment's Overview page. This is your dashboard for this one shipment — a persistent header up top shows route, carrier, and status on every sub-page you visit from here.\nTip: Notice the sidebar below the shipment header — Cargo, Contracts & Schedules, Carrier Booking, Parties & Offices, Documents, and more all live there. The rest of this guide walks through them in the order that actually unblocks each other."
+  },
+  {
+   "id": "manual:shipment:4",
+   "source": "User Manual",
+   "section": "shipment",
+   "sectionLabel": "2. Create the Shipment",
+   "heading": "Step 4: Move through it with »",
+   "anchor": "move-through-it-with",
+   "text": "A bar runs down the right edge of every shipment page, with » and the name of the next page written down it. Click it, or press Alt + →, to save what this page has unsaved and open the next item in the sidebar, in the sidebar's own order. Nothing is skipped: read-only pages, and pages locked until something else is set, are stops too.\nIf something can't be saved, for example a container form with fields still missing, you stay where you are: the bar flashes red and a message says what to fix. While a dialog is open, close it first. On the last item in the sidebar there's no bar.\n(Screen: A shipment's Overview page. The header bar at the top — route, ETD/ETA, vessel, shipper/consignee — stays visible on every page you navigate to for this shipment, so you never lose that context.)"
+  },
+  {
+   "id": "manual:cargo:1",
+   "source": "User Manual",
+   "section": "cargo",
+   "sectionLabel": "3. Add Your Cargo",
+   "heading": "3. Add Your Cargo",
+   "anchor": "",
+   "text": "Before you can book a carrier or price anything properly, CargoDesk needs to know what's actually moving. If you only have one or two containers, type them in by hand. If you have a whole spreadsheet of them already, skip straight to Step 3 and import it instead."
+  },
+  {
+   "id": "manual:cargo:2",
+   "source": "User Manual",
+   "section": "cargo",
+   "sectionLabel": "3. Add Your Cargo",
+   "heading": "Step 1: Add a container by hand",
+   "anchor": "add-a-container-by-hand",
+   "text": "Open Cargo in the shipment's sidebar and click + Add Container. Give it a container number and an equipment type. Each type shows its ISO 6346 code first (45G1 for a 40ft high cube, L5G1 for a 45ft high cube, 22R1 for a 20ft reefer) — the code the carrier, the VGM and the B/L use — with CargoDesk's own code (40HC) beside it. 20ft is 1 TEU; 40ft and 45ft are 2.\nAdd its seals under Seals: each number with who applied it (carrier, shipper, customs or veterinary). ＋ Add seal adds another, for example when customs reseal a container after an inspection. The Shipping Instructions, the VGM and the B/L list every seal."
+  },
+  {
+   "id": "manual:cargo:3",
+   "source": "User Manual",
+   "section": "cargo",
+   "sectionLabel": "3. Add Your Cargo",
+   "heading": "Step 2: Describe what's inside",
+   "anchor": "describe-what-s-inside",
+   "text": "Click into a container and add the cargo itself — pallets, boxes, or crates, each with a description, quantity, and (once you know it) a declared value. This is also where you flag a container as Dangerous Goods and set its IMDG class if it needs one. A booking request for dangerous goods also needs each DG container's UN number, proper shipping name and gross weight, and the shipper's 24-hour emergency contact; the request is refused, saying what's missing, until they're there. The contact is the shipper's own: open the shipper under Customers, and on Profile tick Ships dangerous goods, then give the contact and its 24-hour phone, and the provider (e.g. CHEMTREC) and the shipper's reference with it if it has one. The Dangerous Goods Declaration (DG01) prints the same contact.\n(Screen: The Cargo page — every container on the shipment on the left, its own cargo breakdown underneath it. Both '+ Add Container' and '⬆ Import Containers' sit right above the list.)"
+  },
+  {
+   "id": "manual:cargo:4",
+   "source": "User Manual",
+   "section": "cargo",
+   "sectionLabel": "3. Add Your Cargo",
+   "heading": "Step 3: Or import a whole spreadsheet at once",
+   "anchor": "or-import-a-whole-spreadsheet-at-once",
+   "text": "Got 20 containers already sitting in a spreadsheet? Don't type them in one at a time — click ⬆ Import Containers instead, right next to + Add Container.\nThe very first time, click Download Template. It's a real Excel file with dropdown lists built in for the fields that need to match CargoDesk exactly (container type, Yes/No for Dangerous Goods, IMDG class) — so most typos get caught by Excel itself, before you ever upload anything.\nFill in one row per container, save the file, and upload it back in the same window. CargoDesk reads every row and shows you a review screen before anything is actually created — nothing is added to the shipment until you say so.\n(Screen: The review screen after uploading a file. Row 3 is clean and ready (green check). Row 4 has a typo in its container type code — CargoDesk caught it, explains exactly what's wrong, and lets you fix it right there without re-uploading the whole file.)"
+  },
+  {
+   "id": "manual:cargo:5",
+   "source": "User Manual",
+   "section": "cargo",
+   "sectionLabel": "3. Add Your Cargo",
+   "heading": "Step 4: Fix anything flagged, then import",
+   "anchor": "fix-anything-flagged-then-import",
+   "text": "Any row with a problem is called out in plain language — a container type code that doesn't exist, a weight that isn't a number, a Dangerous Goods row missing its IMDG class. Correct it directly in the review screen (no need to touch the spreadsheet again) and click Re-check. Once every row is clean, Import N Containers creates them all in one go.\nNote: TEU is calculated for you. A 20-foot container counts as 1 TEU, a 40-foot as 2 — the total rolls up automatically to the shipment header and the Dashboard the moment a container is saved, whether you typed it in or imported it."
+  },
+  {
+   "id": "manual:schedule:1",
+   "source": "User Manual",
+   "section": "schedule",
+   "sectionLabel": "4. Find a Sailing",
+   "heading": "4. Find a Sailing",
+   "anchor": "",
+   "text": "Before CargoDesk will let you book a carrier, it needs to know which sailing you're on — vessel, voyage, and dates."
+  },
+  {
+   "id": "manual:schedule:2",
+   "source": "User Manual",
+   "section": "schedule",
+   "sectionLabel": "4. Find a Sailing",
+   "heading": "Step 1: Add a route leg",
+   "anchor": "add-a-route-leg",
+   "text": "Open Booking & Routing → Contracts & Schedules in the sidebar. If this is a straightforward port-to-port move, add one SEA leg from your POL to your POD.\nOn a Central shipment, Change Contract picks the contract and its space. When the trade lane is steered (Master Data → Lane Steering), a Where to book panel comes first: each carrier option in order, marked THE PICK, AVAILABLE, FULL or SKIPPED (with the reason), and the space still free in the ETD's week. The pick — the first option with space — is already selected; click Confirm Selection to take it.\nChoosing a lower option while a higher one has space, a contract that isn't on the steering, or SPOT asks you why first. You can still book it: the reason is saved on the shipment, its History says Booked out of order, and the Contract area shows the verdict (for example #2 of 3 · out of order). Book on #1 instead books the better option."
+  },
+  {
+   "id": "manual:schedule:3",
+   "source": "User Manual",
+   "section": "schedule",
+   "sectionLabel": "4. Find a Sailing",
+   "heading": "Step 2: Search for a sailing and apply it",
+   "anchor": "search-for-a-sailing-and-apply-it",
+   "text": "With a leg in place, Add Sailing becomes available. Search by the leg's own route and pick a real sailing — vessel, voyage, and ETD/ETA all copy onto the leg in one click.\nA sailing that transships is listed under its main vessel — the leg with the longest transit, marked MAIN — with every leg underneath in order (feeder, main, feeder). Picking it creates one sea leg per leg, and the shipment's vessel becomes the main one."
+  },
+  {
+   "id": "manual:schedule:4",
+   "source": "User Manual",
+   "section": "schedule",
+   "sectionLabel": "4. Find a Sailing",
+   "heading": "Step 3: On a SPOT shipment: the spot offer",
+   "anchor": "on-a-spot-shipment-the-spot-offer",
+   "text": "A shipment on SPOT shows a Spot offer section under its contract. Add the carrier's offer there (type it in, pick one, or get offers from the carrier) and the shipment books with its quotation number, its charges become the shipment's BUY cost lines, and its validity and penalty terms stay in view. In the sailing picker, each departure then shows the carrier's spot price: Sailing + offer takes that departure and its offer together when you save the route.\nWarning: This is a hard gate, not a suggestion. If you jump straight to Carrier Booking without a contract and a schedule both in place, CargoDesk blocks you outright and sends you back here to finish first.\n(Screen: Contracts & Schedules — a Route Leg with a real sailing applied (port, date, vessel filled in), and the contract card underneath it.)"
+  },
+  {
+   "id": "manual:booking:1",
+   "source": "User Manual",
+   "section": "booking",
+   "sectionLabel": "5. Book the Carrier",
+   "heading": "5. Book the Carrier",
+   "anchor": "",
+   "text": "With cargo and a sailing both in place, you're ready to actually reserve space with the carrier."
+  },
+  {
+   "id": "manual:booking:2",
+   "source": "User Manual",
+   "section": "booking",
+   "sectionLabel": "5. Book the Carrier",
+   "heading": "Step 1: What you'll see if you're not ready yet",
+   "anchor": "what-you-ll-see-if-you-re-not-ready-yet",
+   "text": "Open Booking & Routing → Carrier Booking. If Chapter 4 isn't done yet, this page tells you exactly what's missing — \"This shipment doesn't have a contract or a schedule assigned yet\" — rather than letting you send an incomplete request."
+  },
+  {
+   "id": "manual:booking:3",
+   "source": "User Manual",
+   "section": "booking",
+   "sectionLabel": "5. Book the Carrier",
+   "heading": "Step 2: Send the booking request",
+   "anchor": "send-the-booking-request",
+   "text": "Once a schedule's attached, this page turns into a real form. Click Send Booking Request to transmit it to the carrier as a standard DCSA booking message, with its own outbound record you can review later. A carrier that isn't connected yet is played by CargoDesk's built-in demo carrier (marked DEMO CARRIER). A SPOT shipment's booking carries its spot offer's quotation number; an expired digital offer can't be sent — replace it first.\nThe booking goes to the carrier's local office: the shipment's Line Agent (Export) (Parties & Offices), not the carrier's head office. A booking names exactly one contract number or carrier quote, and either an ETD or a vessel and voyage. If something the DCSA standard requires is missing, CargoDesk tells you what to add and sends nothing."
+  },
+  {
+   "id": "manual:booking:4",
+   "source": "User Manual",
+   "section": "booking",
+   "sectionLabel": "5. Book the Carrier",
+   "heading": "Step 3: Wait for the carrier's answer",
+   "anchor": "wait-for-the-carrier-s-answer",
+   "text": "The booking sits as Pending until the carrier answers. Only the carrier confirms a booking — there's no manual Confirm. When it does, Booking & Review shows Requested (A) vs Carrier (B): every detail you asked for next to what the carrier confirmed (vessel, dates with the days they moved, each leg, equipment, cut-offs, parties, the quotation number and, when the carrier states them, its charges). If something changed, choose: Accept the carrier's version (it goes onto the shipment), Ask the carrier to amend, or Escalate….\nA booking the carrier rejects, changes, or doesn't answer can be escalated to OCC/AY (export office) or CCL/CO (import office). They find another carrier or sailing — Lane Steering suggests the order — and send it back as instructions; you then click Book As Instructed. Instructions for another carrier must name that carrier's contract: the old carrier's contract or quote comes off the shipment, and the booking goes on the contract named. It all happens on the shipment's Booking & Review page; the Shipments list's Booking column shows where every escalation stands."
+  },
+  {
+   "id": "manual:booking:5",
+   "source": "User Manual",
+   "section": "booking",
+   "sectionLabel": "5. Book the Carrier",
+   "heading": "Step 4: Generate a Booking Confirmation document",
+   "anchor": "generate-a-booking-confirmation-document",
+   "text": "Once Confirmed, a Generate Confirmation button appears on the Review tab — it produces a real BC01 document (equipment breakdown, DG/reefer detail, the carrier's own booking reference) you can hand to whoever needs written proof the booking is locked in.\nNote: If you change the carrier on a leg after a booking already exists, CargoDesk doesn't edit the old booking in place — it archives it as history and starts a fresh one under the new carrier, so you can always see what actually happened.\nWarning: Cancelling a spot booking can cost money. When the carrier has confirmed a booking on a spot offer with penalty terms, Cancel Booking shows the fee first — the cancellation fee with enough notice before departure, the no-show fee inside it — and CargoDesk adds it as a BUY cost line once the carrier confirms the cancellation. Whether to bill it on to the customer is your call.\n(Screen: Carrier Booking — Details, once confirmed. 'Bookings on this Shipment' at the top always shows the current one, plus any earlier attempts, so nothing about the booking history is ever lost.)"
+  },
+  {
+   "id": "manual:parties:1",
+   "source": "User Manual",
+   "section": "parties",
+   "sectionLabel": "6. Add Parties & Offices",
+   "heading": "6. Add Parties & Offices",
+   "anchor": "",
+   "text": "A shipment involves more people than just you and the carrier — the companies moving the cargo, and the CargoDesk offices actually handling it on each side. This chapter is about making sure everyone who needs to see it can, and that the right office keeps the shipment moving even if something goes wrong."
+  },
+  {
+   "id": "manual:parties:2",
+   "source": "User Manual",
+   "section": "parties",
+   "sectionLabel": "6. Add Parties & Offices",
+   "heading": "Step 1: The core four parties",
+   "anchor": "the-core-four-parties",
+   "text": "Open Parties & Offices and click Edit. Every shipment has four fixed roles worth setting as early as possible: Shipper, Consignee, Notify Party, and Principal — each one feeds compliance screening automatically the moment it's saved."
+  },
+  {
+   "id": "manual:parties:3",
+   "source": "User Manual",
+   "section": "parties",
+   "sectionLabel": "6. Add Parties & Offices",
+   "heading": "Step 2: Everyone else",
+   "anchor": "everyone-else",
+   "text": "Underneath, Additional Parties covers forwarders, customs brokers (export and import are separate roles, since they're often different companies), truckers, banks, insurance providers, and agents — add only the ones this specific shipment actually needs.\n(Screen: Parties & Offices. Below the four core parties, Export and Import each get their own card listing the offices handling that side of the shipment — the small pencil icon on each one is how you reassign it.)"
+  },
+  {
+   "id": "manual:parties:4",
+   "source": "User Manual",
+   "section": "parties",
+   "sectionLabel": "6. Add Parties & Offices",
+   "heading": "Step 3: Involved Offices — who's actually running this shipment",
+   "anchor": "involved-offices-who-s-actually-running-this-shipment",
+   "text": "Underneath Parties, Involved Offices shows which CargoDesk office is responsible for each side: the Export Managing Office (EMO), the Import Managing Office (IMO), and — if your organization uses one — a Controlling Office that oversees the whole shipment regardless of side. An export-side user can only ever change the Export office and its services; the same wall applies to import."
+  },
+  {
+   "id": "manual:parties:5",
+   "source": "User Manual",
+   "section": "parties",
+   "sectionLabel": "6. Add Parties & Offices",
+   "heading": "Step 4: Reassign an office — for example, if one location goes down",
+   "anchor": "reassign-an-office-for-example-if-one-location-goes-down",
+   "text": "Click the small pencil icon next to any office. Search for the replacement by name, code, or country, pick it, and — this part is required, not optional — type a short reason. \"Regional outage, moving bookings to a standby office\" is exactly the kind of thing that belongs here; it gets logged permanently on the shipment's History as its own event, separate from a routine edit, so anyone looking back later can see exactly what happened and why.\n(Screen: Reassigning the Export Managing Office. The reason field is required — CargoDesk won't let the reassignment go through without one.)"
+  },
+  {
+   "id": "manual:parties:6",
+   "source": "User Manual",
+   "section": "parties",
+   "sectionLabel": "6. Add Parties & Offices",
+   "heading": "Step 5: What happens to the old office",
+   "anchor": "what-happens-to-the-old-office",
+   "text": "Once you confirm, if you're an admin and the office you just replaced is still marked active elsewhere, CargoDesk asks one more question: keep it active (it's still a real, working office — just not on this shipment anymore), or mark it inactive across all of CargoDesk (use this for a real closure — a flooded office, a permanent shutdown — not a one-off reassignment). Either way, any service on this shipment still pointed at the old office moves to the new one automatically, so nothing is left quietly stuck behind."
+  },
+  {
+   "id": "manual:parties:7",
+   "source": "User Manual",
+   "section": "parties",
+   "sectionLabel": "6. Add Parties & Offices",
+   "heading": "Step 6: Finding an office you marked inactive earlier",
+   "anchor": "finding-an-office-you-marked-inactive-earlier",
+   "text": "Inactive offices don't just disappear. Scroll to the bottom of Involved Offices and open Inactive Offices — it's collapsed by default so it stays out of the way, but every office you've deactivated, on either side, is listed there with a one-click Reactivate button.\n(Screen: Inactive Offices, expanded. This one office was deliberately marked inactive earlier — Reactivate brings it straight back into use.)"
+  },
+  {
+   "id": "manual:parties:8",
+   "source": "User Manual",
+   "section": "parties",
+   "sectionLabel": "6. Add Parties & Offices",
+   "heading": "Step 7: Adding an extra office on the same side",
+   "anchor": "adding-an-extra-office-on-the-same-side",
+   "text": "Sometimes one office isn't enough — a second office needs visibility on the same side without taking over the main EMO/IMO role. Use + Add Export Office (or Import) underneath the main office card for that.\nTip: Line agents fill themselves in. If the carrier has a registered local agent at your port, CargoDesk assigns it automatically — you'll only ever need to set one by hand if there isn't a match on file yet."
+  },
+  {
+   "id": "manual:customs:1",
+   "source": "User Manual",
+   "section": "customs",
+   "sectionLabel": "7. Handle Customs",
+   "heading": "7. Handle Customs",
+   "anchor": "",
+   "text": "Depending on which side of the shipment you're responsible for, you may need to file with customs before cargo can move."
+  },
+  {
+   "id": "manual:customs:2",
+   "source": "User Manual",
+   "section": "customs",
+   "sectionLabel": "7. Handle Customs",
+   "heading": "Step 1: Know which filing you need",
+   "anchor": "know-which-filing-you-need",
+   "text": "• AES/EEI (export) — needs a Customs Broker (Export) on the Parties page.\n• ISF/AMS (import) — needs a Customs Broker (Import) on the Parties page.\nBoth also need priced cargo already on the shipment — another reason Chapter 3 comes before this one."
+  },
+  {
+   "id": "manual:customs:3",
+   "source": "User Manual",
+   "section": "customs",
+   "sectionLabel": "7. Handle Customs",
+   "heading": "Step 2: Create and submit the filing",
+   "anchor": "create-and-submit-the-filing",
+   "text": "Open Customs Filing. Whichever side is missing its broker shows a greyed-out, disabled Create button with an inline hint explaining exactly what to fix — once both preconditions are met, Create Filing then Submit moves it to Filed."
+  },
+  {
+   "id": "manual:customs:4",
+   "source": "User Manual",
+   "section": "customs",
+   "sectionLabel": "7. Handle Customs",
+   "heading": "Step 3: Track the response",
+   "anchor": "track-the-response",
+   "text": "A submitted filing sits as Filed until a response comes back — Accepted with a confirmation number, or Rejected with a reason you can act on and resubmit.\n(Screen: Customs Filing — AES/EEI (left) is already Filed with a confirmation reference. ISF/AMS (right) is still blocked because its own broker hasn't been assigned yet.)\nTip: Export-controlled cargo? Each priced cargo line on the Cargo page has its own Export Control fields — Schedule B number, ECCN, and License Type (NLR, License Required, or License Exception). These are captured into the AES/EEI filing the moment you submit it. Most goods are legitimately NLR/EAR99, so leaving a line unclassified isn't blocked — the filing card just shows how many of your priced lines have a classification on file, as a nudge rather than a gate."
+  },
+  {
+   "id": "manual:documents:1",
+   "source": "User Manual",
+   "section": "documents",
+   "sectionLabel": "8. Generate Documents",
+   "heading": "8. Generate Documents",
+   "anchor": "",
+   "text": "Everything you've entered so far — cargo, parties, booking, filings — feeds straight into the paperwork.\nStep 1: Check what's still missing: Open Documents. The bar at the top tells you, at a glance, how many of this shipment's documents are Confirmed, still in Draft, or entirely Missing."
+  },
+  {
+   "id": "manual:documents:2",
+   "source": "User Manual",
+   "section": "documents",
+   "sectionLabel": "8. Generate Documents",
+   "heading": "Step 2: Generate, review, and confirm",
+   "anchor": "generate-review-and-confirm",
+   "text": "Click Generate next to any missing document. CargoDesk builds it from the shipment's own data, signs it, and saves it as a draft PDF — if something mandatory is still missing (a party, a container, a charge line), it tells you exactly what before generating anything half-finished. Review the draft, then Confirm it once it's right.\n(Screen: Documents — the bar at top tallies Confirmed / Draft / Missing across every document type this shipment could need. Each row gets its own Generate button once its prerequisites are met.)"
+  },
+  {
+   "id": "manual:tracking:1",
+   "source": "User Manual",
+   "section": "tracking",
+   "sectionLabel": "9. Track the Shipment",
+   "heading": "9. Track the Shipment",
+   "anchor": "",
+   "text": "Once the cargo is actually moving, this is where you keep the record honest — logging what's really happening as it happens."
+  },
+  {
+   "id": "manual:tracking:2",
+   "source": "User Manual",
+   "section": "tracking",
+   "sectionLabel": "9. Track the Shipment",
+   "heading": "Step 1: Log container events",
+   "anchor": "log-container-events",
+   "text": "Each container has its own movement history — Empty Pickup, Gate In, Loaded, Sailed, Discharged, Gate Out, Empty Return. Log each stage as it occurs; this is also what demurrage and detention tracking is computed from, so keeping it current matters beyond just visibility."
+  },
+  {
+   "id": "manual:tracking:3",
+   "source": "User Manual",
+   "section": "tracking",
+   "sectionLabel": "9. Track the Shipment",
+   "heading": "Step 2: Work through the milestones",
+   "anchor": "work-through-the-milestones",
+   "text": "Open Milestones & Events. This is the shipment's overall timeline — booking confirmed, SI submitted, cargo gated in, vessel departed, and on through delivery. Several steps complete themselves automatically as you do the real work elsewhere: confirming a booking, logging a Gate In/Gate Out on every container, submitting Shipping Instructions, or logging a Sailed/Discharged container event (which auto-completes Vessel Departed/Arrived — the same credit AIS tracking would give a monitored vessel, now available even without one) — you only need to touch the ones that don't have an obvious trigger. Under each milestone, its tags say which carrier or container event completes it, for example \"Transport · Departed at POL\".\nAbove the milestones, the sea leg shows its departure and arrival, each tagged by where the date came from: ACTUAL (the carrier confirmed it), EST (the carrier's estimate) or AIS (detected by AIS, used only where the carrier hasn't said). Below them, From the carrier lists every event the carrier sent, newest first, and what CargoDesk did with each: a container event recorded, a date moved, a milestone completed. Sync carrier events asks the carrier for its latest events, and Check vessel times for its vessel schedule. A carrier that takes an event back (retracts it) undoes what it caused.\n(Screen: Milestones & Events — a straightforward progress stepper. Completed steps show who finished them and when; the current step is highlighted.)\nNote: Completing things out of order won't block you. Real operations don't always happen in a neat sequence — the milestone stepper is a record of what's true, not a gate you have to satisfy in order."
+  },
+  {
+   "id": "manual:money:1",
+   "source": "User Manual",
+   "section": "money",
+   "sectionLabel": "10. Handle the Money",
+   "heading": "10. Handle the Money",
+   "anchor": "",
+   "text": "The last piece is making sure what you billed the customer, what the carrier billed you, and what you actually agreed to all line up.\nStep 1: Cost Entry — what you owe: Open Accounting → Cost Entry. This is the buy side — every charge you owe a carrier or vendor, one line per charge code."
+  },
+  {
+   "id": "manual:money:2",
+   "source": "User Manual",
+   "section": "money",
+   "sectionLabel": "10. Handle the Money",
+   "heading": "Step 2: Update Carrier Costs — without losing your own corrections",
+   "anchor": "update-carrier-costs-without-losing-your-own-corrections",
+   "text": "A Central-contract shipment generates its BUY-side lines straight from the contract's rates. When the carrier's own rate genuinely changes later — or you're re-importing after fixing something — use Import from Contract or Update Carrier Costs. Both open a Reconcile Carrier Costs comparison first, rather than overwriting anything blind.\nThe comparison shows every charge as one of five things: Match (nothing to do), Contract rate changed (the carrier's price moved since your last import), Manual override (you corrected this line by hand), New on contract (a charge that wasn't there before), or Removed from contract. Pick one of three outcomes: Overwrite All regenerates everything shown — including your own manual corrections, deliberately; Ignore & Add Missing Only touches nothing that already exists and only creates the genuinely new charges; Discard closes without changing anything.\nTip: Editing a cost line by hand protects it automatically. The moment you correct a contract-generated line yourself, it's marked Manual — a later Update Carrier Costs can never silently overwrite it again unless you explicitly choose Overwrite All."
+  },
+  {
+   "id": "manual:money:3",
+   "source": "User Manual",
+   "section": "money",
+   "sectionLabel": "10. Handle the Money",
+   "heading": "Step 3: GP Overview — your margin, live",
+   "anchor": "gp-overview-your-margin-live",
+   "text": "Accounting → GP Overview puts buy and sell side by side and does the subtraction for you — no spreadsheet required. \"Estimated\" is what you've accrued so far; \"Actual\" fills in with the real number the moment a line is actualized or posted, so the two only ever disagree when something genuinely changed.\n(Screen: GP Overview for one shipment — Estimated and Actual currently agree, since nothing's been revised since booking.)"
+  },
+  {
+   "id": "manual:money:4",
+   "source": "User Manual",
+   "section": "money",
+   "sectionLabel": "10. Handle the Money",
+   "heading": "Step 4: Multiple entities? See profit broken out by branch",
+   "anchor": "multiple-entities-see-profit-broken-out-by-branch",
+   "text": "Running more than one legal entity or branch through CargoDesk — say, a Rotterdam office invoicing in EUR and a New York office invoicing in USD? Open Dashboard → Margin and scroll to By Entity. Every branch shows its own buy/sell in its own local currency and converted to a common USD figure, so you can compare entities side by side without losing what each one actually billed in its own currency.\n(Screen: By Entity, on the Dashboard's Margin tab. Rotterdam Branch bills in USD, Verify Entity Branch A bills in EUR — both roll up to the same USD comparison column.)\nWhich branch a shipment counts against is decided automatically, from its Export Managing Office (falling back to the Import Managing Office if Export isn't set) — the same office you assign back in Chapter 6. There's nothing extra to configure per shipment."
+  },
+  {
+   "id": "manual:money:5",
+   "source": "User Manual",
+   "section": "money",
+   "sectionLabel": "10. Handle the Money",
+   "heading": "Step 5: Freight Audit & Payment — trust, but verify",
+   "anchor": "freight-audit-payment-trust-but-verify",
+   "text": "When the carrier's actual invoice arrives, don't just pay what it says. Open Dashboard → Freight Audit and enter it — CargoDesk matches every line against what was actually accrued or contracted, and independently computes what any detention or demurrage charge should be from the container's own free-time fields, before ever comparing it to what the carrier billed.\nFrom here you Approve a line — which posts it as the real, actualized cost — or Dispute one that's come in wrong: matched lines need no action, a flagged variance does.\nTip: Detention and demurrage get the same treatment. If a carrier bills you for late container return, the audit already knows your contracted free days and checks their math — not just the total."
+  },
+  {
+   "id": "manual:help:1",
+   "source": "User Manual",
+   "section": "help",
+   "sectionLabel": "Getting Help",
+   "heading": "Getting Help",
+   "anchor": "",
+   "text": "You've now walked one shipment all the way from a quote to a reconciled invoice. A few more things are worth knowing before you're on your own."
+  },
+  {
+   "id": "manual:help:2",
+   "source": "User Manual",
+   "section": "help",
+   "sectionLabel": "Getting Help",
+   "heading": "Step 1: Ask the AI Assistant",
+   "anchor": "ask-the-ai-assistant",
+   "text": "Click AI Assistant in the sidebar (or the icon in the top bar from any screen). It can look up a specific shipment, list shipments matching criteria, and pull contract or allocation details — opened from inside a shipment, it already knows which one you mean."
+  },
+  {
+   "id": "manual:help:3",
+   "source": "User Manual",
+   "section": "help",
+   "sectionLabel": "Getting Help",
+   "heading": "Step 2: Extract data from a document instead of retyping it",
+   "anchor": "extract-data-from-a-document-instead-of-retyping-it",
+   "text": "On the New Carrier Invoice form (Chapter 10), look for Extract from document — upload the carrier's own PDF or image and it pre-fills the form for your review, instead of you typing every line by hand."
+  },
+  {
+   "id": "manual:help:4",
+   "source": "User Manual",
+   "section": "help",
+   "sectionLabel": "Getting Help",
+   "heading": "Step 3: Where to go from here",
+   "anchor": "where-to-go-from-here",
+   "text": "This guide covers the core path end to end, but CargoDesk does more than fits in one walkthrough — Master Data (carriers, ports, trade lanes), the Command Center, and the Integration Board among them. For a feature-by-feature reference rather than a step-by-step story, use the Reference section below in this same manual — it's organized by topic instead of by sequence, so it's the right place to look something up once you already know your way around.\nNote: 🎉 That's the whole lifecycle — quote, shipment, cargo, schedule, booking, parties, customs, documents, tracking, and money. Every shipment you touch from here follows the same shape."
+  },
+  {
+   "id": "manual:dashboard:1",
+   "source": "User Manual",
+   "section": "dashboard",
+   "sectionLabel": "Dashboard",
+   "heading": "Consumption Dashboard",
+   "anchor": "",
+   "text": "The Dashboard shows TEU consumption against your configured carrier space, for the dates you choose. Its tabs are Overview, Contract Consumption, Carrier Volumes, Margin, Steering and Compliance Review."
+  },
+  {
+   "id": "manual:dashboard:2",
+   "source": "User Manual",
+   "section": "dashboard",
+   "sectionLabel": "Dashboard",
+   "heading": "Dates",
+   "anchor": "dates",
+   "text": "The dashboard opens on the current week (Monday–Sunday). Pick any From and To dates, up to 90 days apart. ← Prev and Next → move the whole range back or forward by its own length, and This Week returns to the current week. Only shipments with an ETD in the range are counted (or, without an ETD, their creation date)."
+  },
+  {
+   "id": "manual:dashboard:3",
+   "source": "User Manual",
+   "section": "dashboard",
+   "sectionLabel": "Dashboard",
+   "heading": "KPIs",
+   "anchor": "kpis",
+   "text": "Total Allocated — the space configured for the dates, across all carriers (weekly space counts once for each of the range's weeks). Active Consumption — TEU booked in the range. Remaining — how much space is still available."
+  },
+  {
+   "id": "manual:dashboard:4",
+   "source": "User Manual",
+   "section": "dashboard",
+   "sectionLabel": "Dashboard",
+   "heading": "Space Configurations",
+   "anchor": "space-configurations",
+   "text": "Under the Dashboard, Space Configurations holds the TEU a carrier has committed on one contract reference, for the routing lines you tick, optionally for one loop, customer or commodity. Choose Per period (the TEU for the whole period) or Per week (that TEU every Monday-to-Sunday week of the period, nothing carried over). A shipment counts in the week of its ETD, or of its cargo-ready date until it has one; a weekly row shows TEU/wk and the week, and its Linked Shipments shows every week. The minimum commitment is always for the whole period.\n(Screen: The Consumption Dashboard's Overview tab — allocated/confirmed/remaining TEU, an on-time health bar, and the shipments falling inside the selected week.)"
+  },
+  {
+   "id": "manual:dashboard:5",
+   "source": "User Manual",
+   "section": "dashboard",
+   "sectionLabel": "Dashboard",
+   "heading": "Steering",
+   "anchor": "steering",
+   "text": "The Steering tab shows how many shipments sailing in the chosen dates followed the Lane Steering: the steering rate, each verdict (steered, rebooked down the line, out of order, other contract, other carrier, SPOT, other loop), a table by trade lane and by carrier, and the shipments that didn't follow, with the option they skipped and the reason given (each opens in a new tab). Lanes with no steering or no space, and shipments assigned before this existed, are counted outside the rate."
+  },
+  {
+   "id": "manual:dashboard:6",
+   "source": "User Manual",
+   "section": "dashboard",
+   "sectionLabel": "Dashboard",
+   "heading": "Sales Pipeline",
+   "anchor": "sales-pipeline",
+   "text": "Below the shipment health bar, a Sales Pipeline tile rolls up what's ahead of a real shipment: open Opportunities, Draft and Sent Quotes, and the total USD value currently sitting in Sent quotes. It only appears once there's actually something in the pipeline to show."
+  },
+  {
+   "id": "manual:command-center:1",
+   "source": "User Manual",
+   "section": "command-center",
+   "sectionLabel": "Command Center",
+   "heading": "Command Center",
+   "anchor": "",
+   "text": "The Command Center is an always-dark operational dashboard accessible from the ✦ button at the top of the sidebar. It gives a real-time overview of the entire shipment portfolio, active tickets, and AI assistance in a single full-screen view."
+  },
+  {
+   "id": "manual:command-center:2",
+   "source": "User Manual",
+   "section": "command-center",
+   "sectionLabel": "Command Center",
+   "heading": "KPI Cards",
+   "anchor": "kpi-cards",
+   "text": "Six metric cards run across the top: Active, Overdue, Pending, Completed, Total TEU, and Carriers. Click any card to filter the shipment list to that category — the list updates in-place without leaving the Command Center. Click the same card again, or the ✕ clear button next to the section header, to return to the default view (Active + Pending shipments)."
+  },
+  {
+   "id": "manual:command-center:3",
+   "source": "User Manual",
+   "section": "command-center",
+   "sectionLabel": "Command Center",
+   "heading": "Shipment List",
+   "anchor": "shipment-list",
+   "text": "Displays the 10 most recent active/pending shipments by default, with overdue shipments sorted to the top. When a KPI filter is active, up to 50 matching shipments are shown. Click any row to open the Shipment Preview panel on the right side."
+  },
+  {
+   "id": "manual:command-center:4",
+   "source": "User Manual",
+   "section": "command-center",
+   "sectionLabel": "Command Center",
+   "heading": "Shipment Preview",
+   "anchor": "shipment-preview",
+   "text": "The preview panel shows the selected shipment's full routing bar — including Door or CY pickup/delivery nodes flanking the port-to-port leg when the routing term includes them. The carrier code, ETD, vessel, voyage, routing term, and trade lane appear below the routing diagram. Status, TEU count, and commodity are shown as chips."
+  },
+  {
+   "id": "manual:command-center:5",
+   "source": "User Manual",
+   "section": "command-center",
+   "sectionLabel": "Command Center",
+   "heading": "Integration Board Tickets Card",
+   "anchor": "integration-board-tickets-card",
+   "text": "When there are overdue or upcoming tickets on the Integration Board, a Ticket Alert card appears between the carrier/route metrics and the shipment list. It has two tabs: Overdue (tickets past their due date) and Due this week (tickets with a due date within the next 7 days). Each row shows the ticket's priority colour, title, status, and how many days late or remaining. Click View board ↗ to navigate directly to the Integration Board (Kanban)."
+  },
+  {
+   "id": "manual:command-center:6",
+   "source": "User Manual",
+   "section": "command-center",
+   "sectionLabel": "Command Center",
+   "heading": "AI Agent Panel",
+   "anchor": "ai-agent-panel",
+   "text": "The right-hand panel (below the Shipment Preview) hosts the AI Agent chat. Type a question or command and press Enter to send (Shift+Enter for a newline). The agent can look up individual shipments, list shipments matching criteria, and retrieve contract and allocation details. The AI Agent must be enabled in App Settings → API Controls → AI Agent, and requires a valid API key configured there."
+  },
+  {
+   "id": "manual:command-center:7",
+   "source": "User Manual",
+   "section": "command-center",
+   "sectionLabel": "Command Center",
+   "heading": "Carrier and Route Summary",
+   "anchor": "carrier-and-route-summary",
+   "text": "Below the KPI cards, two panels summarise the active portfolio by carrier (shipment count and TEU) and by trade lane. These update live as new data arrives via WebSocket.\n(Screen: The Command Center — KPI cards, status breakdown, carrier consumption, top routes, and the AI Assistant panel, all in one full-screen view.)"
+  },
+  {
+   "id": "manual:integration-board:1",
+   "source": "User Manual",
+   "section": "integration-board",
+   "sectionLabel": "Integration Board",
+   "heading": "Integration Board",
+   "anchor": "",
+   "text": "The Integration Board (◩ in the sidebar) is a Kanban-style tracker for development, QA, and operational tasks, kept separate from shipment records."
+  },
+  {
+   "id": "manual:integration-board:2",
+   "source": "User Manual",
+   "section": "integration-board",
+   "sectionLabel": "Integration Board",
+   "heading": "Tickets",
+   "anchor": "tickets",
+   "text": "Tickets have a type (Epic, Story, Feature, Bug, Improvement, Task, Chore), a priority, and a status column. Drag a card between columns to change its status — drop indicators show exactly where it will land. Epics can nest Story and sub-task children; child progress shows as a ring on the Epic card and a breadcrumb chip on children. A ticket can optionally be linked to a shipment.\nTicket Links: Tickets can be linked to each other from the Links tab in the ticket preview: Blocks, Is blocked by, Duplicates, Implements."
+  },
+  {
+   "id": "manual:integration-board:3",
+   "source": "User Manual",
+   "section": "integration-board",
+   "sectionLabel": "Integration Board",
+   "heading": "Test Cases",
+   "anchor": "test-cases",
+   "text": "Test Plans, Test Runs, and Test Cases live in their own dedicated pages, kept separate from the Integration Board so QA work doesn't clutter the dev ticket board. A Test Case can be linked to a Story via the Tests / Is tested by relationship, editable from either side — this gives lightweight requirement-to-test traceability without a full requirements-management module.\n(Screen: The Integration Board — tickets grouped into status columns, with type/priority tags and progress rings on Epics.)"
+  },
+  {
+   "id": "manual:ai-agent:1",
+   "source": "User Manual",
+   "section": "ai-agent",
+   "sectionLabel": "AI Agent",
+   "heading": "AI Agent",
+   "anchor": "",
+   "text": "The AI Agent (✦ chat drawer, also embedded in the Command Center) answers questions about shipments, contracts, and allocations using a tool-calling loop against CargoDesk's own API. It must be enabled and configured in App Settings → API Controls → AI Agent before it appears anywhere in the app."
+  },
+  {
+   "id": "manual:ai-agent:2",
+   "source": "User Manual",
+   "section": "ai-agent",
+   "sectionLabel": "AI Agent",
+   "heading": "Provider presets",
+   "anchor": "provider-presets",
+   "text": "Three presets are available: Anthropic (Claude models, Messages API), OpenRouter (any model OpenRouter hosts, OpenAI-compatible Chat Completions API), and Custom / Local (any OpenAI-compatible endpoint you provide — including a model you run yourself). The backend detects which format to speak from the endpoint URL, so switching presets never needs a code change."
+  },
+  {
+   "id": "manual:ai-agent:3",
+   "source": "User Manual",
+   "section": "ai-agent",
+   "sectionLabel": "AI Agent",
+   "heading": "Running a model locally (no subscription cost)",
+   "anchor": "running-a-model-locally-no-subscription-cost",
+   "text": "The Custom / Local preset works with any locally-hosted, OpenAI-compatible /chat/completions endpoint — whatever you put in the Endpoint URL field is called exactly as written, with no path appended by CargoDesk, so it must be the full URL including the route, not just a base address.\nThree servers that expose this out of the box, including a Qwen model:\n• Ollama — if already installed, run ollama serve (usually already running as a background service), pull the model if you haven't (e.g. ollama pull qwen2.5:14b), then set Endpoint URL to http://localhost:11434/v1/chat/completions.\n• LM Studio — load the model in the chat tab, switch to the Developer / Local Server tab, click Start Server. Endpoint URL is http://localhost:1234/v1/chat/completions by default.\n• vLLM (for raw weights) — vllm serve <path-or-hf-id> --port 8000, giving http://localhost:8000/v1/chat/completions.\nIn App Settings → API Controls → AI Agent: click the Custom / Local preset (it just clears the Endpoint/Model fields for you to fill in), set Endpoint URL to the full path above, set Model to the exact identifier your server expects (Ollama's own tag, e.g. qwen2.5:14b — it has to match what the server has loaded, not just any label), and set API Key to any non-blank placeholder value — CargoDesk requires the field to be non-empty even though a local server typically doesn't check it. Click Test Connection before enabling the feature for other users; it sends a real request through the same code path the chat drawer uses, so a wrong endpoint or model name shows up immediately instead of failing silently the first time someone opens the chat.\nWorth knowing going in: the tool-calling loop (looking up a shipment, listing shipments, pulling a contract) depends on the model reliably emitting OpenAI-style function calls. Claude and GPT-tier models do this consistently; smaller or heavily-quantized local builds (including many local Qwen variants) are noticeably less reliable at it, so plain Q&A tends to work better than tool use on a modest local setup."
+  },
+  {
+   "id": "manual:ai-agent:4",
+   "source": "User Manual",
+   "section": "ai-agent",
+   "sectionLabel": "AI Agent",
+   "heading": "Running a model locally (no subscription cost) (continued)",
+   "anchor": "running-a-model-locally-no-subscription-cost",
+   "text": "A document-extraction caveat: PDF extraction (App.jsx's document-upload flows) is Anthropic-only regardless of which provider is configured for chat — a Custom / Local endpoint can only be sent image files (PNG/JPEG/WEBP/GIF) for extraction, and only produces useful results if the local model itself is a vision-capable variant (e.g. Qwen2-VL), not a text-only one.\nHermes Agent (Nous Research, open-source, MIT-licensed, github.com/NousResearch/hermes-agent) — a self-hosted agent with persistent memory and a built-in skill system, not just a bare chat model. Install natively on Windows with:\nOn Linux, macOS, WSL2, or Termux, use the bash installer instead:\nThe Windows installer is user-scoped (installs under %LOCALAPPDATA%\\hermes — portable Python, Node, and Git) and needs no admin rights; it only creates an autostart entry if you explicitly pass -IncludeDesktop. Review any installer script before running it, same as you would for any third-party software.\nOnce running, point the Custom / Local endpoint at whatever base URL Hermes Agent's gateway exposes on your machine, save, and use Test Connection in App Settings to confirm CargoDesk can reach it before enabling the feature for other users."
+  },
+  {
+   "id": "manual:ai-agent:5",
+   "source": "User Manual",
+   "section": "ai-agent",
+   "sectionLabel": "AI Agent",
+   "heading": "Context awareness",
+   "anchor": "context-awareness",
+   "text": "When the chat is opened from a shipment's detail page, its ID is passed as context automatically, so you can ask things like \"what's the status of this shipment\" without repeating the ID."
+  },
+  {
+   "id": "manual:freight-basics:1",
+   "source": "User Manual",
+   "section": "freight-basics",
+   "sectionLabel": "Ocean Freight Basics",
+   "heading": "Ocean Freight Basics",
+   "anchor": "",
+   "text": "New to shipping, or just want the vocabulary straight? This page covers the handful of concepts that show up constantly in ocean freight — how cargo physically moves, and what the two kinds of Bill of Lading actually are and who issues each. It's general shipping knowledge, not a CargoDesk feature guide, but it explains exactly what CargoDesk is doing for you at each step."
+  },
+  {
+   "id": "manual:freight-basics:2",
+   "source": "User Manual",
+   "section": "freight-basics",
+   "sectionLabel": "Ocean Freight Basics",
+   "heading": "How cargo moves: containers vs. Ro-Ro",
+   "anchor": "how-cargo-moves-containers-vs-ro-ro",
+   "text": "Almost all ocean cargo travels one of two ways. Lift-on/Lift-off (Lo-Lo) is what CargoDesk is built around: cargo is packed into a standard steel container, and a crane lifts that container on and off the vessel. This is what \"FCL\" (Full Container Load) and the 20'/40' container sizes throughout CargoDesk refer to.\nRoll-on/Roll-off (Ro-Ro) is a different method entirely, used for cars, trucks, trailers, and other wheeled or self-propelled cargo — instead of being craned, it's driven or towed directly on and off the vessel via ramps at the bow, stern, or side. A Ro-Ro vessel has no container cranes at all; capacity is measured in vehicle lanes, not TEU. CargoDesk does not currently model Ro-Ro bookings — every shipment here assumes containerized (Lo-Lo) cargo — but it's worth knowing the term, since a carrier or port you work with may run both kinds of vessel."
+  },
+  {
+   "id": "manual:freight-basics:3",
+   "source": "User Manual",
+   "section": "freight-basics",
+   "sectionLabel": "Ocean Freight Basics",
+   "heading": "Master Bill of Lading vs. House Bill of Lading",
+   "anchor": "master-bill-of-lading-vs-house-bill-of-lading",
+   "text": "A Bill of Lading (B/L) is three things at once: a receipt for the cargo, evidence of the contract of carriage, and (unless marked non-negotiable) a document of title — whoever holds the original can claim the goods. Where things get confusing is that a single shipment often has two of them, issued by two different parties.\nMaster Bill of Lading (MBL) — issued by the actual vessel-operating carrier (the shipping line, e.g. Maersk or CMA CGM) to whoever booked the container space with them. On a shipment routed through a freight forwarder or NVOCC, that \"whoever\" is the forwarder/NVOCC itself, not your customer — the carrier only ever contracts with the party it directly booked with.\nHouse Bill of Lading (HBL) — issued by the freight forwarder or NVOCC to its own actual customer (the real shipper and consignee). This is the document your customer sees and uses to claim their cargo at destination; they typically never see the Master B/L at all."
+  },
+  {
+   "id": "manual:freight-basics:4",
+   "source": "User Manual",
+   "section": "freight-basics",
+   "sectionLabel": "Ocean Freight Basics",
+   "heading": "How they interlink",
+   "anchor": "how-they-interlink",
+   "text": "The forwarder/NVOCC sits in the middle of both contracts at once — it's the consignee named on the Master B/L (the carrier's customer), and the carrier named on the House B/L (its own customer's counterparty). Both documents describe the same physical container moving on the same vessel, cross-referenced by each other's B/L number, but they're legally two separate contracts of carriage covering two different legs of the same relationship — carrier-to-forwarder, and forwarder-to-shipper.\nCargoDesk builds this directly: every shipment gets a BL01 House Bill of Lading (from CargoDesk's operator to the shipment's own Shipper/Consignee). If you assign an NVOCC party on the Parties & Offices page, a second, independent MB01 Master Bill of Lading also becomes available — shipper is the assigned NVOCC, consignee reads \"TO ORDER OF {NVOCC}\", and each document's generated HTML cross-references the other's B/L number, exactly matching how the two are used in practice.\nAn issued House B/L is a document of title, so it only moves forward. Confirming a BL01 issues it; after that it can't be deleted or set back to draft. If it's wrong, an admin clicks Void on the Documents page and gives a reason: it stays on record, marked Voided, and you can issue a new one. Void is refused while any original is still out (record them returned first), for a live eBL (it comes back through its platform), and once the B/L was surrendered for delivery or the cargo released against it, so two titles to the same cargo never exist. For the same reason a shipment holding an issued House B/L can't be deleted: cancel it instead. A shipment has one issued House B/L at a time, and generating a new draft replaces the previous draft."
+  },
+  {
+   "id": "manual:freight-basics:5",
+   "source": "User Manual",
+   "section": "freight-basics",
+   "sectionLabel": "Ocean Freight Basics",
+   "heading": "How they interlink (continued)",
+   "anchor": "how-they-interlink",
+   "text": "Issuing checks the B/L is complete first and, if not, lists what is missing: parties with their addresses, a notify party, vessel and voyage, the carrier's confirmed booking, the release type, the issuing legal entity's SCAC and address, and per container the seal, the number and kind of packages, the weight, description and HS code. A B/L that says Shipped on board needs every container loaded and is dated by the last one's loading, in the port's own date; until then, issue it as Received for shipment. An eBL isn't issued while paper originals are out. At destination, Mark Released waits until the originals are surrendered, collect charges are paid and the consignee isn't on credit hold; an admin or finance user can override with a reason. The Delivery Order can only be generated once the cargo is released."
+  },
+  {
+   "id": "manual:freight-basics:6",
+   "source": "User Manual",
+   "section": "freight-basics",
+   "sectionLabel": "Ocean Freight Basics",
+   "heading": "The House B/L panel",
+   "anchor": "the-house-b-l-panel",
+   "text": "The top of a shipment's Documents page shows the House B/L: where it is (Draft, Issued, Surrendered, Released), its record and history, and the next step.\n• Before issue — what is still missing, each with a link to the page where you fix it. Choose what the B/L says: Shipped on board (dated by the last container's loading, or a date you type) or Received for shipment; how many originals and non-negotiable copies; and whether the freight shows as as arranged or with the shipment's charges. Generate draft makes a copy to check or send for approval (it says the number is assigned at issue); Issue House B/L takes the number, prints it dated today and issues it.\n• The B/L number — taken from the issuing office's series when you issue (e.g. RTMHBL2600123: the prefix, the year, a sequence). An admin sets the prefix under Organisation → Offices → Edit. A voided number is never used again. For a B/L already issued on paper, type its number on Conditions first.\n• After issue, on paper — log who received the originals (＋ Record handover: to whom, in person, by courier with its tracking number, or by mail). Record them as presented at destination (an Original B/L, with who presented them) or surrendered at origin (a telex release, once every original handed over is back: the import office gets a task telling it to release without originals), then Release cargo. A live eBL is surrendered only on its platform. The release dialog shows its three checks; an admin or finance user can override with a reason.\n• Corrections — if the shipment changes after issue, the panel says what no longer matches. Surrender for amendment records the originals coming back, with the reason; then issue version 2, which keeps the same number and prints \"VERSION 2 · AMENDED\". An eBL is corrected by its holder asking on the platform."
+  },
+  {
+   "id": "manual:freight-basics:7",
+   "source": "User Manual",
+   "section": "freight-basics",
+   "sectionLabel": "Ocean Freight Basics",
+   "heading": "The House B/L panel (continued)",
+   "anchor": "the-house-b-l-panel",
+   "text": "• Or electronic — Issue as eBL sends it to an eBL platform, issued to the shipper by its platform id (Customers → Identifiers, type WAVE, CARX…). The issuing legal entity needs a SCAC, a street address and a phone or email (Organisation → Branches). The holder endorses it on the platform; when the consignee asks to surrender it for delivery, CargoDesk checks payment and credit and releases the cargo.\n• Void, with a reason (admin only) — takes an issued House B/L out of use; it stays on record and a new one can be issued. Refused while originals are out, for a live eBL, and after surrender for delivery or release.\nPackages for the B/L are entered on each container (Cargo): Packages (how many) and Kind of packages (carton, pallet, …). They are separate from the cargo manifest below the container. A dangerous-goods container also needs its UN number and proper shipping name; a reefer's set temperature prints as it is. To issue the B/L to order, choose it on Conditions → Consignee on the B/L (a Sea Waybill can't be). The printed B/L lists every vessel, the transshipment port and the on-carriage. In a test environment, Test Tools → eBL Platform plays the eBL platform: issue or refuse an eBL, endorse it, or ask CargoDesk to accept a surrender. The carrier booking links the carrier's own Master B/L (MB01), not the House B/L."
+  },
+  {
+   "id": "manual:freight-basics:8",
+   "source": "User Manual",
+   "section": "freight-basics",
+   "sectionLabel": "Ocean Freight Basics",
+   "heading": "Who's who on a shipment",
+   "anchor": "who-s-who-on-a-shipment",
+   "text": "Shipper the party sending the goods · Consignee the party receiving them · Notify Party who the carrier alerts on arrival, often the same as the consignee · Principal CargoDesk's own commercial customer of record for the shipment · NVOCC a Non-Vessel Operating Common Carrier — acts as a carrier to its own customer while being a shipper to the real vessel operator, exactly the dual role described above. Assign any of these from a shipment's Parties & Offices page.\n📋\nFurther reading:\nfor a deeper dive with worked examples, see\nDocShipper's Bill of Lading guide\nand\nHöegh Autoliners on Ro-Ro shipping\n."
+  },
+  {
+   "id": "manual:si-vgm:1",
+   "source": "User Manual",
+   "section": "si-vgm",
+   "sectionLabel": "Shipping Instructions & VGM",
+   "heading": "Shipping Instructions & VGM",
+   "anchor": "",
+   "text": "Two pre-departure compliance steps that sit alongside the booking, not inside it — both live under Booking & Routing in a shipment's sidebar, and both go to the carrier as standard DCSA messages: Shipping Instructions 3.0 and VGM 1.0. A carrier that isn't connected yet is played by the demo carrier, as for bookings."
+  },
+  {
+   "id": "manual:si-vgm:2",
+   "source": "User Manual",
+   "section": "si-vgm",
+   "sectionLabel": "Shipping Instructions & VGM",
+   "heading": "Shipping Instructions (SI)",
+   "anchor": "shipping-instructions-si",
+   "text": "Shipping Instructions is the shipper's own submission of the final Bill of Lading data — parties, container/seal numbers, marks & numbers, cargo description — to the carrier ahead of the SI cutoff. Open Booking & Routing → Shipping Instructions, fill in the SI cutoff and any special instructions, and Save Draft. A shipment needs a Shipper and a Consignee set (Parties & Offices) plus at least one container before Submit is available.\nSubmit sends them to the carrier. The carrier must already have confirmed the booking, because the instructions quote its booking number. Every container needs its number, seal, HS code, gross weight and cargo description, and the export office's legal entity needs a phone or email (Organisation → Branches) for the carrier to reach. If anything is missing, the message lists it and nothing is sent. When the shipment has an NVOCC, the NVOCC is the shipper, because these instructions are for the carrier's Master B/L.\nOnce submitted, the record locks. The carrier then answers:\n• it drafts its Master B/L from them: Confirmed, and the draft appears below the instructions for you to review;\n• it asks for an update: Rejected with the carrier's reason. Reset to Draft, correct the shipment, and submit again. The correction goes as an update under the same carrier reference.\nA declined one is final, and the next submit sends new instructions. Confirmed or Submitted SI unlocks a formal SI01 document under Generate Document.\nWhile the carrier holds the instructions, Send update sends the shipment's data as it is now (a corrected seal, a House B/L issued since) under the same reference, and the carrier redrafts. Cancel instructions asks you to confirm, then cancels them at the carrier, which voids its draft. An update the carrier hasn't worked in yet can be cancelled on its own. Once the carrier has issued the Master B/L, nothing here can change any more."
+  },
+  {
+   "id": "manual:si-vgm:3",
+   "source": "User Manual",
+   "section": "si-vgm",
+   "sectionLabel": "Shipping Instructions & VGM",
+   "heading": "The carrier's Master B/L",
+   "anchor": "the-carrier-s-master-b-l",
+   "text": "When the carrier drafts its Master B/L, a card opens under the instructions. It shows the critical information first:\n• where it stands: drafted, approved, issued, surrendered for delivery;\n• anything that differs from what you sent, at the top, your value next to the carrier's;\n• six key facts, each marked ✓ (same as sent) or ≠ (changed): the document and originals, the vessel and voyage, the shipper, the consignee, the ports, and the containers with their weight and seals.\nShow all fields opens the field-by-field comparison. Click the card's title to fold it away. If the draft is right, Approve draft. If something needs correcting, fix the shipment and use Send update. A task sits on the export office's Kanban until the draft is approved. When the carrier issues it, the shipment takes the Master B/L number and B/L Issued completes. When the B/L is surrendered for delivery, the carrier marks the instructions complete.\nA House B/L you have issued travels inside the Master's instructions where the destination's advance filing needs House-level data (EU ICS2, US AMS, Mercosur). Its packages then need their package code, and its HS code the destination tariff's digits; the submit tells you if either is missing."
+  },
+  {
+   "id": "manual:si-vgm:4",
+   "source": "User Manual",
+   "section": "si-vgm",
+   "sectionLabel": "Shipping Instructions & VGM",
+   "heading": "Amending the issued Master B/L",
+   "anchor": "amending-the-issued-master-b-l",
+   "text": "Once the carrier has issued the Master B/L, Send update is closed. To correct it, fix the shipment first (say customs replaced a seal, or the notify party changed), then click Request amendment on the card. CargoDesk shows what differs between the issued B/L and the shipment now; nothing is sent if nothing does. Send amendment sends the issued B/L with your corrections; everything the carrier decides stays as issued.\n• Waiting: until the carrier works on it, Cancel the amendment withdraws it.\n• Declined: the card shows the carrier's reason and a task goes to the export office. Correct the shipment again and request a new amendment, or settle it with the carrier.\n• Accepted: return the original B/Ls to the carrier (a task reminds the export office until it has them). The carrier then issues the amended B/L under the same number, and the card lists what changed.\nA carrier that doesn't take amendments through DCSA is named as such; ask it directly.\nTip: The Container/Seal Detail table on this page flags, in amber, any container still missing a seal number, marks & numbers, or cargo description — worth a glance before you submit, since those fields render blank on the generated document otherwise."
+  },
+  {
+   "id": "manual:si-vgm:5",
+   "source": "User Manual",
+   "section": "si-vgm",
+   "sectionLabel": "Shipping Instructions & VGM",
+   "heading": "VGM (Verified Gross Mass)",
+   "anchor": "vgm-verified-gross-mass",
+   "text": "SOLAS requires a verified weight for every container before it can be loaded, declared one of two ways: Method 1 — weighing the fully packed container — or Method 2 — a certified sum of the cargo/dunnage weight plus the container's own tare weight. Open the shipment's VGM Export Service page, set each container's weight and Method, then move its status to Submitted — CargoDesk won't let a container move past Pending without a Method on file.\nMoving a container to Submitted sends its VGM declaration to the carrier. If no weight or Method is set, or the carrier refuses it, nothing is saved. A corrected weight or Method sends the declaration again, replacing the first. Moving the container back to Pending withdraws it at the carrier.\nEvery declaration is kept. Open Declarations on a container to see them, newest first, with what was declared, when, by whom and for whom. Each one has its own files:\n• Evidence: the weighbridge ticket (Method 1) or the weight calculation (Method 2). Attach it with Attach weighbridge ticket or Attach weight calculation. Until you do, the container shows No evidence on file. A corrected weight is a new declaration, so it needs its own evidence.\n• VG01 VGM Declaration: the printable, signed declaration, made with Generate VG01.\nThe evidence stays in CargoDesk: the carrier's VGM message carries no attachments. A container whose VGM the carrier holds can't be removed until you set it back to Pending, which withdraws it.\nIn Test Tools, a submitted VGM can be marked Accepted or Rejected, which stands in for the terminal's check. A rejected container shows its reason and a one-click Reset back to Pending for correction. The page's own Message Thread shows every declaration and response for the shipment in one place.\nNote: Once every container on a shipment has reached Submitted VGM (or, more precisely now, once Shipping Instructions is actually submitted), the shipment's SI Submitted milestone auto-completes — whichever of the two happens first."
+  },
+  {
+   "id": "manual:si-vgm:6",
+   "source": "User Manual",
+   "section": "si-vgm",
+   "sectionLabel": "Shipping Instructions & VGM",
+   "heading": "VGM (Verified Gross Mass) (continued)",
+   "anchor": "vgm-verified-gross-mass",
+   "text": "On the import side, Booking & Routing → Arrival Notice shows the carrier's DCSA Arrival Notice for the shipment's Master or House B/L. It arrives on its own when the carrier publishes it; Ask the carrier again fetches it by the B/L number. A new version replaces the old one, and History keeps both.\n• Key facts: the vessel, when it arrives, where to pick up (with the pickup number), where to return the empties, and whether freight, the original B/L and customs are released. The arrival date moves the shipment's ETA, unless the vessel has already been reported as arrived.\n• Free time: the carrier's demurrage and detention days for each container. Empty free days on a container are filled in. Where the container already says something else, the row shows both: Keep yours or Use the carrier's.\n• Charges: what the carrier will collect at destination. Tick the ones to add and click Add as accruals: each becomes a BUY cost from the carrier. A charge that looks already entered (same amount, or the same charge) is flagged and starts unticked.\nGenerate AN01 from it builds CargoDesk's own arrival notice to the consignee with the carrier's arrival date, last free day, pickup and return points.\nTip: The vessel's arrival and departure at the berth can also come from the port call (DCSA Port Call). They move the shipment's sea leg like the carrier's own times do, and never undo a confirmed one."
+  },
+  {
+   "id": "manual:mdm:1",
+   "source": "User Manual",
+   "section": "mdm",
+   "sectionLabel": "Master Data",
+   "heading": "Master Data Management (MDM)",
+   "anchor": "",
+   "text": "MDM is the reference layer for all operational data. Changes here propagate automatically to shipment forms and the dashboard.\nCarriers: Add, edit, or remove ocean carriers. Each carrier requires a SCAC code (e.g. MAEU) and a full name. Carriers listed here appear in the shipment carrier dropdown."
+  },
+  {
+   "id": "manual:mdm:2",
+   "source": "User Manual",
+   "section": "mdm",
+   "sectionLabel": "Master Data",
+   "heading": "Vessels",
+   "anchor": "vessels",
+   "text": "The IMO vessel registry — tens of thousands of real ships, each with its own IMO number, flag, build year, and tonnage. Search by name, IMO, or type. A vessel with no confirmed name yet shows \"Name pending — awaiting a clean AIS report\" rather than garbled data; it fills in automatically once a real position report comes through.\n(Screen: Master Data → Vessels — a searchable index of the IMO registry.)"
+  },
+  {
+   "id": "manual:mdm:3",
+   "source": "User Manual",
+   "section": "mdm",
+   "sectionLabel": "Master Data",
+   "heading": "Commodities",
+   "anchor": "commodities",
+   "text": "The freight commodity code list used when describing what a shipment is carrying, each with its own grade classification. Add a custom code if the one you need isn't already there."
+  },
+  {
+   "id": "manual:mdm:4",
+   "source": "User Manual",
+   "section": "mdm",
+   "sectionLabel": "Master Data",
+   "heading": "Port Locations",
+   "anchor": "port-locations",
+   "text": "The port database contains 14,000+ UN/LOCODE records with coordinates. Use the search bar to filter by code or name. Every row with coordinates includes a 📍 Map link that opens Google Maps at that location. You can add custom ports or edit existing ones.\nLinked Ports: Create links between ports that share a geographical area (e.g. USLAX → USLGB). Useful for matching booking data where the same physical port appears under multiple codes."
+  },
+  {
+   "id": "manual:mdm:5",
+   "source": "User Manual",
+   "section": "mdm",
+   "sectionLabel": "Master Data",
+   "heading": "Trade Lanes",
+   "anchor": "trade-lanes",
+   "text": "14 FIATA high-level trade lanes are pre-configured (FE, EU-N, ME, etc.). Each lane lists its assigned countries. Use the edit modal to search for countries by name or ISO2 code and add or remove them from the lane."
+  },
+  {
+   "id": "manual:mdm:6",
+   "source": "User Manual",
+   "section": "mdm",
+   "sectionLabel": "Master Data",
+   "heading": "Countries",
+   "anchor": "countries",
+   "text": "ISO 3166-1 alpha-2 country registry pre-populated with 193 UN member states and key territories. Each country shows its assigned trade lanes and seaport count. Click View Locations to see all UN/LOCODE ports for that country."
+  },
+  {
+   "id": "manual:mdm:7",
+   "source": "User Manual",
+   "section": "mdm",
+   "sectionLabel": "Master Data",
+   "heading": "UN Location Codes",
+   "anchor": "un-location-codes",
+   "text": "A complete index of all 5-character codes in the system. The Has Seaport? column shows ✅ for any code that matches a port in the Port Locations database, and — for codes referenced in shipments but not yet in the master data."
+  },
+  {
+   "id": "manual:mdm:8",
+   "source": "User Manual",
+   "section": "mdm",
+   "sectionLabel": "Master Data",
+   "heading": "Lane Steering",
+   "anchor": "lane-steering",
+   "text": "The order in which carriers should be tried on a trade lane (for everyone, or for one customer), each on one of its contracts, with a note on the line and an optional switch that moves an unanswered booking to the next carrier automatically. It is what Where to book shows when a contract is assigned, and escalations offer it first. Each option lists the space configurations on its contract; one with none is order only (no cap). Check shows what the booking desk would be told for a shipment you type in. Only admins and Trade Managers can change it."
+  },
+  {
+   "id": "manual:mdm:9",
+   "source": "User Manual",
+   "section": "mdm",
+   "sectionLabel": "Master Data",
+   "heading": "Margin Rules",
+   "anchor": "margin-rules",
+   "text": "The margin a quote adds on top of what was bought: a fixed amount per container on the ocean freight, or a percentage of the buy, for a customer, a trade lane and a container type (blank = any), with a minimum margin. The most specific rule applies — the customer's own on the lane and container, then the customer's for any lane, then everyone's on the lane, then everyone's default. A rule suggests and checks; it never stops a quote. Only admins and Trade Managers can change it."
+  },
+  {
+   "id": "manual:mdm:10",
+   "source": "User Manual",
+   "section": "mdm",
+   "sectionLabel": "Master Data",
+   "heading": "Carrier Agents",
+   "anchor": "carrier-agents",
+   "text": "Which local company represents a carrier, and where. A carrier's agent in Rotterdam usually isn't the same company as its agent in New York — this registry records that, and CargoDesk uses it to automatically fill in the \"Line Agent\" party on a new shipment once its carrier and route are known, so nobody has to remember or re-type it by hand.\nClick + Add Carrier Agent, pick the carrier and the agent company, and add at least one place they cover — either one specific port (search by UN/LOCODE) or an entire country. One agent can cover several places at once: for example, an agent based in Spain can also be set to cover Andorra, by adding both as separate rows. If you later add a whole country and some of the ports you'd already added are inside it, CargoDesk removes those specific ports automatically (they're now redundant) and tells you exactly which ones it removed — nothing disappears silently.\nClick the ⚙ button on any row and choose Edit to open the full record, which has four tabs:\nCoverage — the list of places this agent covers (add or remove them here), and a Working Schedule — which days of the week they're reachable and during which hours, since an agent isn't necessarily open the same hours every day. Add a row for each group of days that shares the same hours (for example, Monday–Tuesday 9:00–18:00, then a separate row for Wednesday and Friday 9:00–13:00) — click a day to toggle it on or off for that row.\nCapabilities — a checklist of what this agent can actually do (road haulage, warehousing, customs clearance, and so on). This is recorded so a future check can flag a mismatch before a booking is sent — for example, if a shipment needs road haulage arranged on export but the assigned agent doesn't offer it — but that automatic check doesn't exist yet; today the checklist is just recorded on the agent's own record.\nNotes and Address & Contact — a free-text notes box, and a read-only view of the agent company's own address and contact person (kept in sync with their Customer record — update it there, not here)."
+  },
+  {
+   "id": "manual:mdm:11",
+   "source": "User Manual",
+   "section": "mdm",
+   "sectionLabel": "Master Data",
+   "heading": "Automatic assignment on a new shipment",
+   "anchor": "automatic-assignment-on-a-new-shipment",
+   "text": "Whenever a shipment's carrier, origin, or destination is set, CargoDesk automatically checks whether a registered Line Agent covers each end and — if exactly one does — fills the \"Line Agent (Export)\"/\"Line Agent (Import)\" party for you, so nobody has to remember to do it by hand. The Line Agent (Export) is where the carrier booking goes: the booking names it as the carrier's booking office, with its address and contact from its Customer record. If a location resolves through more than one linked port and each has its own registered agent, CargoDesk won't guess: the shipment's header shows a Line Agent Picks Needed badge, and opening Parties & Offices shows a \"pick one\" list naming every real candidate and which linked port it matched through. Dismissing that list without picking leaves the party unassigned exactly as it already is — you can always assign one manually later."
+  },
+  {
+   "id": "manual:ais-integration:1",
+   "source": "User Manual",
+   "section": "ais-integration",
+   "sectionLabel": "AIS Vessel Tracking",
+   "heading": "AIS Vessel Tracking",
+   "anchor": "",
+   "text": "CargoDesk can listen to a live feed of real ship movements — AIS (Automatic Identification System) is the radio signal every ocean-going vessel broadcasts by international requirement, reporting its identity and position. Connected, it does two things automatically, with no manual data entry: keeps the Vessels registry accurate, and confirms when a shipment's own vessel has actually sailed or arrived."
+  },
+  {
+   "id": "manual:ais-integration:2",
+   "source": "User Manual",
+   "section": "ais-integration",
+   "sectionLabel": "AIS Vessel Tracking",
+   "heading": "Keeping the Vessels registry fresh",
+   "anchor": "keeping-the-vessels-registry-fresh",
+   "text": "When AIS reports a vessel CargoDesk doesn't recognize yet, it's added to Master Data → Vessels automatically — no admin has to hand-enter its IMO number, name, or flag first. If a known vessel's reported name ever changes (a real ship can be renamed or re-flagged over its life), CargoDesk logs that as a RENAMED event on the vessel's own history rather than silently overwriting it — and won't log the same event twice just because the same, unchanged name is reported again on a later pass. A vessel confirmed this way shows a small AIS badge in the Vessels list — hover it to see the date it was last seen live."
+  },
+  {
+   "id": "manual:ais-integration:3",
+   "source": "User Manual",
+   "section": "ais-integration",
+   "sectionLabel": "AIS Vessel Tracking",
+   "heading": "Confirming a shipment's actual departure and arrival",
+   "anchor": "confirming-a-shipment-s-actual-departure-and-arrival",
+   "text": "Every sea leg on a shipment carries an ETD/ETA that starts as an estimate. Once AIS reports the assigned vessel has genuinely left the Port of Loading or reached the Port of Discharge — a real change in navigational status near that port, not just a position update in transit — CargoDesk updates that same ETD or ETA field in place with the real date, rather than adding a second \"actual\" field alongside it. A small 🚢 ship icon appears next to a confirmed value on the Route Legs table so you can tell an estimate from a confirmed fact at a glance. This only ever fills in what's still an estimate — it never overwrites a value you've already typed in yourself, and if you do edit a confirmed field by hand afterward, that edit always wins and the confirmed marker clears."
+  },
+  {
+   "id": "manual:ais-integration:4",
+   "source": "User Manual",
+   "section": "ais-integration",
+   "sectionLabel": "AIS Vessel Tracking",
+   "heading": "Turning it on",
+   "anchor": "turning-it-on",
+   "text": "Go to Application Settings → API Controls → External APIs and find the AIS Vessel Tracking card. The default provider is aisstream.io — free, no payment, no hardware required, just a signup for an API key. Paste the key in and save; CargoDesk connects automatically and reconnects on its own if the connection ever drops."
+  },
+  {
+   "id": "manual:ais-integration:5",
+   "source": "User Manual",
+   "section": "ais-integration",
+   "sectionLabel": "AIS Vessel Tracking",
+   "heading": "Checking it's connected",
+   "anchor": "checking-it-s-connected",
+   "text": "On the same AIS Vessel Tracking card, click Test — it reports Connected · N vessel(s) tracked when the feed is live, or the actual connection error when it isn't. The System Health link in the footer (bottom right of every page) lists it too, alongside every other internal and external service, as a quick pass/fail check.\nTip: AIS confirmation also completes the matching Vessel Departed / Vessel Arrived step on the shipment's Milestones page automatically, the moment the real departure or arrival is detected — no manual click needed, and it's noted there as completed by \"System (Auto)\" so it's clear where the date came from."
+  },
+  {
+   "id": "manual:document-templates:1",
+   "source": "User Manual",
+   "section": "document-templates",
+   "sectionLabel": "Document Templates",
+   "heading": "Document Templates (the Document Builder)",
+   "anchor": "",
+   "text": "By default, every generated document — Bill of Lading, Commercial Invoice, and the rest — comes from a fixed layout built into CargoDesk. The Document Builder lets you design your own layout instead, for a specific office, a specific carrier, or both — with no code change and nothing for CargoDesk's engineers to ship. It's reached from Master Data → Document Templates, and creating or editing a template needs an admin, operator, or trade manager account.\nWarning: House Bill of Lading (BL01) only, for now. Every other document type — Commercial Invoice, Packing List, and the rest — still always renders through its built-in layout. Support for more document types is planned, not a permanent limit."
+  },
+  {
+   "id": "manual:document-templates:2",
+   "source": "User Manual",
+   "section": "document-templates",
+   "sectionLabel": "Document Templates",
+   "heading": "Creating a template",
+   "anchor": "creating-a-template",
+   "text": "Click + New Template. Give it a name you'll recognize later (e.g. \"Rotterdam / Maersk House B/L\"), then choose how narrowly it should apply:\n• Office — leave blank to apply to every office, or pick one to scope it there only.\n• Carrier — same idea: blank means every carrier, or pick one specific carrier.\nCreate & Open Editor saves the template (empty, to start) and takes you straight into the canvas.\n(Screen: Document Templates — one row per template, showing exactly which office and carrier it's scoped to. A row scoped to 'Any office' or 'Any carrier' applies wherever nothing more specific matches.)"
+  },
+  {
+   "id": "manual:document-templates:3",
+   "source": "User Manual",
+   "section": "document-templates",
+   "sectionLabel": "Document Templates",
+   "heading": "Designing the layout",
+   "anchor": "designing-the-layout",
+   "text": "The canvas is a real page-sized surface (A4 by default) that starts blank — you build up the layout by adding fields and arranging them wherever you want, like a simple poster or PDF design tool:\n• Pick a value from one of the Shipment… / Shipper… / Consignee… / Document… dropdowns to drop a field bound to real shipment data — B/L number, vessel, shipper's company name, and so on.\n• + Free Text adds a field with your own fixed wording instead — a heading like \"BILL OF LADING,\" a label, boilerplate text — anything that doesn't come from the shipment.\n• + Table adds a repeating region, one row per container on the shipment — pick which columns it shows and in what order from its own inspector.\nClick a field to select it, then drag it anywhere on the page. A small handle appears in its bottom-right corner when selected — drag that to resize it instead of move it.\nWith a field selected, the panel on the right — the Inspector — is where you fine-tune it: for a text field, switch its Source between a Shipment Value and Free Text, adjust font size, alignment, and weight (Normal/Bold); for a table, add or remove columns and change what each one is bound to. Delete Field (or Delete Table) removes whatever's selected.\n(Screen: The canvas editor. The selected field (orange border, left) shows its properties in the Inspector on the right — this one's a Free Text heading, bold, size 16.)"
+  },
+  {
+   "id": "manual:document-templates:4",
+   "source": "User Manual",
+   "section": "document-templates",
+   "sectionLabel": "Document Templates",
+   "heading": "Preview before you save",
+   "anchor": "preview-before-you-save",
+   "text": "Click 👁 Preview at any time to see the layout rendered with realistic sample data — instantly, with no server round-trip, since the whole thing renders in your browser. ✎ Back to Editing returns you to the canvas with everything exactly as you left it.\n(Screen: Preview — the same layout, rendered with realistic sample data so you can check spacing and alignment before it's ever used on a real shipment.)\nWhen it looks right, click Save. There's no separate draft/published state — a saved template is live immediately, the next time someone generates a House B/L that matches its scope."
+  },
+  {
+   "id": "manual:document-templates:5",
+   "source": "User Manual",
+   "section": "document-templates",
+   "sectionLabel": "Document Templates",
+   "heading": "Which template a shipment actually gets",
+   "anchor": "which-template-a-shipment-actually-gets",
+   "text": "When someone generates a House B/L, CargoDesk looks for the most specific template that matches the shipment's own Export Managing Office and carrier, checked in this order:\n• A template scoped to this exact office and this exact carrier.\n• A template scoped to this office, any carrier.\n• A template scoped to any office, any carrier — a true fallback template.\n• If nothing matches at all, the shipment's House B/L renders through CargoDesk's own built-in layout, exactly as it always did before you ever created a template.\nTip: This is why a template scoped to \"Any office / Any carrier\" is worth creating even if you also have office- or carrier-specific ones — it becomes the catch-all for every combination that doesn't have its own dedicated layout."
+  },
+  {
+   "id": "manual:document-templates:6",
+   "source": "User Manual",
+   "section": "document-templates",
+   "sectionLabel": "Document Templates",
+   "heading": "Editing or removing a template",
+   "anchor": "editing-or-removing-a-template",
+   "text": "Open the ⚙ action menu on any row and choose Edit to go straight back into the canvas, or Delete to remove it. Deleting is safe, not destructive to past documents — any shipment that matched it simply falls back to whichever template (or the built-in layout) matches next; nothing already generated changes retroactively."
+  },
+  {
+   "id": "manual:concurrent-editing:1",
+   "source": "User Manual",
+   "section": "concurrent-editing",
+   "sectionLabel": "Concurrent Editing",
+   "heading": "Concurrent Editing",
+   "anchor": "",
+   "text": "CargoDesk doesn't merge two people's edits to the same shipment — whoever gets there first keeps the pen until they leave, and everyone else sees a read-only copy in the meantime, so two people can never accidentally overwrite each other's changes."
+  },
+  {
+   "id": "manual:concurrent-editing:2",
+   "source": "User Manual",
+   "section": "concurrent-editing",
+   "sectionLabel": "Concurrent Editing",
+   "heading": "How it works",
+   "anchor": "how-it-works",
+   "text": "The moment an operator or admin opens a shipment (any of its pages — Overview, Cargo, Parties, Schedules, Accounting, and so on), that shipment is claimed for them. If someone else with edit rights opens the same shipment while it's claimed, they see a 🔒 Locked by {name} badge in the shipment header and a View Only banner on Overview naming who holds it — every Save button and edit control on every page behaves exactly as it does for a Viewer account until the lock is released. Nothing needs to be reloaded to see the change either way: as soon as the first person leaves the shipment, everyone else watching it regains full edit access immediately."
+  },
+  {
+   "id": "manual:concurrent-editing:3",
+   "source": "User Manual",
+   "section": "concurrent-editing",
+   "sectionLabel": "Concurrent Editing",
+   "heading": "Releasing the lock",
+   "anchor": "releasing-the-lock",
+   "text": "Navigating away from the shipment (back to the list, or to a different shipment) releases it right away for the next person. If a tab is closed, crashes, or loses its connection without a chance to release cleanly, the lock clears itself automatically after 30 minutes of inactivity — there's no separate \"unlock\" button to press, and nobody needs to be reached to free it up.\nNote: A Viewer-role account is unaffected by any of this — it was already read-only regardless of who else has a shipment open."
+  },
+  {
+   "id": "manual:incoterms:1",
+   "source": "User Manual",
+   "section": "incoterms",
+   "sectionLabel": "Incoterms",
+   "heading": "Incoterms® 2020",
+   "anchor": "",
+   "text": "Incoterms® are standardised trade terms published by the ICC, used in every international shipment to define where risk and cost transfer from seller to buyer."
+  },
+  {
+   "id": "manual:incoterms:2",
+   "source": "User Manual",
+   "section": "incoterms",
+   "sectionLabel": "Incoterms",
+   "heading": "The two groups",
+   "anchor": "the-two-groups",
+   "text": "Any transport mode (EXW, FCA, CPT, CIP, DAP, DPU, DDP) — suitable for all cargo types including containerised ocean freight.\nSea and inland waterway only (FAS, FOB, CFR, CIF) — intended for bulk and break-bulk. For containerised cargo, prefer FCA over FOB and CIP over CIF."
+  },
+  {
+   "id": "manual:incoterms:3",
+   "source": "User Manual",
+   "section": "incoterms",
+   "sectionLabel": "Incoterms",
+   "heading": "Key principle",
+   "anchor": "key-principle",
+   "text": "Incoterms define where risk and cost transfer from seller to buyer. They do not determine title of goods, payment terms, or liability for cargo damage beyond the risk transfer point."
+  },
+  {
+   "id": "manual:incoterms:4",
+   "source": "User Manual",
+   "section": "incoterms",
+   "sectionLabel": "Incoterms",
+   "heading": "EXW (Ex Works)",
+   "anchor": "",
+   "text": "EXW — Ex Works. Any transport mode.\nRisk transfers: At seller's premises\nSeller: Makes goods available at their premises only.\nBuyer: Bears all costs and risks from seller's door to final destination.\nNotes: Maximum obligation on buyer. Suitable for domestic trade or when buyer has own logistics."
+  },
+  {
+   "id": "manual:incoterms:5",
+   "source": "User Manual",
+   "section": "incoterms",
+   "sectionLabel": "Incoterms",
+   "heading": "FCA (Free Carrier)",
+   "anchor": "",
+   "text": "FCA — Free Carrier. Any transport mode.\nRisk transfers: When goods delivered to named carrier at seller's premises or named place\nSeller: Delivers to named carrier or other nominated person at agreed place.\nBuyer: Bears all costs and risks once goods are handed to carrier.\nNotes: Replaces FOB for containerised cargo. Can specify that buyer instructs carrier to issue on-board B/L."
+  },
+  {
+   "id": "manual:incoterms:6",
+   "source": "User Manual",
+   "section": "incoterms",
+   "sectionLabel": "Incoterms",
+   "heading": "CPT (Carriage Paid To)",
+   "anchor": "",
+   "text": "CPT — Carriage Paid To. Any transport mode.\nRisk transfers: When goods delivered to first carrier\nSeller: Contracts and pays for carriage to named destination. Risk transfers at first carrier handover.\nBuyer: Bears risk from first carrier handover; seller pays freight.\nNotes: Risk and cost transfer at different points — a common source of confusion."
+  },
+  {
+   "id": "manual:incoterms:7",
+   "source": "User Manual",
+   "section": "incoterms",
+   "sectionLabel": "Incoterms",
+   "heading": "CIP (Carriage and Insurance Paid To)",
+   "anchor": "",
+   "text": "CIP — Carriage and Insurance Paid To. Any transport mode.\nRisk transfers: When goods delivered to first carrier\nSeller: As CPT, plus must obtain Institute Cargo Clauses (A) — all-risks insurance.\nBuyer: Bears risk from first carrier handover.\nNotes: Upgraded insurance vs CIF. Preferred for high-value cargo on any transport mode."
+  },
+  {
+   "id": "manual:incoterms:8",
+   "source": "User Manual",
+   "section": "incoterms",
+   "sectionLabel": "Incoterms",
+   "heading": "DAP (Delivered at Place)",
+   "anchor": "",
+   "text": "DAP — Delivered at Place. Any transport mode.\nRisk transfers: At named place of destination, ready for unloading\nSeller: Bears all costs and risks to deliver to named destination, not unloaded.\nBuyer: Responsible for unloading and import clearance.\nNotes: Very common for door-to-door shipments. Customs clearance is buyer's responsibility."
+  },
+  {
+   "id": "manual:incoterms:9",
+   "source": "User Manual",
+   "section": "incoterms",
+   "sectionLabel": "Incoterms",
+   "heading": "DPU (Delivered at Place Unloaded)",
+   "anchor": "",
+   "text": "DPU — Delivered at Place Unloaded. Any transport mode.\nRisk transfers: After goods unloaded at named place\nSeller: Bears all costs and risks including unloading at destination.\nBuyer: Responsible for import clearance after unloading.\nNotes: Replaced DAT (Incoterms 2010). Seller must be able to organise unloading at destination."
+  },
+  {
+   "id": "manual:incoterms:10",
+   "source": "User Manual",
+   "section": "incoterms",
+   "sectionLabel": "Incoterms",
+   "heading": "DDP (Delivered Duty Paid)",
+   "anchor": "",
+   "text": "DDP — Delivered Duty Paid. Any transport mode.\nRisk transfers: At named place of destination, ready for unloading\nSeller: Maximum obligation — bears all costs including import duties and taxes to destination.\nBuyer: Only needs to unload the goods.\nNotes: Seller assumes full responsibility. Be cautious if seller cannot easily handle import formalities."
+  },
+  {
+   "id": "manual:incoterms:11",
+   "source": "User Manual",
+   "section": "incoterms",
+   "sectionLabel": "Incoterms",
+   "heading": "FAS (Free Alongside Ship)",
+   "anchor": "",
+   "text": "FAS — Free Alongside Ship. Sea and inland waterway only.\nRisk transfers: When goods placed alongside vessel at named port\nSeller: Delivers goods alongside vessel at named loading port. Export cleared by seller.\nBuyer: Bears all costs from alongside ship onwards, including loading.\nNotes: Suitable for bulk/break-bulk cargo. Buyer arranges loading."
+  },
+  {
+   "id": "manual:incoterms:12",
+   "source": "User Manual",
+   "section": "incoterms",
+   "sectionLabel": "Incoterms",
+   "heading": "FOB (Free On Board)",
+   "anchor": "",
+   "text": "FOB — Free On Board. Sea and inland waterway only.\nRisk transfers: When goods on board vessel at named port of loading\nSeller: Loads goods on board vessel nominated by buyer at named port.\nBuyer: Bears all costs and risks from the moment goods are on board.\nNotes: Most common term in ocean freight. Not recommended for containerised cargo — use FCA instead."
+  },
+  {
+   "id": "manual:incoterms:13",
+   "source": "User Manual",
+   "section": "incoterms",
+   "sectionLabel": "Incoterms",
+   "heading": "CFR (Cost and Freight)",
+   "anchor": "",
+   "text": "CFR — Cost and Freight. Sea and inland waterway only.\nRisk transfers: When goods on board vessel at port of loading\nSeller: Contracts and pays freight to named destination port. Risk transfers on loading.\nBuyer: Bears risk from loading; seller pays ocean freight.\nNotes: Like FOB but seller pays freight. Risk and cost split at different points."
+  },
+  {
+   "id": "manual:incoterms:14",
+   "source": "User Manual",
+   "section": "incoterms",
+   "sectionLabel": "Incoterms",
+   "heading": "CIF (Cost, Insurance and Freight)",
+   "anchor": "",
+   "text": "CIF — Cost, Insurance and Freight. Sea and inland waterway only.\nRisk transfers: When goods on board vessel at port of loading\nSeller: As CFR, plus obtains minimum insurance (Institute Cargo Clauses C).\nBuyer: Bears risk from loading; entitled to insurance policy proceeds.\nNotes: Minimum insurance only. For higher-value cargo, consider CIP with Clauses (A)."
+  },
+  {
+   "id": "manual:dg-classes:1",
+   "source": "User Manual",
+   "section": "dg-classes",
+   "sectionLabel": "DG Classes",
+   "heading": "IMDG Dangerous Goods Classes",
+   "anchor": "",
+   "text": "The International Maritime Dangerous Goods (IMDG) Code classifies hazardous materials into 9 primary classes. When a container is flagged as DG in CargoDesk, the applicable class is mandatory. This ensures correct handling, segregation, and documentation across the shipment lifecycle.\n📋\nDocumentation note:\nDG shipments require a Dangerous Goods Declaration (DGD). The container must be marked and placarded with the appropriate IMDG hazard label. Always verify compliance with the carrier's DG acceptance policy and port restrictions before booking. Source:\nSeaRates IMO Reference\n."
+  },
+  {
+   "id": "manual:dg-classes:2",
+   "source": "User Manual",
+   "section": "dg-classes",
+   "sectionLabel": "DG Classes",
+   "heading": "Class 1: Explosives",
+   "anchor": "",
+   "text": "Class 1.1 — Mass Explosion Hazard: Explosives that have a mass explosion hazard. A mass explosion affects almost the entire load instantaneously.\nClass 1.2 — Projection Hazard: Explosives that have a projection hazard but not a mass explosion hazard.\nClass 1.3 — Fire, Blast or Projection Hazard: Explosives that have a fire hazard and either a minor blast or projection hazard but not a mass explosion hazard.\nClass 1.4 — Minor Explosion Hazard: Explosives that present a minor explosion hazard. Effects are largely confined to the package with no projection of fragments of appreciable size.\nClass 1.5 — Very Insensitive, Mass Explosion Hazard: Very insensitive explosives with a mass explosion hazard but very little probability of initiation under normal transport conditions.\nClass 1.6 — Extremely Insensitive: Extremely insensitive articles with no mass explosion hazard and negligible probability of accidental initiation."
+  },
+  {
+   "id": "manual:dg-classes:3",
+   "source": "User Manual",
+   "section": "dg-classes",
+   "sectionLabel": "DG Classes",
+   "heading": "Class 2: Gases",
+   "anchor": "",
+   "text": "Class 2.1 — Flammable Gas: Gases ignitable at 101.3 kPa in a mixture of 13% or less by volume with air, or with a flammable range of at least 12% regardless of lower limit.\nClass 2.2 — Non-flammable, Non-toxic Gas: Compressed, liquefied, pressurized cryogenic, or dissolved gas. Exerts absolute pressure ≥ 280 kPa at 20°C. Does not meet 2.1 or 2.3 definitions.\nClass 2.3 — Toxic Gas: Gas toxic by inhalation, known or presumed to be toxic to humans, posing a health hazard during transportation."
+  },
+  {
+   "id": "manual:dg-classes:4",
+   "source": "User Manual",
+   "section": "dg-classes",
+   "sectionLabel": "DG Classes",
+   "heading": "Class 3: Flammable Liquids",
+   "anchor": "",
+   "text": "Class 3 — Flammable Liquids: Liquids, or mixtures of liquids, with a flash point not more than 60°C (140°F). Includes flammable liquid desensitized explosives."
+  },
+  {
+   "id": "manual:dg-classes:5",
+   "source": "User Manual",
+   "section": "dg-classes",
+   "sectionLabel": "DG Classes",
+   "heading": "Class 4: Flammable Solids, Self-Reactive Substances",
+   "anchor": "",
+   "text": "Class 4.1 — Flammable Solids, Self-Reactive Substances: Solids that under normal transport conditions are readily combustible, or may cause or contribute to fire through friction. Includes self-reactive substances and solid desensitized explosives.\nClass 4.2 — Spontaneously Combustible: Substances liable to spontaneous heating under normal transport conditions, or to heating in contact with air, and likely to catch fire.\nClass 4.3 — Dangerous When Wet: Substances which, by interaction with water, emit flammable gases liable to spontaneous ignition or in quantities representing a hazard."
+  },
+  {
+   "id": "manual:dg-classes:6",
+   "source": "User Manual",
+   "section": "dg-classes",
+   "sectionLabel": "DG Classes",
+   "heading": "Class 5: Oxidizing Substances",
+   "anchor": "",
+   "text": "Class 5.1 — Oxidizing Substances: Substances that, while not necessarily combustible themselves, may cause or contribute to the combustion of other material by yielding oxygen.\nClass 5.2 — Organic Peroxides: Organic substances which contain the bivalent –O–O– structure. Thermally unstable, may combust, explode, or react dangerously with other substances."
+  },
+  {
+   "id": "manual:dg-classes:7",
+   "source": "User Manual",
+   "section": "dg-classes",
+   "sectionLabel": "DG Classes",
+   "heading": "Class 6: Toxic Substances",
+   "anchor": "",
+   "text": "Class 6.1 — Toxic Substances: Substances liable to cause death, serious injury, or harm to human health if swallowed, inhaled, or if they come into contact with skin.\nClass 6.2 — Infectious Substances: Substances known or reasonably expected to contain pathogens — microorganisms including bacteria, viruses, parasites, prions — causing disease in humans or animals."
+  },
+  {
+   "id": "manual:dg-classes:8",
+   "source": "User Manual",
+   "section": "dg-classes",
+   "sectionLabel": "DG Classes",
+   "heading": "Class 7: Radioactive Material",
+   "anchor": "",
+   "text": "Class 7 — Radioactive Material: Any material containing radionuclides where both the activity concentration and total activity exceed defined threshold values."
+  },
+  {
+   "id": "manual:dg-classes:9",
+   "source": "User Manual",
+   "section": "dg-classes",
+   "sectionLabel": "DG Classes",
+   "heading": "Class 8: Corrosive Substances",
+   "anchor": "",
+   "text": "Class 8 — Corrosive Substances: Substances or mixtures which, by chemical action, degrade or irreversibly damage living tissue on contact, or which severely damage or destroy other freight or the vessel."
+  },
+  {
+   "id": "manual:dg-classes:10",
+   "source": "User Manual",
+   "section": "dg-classes",
+   "sectionLabel": "DG Classes",
+   "heading": "Class 9: Miscellaneous Dangerous Substances",
+   "anchor": "",
+   "text": "Class 9 — Miscellaneous Dangerous Substances: Substances and articles which, during transport, present a danger not covered by other classes. Includes lithium batteries, dry ice, elevated temperature materials, and magnetized materials."
+  },
+  {
+   "id": "dfs:dfs-1:1",
+   "source": "Functional Spec",
+   "section": "dfs-1",
+   "sectionLabel": "1. Purpose & Audience",
+   "heading": "1. Purpose & Audience",
+   "anchor": "",
+   "text": "This document specifies CargoDesk's functional scope and data flow, domain by domain, for anyone who needs to reason about the system without reading its source: onboarding, a design review before a major change, or an external audit. It is deliberately top-down — the first pass covers every major domain at a consistent level of detail, rather than one domain in exhaustive depth. Where a domain needs deeper treatment later, that becomes its own Level 2 DFD and functional appendix, added incrementally."
+  },
+  {
+   "id": "dfs:dfs-2:1",
+   "source": "Functional Spec",
+   "section": "dfs-2",
+   "sectionLabel": "2. System Overview",
+   "heading": "2. System Overview",
+   "anchor": "",
+   "text": "CargoDesk is a single-tenant freight-forwarding operations system covering the full commercial lifecycle of a sea-freight shipment: quoting, booking, container/cargo management, operational accounting, space allocation against carrier contracts, multi-list compliance screening, customs filing, and an AI assistant over all of it. It runs as one Express monolith plus seven extracted microservices (§6), each independently toggleable between \"local\" (monolith-owned data) and \"remote\" (its own service) per domain — a deliberate, incremental extraction strategy rather than a single big-bang rewrite."
+  },
+  {
+   "id": "dfs:dfs-3:1",
+   "source": "Functional Spec",
+   "section": "dfs-3",
+   "sectionLabel": "3. Actors & Roles",
+   "heading": "3. Actors & Roles",
+   "anchor": "",
+   "text": "Role: admin; Typical user: System administrator; Scope: Full access, including user management, app settings, secrets\nRole: operator; Typical user: Day-to-day operations staff; Scope: Full shipment/contract/booking read-write, no admin config\nRole: occbk; Typical user: Operations/booking desk; Scope: Shipment and booking read-write, narrower than operator on admin-adjacent actions; books as instructed after an escalation; attaches spot offers to shipments\nRole: occay (2026-10-20); Typical user: Booking escalation desk, export side; Scope: Finds an alternative carrier or sailing for an escalated booking and instructs OCC/BK\nRole: cclco (2026-10-20); Typical user: Booking escalation desk, import side; Scope: The same as OCC/AY, from the shipment's import office\nRole: tradeay (2026-10-20); Typical user: Trade analyst for a lane; Scope: Takes escalations OCC/AY or CCL/CO pass up: gives an alternative, marks the booking impossible, or sends it back\nRole: trademanager; Typical user: Trade-lane owner; Scope: Read-write scoped to their trade lane/office; owns credit-hold override authority; maintains Lane Steering and Margin Rules (with admin)\nRole: sales (v0.91.1); Typical user: Quoting/pipeline owner; Scope: Read-write on Quotes and Opportunities only; deliberately no booking authority (not granted on shipment/booking/EDI/customs-filing writes)\nRole: viewer; Typical user: Read-only stakeholder; Scope: Read access only, scope-limited the same way as other roles\nA user can hold more than one role; occbk/occay/cclco/tradeay/trademanager/sales are co-equal, non-hierarchical specialty grants (same rank), not rungs on the admin/operator/viewer ladder. Access is further scoped by office and/or trade lane (allOffices/userOffices, scopeItems) independent of role — two operators can see disjoint sets of shipments. Since v0.91.1, office scoping also supports a\nBranch or Country grant — a single admin action that cascades to every office under it (inheriting new offices added later), with an optional narrower exclusion carved back out — instead of only ever assigning one office at a time; this same office-scoping mechanism now also governs Quotes/Opportunities visibility, which had none before. See USER-MANAGEMENT-REDESIGN.md for the full model and ARCHITECTURE.md §8.9 for the underlying mechanics (JWT, idle-timeout, SSO)."
+  },
+  {
+   "id": "dfs:dfs-5:1",
+   "source": "Functional Spec",
+   "section": "dfs-5",
+   "sectionLabel": "5. Functional Specification by Domain",
+   "heading": "5. Functional Specification by Domain",
+   "anchor": "",
+   "text": "Each domain below: Purpose, Key Functions, Roles, Primary Data, and one or two\nBusiness Rules worth knowing before touching it. Deep implementation detail lives in ARCHITECTURE.md §8 (cross-referenced per domain)."
+  },
+  {
+   "id": "dfs:dfs-5-1:1",
+   "source": "Functional Spec",
+   "section": "dfs-5-1",
+   "sectionLabel": "5.1 Pre-Booking / Quoting & Pipeline (P2)",
+   "heading": "5.1 Pre-Booking / Quoting & Pipeline (P2)",
+   "anchor": "",
+   "text": "Purpose: capture and price freight demand before a real shipment exists — a two-stage funnel, an opportunity (lead-tracking, pre-pricing) that converts into a quote (priced, customer-facing).\nKey functions: track a lead through New → Qualified → Converted (to Quote)/Lost; create a quote against a matched contract or spot rate; Draft → Sent → Accepted/Declined/Expired lifecycle; convert an accepted quote into a real shipment, carrying parties, containers, and cost lines across. A quote can be bought on a carrier's spot offer (§5.13): the quote then takes the offer's carrier and reference, shows buy / sell / margin, applies the customer's margin rule, and flags a margin under the rule's minimum. The quote and opportunity lists are filterable the way the Shipments list is: an Excel-style checklist on each column header, free-text search, sort, and server-side paging (the shared table system, ARCHITECTURE.md §8.23 — Quotes is its pilot; other lists follow).\nRoles: operator, occbk, sales, admin (write); all roles (read, scope-permitting). sales (v0.91.1) is this domain's dedicated role — owns both objects, no booking authority elsewhere.\nPrimary data: opportunities, quotes, quotelines; spotoffers (a quote's buy side).\nBusiness rules: an expired quote cannot be accepted; conversion splits BUY (from the matched contract, or from the quote's spot offer — a SPOT shipment on the offer's reference) and SELL (from the quote's own price) cost lines — they are independent figures, not derived from each other. A quote on a spot offer can't change its carrier, route or contract until the offer is removed. Since v0.91.1 both objects carry an officeid and are office-scoped the same way shipments are (previously neither had any access scoping at all) — the office and any trade-lane restriction on the acting user's scope both apply. See ARCHITECTURE.md §8.2 and USER-MANAGEMENT-REDESIGN.md."
+  },
+  {
+   "id": "dfs:dfs-5-2:1",
+   "source": "Functional Spec",
+   "section": "dfs-5-2",
+   "sectionLabel": "5.2 Shipment & Cargo Management (P1)",
+   "heading": "5.2 Shipment & Cargo Management (P1)",
+   "anchor": "",
+   "text": "Purpose: the operational core — everything about moving one shipment from booking to delivery.\nKey functions: shipment CRUD; multimodal route legs and routing-term derivation; container/ cargo manifest with DG classification; parties (shipper/consignee/principal + flexible additional roles); milestones; carrier booking lifecycle (DCSA, §5.12); shipment messaging; audit history. A shipment's vessel, voyage and IMO are its main sea leg's (the longest transit), and every place a sailing is picked or shown marks the main vessel and its feeders (§5.12). A SPOT shipment can carry a carrier's spot offer under its contract (§5.13).\nRoles: operator, occbk (write, scoped by office/trade lane); trademanager (write within their lane); viewer (read only).\nPrimary data: shipments, shipmentlegs, containers, shipmentparties, shipmentmilestones, carrierbookings, shipmentmessages, shipmentevents.\nBusiness rules: a shipment's space badge (Confirmed/Warning/Exceeded) is recomputed on every container, booking, or allocation-link change — never a stale, on-demand-only calculation. Cancelling a shipment cascades to cancel its carrier booking (and, on a confirmed spot booking, accrues the offer's cancellation or no-show fee, §5.13). Since v0.91.7, write authority on a shipment's own sub-pages is per-shipment relative to the acting user's office, not a blanket role permission: Schedules/Cargo/Carrier Booking/Shipping Instructions are fixed export-side; Export/Import Services, Customs Filing and Cost Lines gate by the record's own side; an office on neither side of a given shipment, or an admin/operator, is unrestricted either way. See ARCHITECTURE.md §8.6, §8.10, §8.12, §8.26.\nWorking through a shipment: a shipment's pages form one tree (the Explorer sidebar), in an order an admin sets for everyone. A bar down the right edge of every shipment page (») saves what the page has unsaved and opens the next item of that tree — the viewer's own tree (no Accounting for a trade manager, service pages only once ordered), read-only and prerequisite-locked pages included; Alt+→ does the same. It never skips: after ordering a service on Overview, » goes to the next item, not to the service. A save that fails keeps the user on the page with the reason; there is no bar on the last item (ARCHITECTURE.md §8.45)."
+  },
+  {
+   "id": "dfs:dfs-5-3:1",
+   "source": "Functional Spec",
+   "section": "dfs-5-3",
+   "sectionLabel": "5.3 Commercial — Contracts & Space Allocation (P3 / P3a)",
+   "heading": "5.3 Commercial — Contracts & Space Allocation (P3 / P3a)",
+   "anchor": "",
+   "text": "Purpose: the commercial terms a shipment books against, and the physical capacity a carrier has actually committed."
+  },
+  {
+   "id": "dfs:dfs-5-3:2",
+   "source": "Functional Spec",
+   "section": "dfs-5-3",
+   "sectionLabel": "5.3 Commercial — Contracts & Space Allocation (P3 / P3a)",
+   "heading": "5.3 Commercial — Contracts & Space Allocation (P3 / P3a) (continued)",
+   "anchor": "",
+   "text": "Key functions: contract CRUD (legs, rates, routings, container-type/IMDG filters); contract matching by route/date/routing-term; space configuration — the TEU a carrier has committed on one contract record (contract number + reference) for a route and period — with conflict detection; real-time Confirmed/Pending/Rejected consumption tracking against each configuration. When a shipment's chosen space is full, the contract picker suggests another reference under the same contract number that fits (checking named account, container types, DG and space, and showing the freight-rate difference), or lets the user book anyway after confirming an overage reason; how the space was picked (suggested / direct / overbooked) is recorded on the shipment. The Dashboard's Contract Consumption view groups consumption per carrier + contract number — a bar per contract, a six-week confirmed trend, and a breakdown per reference showing confirmed, pending, available and over-allocated space plus how many bookings followed the steering suggestion — in TEU or % of the allocation. The contracts list is filterable the way the Shipments list is — a checklist on every column header, free-text search, sort, an \"active as of\" date, and server-side paging (the shared table system, ARCHITECTURE.md §8.23). Schedule Search finds contracts for a lane (POL/POD, carrier-haulage Pick-up / Delivery points — renamed from \"Via Origin / Via Destination\", a name kept free for the first / last transshipment port in a planned contract-routing rework — as-of date, carrier, account, routing term) and lets the user request sailings on any result; its results can be narrowed by column and sorted (including cheapest-first once a container mix is chosen), in the browser. The Space Configurations list shows each configuration's trade as an Origin Trade and a Destination Trade (lanes not stored on an older configuration are worked out from its ports and marked as such), and can be searched, filtered by carrier / route / trade / contract / status, and sorted by awarded TEU or consumption. A space configuration holds its TEU per period or per week (that TEU every Monday-to-Sunday week of the period, nothing carried over; a shipment counts in the week of its ETD, or of its cargo-ready date until it has one); weekly ones show their week everywhere, and the Dashboard counts them per week of its dates."
+  },
+  {
+   "id": "dfs:dfs-5-3:3",
+   "source": "Functional Spec",
+   "section": "dfs-5-3",
+   "sectionLabel": "5.3 Commercial — Contracts & Space Allocation (P3 / P3a)",
+   "heading": "5.3 Commercial — Contracts & Space Allocation (P3 / P3a) (continued)",
+   "anchor": "",
+   "text": "Where to book: when a contract is assigned (the shipment form or the Schedules page), CargoDesk shows the Lane Steering line for the shipment's customer and trade lane, each option as skipped (with the reason), full or available with its free space in the ETD's week, and pre-selects the first available one (the pick) for the user to confirm. Choosing a lower option while a higher one has space, a contract off the line, or SPOT asks for a reason first and is recorded on the shipment as out of order / off the steering (never blocked); Lane Steering's Check shows the same answer for a shipment typed in. The Dashboard's Steering tab counts, for its dates, how many shipments followed the steering (the steering rate), by trade lane and carrier, with the ones that didn't and why.\nRoles: admin, operator, trademanager (write); all roles (read).\nPrimary data: contracts , contractlegs , contractrates , allocations, lanesteerings, shipments (the steering verdict). (owned by the Contract Management Service when contractsource=remote, monolith-local otherwise.)"
+  },
+  {
+   "id": "dfs:dfs-5-3:4",
+   "source": "Functional Spec",
+   "section": "dfs-5-3",
+   "sectionLabel": "5.3 Commercial — Contracts & Space Allocation (P3 / P3a)",
+   "heading": "5.3 Commercial — Contracts & Space Allocation (P3 / P3a) (continued)",
+   "anchor": "",
+   "text": "Business rules: every consumption view buckets bookings the same way — Confirmed (the carrier's DCSA confirmation; the operator's own Confirm click was retired on 2026-10-11), Pending (no booking yet, created but not sent, or sent and awaiting the carrier), Rejected (shown, never subtracted), Cancelled (excluded) — and a shipment counts against a configuration only through its own link to it, never by matching carrier/route/contract. From those buckets come two deliberate figures: Remaining (allocated − confirmed) is the configuration's own number; Available (allocated − confirmed − pending) is what booking decisions use — the contract picker and the Dashboard's Contract Consumption — so space already waiting on a carrier reply isn't sold twice. Disagreement between views has been a recurring, actively hunted bug class in this codebase. A configuration is unique per contract record, route and period: two references under one contract number may each hold space on the same lane, which is what makes steering between them possible. Where to book follows the Steering & Allocation rules: a customer's own line first, else the line for everyone; a customer's own space is theirs only; the first option with space is the pick, and a shipment bigger than what's left stays there as an overbooking; with every option full, the first one takes it. A steered contract with no space configuration counts as order only (no cap). The verdict is worked out by the server whenever a contract or space is saved, not by the screen. See ARCHITECTURE.md §8.6, §8.31, §8.32, §8.39."
+  },
+  {
+   "id": "dfs:dfs-5-4:1",
+   "source": "Functional Spec",
+   "section": "dfs-5-4",
+   "sectionLabel": "5.4 Compliance Screening (P4 / P4a)",
+   "heading": "5.4 Compliance Screening (P4 / P4a)",
+   "anchor": "",
+   "text": "Purpose: screen every shipment party and customer against denied-party lists before/while a shipment proceeds.\nKey functions: 12-list sanctions screening (OFAC SDN + Consolidated Screening List) across every party role on a shipment; auto-re-screen on any party change; a company-wide compliance roll-up view; customs filing (simulated AES/EEI, ISF/AMS).\nRoles: operator, occbk (act on hits); admin (manage screening config); all roles (read status).\nPrimary data: shipmentscreenings, sanctionsentries , customsfilings. (owned by the Screening Service when screeningsource=remote.)\nBusiness rules: a screening hit blocks nothing automatically — it surfaces for manual officer review and override, logged. See ARCHITECTURE.md §8.4."
+  },
+  {
+   "id": "dfs:dfs-5-5:1",
+   "source": "Functional Spec",
+   "section": "dfs-5-5",
+   "sectionLabel": "5.5 Freight Audit & Payment (P5)",
+   "heading": "5.5 Freight Audit & Payment (P5)",
+   "anchor": "",
+   "text": "Purpose: reconcile what a carrier actually invoices against what was contracted and accrued.\nKey functions: carrier invoice import/matching against contract rates and accrued cost lines (a spot offer's BUY lines are matched as \"vs. spot offer\", §5.13); Detention & Demurrage pre-audit; a Reconcile Carrier Costs modal — the shipment's existing lines against the contract, charge by charge, with a keep-or-take choice per charge (pre-set to a suggested choice, or \"take all\" / \"add missing only\") — behind Import Contract Costs, Update Carrier Costs and Reset to Contract. A Central contract's costs are imported automatically, once per contract, when nothing on the shipment clashes with them; otherwise Cost Entry opens the Reconcile modal and the user decides (including after a contract swap). Both the invoice list and the open-exceptions queue are filterable the way the Shipments list is — header checklists, search, sort, paging (the shared table system, ARCHITECTURE.md §8.23). Since v0.91.8, a Charge Defaults setup (Master Data → Finance) can pre-populate a matching shipment's BUY/SELL cost lines once, scoped by Principal/Movement Type/Region-Country-Location, so recurring charges never need re-entering shipment by shipment.\nRoles: operator, admin, trademanager (with canViewFinance).\nPrimary data: shipmentcostlines, carrierinvoices, chargedefaultsetups, chargedefaultlines.\nBusiness rules: a contract refresh may only ever replace an accrued contract or manual BUY line. Posted, actualized or invoiced lines, Charge Default lines (labelled CCD, \"Charge Cost Default\"), haulage, carrier-invoice and adjustment lines are never touched — a charge that has one is shown as locked, and a posted amount is corrected with an adjustment instead. A line the user deletes after the automatic import stays deleted; bringing it back is a deliberate Import Contract Costs click. A cost line's source must survive a rate refresh correctly, or a dispatcher's manual correction gets silently destroyed — a real, previously-shipped bug. See ARCHITECTURE.md §8.3, §8.30. A Charge Default only ever fills a gap: it never overrides a line the shipment already has from a contract or a manual entry, and it applies at most once per shipment, even if a better-matching setup is created afterward. See ARCHITECTURE.md §8.27."
+  },
+  {
+   "id": "dfs:dfs-5-6:1",
+   "source": "Functional Spec",
+   "section": "dfs-5-6",
+   "sectionLabel": "5.6 Master Data Management (P6a)",
+   "heading": "5.6 Master Data Management (P6a)",
+   "anchor": "",
+   "text": "Purpose: the shared reference data every other domain depends on.\nKey functions: carriers, vessels, ports (14,269 UN/LOCODEs) with linked-port equivalence, trade lanes, countries, commodities, charge codes, pack types, carrier line agents (per-port/country representative resolution), carrier service loop codes with a directional (Eastbound/Westbound) port rotation, and an HS Codes registry of real 6-digit Harmonized System codes that cargo forms pick from instead of typing free text.\nRoles: admin (write; HS Codes writes also allow operator); every domain (read, as a dependency, not a direct user-facing action).\nPrimary data: owned by the MDM Service when mdmsource=remote, monolith-local otherwise. Loop Codes (loopcodes, loopcodeports) and HS Codes (hscodes) are always monolith-local — they are not part of the MDM Service's data set.\nBusiness rules: port-lane and port-country lookups are hot-path, read on every shipment mapped — they stay as in-process caches regardless of which mode is active, never a live per-request fetch. See ARCHITECTURE.md §8.1. A loop's rotation is two independent lists (each stop tagged Eastbound or Westbound, a port allowed in both) that a shipment header's Loop field resolves and draws. The HS Codes page can look a classification up live from the EU's public tariff service, but that result is shown and copied by hand, never stored — the service's terms forbid caching it. See ARCHITECTURE.md §8.24."
+  },
+  {
+   "id": "dfs:dfs-5-7:1",
+   "source": "Functional Spec",
+   "section": "dfs-5-7",
+   "sectionLabel": "5.7 Operations — Kanban / Testing (P7 / P7a)",
+   "heading": "5.7 Operations — Kanban / Testing (P7 / P7a)",
+   "anchor": "",
+   "text": "Purpose: internal engineering/ops ticket tracking and manual test-case management, linked to shipments where relevant.\nKey functions: a 6-column Kanban board with Epic→Story→sub-task nesting; a separate test-case repository with test runs; an automated ops-sweep that opens real tickets for detected operational gaps (e.g. a stale booking).\nRoles: admin, operator (write); all roles (read).\nPrimary data: owned by the Kanban/Testing Service when kanbansource=remote."
+  },
+  {
+   "id": "dfs:dfs-5-8:1",
+   "source": "Functional Spec",
+   "section": "dfs-5-8",
+   "sectionLabel": "5.8 Customer / Organization Management (P8 / P8a)",
+   "heading": "5.8 Customer / Organization Management (P8 / P8a)",
+   "anchor": "",
+   "text": "Purpose: the counterparties CargoDesk transacts with, and their internal grouping.\nKey functions: customer CRUD with identifiers/contacts; credit control (AR aging, exposure, hold/override authority scoped to the trade lane's own trade manager); customer hierarchy (parent/subsidiary rollup); derived roles (shipper/consignee/etc. computed from actual usage, not hand-maintained checkboxes). The customer list is filterable the way the Shipments list is — checklists on company, role and city/country, free-text search, sort, server-side paging — with an All / Trading Customers / Service Providers switch on top (the shared table system, ARCHITECTURE.md §8.23). A Credit Overrides queue lists every shipment currently blocked by a credit hold or an over-limit customer, with the same filtering, search and sort applied in the browser; only the shipment's own lane trade manager can release or approve. A shipper of dangerous goods carries its own 24-hour DG emergency contact on its profile (2026-10-29): the contact, the 24-hour phone, and optionally its provider (e.g. CHEMTREC) and its reference number with that provider. It is sent with every dangerous goods booking and printed on the DG Declaration (DG01); it replaces the org-wide DG Compliance Address, and App Settings no longer has a Compliance tab. It is entered under Profile → Dangerous goods (\"Ships dangerous goods\"); a name and a 24-hour phone are needed together, and unticking clears it.\nRoles: operator, admin (write); trademanager (credit override, within their lane).\nPrimary data: owned by the Customer/Organization Service when customersource=remote.\nBusiness rules: credit-hold/over-limit override authority belongs exclusively to the shipment's own lane trade manager — not a blanket admin power. See ARCHITECTURE.md §8.1."
+  },
+  {
+   "id": "dfs:dfs-5-9:1",
+   "source": "Functional Spec",
+   "section": "dfs-5-9",
+   "sectionLabel": "5.9 Document Generation & Distribution (P9 / P9a / P9b)",
+   "heading": "5.9 Document Generation & Distribution (P9 / P9a / P9b)",
+   "anchor": "",
+   "text": "Purpose: produce and deliver every generated document (B/L, invoices, packing lists, and more) as a real, tamper-evident signed PDF.\nKey functions: server-side rendering (headless Chromium) with CAdES/PKCS#7 signing; a per-office/carrier free-form Document Template Editor (BL01 pilot); outbound delivery via email or webhook with its own retry/failure handling, decoupled from the request/response cycle that triggered generation. An issued House B/L (BL01) only moves forward: it is voided with a reason, never deleted or set back to draft, and a shipment has at most one issued (ARCHITECTURE.md §8.40). Behind it is a DCSA transport document record: issue is refused until the B/L is complete (parties with addresses, sealed containers with packages and HS codes, a confirmed booking, loading for a shipped-on-board B/L); release at destination waits for the originals, paid collect charges and no credit hold (a finance override with a reason); and the House B/L can be issued and surrendered as an eBL (DCSA eBL Issuance and Surrender 3.0). Its number comes from the issuing office's series (e.g. RTMHBL2600123), taken when it is issued and never reused, unless one was typed for a B/L already issued on paper. A correction is a surrender for amendment followed by version 2 under the same number. The B/L can be issued to order, in a chosen number of originals and copies, with the charges or \"freight as arranged\"; it prints every vessel and the on-carriage, a reefer's temperature and dangerous goods. The originals handed over are logged, and a telex release surrendered at origin sends the import office a task. All of it is run from the House B/L panel at the top of the shipment's Documents page; Test Tools plays the eBL platform."
+  },
+  {
+   "id": "dfs:dfs-5-9:2",
+   "source": "Functional Spec",
+   "section": "dfs-5-9",
+   "sectionLabel": "5.9 Document Generation & Distribution (P9 / P9a / P9b)",
+   "heading": "5.9 Document Generation & Distribution (P9 / P9a / P9b) (continued)",
+   "anchor": "",
+   "text": "One title to the cargo (the House B/L audit, 2026-10-29): the originals are logged going out and coming back; an issued House B/L is voided only by an admin, and never while originals are out, for a live eBL, or after it was surrendered or the cargo released, and a shipment holding one can't be deleted (it is cancelled instead); no eBL is issued while paper originals are out; a live eBL is surrendered only on its platform; a telex release at origin needs every original back. \"Shipped on board\" needs every container loaded and is dated by the last, in the port's own date; a received-for-shipment B/L gets a dated on-board notation once all are aboard. The issuer's legal entity needs a SCAC and address. The House is compared with the carrier's Master (seals, weights, packages; a warning), the draft can go to the shipper for approval (an answer belongs to the draft it was sent with), and clauses can be added to it. (The new controls follow the pending mockup; the rules are in place.)\nRoles: operator, occbk (generate/send); all roles (view/download, scope-permitting).\nPrimary data: shipmentdocuments; delivery state owned by the Document Distribution Service.\nBusiness rules: PDF Render is stateless by design — no document content is ever persisted there, only rendered and handed off. See ARCHITECTURE.md §8.1, §12."
+  },
+  {
+   "id": "dfs:dfs-5-10:1",
+   "source": "Functional Spec",
+   "section": "dfs-5-10",
+   "sectionLabel": "5.10 Platform (P10)",
+   "heading": "5.10 Platform (P10)",
+   "anchor": "",
+   "text": "Purpose: the cross-cutting concerns every other domain relies on.\nKey functions: authentication (JWT + optional Azure AD/Entra SSO) and 9-role RBAC (§3); app-wide feature toggles; system messages; live FX rates; per-shipment WebSocket subscriptions (not blanket broadcast); the AI Agent (tool-calling chat + document extraction); GP-by-trade-area reporting (the finance reports — FX Revaluation, VAT Liability — belong to §5.11).\nRoles: admin (settings, secrets, user management); all roles (auth, as a precondition for everything else).\nPrimary data: users, appsettings, systemmessages.\nBusiness rules: a secret setting (SSO client secret, AI API key, AIS key) is never returned in plaintext to any role via the generic settings read — a real, previously-shipped vulnerability class, now closed with a masked-boolean pattern. See ARCHITECTURE.md §8.8, §8.9, §8.13."
+  },
+  {
+   "id": "dfs:dfs-5-11:1",
+   "source": "Functional Spec",
+   "section": "dfs-5-11",
+   "sectionLabel": "5.11 Finance — Billing, GL Export, VAT & FX (P11)",
+   "heading": "5.11 Finance — Billing, GL Export, VAT & FX (P11)",
+   "anchor": "",
+   "text": "Purpose: turn a shipment's charges into customer bills, and hand the resulting figures to the company's accounting and tax processes.\nKey functions: per-shipment invoices (FR01/FR02) and credit/debit notes (CN01), showing the supplier's VAT number (per legal entity / branch) and the customer's (from its identifiers), with a VAT treatment per charge line — standard, zero-rated, reverse-charged or exempt — on both customer (output VAT) and vendor (input VAT) lines; Mark as Paid, optionally recording the amount received in the invoice's own currency; Consolidated Statements — bill one customer once across several shipments (draft → confirmed → paid); GL Export — a generic journal-entry file built from an admin-maintained charge code → GL account mapping, picking up only what is new each run, with a permanent run history; FX Revaluation — unrealized and realized exchange gain/loss on non-USD invoices; VAT Liability — output minus input VAT per legal entity for a period, with zero-rated, reverse-charged and exempt amounts shown separately.\nRoles: admin, operator (generate statements, run GL exports, mark invoices paid); trademanager also maintains GL account mappings; FX Revaluation and VAT Liability need admin or finance access; the GL Export page is shown to admin, operator or finance access; the Statements page is shown to every role.\nPrimary data: shipmentdocuments, shipmentcostlines, customerstatements, customerstatementlines, glaccountmappings, glexportbatches; tax numbers on branches and customeridentifiers."
+  },
+  {
+   "id": "dfs:dfs-5-11:2",
+   "source": "Functional Spec",
+   "section": "dfs-5-11",
+   "sectionLabel": "5.11 Finance — Billing, GL Export, VAT & FX (P11)",
+   "heading": "5.11 Finance — Billing, GL Export, VAT & FX (P11) (continued)",
+   "anchor": "",
+   "text": "Business rules: an invoice or credit note counts as issued if it was confirmed, or voided by a proper credit note (the original and its credit note both count and net to zero) — a bare manual void never counted; every revenue and tax figure uses this one definition. Revenue is recognised when a billing document is confirmed, cost when a vendor line is posted. A non-standard VAT treatment always means 0% on the line itself; the three kinds are kept apart because a VAT return reports them in different boxes. A charge line is billed once: a statement skips lines already on an issued invoice or another live statement, and an invoice skips lines on a live statement. The gaps once listed here (statement scope, statements in the GL / VAT / FX figures and reports, VAT on statements and in GL export, GL-export atomicity, reverse-charge self-assessment) were closed under Epic TKT-XV4UHD on 2026-09-30; issued invoices can no longer be deleted or un-voided. See ARCHITECTURE.md §8.28, §8.29, §11 M15."
+  },
+  {
+   "id": "dfs:dfs-5-12:1",
+   "source": "Functional Spec",
+   "section": "dfs-5-12",
+   "sectionLabel": "5.12 Carrier Booking — DCSA, Escalations & the Carrier's Changes (P1 / P3)",
+   "heading": "5.12 Carrier Booking — DCSA, Escalations & the Carrier's Changes (P1 / P3)",
+   "anchor": "",
+   "text": "Purpose: get every booking to the carrier in the industry standard, and keep it moving when the carrier says no, says \"yes, but\", or says nothing.\nKey functions: Send Booking Request as a DCSA Booking 2.0 message — to the carrier's own integration, or, where it has none, to CargoDesk's built-in demo carrier (always on outside production; in production only when an admin turns it on), which answers like a real carrier and is marked DEMO CARRIER; only the carrier confirms (no manual confirmation). Booking escalations: a booking the carrier rejects, confirms with changes, or leaves unanswered past the no-answer time can be escalated by OCC/BK to OCC/AY (export office) or CCL/CO (import office), who find an alternative from\nLane Steering (the carrier order per trade lane, for everyone or one customer, with an optional no-answer switch to the next option; the same order Where to book shows when a contract is assigned, §5.3) or the contract search, hand it over, or pass it to Trade/AY; OCC/BK then books as instructed. It all happens in the shipment (Booking & Review) and the Shipments list's Booking column — no separate section. The main vessel: the sea leg with the longest transit headlines every schedule search and the shipment, and every sailing list marks MAIN and FEEDER legs in order. Requested (A) vs Carrier (B): Booking & Review compares every detail of what was requested with the carrier's confirmation (vessel, dates with day deltas, legs, equipment, cut-offs, parties, the quotation reference and, when the carrier states them, its charges); the user accepts the carrier's version (legs, dates and cut-offs onto the shipment), asks the carrier to amend, or escalates.\nAfter the booking (2026-10-27): the Shipping Instructions go to the carrier as DCSA Shipping Instructions 3.0 once the carrier has confirmed the booking. The carrier receives them, asks for an update (with its reason; the user corrects them and resends them as an update under the same reference) or completes them. Each container's VGM goes as a DCSA VGM 1.0 declaration when it is marked Submitted. It is declared again when it changes, and retracted when it goes back to Pending. The carrier's tracking events arrive as DCSA Track & Trace 3.0."
+  },
+  {
+   "id": "dfs:dfs-5-12:2",
+   "source": "Functional Spec",
+   "section": "dfs-5-12",
+   "sectionLabel": "5.12 Carrier Booking — DCSA, Escalations & the Carrier's Changes (P1 / P3)",
+   "heading": "5.12 Carrier Booking — DCSA, Escalations & the Carrier's Changes (P1 / P3) (continued)",
+   "anchor": "",
+   "text": "The carrier's Master B/L (2026-10-28): the carrier accepts the Shipping Instructions by drafting its Master B/L from them. The export side reviews the draft against what was sent: differences first, then the key facts, with the full field list behind a button. It approves the draft, or corrects the shipment and sends an update. The carrier issues it (B/L Issued completes), and its surrender for delivery completes the instructions. An issued House B/L travels in the Master's instructions where the destination's advance filing needs House-level data (EU ICS2, US AMS, Mercosur).\nAmending the issued Master B/L (2026-10-28): after the carrier has issued it, a correction to the shipment (a seal replaced at an inspection, a changed notify party) goes to the carrier as an amendment of the issued B/L. The user first sees what differs; nothing is sent when nothing does. The carrier declines it (a task, with its reason) or accepts it: the originals go back (a task until they do) and it issues the amended B/L under the same number, with the changes on record. Until the carrier works on it, the request can be withdrawn.\nEquipment and seals (2026-10-28): each container carries its ISO 6346 equipment code (45G1, L5G1…) — the code the booking, the instructions, the VGM and the B/L send — and 45' containers are allowed (2 TEU). A container holds several seals, each with who applied it (carrier, shipper, customs, veterinary).\nThe carrier's Arrival Notice (2026-10-28, import side): it lands on the shipment whose Master or House B/L it names, every version kept. It moves the ETA, fills the containers' empty free days and shows where they differ (the user keeps theirs or takes the carrier's), and lists the carrier's destination charges, which the user adds as accruals with one click (one that looks entered starts unticked). AN01 is built from it. The vessel's berth arrival and departure can also come as DCSA Port Call events; they move the legs' times.\nVGM declarations are kept, every one, each with its evidence (the weighbridge ticket for Method 1, the weight calculation for Method 2) and a generated VG01 VGM Declaration. A declaration with no evidence is flagged."
+  },
+  {
+   "id": "dfs:dfs-5-12:3",
+   "source": "Functional Spec",
+   "section": "dfs-5-12",
+   "sectionLabel": "5.12 Carrier Booking — DCSA, Escalations & the Carrier's Changes (P1 / P3)",
+   "heading": "5.12 Carrier Booking — DCSA, Escalations & the Carrier's Changes (P1 / P3) (continued)",
+   "anchor": "",
+   "text": "The carrier's events are kept with what CargoDesk did with each. Container events and milestones follow from them, and the sea legs' times are marked as confirmed by the carrier, its estimate, or AIS (which only fills in). The carrier's vessel schedules (DCSA OVS 3.0) can be asked for the same.\nRoles: occbk, operator, admin (send, accept, amend, escalate, book as instructed); occay, cclco, tradeay, trademanager (escalation steps by side and lane); admin and trademanager only (Lane Steering); admin only (the escalation settings).\nPrimary data: carrierbookings (with the carrier's DCSA confirmation), edimessages, shippinginstructions, transportdocuments (the Master B/L, its amendment), vgmdeclarations, carrierevents, arrivalnotices, portcallevents, containers (ISO code, seals), bookingescalations, bookingescalationsteps, lanesteerings, lanesteeringoptions, dcsasimbookings.\nBusiness rules: a detail DCSA doesn't carry is \"Not stated\", never \"changed\". Rebooking elsewhere replaces the shipment's sea legs from the chosen sailing (feeder, main, feeder). When the carrier, contract or (for a digital offer) departure changes, it takes the old spot offer off. A rebook to another carrier drops the old carrier's contract and quote, so instructions for another carrier must name its contract (the booking then goes on that contract number).\n• Contract or quote. A booking names exactly one contract number or carrier quote reference.\n• Sailing. A booking names an ETD, or a vessel and voyage.\n• The carrier's local office. The booking goes to the carrier's local office: the shipment's Line Agent (Export).\n• Refusals. Nothing is sent that isn't valid DCSA, including a field the standard doesn't define; the user is told what's missing.\n• No connection. Shipping Instructions and VGM need a DCSA connection to the carrier (its own, or the demo carrier); there is no manual path.\n• What a carrier's push may change (2026-10-29). A carrier's events, Arrival Notices and port call times change only open shipments (never a Completed or Cancelled one), and an event or Arrival Notice only that carrier's shipments. The demo carrier's own API answers only CargoDesk. A VGM is Submitted to the carrier and isn't \"accepted\": DCSA VGM has no such answer."
+  },
+  {
+   "id": "dfs:dfs-5-12:4",
+   "source": "Functional Spec",
+   "section": "dfs-5-12",
+   "sectionLabel": "5.12 Carrier Booking — DCSA, Escalations & the Carrier's Changes (P1 / P3)",
+   "heading": "5.12 Carrier Booking — DCSA, Escalations & the Carrier's Changes (P1 / P3) (continued)",
+   "anchor": "",
+   "text": "• Dangerous goods (2026-10-29). A booking declares its dangerous goods on the equipment line they travel in: UN number, proper shipping name, IMO class, weight, packages and the shipper's 24-hour emergency contact. A DG container missing any of them, or a shipper with no emergency contact on its profile, refuses the booking, saying what's missing. There is no fallback contact.\nSee ARCHITECTURE.md §8.34–§8.37 and §8.41–§8.44."
+  },
+  {
+   "id": "dfs:dfs-5-13:1",
+   "source": "Functional Spec",
+   "section": "dfs-5-13",
+   "sectionLabel": "5.13 Spot Rates & Margins (P2 / P3)",
+   "heading": "5.13 Spot Rates & Margins (P2 / P3)",
+   "anchor": "",
+   "text": "Purpose: price a shipment the carrier sells at the day's market rate — what was bought, on which terms — and the margin a quote adds on top.\nKey functions: a spot offer — the carrier's quotation number or price id, its kind (a classic quote, days to weeks, surcharges often \"subject to\" at shipment; or a digital spot offer such as Maersk Spot, Hapag-Lloyd Quick Quotes Spot or CMA CGM SpotOn, hours to a day, priced per departure), route, containers, validity, price-lock point, charges (per container or per B/L, any currency, in the price or subject to) and penalty terms (cancellation fee and notice, no-show fee, amendment fee, roll compensation). Offers are typed in, picked from those already entered, or taken from the carrier (\"Get offers\": the carrier's own spot connection, or the demo carrier, answering with one priced offer per departure; the sailing picker shows the same price per departure on a SPOT shipment). An offer is attached to a quote (sales) or straight to a shipment (the booking desk, e.g. when the contract has no space): the shipment becomes SPOT on the offer's reference and its charges become BUY cost lines; the booking carries the reference to the carrier as DCSA contractQuotationReference. Guardrails: an expired digital offer can't be attached or booked; an expired classic quote only warns; cancelling a confirmed booking shows the fee first and accrues it as a BUY line once the carrier confirms the cancellation. Margin Rules (Master Data): the margin a quote adds — USD per container on the freight, or a percentage of the buy — by customer, trade lane and container, with a minimum; the most specific valid rule applies; a quote below the minimum is flagged and recorded when sent, never blocked.\nRoles: admin, operator, occbk, sales (offers, quotes); admin, operator, occbk (offers on shipments, export side); admin and trademanager only (Margin Rules); all roles (read).\nPrimary data: spotoffers, spotofferlines, marginrules, dcsasimspotoffers; shipmentcostlines.spotofferid.\nBusiness rules: no DCSA standard covers rates, so each carrier connection is its own adapter (none live yet: Hapag-Lloyd Quick Quotes and the Maersk Offers API wait on carrier access). Once the carrier holds the booking (Pending or Confirmed), its offer can't change. Plan and research: https://claude.ai/artifact/Y61PAmXZfgFxTLtpt7GiAZ. See ARCHITECTURE.md §8.38."
+  },
+  {
+   "id": "dfs:dfs-8:1",
+   "source": "Functional Spec",
+   "section": "dfs-8",
+   "sectionLabel": "8. Glossary",
+   "heading": "Glossary: DFD, TEU, EDI, DCSA, Master B/L, VGM evidence / VG01",
+   "anchor": "",
+   "text": "DFD: Data Flow Diagram — the notation used in §4: processes (circles), external entities (rectangles), data stores (cylinders), labeled flows (arrows).\nTEU: Twenty-foot Equivalent Unit — the standard unit for container/space capacity (20ft = 1 TEU, 40ft = 2 TEU, admin-overridable per container type).\nEDI: Electronic Data Interchange — the carrier booking request/response protocol; DCSA is the specific industry-standard EDI schema this app targets for real carrier integrations.\nDCSA: Digital Container Shipping Association — the carriers' interface standards (Booking 2.0, eBL, Track & Trace…). Every CargoDesk booking goes out as DCSA Booking 2.0, Shipping Instructions as DCSA Shipping Instructions 3.0, and each container's VGM as DCSA VGM 1.0; carriers without an integration are played by the built-in demo carrier.\nMaster B/L: The carrier's own bill of lading for the shipment, drafted from the Shipping Instructions; CargoDesk reviews and approves the draft, the carrier issues it (§5.12).\nVGM evidence / VG01: What a VGM declaration rests on (weighbridge ticket, weight calculation) and the printable VGM Declaration CargoDesk generates for it."
+  },
+  {
+   "id": "dfs:dfs-8:2",
+   "source": "Functional Spec",
+   "section": "dfs-8",
+   "sectionLabel": "8. Glossary",
+   "heading": "Glossary: Line Agent (Export / Import), Booking escalation, Lane steering, Where to book, Weekly space, Order only, Out of order / steering rate",
+   "anchor": "",
+   "text": "Line Agent (Export / Import): The carrier's local representative at the port of loading (Export) or discharge (Import). A booking is placed with the Line Agent (Export), sent as the DCSA carrier booking office.\nBooking escalation: Handing a rejected, changed or unanswered booking to OCC/AY or CCL/CO (and on to Trade/AY) for an alternative, which OCC/BK then books as instructed (§5.12).\nLane steering: The carrier order per trade lane (for everyone or one customer), shown as Where to book when a contract is assigned and tried first by escalations (§5.3, §5.12).\nWhere to book: The Lane Steering line for a shipment with each option's status and free space, and the pick: the first option with space (§5.3).\nWeekly space: A space configuration holding its TEU every Monday-to-Sunday week of its period, nothing carried over, instead of once for the period (§5.3).\nOrder only: A steered contract with no space configuration: it can be booked with no cap.\nOut of order / steering rate: Booking a lower steered option while a higher one has space (recorded with the reason) / the share of shipments that followed the steering, on the Dashboard's Steering tab (§5.3)."
+  },
+  {
+   "id": "dfs:dfs-8:3",
+   "source": "Functional Spec",
+   "section": "dfs-8",
+   "sectionLabel": "8. Glossary",
+   "heading": "Glossary: Main vessel, Requested (A) vs Carrier (B), Spot offer, Classic quote / digital spot, Quotation reference, Subject to, No-show fee, Margin rule, SDN / CSL",
+   "anchor": "",
+   "text": "Main vessel: The sea leg with the longest transit in a transshipment; the shipment and every sailing list are headlined by it, feeders marked (§5.12).\nRequested (A) vs Carrier (B): Booking & Review's detail-by-detail comparison of the booking request with the carrier's confirmation (§5.12).\nSpot offer: A carrier's priced offer for one shipment at the day's market rate: reference, charges, validity, penalty terms (§5.13).\nClassic quote / digital spot: The two kinds of spot offer: a carrier's quote valid days to weeks (expired → a warning) and an instant, per-departure offer valid hours (expired → can't be booked).\nQuotation reference: A spot offer's reference, sent on the booking as DCSA contractQuotationReference in place of a contract number.\nSubject to: A charge outside the offered price, billed at its level on the shipment date.\nNo-show fee: The penalty for cancelling a confirmed spot booking inside the notice period (otherwise the cancellation fee applies).\nMargin rule: The margin a quote adds on top of what was bought, by customer, lane and container, with a minimum (§5.13).\nSDN / CSL: Specially Designated Nationals (OFAC) / Consolidated Screening List (trade.gov) — the two primary US sanctions/denied-party data sources this app screens against."
+  },
+  {
+   "id": "dfs:dfs-8:4",
+   "source": "Functional Spec",
+   "section": "dfs-8",
+   "sectionLabel": "8. Glossary",
+   "heading": "Glossary: B/L, INCOTERM, AIS, RBAC, HS Code, Loop code, Eastbound / Westbound (EB / WB), Contract number / contract reference",
+   "anchor": "",
+   "text": "B/L: Bill of Lading — the core transport document; House B/L and Master B/L are both modeled.\nINCOTERM: International Commercial Terms — defines which party bears cost/risk at each point in the shipment's journey.\nAIS: Automatic Identification System — the maritime vessel-tracking protocol this app consumes live via aisstream.io.\nRBAC: Role-Based Access Control — this app's 9-role permission model (§3).\nHS Code: Harmonized System code — the international goods-classification number; the first 6 digits are common worldwide (chapter = the first 2). CargoDesk's registry holds real 6-digit codes; national extensions (e.g. the EU's 8-digit CN) are looked up live, never stored.\nLoop code: A carrier's named recurring service rotation (e.g. AL1) — the ordered list of ports one vessel string calls at, out and back.\nEastbound / Westbound (EB / WB): The two directional legs of a loop. By convention transatlantic Europe→US is Westbound and transpacific Asia→US is Eastbound; each stop in a loop's rotation carries one of the two.\nContract number / contract reference: One carrier contract number can have several contract records, each with its own reference (and optionally a named account, validity and rates). Space is committed per record; the Dashboard adds records up per contract number."
+  },
+  {
+   "id": "dfs:dfs-8:5",
+   "source": "Functional Spec",
+   "section": "dfs-8",
+   "sectionLabel": "8. Glossary",
+   "heading": "Glossary: Space configuration, Steering (same-contract suggestion), Remaining / Available, CCD, GL / journal entry, AR / AP, Output / input VAT",
+   "anchor": "",
+   "text": "Space configuration: The TEU a carrier has committed on one contract record for a route and period (stored as an allocation).\nSteering (same-contract suggestion): Directing a booking to another reference under the same contract number that still has space, via the contract picker's suggestion; recorded per shipment as suggested / direct / overbooked. Not to be confused with Lane steering.\nRemaining / Available: Remaining = allocated − confirmed; Available = allocated − confirmed − pending. Booking decisions use Available (§5.3).\nCCD: Charge Cost Default — a cost line added automatically from a Charge Defaults setup (Master Data → Finance).\nGL / journal entry: General Ledger — the company's accounting books. A journal entry is a balanced set of debits and credits; GL Export produces them as a file (§5.11).\nAR / AP: Accounts Receivable (owed by customers) / Accounts Payable (owed to vendors) — the two control accounts GL Export posts invoice and cost totals against.\nOutput / input VAT: VAT charged to customers on sales / VAT paid to vendors on purchases (normally reclaimable). The VAT owed for a period is output minus input."
+  },
+  {
+   "id": "dfs:dfs-8:6",
+   "source": "Functional Spec",
+   "section": "dfs-8",
+   "sectionLabel": "8. Glossary",
+   "heading": "Glossary: Zero-rated / reverse charge / exempt",
+   "anchor": "",
+   "text": "Zero-rated / reverse charge / exempt: Three different reasons a line carries 0% VAT: taxable at 0%; the customer accounts for the VAT instead of the supplier; outside the scope of VAT. Reported separately."
+  }
+ ]
+}

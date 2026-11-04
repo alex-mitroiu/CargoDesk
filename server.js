@@ -233,7 +233,7 @@ async function callCustomerService(method, urlPath, body) {
 // node:sqlite — MDM reference-data seeding for a fresh Postgres install goes through the same
 // `npm run seed` path as any subsequent reseed (scripts/import-mdm-data.js), not an automatic
 // file copy that no longer makes sense once the file isn't a SQLite database.
-const { query, transaction, close: closeDb } = require("./lib/db");
+const { query, transaction, close: closeDb, runReadOnly } = require("./lib/db");
 const { initSchema } = require("./lib/schema");
 
 const app = express();
@@ -358,6 +358,10 @@ app.use((req, res, next) => {
 // middleware to matching requests, so no other route is affected.
 app.use("/api/carrier-webhooks", express.raw({ type: "*/*" }));
 app.use(express.json({ limit: "25mb" }));
+// The AI Assistant's lookups (lib/ai-tools.js) call this API as the user with X-CargoDesk-Agent: readonly;
+// such a request runs in read-only mode, where lib/db.js refuses every statement that changes data.
+// Anyone may send the header: it can only take rights away from the request that carries it.
+app.use((req, res, next) => (req.get("X-CargoDesk-Agent") === "readonly" ? runReadOnly(next) : next()));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -604,9 +608,18 @@ const SETTING_DEFAULTS = {
   api_sysmsg_enabled:         'true',
   ai_agent_enabled:           '0',
   ai_endpoint:                '',
-  ai_model:                   'claude-haiku-4-5-20251001',
+  ai_model:                   'claude-haiku-5-5',
   ai_api_key:                 '',
   ai_system_prompt:           '',
+  // The AI Assistant's manual search (lib/assistant-knowledge.js): an OpenAI-compatible
+  // /v1/embeddings endpoint, e.g. a local Ollama's. Blank = full-text search only.
+  ai_embedding_endpoint:      '',
+  ai_embedding_model:         'embeddinggemma',
+  // Document extraction (POST /api/ai/extract-document) on its own model when set, so the chat can run
+  // on a local text-only model while invoices are still read by Claude. Blank = the chat settings.
+  ai_extract_endpoint:        '',
+  ai_extract_model:           '',
+  ai_extract_api_key:         '',
   // 'local' (default) = the monolith's own in-process contracts/contract_legs/contract_rates/
   // contract_routings tables, exactly as today. 'remote' = the standalone Contract Management
   // Service (services/contract-management/, see CONTRACT_SERVICE_URL above). A one-way cutover
@@ -696,6 +709,33 @@ async function seedSettingDefaults() {
   });
 }
 schemaReadyPromise = schemaReadyPromise.then(() => seedSettingDefaults());
+
+// The settings whose values are credentials: masked by GET /api/settings, admin-only to change, and
+// never written to the admin log (routes/system.js). One list for all three.
+const SECRET_SETTING_KEYS = ["sso_client_secret", "ai_api_key", "ais_api_key", "ai_extract_api_key"];
+// Until 2026-11-01 the admin log's SETTINGS_UPDATED entries skipped only keys named "secret" or
+// "password", so ai_api_key and ais_api_key values were stored there in plain text (a real AIS key
+// among them). Blanked on every start; idempotent, and only rows still holding a value are rewritten.
+async function redactSecretsInAdminLog() {
+  const rows = await query(
+    "SELECT id, details FROM admin_events WHERE action = 'SETTINGS_UPDATED' AND (" +
+    SECRET_SETTING_KEYS.map((_, i) => `details LIKE $${i + 1}`).join(" OR ") + ")",
+    SECRET_SETTING_KEYS.map(k => `%"${k}"%`));
+  let redacted = 0;
+  for (const row of rows) {
+    let details;
+    try { details = JSON.parse(row.details || "{}"); } catch { continue; }
+    let changed = false;
+    for (const k of SECRET_SETTING_KEYS) {
+      if (k in details && details[k] !== "[redacted]") { details[k] = "[redacted]"; changed = true; }
+    }
+    if (!changed) continue;
+    await query("UPDATE admin_events SET details = $1 WHERE id = $2", [JSON.stringify(details), row.id]);
+    redacted++;
+  }
+  if (redacted) console.log(`Admin log: blanked stored credential values in ${redacted} settings entries`);
+}
+schemaReadyPromise = schemaReadyPromise.then(() => redactSecretsInAdminLog().catch(e => console.error("redactSecretsInAdminLog:", e.message)));
 
 // Default rows for four admin-maintained registries — carried over from the old SQLite
 // migrations array's own hardcoded INSERT OR IGNORE statements (pack/container type defs,
@@ -4270,7 +4310,10 @@ const ctx = {
   schemaReady: schemaReadyPromise,
   query, transaction, uid, ok, err, isUniqueViolation, isForeignKeyViolation, validCoord,
   gracefulShutdown,
-  auth, requireRole,
+  auth, requireRole, effectiveRolesFor,
+  // This server's own address, for calls it makes to its own API (the AI Assistant's lookups). Fixed to
+  // the loopback interface and PORT, never built from a request's Host header.
+  selfBaseUrl: () => `http://127.0.0.1:${PORT}`,
   portLanesMap, portCountryMap, rebuildPortLanesMap, longestLane,
   applyShipmentAccessFilter, applyOfficeScopedAccessFilter, resolveOfficeAccess, resolveEffectiveOfficeIds, deriveEffectiveRole,
   officeSideOf, chargeCodeSide, blockIfWrongSide, PARTY_ROLE_SIDE,
@@ -4280,7 +4323,7 @@ const ctx = {
   sanctionsMap, loadSanctionsIndex, syncOfacSdn, scheduleNextOfacSync,
   syncConsolidatedScreeningList, scheduleNextCslSync,
   normSanctionName, EMBARGOED_COUNTRIES,
-  getSettings,
+  getSettings, SECRET_SETTING_KEYS,
   shipmentSubs, broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, shipmentLoopCode, revalidateSpaceLoop,
   recomputeSpaceBadgesForAllocation, recomputeSpacePool, TEU_EXPR,
   UPLOADS_DIR,
@@ -4360,6 +4403,14 @@ ctx.houseBl = require('./lib/house-bl')(ctx);
 ctx.trackTrace = require('./lib/track-trace')(ctx);
 ctx.arrivalNotices = require('./lib/arrival-notices')(ctx);
 ctx.portCalls = require('./lib/port-calls')(ctx);
+// The AI Assistant's knowledge of the manuals (Epic TKT-IYOYA5): data/assistant-knowledge.json loaded at
+// startup when it changed; its embeddings are filled after listen() (below), never holding up startup.
+ctx.assistantKnowledge = require('./lib/assistant-knowledge')(ctx);
+schemaReadyPromise = schemaReadyPromise.then(() => ctx.assistantKnowledge.syncFromFile()
+  .then(r => { if (r.written || r.removed) console.log(`Assistant knowledge: ${r.passages} passages (${r.written} written, ${r.removed} removed)`); })
+  .catch(e => console.error("Assistant knowledge sync failed:", e.message)));
+// …and its live-data lookups: a closed allowlist of GETs to this API, made as the user and read-only.
+ctx.aiTools = require('./lib/ai-tools')(ctx);
 schemaReadyPromise = schemaReadyPromise.then(() => ctx.houseBl.migrateLegacyHouseBls());
 // …and as an eBL (gap G24): CargoDesk as issuer, and the built-in eBL platform it talks to.
 ctx.ebl = require('./lib/ebl')(ctx);
@@ -4528,5 +4579,12 @@ schemaReadyPromise
 
 const PORT = 3001;
 schemaReadyPromise
-  .then(() => httpServer.listen(PORT, () => console.log(`⚓  CargoDesk API + WS running on http://localhost:${PORT}`)))
+  .then(() => httpServer.listen(PORT, () => {
+    console.log(`⚓  CargoDesk API + WS running on http://localhost:${PORT}`);
+    // In the background: an embedding endpoint can be slow or down, and the assistant's search falls back
+    // to full-text meanwhile.
+    ctx.assistantKnowledge.embedMissing()
+      .then(r => { if (r.embedded) console.log(`Assistant knowledge: embedded ${r.embedded} passages with ${r.model}`); })
+      .catch(e => console.warn("Assistant knowledge embeddings not filled:", e.message));
+  }))
   .catch(e => { console.error("Failed to initialize database:", e); process.exit(1); });

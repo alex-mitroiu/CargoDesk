@@ -8,7 +8,8 @@ module.exports = function systemRoutes(app, ctx) {
           logAdminEvent, migrationFailures, restartAisListener, rebuildPortLanesMap,
           getAisListenerStatus, getCarrierAdapter, carrierIntegrationFor,
           DISTRIBUTION_SERVICE_URL, PDF_RENDER_SERVICE_URL, CONTRACT_SERVICE_URL, MDM_SERVICE_URL,
-          SCREENING_SERVICE_URL, KANBAN_SERVICE_URL, CUSTOMER_SERVICE_URL, BREAK_GLASS_EMAILS } = ctx;
+          SCREENING_SERVICE_URL, KANBAN_SERVICE_URL, CUSTOMER_SERVICE_URL, BREAK_GLASS_EMAILS,
+          SECRET_SETTING_KEYS } = ctx;
 
   // ─── Health ───────────────────────────────────────────────────────────────
 
@@ -124,7 +125,13 @@ module.exports = function systemRoutes(app, ctx) {
   // unfiltered blob. Masking them in place here (rather than also giving each its own dedicated
   // route set) keeps every other already-correctly-shared setting on this same page/save flow
   // untouched.
-  const SECRET_SETTING_KEYS = ["sso_client_secret", "ai_api_key", "ais_api_key"];
+  // SECRET_SETTING_KEYS (server.js, via ctx): the credential settings — masked here, admin-only, kept
+  // out of the admin log.
+  // Addresses the server sends a stored credential (or a user's question) to. Admin-only, like the
+  // credentials themselves: an operator who could repoint ai_endpoint would receive the admin's AI API
+  // key on the next chat request (found while planning the AI Assistant upgrade, 2026-11-01), and could
+  // aim the server at internal addresses.
+  const ADMIN_ONLY_ENDPOINT_KEYS = ["ai_endpoint", "ai_embedding_endpoint", "ai_extract_endpoint"];
   const maskSecrets = settings => {
     const out = { ...settings };
     for (const k of SECRET_SETTING_KEYS) {
@@ -195,6 +202,8 @@ module.exports = function systemRoutes(app, ctx) {
     // on here: any future secret field added to that array is admin-only automatically (TKT-67EDF3).
     if (!req.user.roles.includes("admin") && SECRET_SETTING_KEYS.some(k => k in updates))
       return err(res, "Only an admin can change credential settings (" + SECRET_SETTING_KEYS.filter(k => k in updates).join(", ") + ")", 403);
+    if (!req.user.roles.includes("admin") && ADMIN_ONLY_ENDPOINT_KEYS.some(k => k in updates))
+      return err(res, "Only an admin can change the AI endpoints (" + ADMIN_ONLY_ENDPOINT_KEYS.filter(k => k in updates).join(", ") + ")", 403);
     // Same "blank means keep the existing value" idiom the SMTP password fields already use
     // (routes/office-mail.js, routes/auth.js's system-email routes) — the frontend now never
     // gets the real secret back from GET, so its input always renders blank; submitting that
@@ -215,9 +224,10 @@ module.exports = function systemRoutes(app, ctx) {
     } catch (e) { return err(res, e.message); }
     await scheduleNextOfacSync();
     await restartAisListener();
-    // Log settings changes — skip secrets
+    // Log settings changes — skip secrets. SECRET_SETTING_KEYS too: ai_api_key and ais_api_key match
+    // neither word, so their values used to be written to the admin log in plain text.
     const safeKeys = Object.fromEntries(
-      Object.entries(updates).filter(([k]) => !k.includes('secret') && !k.includes('password'))
+      Object.entries(updates).filter(([k]) => !k.includes('secret') && !k.includes('password') && !SECRET_SETTING_KEYS.includes(k))
     );
     if (Object.keys(safeKeys).length) await logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', '', safeKeys);
     ok(res, maskSecrets(await getSettings()));
