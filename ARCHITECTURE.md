@@ -99,7 +99,7 @@ this document covers *how it's built*.
 ---
 
 ## Table of Contents
-_(§8.44 added 2026-10-29 (the House B/L audit's fixes, dangerous goods in the DCSA booking and the shipper's DG emergency contact, with §6 and §14); §8.43 added 2026-10-28 (the remaining DCSA phases: Master B/L amendments, equipment, Arrival Notice, Port Call, with §6 and §14); §8.42 added 2026-10-28 (DCSA phases 4–6, with §6 and §14); §8.41 added 2026-10-27 (the DCSA message review, with §6 and §14); §8.40 added 2026-10-21 (House B/L, Story 1) and completed 2026-10-24 (the remaining gaps, with §6 and §14); §8.33–8.39 added 2026-09-30 → 2026-10-21, with the §6 table count and groupings and the §14
+_(§8.45 added 2026-11-02 (the » Advance bar on shipment pages; no §6 or §14 change); §8.44 added 2026-10-29 (the House B/L audit's fixes, dangerous goods in the DCSA booking and the shipper's DG emergency contact, with §6 and §14); §8.43 added 2026-10-28 (the remaining DCSA phases: Master B/L amendments, equipment, Arrival Notice, Port Call, with §6 and §14); §8.42 added 2026-10-28 (DCSA phases 4–6, with §6 and §14); §8.41 added 2026-10-27 (the DCSA message review, with §6 and §14); §8.40 added 2026-10-21 (House B/L, Story 1) and completed 2026-10-24 (the remaining gaps, with §6 and §14); §8.33–8.39 added 2026-09-30 → 2026-10-21, with the §6 table count and groupings and the §14
 write-triggered side effects brought up to date on 2026-10-21 (§8.39, Where to book); §8.28–8.32, the full §5 `routes/` re-measure and the §4/§6/§8.5/§8.6/§11/§14 updates added
 2026-09-29 (v0.91.9 + unreleased); §8.26–8.27 and the §4/§6/§11 updates added 2026-09-25 (v0.91.8); §8.25 added 2026-09-20 (v0.91.6);
 §8.23–8.24 added 2026-09-19 (v0.91.5); §8.15 extended 2026-08-29 (v0.87.0); §8.21 added 2026-08-29
@@ -299,6 +299,8 @@ src/
 ├─ shipmentSections.js                 Shared config for the promoted shipment sub-pages —
 │                                        closes the old "two hand-synced files" gap (§11, was M9)
 ├─ shipmentServicePages.js             Config for the generic/loading/VGM service sub-pages
+├─ shipmentNavSequence.js              The shipment sidebar's tree as data (order, service rows,
+│                                        group children), shared by the sidebar and the » bar (§8.45)
 ├─ cargoValueBus.js / servicesBus.js / saving.js / navigationGuard.js
 │                                      Small pub-sub/utility modules (cargo-value recompute
 │                                      notifications, unsaved-changes guard on nav, etc.)
@@ -4197,6 +4199,54 @@ L5 (several House B/Ls under one Master) is not done: it is the consolidation/LC
   - Cypress: `house-bl` (6) now provisions a complete legal entity for the default export office itself, as
     `ensureIssuingEntity` does; CI's empty database has no SCAC on it. `customer-dg-contact` (2, new): the
     profile section end to end, and no Compliance tab in App Settings.
+
+### 8.45 The » Advance bar on shipment pages (TKT-ACI6J1, 2026-11-02)
+
+The user's idea: a bar down the right edge of every shipment page whose » button saves what's unsaved and opens
+the next item of the sidebar tree. Mockup https://claude.ai/code/artifact/d3c085ee-b430-4948-b9c7-2ed4a14c4b21 (style B,
+the rail with the next page's name written down it). Frontend only: no route, table or setting.
+
+- **The user's rules.** The plain next item in the order: after ordering a service on Overview, » goes to
+  Milestones & Events, not to the service. Strict tree order as the admin saved it (`shipment_sidebar_order`).
+  Nothing is skipped: read-only (locked) pages are stops too. No bar on the last item, no Back button.
+- **One tree, two readers (`src/shipmentNavSequence.js`).** The admin-reorderable top-level order
+  (`DEFAULT_SIDEBAR_ORDER`, `reconcileSidebarOrder`, `sidebarOrderFromSettings`), which service rows a shipment
+  shows (`orderedServiceTypes`, `serviceGroupTypes`: non-cancelled, never "Other", Import Delivery under Booking &
+  Routing) and the Booking & Routing and Accounting children (`bookingRoutingRows`, `ACCOUNTING_ROWS`) moved here
+  out of `ShipmentDetailSidebar.jsx`, which now renders its rows from them and only adds icons, badges and locks.
+  `shipmentNavSequence({ order, services, isTradeManager })` flattens the tree into stops: a group contributes its
+  children, not itself (its row only opens its first child); a block the sidebar doesn't show contributes nothing
+  (a services group with nothing ordered, Accounting for a trade manager). Each stop lists every page key that
+  counts as being on it, so a Review step (Carrier Booking, Customs Filing) belongs to its item.
+  `nextNavStop(sequence, currentPage)` is null on the last stop and on any page that isn't a stop.
+- **The bar (`src/components/shared/ShipmentAdvanceBar.jsx`).** Mounted by `App.jsx` on every shipment page
+  (`onShipmentPage`, the same condition as the shipment sidebar). It self-fetches `api.services.list` like the
+  sidebar (on each page switch and on the `servicesBus` signal, tagged with the shipment so another shipment's list
+  is never walked) and shows nothing until the first answer. Fixed to the right edge between the header (46px) and
+  the footer (36px), 46px wide, z-index 150 (the Command Center precedent): dialogs (1000) and drawers (1100) cover
+  it. Its CSS is injected once; the colours come in as custom properties from `HZ`, so a theme switch restyles it.
+- **Saving is the existing navigation guard.** » calls `navigate(nextPageKey, shipmentId)`, which already runs
+  `runNavigationGuard()` (`src/navigationGuard.js`): the same check a sidebar click runs. Today only the Cargo
+  container form and the Contracts & Schedules draft register a guard; every other page saves through its own
+  button, as before. `navigate()` now resolves `false` when it stayed put (a failed guard, or the edit form's
+  discard prompt answered no) and `true` otherwise; on `false` the bar flashes red (`data-state="error"`) next to the
+  guard's error toast.
+- **Alt+→** does the same while the bar shows, and is never the browser's history Forward on those pages. It acts
+  only when the topmost element at the bar's centre is the bar (`document.elementFromPoint`), so an open dialog or
+  drawer blocks it; key repeat is ignored.
+- **Locked pages stay passable.** The Carrier Booking and Customs Filing prerequisite locks (`CarrierBookingGateModal`,
+  `CustomsFilingGateModal`, `hideClose`, only "go fix it" buttons) would otherwise trap » on a locked stop. They pass
+  `keepAdvanceBar` to `Modal`, which sets `data-advance-bar-over-modal` on the root while open; the bar's CSS lifts it
+  to z-index 1001 above that backdrop. Every other dialog still covers the bar, so » never leaves one half-done.
+- **Room for the bar.** While it shows, the bar sets `--cd-advance-bar-w: 46px` on the root: `main#app-scroll-main`
+  takes it as a right margin (the scroll area ends where the bar starts, so its scrollbar stays usable) and the
+  toast stack (`ToastContainer`) as extra right offset. Gone on the last item, so the page gets its width back.
+- **Sidebar test hooks.** Each sidebar row carries `data-testid="shipment-nav-<id>"` and `data-nav-label`; the row of
+  the page you're on has `aria-current="page"` (a group's row is highlighted too but isn't a page, so it doesn't).
+- **Tests.** Vitest `shipmentNavSequence` (9) and `ShipmentAdvanceBar` (7, against the real `api.js` shape),
+  `Modal` (+2, `keepAdvanceBar`); Cypress `shipment-advance-bar` (3): walking » from the first row visits every
+  sidebar row in order through both locks and ends with no bar, a half-filled container form stops it with the
+  guard's error, Alt+→ advances except under a dialog. Real-browser pass on SHP-AQ1FIM (16 rows), dark and light.
 
 ## 9. Data Flow Diagrams
 

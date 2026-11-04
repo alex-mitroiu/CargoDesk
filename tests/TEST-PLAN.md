@@ -4,12 +4,12 @@
 **Author:** QA Engineering (Claude Code)
 **Server Under Test:** http://localhost:3001 (Express + node:sqlite)
 **Frontend Under Test:** http://localhost:5173 (React 18 + Vite)
-**Last updated:** 2026-10-29. §0 describes the suite as it is today. §1–§9 are the original v0.26.0
+**Last updated:** 2026-11-02. §0 describes the suite as it is today. §1–§9 are the original v0.26.0
 plan, kept for history: it describes node:sqlite and 3 suites, long since replaced.
 
 ---
 
-## 0. The test suite today (2026-10-29)
+## 0. The test suite today (2026-11-02)
 
 Three layers, all automated. Every feature ships with tests in each layer it touches; the new
 behaviour of an epic is described in its ARCHITECTURE.md §8 section, with the test files named there.
@@ -18,8 +18,8 @@ behaviour of an epic is described in its ARCHITECTURE.md §8 section, with the t
 |---|---|---|---|
 | Backend API tests | `tests/*.test.js` (plain Node, `fetch` against the running monolith) | 126 files; 116 in the `npm test` chain, the rest in the per-service `test:*-toggle` scripts | `npm test`, or one file: `node tests/<name>.test.js` |
 | Microservice tests | `services/*/tests/*.test.js` | per service | `npm run test:contract-service`, `test:mdm-service`, `test:kanban-service`, `test:customer-service`, `test:screening-service`, `test:distribution-service` |
-| Frontend unit tests | `src/**/*.test.js(x)` (Vitest + Testing Library) | 34 files, 383 tests | `npm run test:frontend` |
-| Browser tests | `cypress/e2e/*.cy.js` | 38 specs, 295 tests | `npx cypress run` (from this VS Code shell: `env -u ELECTRON_RUN_AS_NODE npx cypress run`) |
+| Frontend unit tests | `src/**/*.test.js(x)` (Vitest + Testing Library) | 37 files, 406 tests | `npm run test:frontend` |
+| Browser tests | `cypress/e2e/*.cy.js` | 39 specs, 298 tests | `npx cypress run` (from this VS Code shell: `env -u ELECTRON_RUN_AS_NODE npx cypress run`) |
 
 **How to run a full pass**
 1. Start the stack (`npm run dev`), or restart only the monolith. Stop it with
@@ -61,7 +61,10 @@ behaviour of an epic is described in its ARCHITECTURE.md §8 section, with the t
 files, Vitest 383/383, Cypress 295/295 on the first run (see SYSTEM-TEST-RESULTS.md). The manual test cases for Where to
 book are Area 11 of TEST-CASES.md; for the DCSA carrier messages, the Master B/L and its amendment, VGM
 declarations, carrier events, equipment and seals, and the Arrival Notice Area 12; for the House B/L audit's fixes
-and dangerous goods in the booking Area 13.
+and dangerous goods in the booking Area 13; for the » Advance bar on shipment pages Area 14.
+**2026-11-02** (the » Advance bar, frontend only): Vitest 406/406 in 37 files, Cypress 298/298 in 39 specs, build OK;
+the backend suite was not re-run (no backend change). The Vitest count includes the AI Assistant's
+`assistantKnowledge` (5).
 
 ---
 

@@ -992,3 +992,32 @@ mismatch 33, export fields 19, workflow 26, contract routings 55, commodity code
 
 Still open: R6 (Test Tools' demo lists aren't filtered by the user's shipment access) and R7 (two unused exports). The
 House B/L panel's new controls wait for screens 1–4 of mockup 12f412e9.
+
+### 2026-11-02: The » Advance bar on shipment pages (TKT-ACI6J1, ARCHITECTURE.md §8.45)
+
+| Check | Result |
+|---|---|
+| New `src/shipmentNavSequence.test.js` (the admin-saved order, a group's rows one by one, cancelled and "Other" services left out, Delivery under Booking & Routing, no Accounting for a trade manager, Review steps, the last row, stale saved orders) | **9/9** |
+| New `src/components/shared/ShipmentAdvanceBar.test.jsx` (against the real `api.js` shape: names and opens the next row, the side on a service row, flashes on a failed save check, gone on the last row with its width, the viewer's own tree, a service ordered without a page switch, Alt+→ only when the bar isn't covered) | **7/7** |
+| `Modal` (+2: `keepAdvanceBar` lifts the bar over a prerequisite lock only) | **14/14** |
+| New `cypress/e2e/shipment-advance-bar.cy.js` (» from the first row visits every sidebar row in order through the Carrier Booking and Customs Filing locks, no bar on the last; a half-filled container form keeps the page with the guard's error; Alt+→, not under a dialog) | **3/3** |
+| Real-browser pass on SHP-AQ1FIM (16 rows; layout against header, footer and scroll area; Alt+→; the Request Service dialog; the Cargo save check with nothing saved; the Customs Filing lock; dark and light) | **19/19**, no console errors |
+| Vitest | **406/406** in 37 files (includes the AI Assistant's `assistantKnowledge`, 5) |
+| Full Cypress suite | **298/298** in 39 specs, after the `lane-steering` fix below (first run 295/298) |
+| Build | OK |
+
+Found and fixed on the way:
+- **» was trapped on locked pages.** The Carrier Booking and Customs Filing prerequisite locks are dialogs with no
+  close button; they covered the bar, so » stopped on them (seen live: Customs Filing on SHP-AQ1FIM; the first browser
+  pass only got through because the lock rendered after the click). They now lift the bar above their backdrop
+  (`Modal keepAdvanceBar`); every other dialog still covers it.
+- **The scroll area's scrollbar sat under the bar** with the mockup's padding approach; the bar's width is a right
+  margin on `main#app-scroll-main` instead.
+- **`lane-steering.cy.js` failed 3/3 from November**, unrelated to the bar: it clicked › twice from the current month
+  and expected December, which only held in October. It now pages forward until December (its fixture is 2026-12-31).
+- The first full Cypress run hit the login limiter (429) from spec 6 on: the monolith had been started without CI's
+  rate-limit settings. Restarted with them (TEST-PLAN.md §0), the suite ran clean apart from `lane-steering`.
+
+Seen, not caused by this change: one `GET /api/shipments/:id/schedules` answered 502 "API proxy error: socket hang up"
+through the Vite dev proxy during the browser pass (a dropped keep-alive connection); the request isn't one the bar
+makes, and it didn't recur.

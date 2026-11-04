@@ -6,7 +6,8 @@ the main vessel and Requested-vs-Carrier comparison, SPOT rates and margin rules
 date 2026-10-27 for the DCSA message review: Shipping Instructions and VGM as DCSA, the carrier's local
 office on the booking; and 2026-10-28 for the carrier's Master B/L, VGM declarations with their evidence, and
 the carrier's events and vessel times; 2026-10-29 for the House B/L audit's rules (§5.9), dangerous goods in
-the booking (§5.12) and the shipper's DG emergency contact (§5.8)). **Scope**:
+the booking (§5.12) and the shipper's DG emergency contact (§5.8); 2026-11-02 for the » Advance bar on shipment
+pages (§5.2)). **Scope**:
 whole application, at the level of its major
 functional domains and system-to-system data flows — not an exhaustive per-route specification.
 **Companion documents**: [`ARCHITECTURE.md`](ARCHITECTURE.md) (technical architecture, module
@@ -251,6 +252,13 @@ role permission: Schedules/Cargo/Carrier Booking/Shipping Instructions are fixed
 Export/Import Services, Customs Filing and Cost Lines gate by the record's own side; an office on
 neither side of a given shipment, or an admin/operator, is unrestricted either way. See
 ARCHITECTURE.md §8.6, §8.10, §8.12, §8.26.
+**Working through a shipment**: a shipment's pages form one tree (the Explorer sidebar), in an order an
+admin sets for everyone. A bar down the right edge of every shipment page (») saves what the page has
+unsaved and opens the next item of that tree — the viewer's own tree (no Accounting for a trade manager,
+service pages only once ordered), read-only and prerequisite-locked pages included; Alt+→ does the same.
+It never skips: after ordering a service on Overview, » goes to the next item, not to the service. A
+save that fails keeps the user on the page with the reason; there is no bar on the last item
+(ARCHITECTURE.md §8.45).
 
 ### 5.3 Commercial — Contracts & Space Allocation (P3 / P3a)
 **Purpose**: the commercial terms a shipment books against, and the physical capacity a carrier has

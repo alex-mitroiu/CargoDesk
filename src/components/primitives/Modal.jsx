@@ -55,9 +55,24 @@ const useEscapeToClose = (onClose, hideClose) => {
   }, []);
 };
 
-const Modal = ({ title, onClose, children, width = 520, minHeight, hideClose = false, "data-testid": testId }) => {
+// keepAdvanceBar: while this modal is open, the shipment pages' » Advance bar is lifted above its
+// backdrop (ShipmentAdvanceBar reads the root attribute). Only for a page's prerequisite lock
+// (CarrierBookingGateModal, CustomsFilingGateModal): a locked page is still a stop in the tree, and
+// » must be able to move on from it. Every other dialog covers the bar, so » never leaves one half-done.
+const useAdvanceBarOverModal = on => {
+  useEffect(() => {
+    if (!on) return undefined;
+    const root = document.documentElement;
+    root.setAttribute("data-advance-bar-over-modal", "");
+    return () => root.removeAttribute("data-advance-bar-over-modal");
+  }, [on]);
+};
+
+const Modal = ({ title, onClose, children, width = 520, minHeight, hideClose = false, keepAdvanceBar = false,
+  "data-testid": testId }) => {
   useBodyScrollLock();
   useEscapeToClose(onClose, hideClose);
+  useAdvanceBarOverModal(keepAdvanceBar);
   return (
   <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.78)", display: "flex",
       alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>

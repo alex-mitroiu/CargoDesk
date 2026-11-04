@@ -282,6 +282,16 @@ const UserManualPage = () => {
           <Tag>Contracts & Schedules</Tag>, <Tag>Carrier Booking</Tag>, <Tag>Parties & Offices</Tag>,{" "}
           <Tag>Documents</Tag>, and more all live there. The rest of this guide walks through them in
           the order that actually unblocks each other.</Callout>
+        <Step n={4}>Move through it with »</Step>
+        <StepBody>
+          <P>A bar runs down the right edge of every shipment page, with <Tag>»</Tag> and the name of the
+            next page written down it. Click it, or press <Tag>Alt</Tag> + <Tag>→</Tag>, to save what this
+            page has unsaved and open the next item in the sidebar, in the sidebar's own order. Nothing is
+            skipped: read-only pages, and pages locked until something else is set, are stops too.</P>
+          <P>If something can't be saved, for example a container form with fields still missing, you stay
+            where you are: the bar flashes red and a message says what to fix. While a dialog is open,
+            close it first. On the last item in the sidebar there's no bar.</P>
+        </StepBody>
         <Screenshot src={imgShipmentOverview} alt="A shipment's Overview page" caption="A shipment's Overview page. The header bar at the top — route, ETD/ETA, vessel, shipper/consignee — stays visible on every page you navigate to for this shipment, so you never lose that context." />
       </div>
     ),

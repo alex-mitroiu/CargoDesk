@@ -8,7 +8,10 @@ import { onServicesChanged } from "../../servicesBus";
 import {
   SHIPMENT_SECTIONS, SHIPMENT_SECTIONS_AFTER_ACCOUNTING, SHIPMENT_PROMOTED_ROUTES,
 } from "../../shipmentSections";
-import { SERVICE_TYPES, SERVICE_TYPE_ICON, servicePageKey } from "../../shipmentServicePages";
+import { SERVICE_TYPE_ICON, servicePageKey } from "../../shipmentServicePages";
+import {
+  sidebarOrderFromSettings, orderedServiceTypes, serviceGroupTypes, bookingRoutingRows, ACCOUNTING_ROWS,
+} from "../../shipmentNavSequence";
 import {
   AnyIcon, IconAnchor, IconArrowDown, IconBaseStation, IconChartBar, IconClipboard, IconCoin, IconDownload,
   IconFileCertificate, IconLock, IconMapPin, IconReceipt, IconRoute, IconUpload,
@@ -20,31 +23,9 @@ import { viaText } from "./LegRoles";
 
 // ─── Shipment Detail Sidebar ──────────────────────────────────────────────────
 
-// Admin-reorderable top-level nav blocks. A block can be a single row (Overview, Cargo, ...)
-// or a parent+children group (Booking & Routing, Export/Import Services, Accounting) — only
-// the TOP-LEVEL sequence is reorderable; children stay in their existing fixed relative order
-// within their own group, keeping the drag interaction simple (11 draggable rows, not an
-// arbitrary tree) and avoiding a child ever floating out to become its own top-level item,
-// which would break the nav's structural meaning (e.g. "Cost Entry" isn't a thing outside of
-// Accounting). This sequence was set via the admin Reorder UI (SHP-JFULNY's saved order,
-// promoted to the hardcoded default) rather than the original v0.44.0 default — a fresh
-// install with no admin-saved override yet should already start from the intended order.
-const DEFAULT_SIDEBAR_ORDER = [
-  "shp-documents", "shp-overview", "shp-milestones", "shp-conditions", "shp-parties",
-  "shp-cargo", "shp-booking-routing", "shp-export-services", "shp-import-services",
-  "shp-accounting", "shp-history",
-];
-
-// Reconciles an admin-saved order (possibly stale — saved before a since-added/removed nav
-// block) against the current default: keeps only ids that still exist today, in the saved
-// sequence, then appends any current id missing from the saved list (preserving ITS default
-// relative position) — so a newly-introduced block always appears rather than silently
-// vanishing just because it didn't exist yet when the order was last saved.
-const reconcileSidebarOrder = stored => {
-  const valid = stored.filter(id => DEFAULT_SIDEBAR_ORDER.includes(id));
-  const missing = DEFAULT_SIDEBAR_ORDER.filter(id => !valid.includes(id));
-  return [...valid, ...missing];
-};
+// The tree's order (admin-reorderable top-level blocks, DEFAULT_SIDEBAR_ORDER + the saved
+// override), which service rows show, and the Booking & Routing/Accounting children all come
+// from shipmentNavSequence.js — shared with the » Advance bar, which walks the same tree.
 
 // Per-viewer UI preferences (NOT the admin-shared sidebar order above) — whether each nested
 // group is folded, and whether the whole sidebar is collapsed to an icon rail. Personal to
@@ -101,9 +82,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
   const [vitalsFlyoutOpen, setVitalsFlyoutOpen] = useState(false);
   const [vitalsFlyoutPos, setVitalsFlyoutPos] = useState(null);
 
-  let storedOrder = [];
-  try { storedOrder = JSON.parse(appSettings.shipment_sidebar_order || "[]"); } catch { storedOrder = []; }
-  const effectiveOrder = reconcileSidebarOrder(Array.isArray(storedOrder) ? storedOrder : []);
+  const effectiveOrder = sidebarOrderFromSettings(appSettings);
 
   const startReorder = () => { setDraftOrder(effectiveOrder); setReorderMode(true); };
   const cancelReorder = () => { setReorderMode(false); setDragIdx(null); setDragOverIdx(null); };
@@ -230,21 +209,12 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
     : etdDays === 0 ? "today"
     : `${Math.abs(etdDays)}d ago`;
 
-  // One nav row per distinct, non-cancelled ordered type per side, in canonical
-  // SERVICE_TYPES order (not order-ordered) for predictable placement.
-  const orderedTypesFor = (side) => {
-    if (servicesLoading) return [];
-    const ordered = new Set(services.filter(s => s.side === side && s.status !== "Cancelled").map(s => s.serviceType));
-    return SERVICE_TYPES.filter(t => t !== "Other" && ordered.has(t));
-  };
-  const exportTypes = orderedTypesFor("Export");
-  const importTypes = orderedTypesFor("Import");
-  // Delivery stays grouped under "Booking & Routing" below (excluded here so that group's own
-  // visibility reflects only the ancillary types it actually still renders) — Pickup moved
-  // back into Export Services as a regular child, per direct request, so it's no longer
-  // filtered out of exportTypes here.
-  const genericExportTypes = exportTypes;
-  const genericImportTypes = importTypes.filter(t => t !== "Delivery");
+  // One nav row per distinct, non-cancelled ordered type per side (shipmentNavSequence.js);
+  // Import Delivery is left out of the Import Services group — it sits under Booking & Routing.
+  const exportTypes = orderedServiceTypes(services, "Export");
+  const importTypes = orderedServiceTypes(services, "Import");
+  const genericExportTypes = serviceGroupTypes("Export", exportTypes);
+  const genericImportTypes = serviceGroupTypes("Import", importTypes);
 
   const goBack = () => {
     if (window.opener) window.close();
@@ -321,38 +291,25 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
     ...SHIPMENT_SECTIONS.filter(s => !["shp-schedules", "shp-shipping-instructions", "shp-arrival-notice"].includes(s.id))
       .map(s => s.id === "shp-cargo" ? { ...s, badge: ctrCount || null, locked: sideLocked("export") } : s),
   ];
-  const schedulesSection = SHIPMENT_SECTIONS.find(s => s.id === "shp-schedules");
-  const siSection = SHIPMENT_SECTIONS.find(s => s.id === "shp-shipping-instructions");
-  const anSection = SHIPMENT_SECTIONS.find(s => s.id === "shp-arrival-notice");
   // Groups the booking pipeline — what & when (Schedules) → booked with the carrier
   // (Carrier Booking) → Shipping Instructions/Customs Filing (pre-departure filings) →
-  // physically arranged (Pickup/Delivery, once ordered) — under one parent, same NavRow
-  // parent+children idiom as Accounting just below. Schedules/Carrier Booking/Shipping
-  // Instructions/Customs Filing are always-visible children; Pickup/Delivery only appear
-  // once actually ordered (mirrors Export/Import Services' own "only show if ordered" rule).
-  const bookingRoutingChildren = [
-    { id: schedulesSection.id, icon: schedulesSection.icon, label: schedulesSection.label, locked: sideLocked("export") },
-    { id: "shp-carrier-booking", icon: IconBaseStation, label: "Carrier Booking",
-      badge: bookingBadge?.text, badgeColor: bookingBadge?.color, locked: sideLocked("export") },
-    { id: siSection.id, icon: siSection.icon, label: siSection.label,
+  // physically arranged (Delivery, once ordered) — under one parent, same NavRow
+  // parent+children idiom as Accounting just below. The rows themselves (and their order)
+  // come from bookingRoutingRows; this adds each one's icon, badge and lock.
+  const bookingRoutingDecor = {
+    "shp-schedules":             { icon: SHIPMENT_SECTIONS.find(s => s.id === "shp-schedules").icon, locked: sideLocked("export") },
+    "shp-carrier-booking":       { icon: IconBaseStation, badge: bookingBadge?.text, badgeColor: bookingBadge?.color, locked: sideLocked("export") },
+    "shp-shipping-instructions": { icon: SHIPMENT_SECTIONS.find(s => s.id === "shp-shipping-instructions").icon,
       badge: siBadge?.text, badgeColor: siBadge?.color, locked: sideLocked("export") },
-    { id: anSection.id, icon: anSection.icon, label: anSection.label, locked: sideLocked("import") },
-    { id: "shp-customs-filing", icon: IconFileCertificate, label: "Customs Filing",
-      badge: filingBadge?.text, badgeColor: filingBadge?.color },
-    ...(importTypes.includes("Delivery")
-      ? [{ id: servicePageKey("Import", "Delivery"), icon: IconMapPin, label: "Delivery Service", locked: sideLocked("import") }] : []),
-  ];
-  const BOOKING_ROUTING_ROUTES = [
-    "shipment-schedules", "shipment-carrier-booking-details", "shipment-carrier-booking-review",
-    "shipment-shipping-instructions", "shipment-arrival-notice",
-    "shipment-customs-filing-details", "shipment-customs-filing-review",
-    ...(importTypes.includes("Delivery") ? [servicePageKey("Import", "Delivery")] : []),
-  ];
-  const accountingChildren = [
-    { id: "shp-accounting-invoices", icon: IconReceipt, label: "Invoice Entry" },
-    { id: "shp-accounting-costs",    icon: IconCoin, label: "Cost Entry" },
-    { id: "shp-accounting-gp",       icon: IconChartBar, label: "GP Overview" },
-  ];
+    "shp-arrival-notice":        { icon: SHIPMENT_SECTIONS.find(s => s.id === "shp-arrival-notice").icon, locked: sideLocked("import") },
+    "shp-customs-filing":        { icon: IconFileCertificate, badge: filingBadge?.text, badgeColor: filingBadge?.color },
+    [servicePageKey("Import", "Delivery")]: { icon: IconMapPin, locked: sideLocked("import") },
+  };
+  const bookingRoutingRowList = bookingRoutingRows(importTypes);
+  const bookingRoutingChildren = bookingRoutingRowList.map(row => ({ ...row, ...bookingRoutingDecor[row.id] }));
+  const BOOKING_ROUTING_ROUTES = bookingRoutingRowList.flatMap(row => row.pageKeys);
+  const ACCOUNTING_ICONS = { "shp-accounting-invoices": IconReceipt, "shp-accounting-costs": IconCoin, "shp-accounting-gp": IconChartBar };
+  const accountingChildren = ACCOUNTING_ROWS.map(row => ({ ...row, icon: ACCOUNTING_ICONS[row.id] }));
   // Lookup for the 6 top-level blocks that are single flat rows sourced from `sections`
   // (Overview, Conditions, Parties, Cargo, Milestones, Documents, History) — reordering
   // renders from this plus TOP_LEVEL_META below (the 5 blocks that are groups or otherwise
@@ -615,8 +572,11 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
             TestCasesPage.jsx's NavRow/NavFolderNode. GroupRow wraps it with a fold chevron
             for the four parent+children blocks. */}
         {!reorderMode && (() => {
-          const NavRow = ({ id, icon, label, badge, badgeColor = HZ.cyan, depth = 0, selected, promoted, locked, onClick }) => (
-            <div key={id} onClick={onClick}
+          // aria-current marks the row of the page you're on — not its group's row, which is
+          // highlighted too (`group`) but isn't itself a page.
+          const NavRow = ({ id, icon, label, badge, badgeColor = HZ.cyan, depth = 0, selected, promoted, locked, group, onClick }) => (
+            <div key={id} onClick={onClick} data-testid={`shipment-nav-${id}`} data-nav-label={label}
+              aria-current={selected && !group ? "page" : undefined}
               style={{
                 display: "flex", alignItems: "center", justifyContent: railCollapsed ? "center" : "space-between",
                 padding: railCollapsed ? "7px 0" : `6px 8px 6px ${32 + depth * 14}px`,
@@ -671,7 +631,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
           const GroupRow = ({ id, icon, label, hasActive, isOpen, onToggle, onClick }) => (
             <div style={{ display: "flex", alignItems: "stretch" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <NavRow id={id} icon={icon} label={label} depth={0} selected={hasActive} promoted onClick={onClick} />
+                <NavRow id={id} icon={icon} label={label} depth={0} selected={hasActive} promoted group onClick={onClick} />
               </div>
               {!railCollapsed && (
                 <button onClick={e => { e.stopPropagation(); onToggle(); }}

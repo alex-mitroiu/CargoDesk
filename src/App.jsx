@@ -42,6 +42,7 @@ import DocumentsModal from "./components/shared/DocumentsModal";
 import HealthModal from "./components/shared/HealthModal";
 import ShipmentFormSidebar from "./components/shared/ShipmentFormSidebar";
 import ShipmentDetailSidebar from "./components/shared/ShipmentDetailSidebar";
+import ShipmentAdvanceBar from "./components/shared/ShipmentAdvanceBar";
 
 import ShipmentsPage     from "./pages/shipments/ShipmentsPage";
 import ShipmentFormPage  from "./pages/shipments/ShipmentFormPage";
@@ -669,11 +670,12 @@ function App() {
   // section switch through, rather than silently discarding it — distinct from the
   // isFormPage/formDirtyRef check right below, which is the older, separate
   // confirm-then-discard mechanism for the standalone shipment create/edit page.
+  // Resolves false when it stayed put (the » Advance bar flashes on that), true otherwise.
   const navigate = async (key, id = null) => {
     const guardResult = await runNavigationGuard();
-    if (!guardResult.proceed) { toast.error(guardResult.error); return; }
+    if (!guardResult.proceed) { toast.error(guardResult.error); return false; }
     if (isFormPage(page) && formDirtyRef.current) {
-      if (!window.confirm("You have unsaved changes. Leave and discard them?")) return;
+      if (!window.confirm("You have unsaved changes. Leave and discard them?")) return false;
     }
     formDirtyRef.current = false;
     if (page === "settings" && key !== "settings")
@@ -689,6 +691,7 @@ function App() {
     else if (SERVICE_SUBPAGE_HASHES[key] && id)          window.location.hash = `shipments/${id}/services/${SERVICE_SUBPAGE_HASHES[key]}`;
     else if (key === "detail" && id)                     window.location.hash = `shipments/${id}`;
     else                                                  window.location.hash = key;
+    return true;
   };
 
   // Browser back/forward
@@ -1859,12 +1862,17 @@ function App() {
     "gl-export":        { icon: IconCoin,            label: "GL Export" },
   };
 
+  // A shipment's own pages: the shipment sidebar on the left, the » Advance bar on the right.
+  const onShipmentPage = (page === "detail" || Object.values(SHIPMENT_SUBPAGES).includes(page)
+    || Object.values(ACCOUNTING_SUBPAGES).includes(page) || Object.values(CARRIER_BOOKING_SUBPAGES).includes(page)
+    || Object.values(CUSTOMS_FILING_SUBPAGES).includes(page) || SERVICE_PAGE_KEYS.includes(page)) && !!selectedShipment;
+
   return (
   <AuthContext.Provider value={authCtxValue}>
     <div style={{ display: "flex", minHeight: "100vh", background: T.bg, fontFamily: T.body, color: T.text }}>
 
       {/* ── Sidebar ── */}
-      {(page === "detail" || Object.values(SHIPMENT_SUBPAGES).includes(page) || Object.values(ACCOUNTING_SUBPAGES).includes(page) || Object.values(CARRIER_BOOKING_SUBPAGES).includes(page) || Object.values(CUSTOMS_FILING_SUBPAGES).includes(page) || SERVICE_PAGE_KEYS.includes(page)) && selectedShipment ? (
+      {onShipmentPage ? (
         <ShipmentDetailSidebar
           shipment={selectedShipment}
           ctrCount={containers.filter(c => c.shipmentId === selectedShipment.id).length}
@@ -2079,7 +2087,10 @@ function App() {
       {/* ── Main ── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         <Header />
-        <main id="app-scroll-main" style={{ flex: 1, padding: "28px 36px 60px", overflow: "auto" }}>
+        {/* marginRight: the » Advance bar's width while it shows (ShipmentAdvanceBar), so the
+            bar never sits over this scroll area's scrollbar. */}
+        <main id="app-scroll-main" style={{ flex: 1, padding: "28px 36px 60px", overflow: "auto",
+          marginRight: "var(--cd-advance-bar-w, 0px)" }}>
 
         {(page === "detail" || SHIPMENT_SUBPAGE_LABELS[page]) && selectedShipment && isEnabled(page) && (
           <ShipmentHeaderBar shipment={selectedShipment} containers={containers}
@@ -2512,6 +2523,12 @@ function App() {
 
         </main>
       </div>
+
+      {/* ── » Advance bar — saves, then opens the next row of the shipment tree ── */}
+      {onShipmentPage && (
+        <ShipmentAdvanceBar shipment={selectedShipment} currentPage={page}
+          appSettings={appSettings} navigate={navigate} />
+      )}
 
       {/* ── Footer ─────────────────────────────────────────────────────────── */}
       <footer style={{

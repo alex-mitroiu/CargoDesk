@@ -1361,3 +1361,49 @@ TC-079 and TC-080 run through the API until they are built.
 - 404, the VGM stays Submitted; Test Tools has no VGM Simulator tab
 
 **Status:** PASS (2026-10-29, automated: tests/house-bl-audit-fixes.test.js; tests/dcsa-simulator.test.js; tests/dcsa-amend-equip-arrival.test.js; tests/dcsa-messages.test.js)
+
+---
+
+## Area 14 — The » Advance Bar on Shipment Pages (2026-11-02, TKT-ACI6J1)
+
+The bar down the right edge of every shipment page (ARCHITECTURE.md §8.45, mockup d3c085ee, style B). Frontend only.
+
+### TC-083: » walks the shipment's tree in order
+**Feature:** » opens the next item of the sidebar tree, in the admin-saved order, nothing skipped
+**Precondition:** A Central FCL export NLRTM → USNYC on MAEU, 1 × 40' HC of flat-packed furniture, no contract or schedule yet,
+no customs broker; an export VGM and an import Delivery ordered. Logged in as an admin
+**Steps:**
+1. Open the shipment's Overview
+2. Open the first row of the sidebar, then click » until there's no bar, noting the name on the bar each time
+3. As a trade manager, open the last service row
+4. On Overview, order an import Unloading service, then click »
+
+**Expected Result:**
+- On Overview the bar reads "Next · Milestones & Events" (for the admin-saved order) and the page's scroll area ends where the bar starts
+- The names, in order, are the sidebar's rows top to bottom: a group's rows one by one (Contracts & Schedules,
+  Carrier Booking, Shipping Instructions, Arrival Notice, Customs Filing, Delivery Service), VGM under Export Services,
+  the three Accounting rows, History last; Carrier Booking and Customs Filing open on their lock and » still moves on;
+  the sidebar highlights each row reached; on History there is no bar and the page gets its width back
+- The bar reads "Next · History": no Accounting rows for a trade manager
+- » goes to Milestones & Events, not to the new service; the Unloading row appears under Import Services at once
+
+**Status:** PASS (2026-11-02, automated: src/shipmentNavSequence.test.js; src/components/shared/ShipmentAdvanceBar.test.jsx; cypress/e2e/shipment-advance-bar.cy.js; real-browser pass on SHP-AQ1FIM, 16 rows)
+
+---
+
+### TC-084: » saves first, and dialogs stop it
+**Feature:** » runs the page's save check; Alt+→; dialogs and prerequisite locks
+**Precondition:** The shipment of TC-083
+**Steps:**
+1. On Cargo, click + Add Container, leave the form empty, click »
+2. On Overview, press Alt+→
+3. On Overview, open + Request Service, press Alt+→; close the dialog
+4. Open Customs Filing (locked: no customs broker, no priced cargo line), press Alt+→
+
+**Expected Result:**
+- The page stays on Cargo; the bar flashes red; the toast says the container form has incomplete/invalid fields and names them; nothing is saved
+- Milestones & Events opens
+- Nothing happens while the dialog is open (it covers the bar)
+- The lock leaves the bar above its backdrop; Alt+→ opens VGM
+
+**Status:** PASS (2026-11-02, automated: src/components/shared/ShipmentAdvanceBar.test.jsx; src/components/primitives/Modal.test.jsx; cypress/e2e/shipment-advance-bar.cy.js; real-browser pass in dark and light)

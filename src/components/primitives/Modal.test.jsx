@@ -115,3 +115,21 @@ describe("Modal — Escape to close", () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 });
+
+// The shipment pages' » Advance bar sits on the right edge; a page's prerequisite lock (the
+// Carrier Booking / Customs Filing gates) must leave it reachable, every other dialog covers it.
+describe("Modal — keepAdvanceBar", () => {
+  const ATTR = "data-advance-bar-over-modal";
+
+  it("lifts the » bar above the backdrop while open, and stops when closed", () => {
+    const { unmount } = render(<Modal title="Carrier Booking Unavailable" onClose={() => {}} hideClose keepAdvanceBar><p>body</p></Modal>);
+    expect(document.documentElement.hasAttribute(ATTR)).toBe(true);
+    unmount();
+    expect(document.documentElement.hasAttribute(ATTR)).toBe(false);
+  });
+
+  it("leaves the bar covered by any other dialog", () => {
+    render(<Modal title="Request Service" onClose={() => {}}><p>body</p></Modal>);
+    expect(document.documentElement.hasAttribute(ATTR)).toBe(false);
+  });
+});

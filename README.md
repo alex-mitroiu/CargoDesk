@@ -31,6 +31,7 @@ End-User License Agreement for full terms.
 ### Shipments & Cargo
 - **Shipment lifecycle tracking** — container-level cargo detail (commodity, weight, volume, IMDG DG class), Shipper/Consignee/Principal parties, and a Requires Review status stage.
 - **Persistent shipment header** — ID, route, dates, vessel, contract, TEU, and a Door→POL→POD→Terminal journey bar visible across every sub-page, correct even for Door pickups and multi-leg transshipment routings.
+- **» Advance bar** — a rail down the right edge of every shipment page: » (or Alt+→) saves what the page has unsaved and opens the next item of the shipment's sidebar, in the admin-set order, read-only and locked pages included; a save that fails keeps you on the page with the reason.
 - **Multimodal route legs** — a 14-column leg table (Pick-up/SEA/Feeder/Rail/Air/Delivery) with auto-derived carrier fields and a routing-term engine (e.g. `DR-CY`) computed from the carrier-covered legs.
 - **Full audit trail** — every field change, status transition, and container edit logged as a colour-coded timeline on the shipment history page.
 - **Threaded messages** — a real-time (WebSocket, polling fallback) per-shipment message panel with unread badges and role/timestamp display.

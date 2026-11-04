@@ -10,7 +10,8 @@ import { HZ, HZ_MONO, HZ_BODY } from "../../pages/shipments/shipmentDetailTheme"
 // exact shape (hideClose, no backdrop dismiss, warning banner, modeled on
 // ChangePasswordModal's forced pattern) — the one deviation: the two preconditions
 // here have different destinations (Parties vs. Cargo), so render one button per
-// missing precondition instead of a single shared one.
+// missing precondition instead of a single shared one. Like that gate, it leaves the » Advance
+// bar reachable (keepAdvanceBar).
 //
 // Point-by-point checklist rather than one combined sentence — a direct report found the
 // original single-paragraph phrasing ("needs both a broker... and at least one priced cargo
@@ -30,7 +31,7 @@ const CustomsFilingGateModal = ({ missingBroker, missingCargo, missingParties, o
   const missing = { broker: missingBroker, cargo: missingCargo, parties: missingParties };
 
   return (
-    <Modal title="Customs Filing Unavailable" onClose={() => {}} width={440} hideClose>
+    <Modal title="Customs Filing Unavailable" onClose={() => {}} width={440} hideClose keepAdvanceBar>
       <div style={{ padding: "10px 14px", borderRadius: 8, background: HZ.warnBg,
         border: `1px solid ${HZ.warn}44`, display: "flex", gap: 10, alignItems: "flex-start",
         marginBottom: 14 }}>

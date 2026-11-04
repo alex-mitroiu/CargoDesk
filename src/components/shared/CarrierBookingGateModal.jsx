@@ -8,7 +8,8 @@ import { HZ, HZ_BODY } from "../../pages/shipments/shipmentDetailTheme";
 // schedule — no close button, no backdrop dismiss (Modal's own backdrop has no onClick,
 // so hideClose alone is enough), only the one way out: go fix it. Modeled directly on
 // ChangePasswordModal's forced pattern (warning banner + hideClose + a single action
-// button in place of Cancel) rather than inventing a new blocking-modal convention.
+// button in place of Cancel) rather than inventing a new blocking-modal convention. The » Advance
+// bar stays reachable (keepAdvanceBar) — a locked page is still a stop the user can move past.
 
 const CarrierBookingGateModal = ({ missingContract, missingSchedule, onGoToSchedules }) => {
   const both = missingContract && missingSchedule;
@@ -19,7 +20,7 @@ const CarrierBookingGateModal = ({ missingContract, missingSchedule, onGoToSched
     : "This shipment doesn't have a schedule assigned yet.";
 
   return (
-    <Modal title="Carrier Booking Unavailable" onClose={() => {}} width={440} hideClose>
+    <Modal title="Carrier Booking Unavailable" onClose={() => {}} width={440} hideClose keepAdvanceBar>
       <div style={{ padding: "10px 14px", borderRadius: 8, background: HZ.warnBg,
         border: `1px solid ${HZ.warn}44`, display: "flex", gap: 10, alignItems: "flex-start",
         marginBottom: 18 }}>

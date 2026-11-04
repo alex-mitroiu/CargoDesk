@@ -100,7 +100,8 @@ const ToastContainer = () => {
 
   return (
     <div style={{
-      position: "fixed", top: 54, right: 20,
+      // Steps left of the » Advance bar while it shows (ShipmentAdvanceBar sets the variable).
+      position: "fixed", top: 54, right: "calc(20px + var(--cd-advance-bar-w, 0px))",
       zIndex: 10000, display: "flex", flexDirection: "column",
       gap: 8, alignItems: "flex-end",
       pointerEvents: "none",
