@@ -130,7 +130,15 @@ describe("Lane steering", () => {
       cy.get("#ls-to > button").click();
       // The calendar is portaled to <body> (DatePicker.jsx), outside this within() scope.
       const calendar = () => cy.get("#ls-to-calendar", { withinSubject: null });
-      calendar().contains("button", "›").click().click();
+      // Page forward to December (2026-12-31, the date asserted below). It opens on the current month, so a
+      // fixed number of clicks only worked in the month the spec was written (two from October).
+      const toDecember = (clicks = 0) => calendar().find("button").then($buttons => {
+        if ([...$buttons].some(b => b.textContent.trim() === "December")) return;
+        if (clicks >= 12) throw new Error("the calendar never reached December");
+        calendar().contains("button", "›").click();
+        toDecember(clicks + 1);
+      });
+      toDecember();
       calendar().contains("button", /^December$/).should("be.visible");
       calendar().contains("button", /^31$/).click();
       cy.get('[data-testid="lane-steering-switch"]').should("have.attr", "aria-checked", "false").click().should("have.attr", "aria-checked", "true");
