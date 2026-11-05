@@ -73,18 +73,26 @@ const Modal = ({ title, onClose, children, width = 520, minHeight, hideClose = f
   useBodyScrollLock();
   useEscapeToClose(onClose, hideClose);
   useAdvanceBarOverModal(keepAdvanceBar);
+  // Trade Horizon pages (T.hz): the solid HZ surface on the stronger border, HZ's soft popover shadow,
+  // a lighter, blurred backdrop in light mode, and a bordered close button.
+  const hz = T.hz;
   return (
-  <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.78)", display: "flex",
+  <div style={{ position: "fixed", inset: 0, background: T.backdrop, display: "flex",
+      backdropFilter: hz ? "blur(3px)" : undefined,
       alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
-    <div data-testid={testId} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
+    <div data-testid={testId} style={{ background: T.surface, border: `1px solid ${hz ? T.borderMid : T.border}`, borderRadius: hz ? 14 : 12,
       width: "100%", maxWidth: width, maxHeight: "90vh", overflowY: "auto",
       minHeight: minHeight ?? undefined,
-      boxShadow: "0 30px 70px rgba(0,0,0,.65)" }}>
+      boxShadow: hz ? T.popoverShadow : "0 30px 70px rgba(0,0,0,.65)" }}>
       <div style={{ padding: "18px 24px", borderBottom: `1px solid ${T.border}`,
         display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h2 style={{ fontFamily: T.head, fontSize: 18, fontWeight: 700, color: T.text, margin: 0 }}>{title}</h2>
+        <h2 style={{ fontFamily: T.head, fontSize: hz ? 17 : 18, fontWeight: 700, color: T.text, margin: 0 }}>{title}</h2>
         {!hideClose && (
-          <button onClick={onClose} style={{ background: "none", border: "none", color: T.textMuted,
+          <button onClick={onClose} style={hz ? {
+            background: "none", border: `1px solid ${T.border}`, color: T.textMuted, cursor: "pointer",
+            width: 30, height: 30, borderRadius: 8, fontSize: 18, lineHeight: 1, padding: 0,
+            display: "flex", alignItems: "center", justifyContent: "center", transition: "color 0.14s",
+          } : { background: "none", border: "none", color: T.textMuted,
             cursor: "pointer", fontSize: 22, lineHeight: 1, padding: "0 4px",
             borderRadius: 4, transition: "color 0.14s" }}
             onMouseEnter={e => e.currentTarget.style.color = T.text}

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { T } from "../../tokens";
-import { inputBase } from "../primitives/Form";
+import { inputBase, FIELD_CLASS } from "../primitives/Form";
 import { Modal } from "../primitives/Modal";
 import Pagination from "../primitives/Pagination";
 import Btn from "../primitives/Btn";
@@ -46,7 +46,7 @@ export const PortPickerModal = ({ onSelect, onClose }) => {
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {/* Filter bar */}
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <input
+          <input className={FIELD_CLASS}
             ref={searchRef}
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -54,7 +54,7 @@ export const PortPickerModal = ({ onSelect, onClose }) => {
             placeholder="Port name or LOCODE…"
             style={{ ...inputBase, flex: "1 1 200px" }}
           />
-          <input
+          <input className={FIELD_CLASS}
             value={country}
             onChange={e => setCountry(e.target.value.toUpperCase().slice(0, 2))}
             onKeyDown={handleKey}
@@ -269,7 +269,7 @@ const PortCombobox = ({ value = null, onChange, placeholder = "Search port or LO
         // ── Search input ───────────────────────────────────────────────────────
         <>
           <div style={{ position: "relative", paddingTop: 5, paddingBottom: 5 }}>
-            <input
+            <input className={FIELD_CLASS}
               ref={inputRef}
               value={query}
               onChange={e => search(e.target.value)}
@@ -302,7 +302,7 @@ const PortCombobox = ({ value = null, onChange, placeholder = "Search port or LO
             <div ref={dropRef} style={{
               ...dropStyle,
               background: T.surface, border: `1px solid ${T.border}`,
-              borderRadius: 10, boxShadow: "0 12px 32px rgba(0,0,0,.4)",
+              borderRadius: 10, boxShadow: T.hz ? T.popoverShadow : "0 12px 32px rgba(0,0,0,.4)",
               overflow: "hidden", maxHeight: 260, overflowY: "auto",
             }}>
               {results.map((r, idx) => (

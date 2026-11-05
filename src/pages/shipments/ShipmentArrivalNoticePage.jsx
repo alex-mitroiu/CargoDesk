@@ -16,7 +16,7 @@ import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDet
 // with "Add as accruals" (the user's decision: shown, added on a click; one that looks entered starts
 // unticked), and "Generate AN01 from it". lib/arrival-notices.js holds the rules.
 
-const card = { background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, padding: 18 };
+const card = () => ({ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, padding: 18 });
 const day = s => (s ? new Date(`${String(s).slice(0, 10)}T12:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "—");
 const when = s => (s ? new Date(s).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
 const money = (cur, n) => `${cur} ${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -57,7 +57,7 @@ const ShipmentArrivalNoticePage = ({ shipment }) => {
   if (an === undefined) return <div style={{ padding: 40, display: "flex", justifyContent: "center" }}><Spinner /></div>;
 
   const header = (
-    <div style={card}>
+    <div style={card()}>
       <h3 style={{ fontFamily: HZ_DISPLAY, fontSize: 14, fontWeight: 700, color: HZ.text, margin: "0 0 4px", display: "flex", alignItems: "center", gap: 6 }}>
         <IconMailUnread size={14} /> Arrival Notice
       </h3>
@@ -71,7 +71,7 @@ const ShipmentArrivalNoticePage = ({ shipment }) => {
   if (!an) return (
     <div id="shpan-page" style={{ maxWidth: 900, margin: "0 auto", display: "flex", flexDirection: "column", gap: 18 }}>
       {header}
-      <div id="shpan-empty" style={{ ...card, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>
+      <div id="shpan-empty" style={{ ...card(), display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>
         <span style={{ flex: "1 1 320px" }}>No Arrival Notice from {carrier} yet.</span>
         {canEdit && <Btn id="shpan-refresh-btn" size="sm" variant="secondary" disabled={!!busy} onClick={refresh}>{busy === "refresh" ? "Asking…" : `Ask ${carrier} now`}</Btn>}
       </div>
@@ -97,7 +97,7 @@ const ShipmentArrivalNoticePage = ({ shipment }) => {
       {genDocOpen && <GenerateDocumentModal shipment={shipment} defaultCode="AN01" onClose={() => setGenDocOpen(false)} onSaved={() => setGenDocOpen(false)} />}
       {header}
 
-      <div style={{ ...card, padding: 0 }}>
+      <div style={{ ...card(), padding: 0 }}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px", padding: "14px 18px", borderBottom: `1px solid ${HZ.border}` }}>
           <span style={{ fontFamily: HZ_DISPLAY, fontSize: 15, fontWeight: 800, color: HZ.text }}>Arrival Notice from {an.carrierCode || carrier}</span>
           <Pill id="shpan-version" tone="info">VERSION {an.version || "1"}</Pill>
@@ -131,7 +131,7 @@ const ShipmentArrivalNoticePage = ({ shipment }) => {
       </div>
 
       {an.freeTime.length > 0 && (
-        <div style={{ ...card, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ ...card(), display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 10 }}>
             <span style={{ fontFamily: HZ_DISPLAY, fontSize: 14, fontWeight: 700, color: HZ.text }}>Free time</span>
             <span style={{ fontSize: 12, color: HZ.textMuted }}>checked against the containers</span>
@@ -169,7 +169,7 @@ const ShipmentArrivalNoticePage = ({ shipment }) => {
       )}
 
       {an.charges.length > 0 && (
-        <div style={{ ...card, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ ...card(), display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 10 }}>
             <span style={{ fontFamily: HZ_DISPLAY, fontSize: 14, fontWeight: 700, color: HZ.text }}>{an.carrierCode || carrier}'s charges</span>
             <span style={{ fontSize: 12, color: HZ.textMuted }}>{an.charges.every(c => c.paymentTermCode === "COL") ? "collect at destination" : "as the carrier lists them"}</span>

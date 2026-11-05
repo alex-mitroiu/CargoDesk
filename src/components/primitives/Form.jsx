@@ -51,18 +51,22 @@ const Field = ({ label, required, hint, children }) => (
   </div>
 );
 
-// Getters re-evaluate T on every spread — theme-safe across light/dark switches.
+// Getters re-evaluate T on every spread — theme-safe across light/dark switches. On a Trade Horizon
+// page (T.hz) a field sits on the stronger border with rounder corners; its focus ring is the
+// `cd-field` class's CSS rule (FIELD_CLASS below, injected by src/tokens.js applyTheme).
 export const inputBase = {
   get background() { return T.bg; },
-  get border()     { return `1px solid ${T.border}`; },
+  get border()     { return `1px solid ${T.hz ? T.borderMid : T.border}`; },
   get color()      { return T.text; },
-  borderRadius: 6, padding: "8px 12px",
+  get borderRadius() { return T.hz ? 7 : 6; },
+  padding: "8px 12px",
   outline: "none", width: "100%", boxSizing: "border-box",
 };
+export const FIELD_CLASS = "cd-field";
 
 const Inp = ({ id, label, value, onChange, onBlur, placeholder, mono, maxLength, required, hint, type = "text", inputMode, disabled = false }) => (
   <Field label={label} required={required} hint={hint}>
-    <input id={id} value={value} onChange={e => onChange(e.target.value)} onBlur={onBlur} placeholder={placeholder}
+    <input id={id} className={FIELD_CLASS} value={value} onChange={e => onChange(e.target.value)} onBlur={onBlur} placeholder={placeholder}
       maxLength={maxLength} type={type} inputMode={inputMode} disabled={disabled}
       style={{ ...inputBase, fontFamily: mono ? T.mono : T.body, fontSize: mono ? 13 : 14,
         opacity: disabled ? 0.6 : 1, cursor: disabled ? "not-allowed" : "text" }} />
@@ -71,7 +75,7 @@ const Inp = ({ id, label, value, onChange, onBlur, placeholder, mono, maxLength,
 
 const Sel = ({ id, label, value, onChange, options, required, error, hint, disabled = false }) => (
   <Field label={label} required={required} hint={hint}>
-    <select id={id} value={value} onChange={e => onChange(e.target.value)} disabled={disabled}
+    <select id={id} className={FIELD_CLASS} value={value} onChange={e => onChange(e.target.value)} disabled={disabled}
       style={{ ...inputBase, fontFamily: T.body, fontSize: 14, cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.6 : 1,
         ...(error ? { border: `1px solid ${T.danger}`, boxShadow: `0 0 0 2px ${T.danger}44` } : {}) }}>
@@ -82,7 +86,7 @@ const Sel = ({ id, label, value, onChange, options, required, error, hint, disab
 
 const Textarea = ({ label, value, onChange, placeholder, rows = 3, disabled = false }) => (
   <Field label={label}>
-    <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows} disabled={disabled}
+    <textarea className={FIELD_CLASS} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows} disabled={disabled}
       style={{ ...inputBase, fontFamily: T.body, fontSize: 14, resize: "vertical", opacity: disabled ? 0.6 : 1 }} />
   </Field>
 );

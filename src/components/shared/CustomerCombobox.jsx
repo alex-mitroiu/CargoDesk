@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { T } from "../../tokens";
 import { api } from "../../api";
-import { inputBase, Field } from "../primitives/Form";
+import { inputBase, Field, FIELD_CLASS } from "../primitives/Form";
 import { Modal } from "../primitives/Modal";
 import Pagination from "../primitives/Pagination";
 import Btn from "../primitives/Btn";
@@ -69,7 +69,7 @@ export const CustomerPickerModal = ({ onSelect, onClose, roleFilter = "" }) => {
             { key: "country",    placeholder: "ISO2",                   width: 70, upper: true, max: 2 },
             { key: "customerId", placeholder: "Customer code",          width: 120 },
           ].map(({ key, placeholder, width, upper, max }) => (
-            <input
+            <input className={FIELD_CLASS}
               key={key}
               value={filters[key]}
               onChange={e => setF(key)(upper ? e.target.value.toUpperCase().slice(0, max) : e.target.value)}
@@ -243,7 +243,7 @@ const CustomerCombobox = ({ label, value = { id: "", name: "" }, onChange, requi
           mousedown-outside detection works correctly */}
       <div ref={wrapRef}>
         <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-          <input
+          <input className={FIELD_CLASS}
             ref={inputRef}
             value={query}
             onChange={e => handleInput(e.target.value)}
@@ -295,7 +295,7 @@ const CustomerCombobox = ({ label, value = { id: "", name: "" }, onChange, requi
             position: "fixed",
             top: dropPos.top, left: dropPos.left, width: dropPos.width,
             background: T.surface, border: `1px solid ${T.border}`,
-            borderRadius: 8, boxShadow: "0 8px 28px rgba(0,0,0,.45)",
+            borderRadius: 8, boxShadow: T.hz ? T.popoverShadow : "0 8px 28px rgba(0,0,0,.45)",
             zIndex: 1100, overflow: "hidden",
           }}>
             {results.map(c => (
@@ -326,7 +326,7 @@ const CustomerCombobox = ({ label, value = { id: "", name: "" }, onChange, requi
             position: "fixed",
             top: dropPos.top, left: dropPos.left, width: dropPos.width,
             background: T.surface, border: `1px solid ${T.border}`,
-            borderRadius: 8, boxShadow: "0 8px 28px rgba(0,0,0,.45)",
+            borderRadius: 8, boxShadow: T.hz ? T.popoverShadow : "0 8px 28px rgba(0,0,0,.45)",
             zIndex: 1100, padding: "10px 12px",
           }}>
             <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.5 }}>

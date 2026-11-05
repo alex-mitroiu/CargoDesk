@@ -18,13 +18,16 @@ const Toast = ({ t, onDismiss }) => {
   const timerRef = useRef(null);
 
   const TYPE = {
-    success: { icon: "✓", color: () => T.success  },
-    error:   { icon: "✕", color: () => T.danger   },
-    warning: { icon: "⚠", color: () => T.warning  },
-    info:    { icon: "ℹ", color: () => T.info     },
-  }[t.type] ?? { icon: "·", color: () => T.textMuted };
+    success: { icon: "✓", color: () => T.success,   bg: () => T.successBg },
+    error:   { icon: "✕", color: () => T.danger,    bg: () => T.dangerBg  },
+    warning: { icon: "⚠", color: () => T.warning,   bg: () => T.warningBg },
+    info:    { icon: "ℹ", color: () => T.info,      bg: () => T.infoBg    },
+  }[t.type] ?? { icon: "·", color: () => T.textMuted, bg: () => T.neutralBg };
 
   const color = TYPE.color();
+  // A toast raised on a Trade Horizon page (T.hz) is an HZ card: rounded, on the plain border with a
+  // coloured left edge and HZ's popover shadow, its icon in a tinted circle.
+  const hz = T.hz;
 
   useEffect(() => {
     timerRef.current = setTimeout(onDismiss, t.duration);
@@ -48,18 +51,20 @@ const Toast = ({ t, onDismiss }) => {
       onMouseLeave={resume}
       style={{
         pointerEvents: "all",
-        background: T.surface, border: `1px solid ${color}`,
+        background: T.surface, border: `1px solid ${hz ? T.border : color}`,
         borderLeft: `3px solid ${color}`,
-        borderRadius: 0, padding: "11px 14px",
+        borderRadius: hz ? 10 : 0, padding: "11px 14px",
         display: "flex", alignItems: "flex-start", gap: 10,
         minWidth: 260, maxWidth: 380,
-        boxShadow: "0 6px 24px rgba(0,0,0,.25)",
+        boxShadow: hz ? T.popoverShadow : "0 6px 24px rgba(0,0,0,.25)",
         animation: "cd-slide-in .2s ease forwards",
         position: "relative", overflow: "hidden",
         fontFamily: T.body,
       }}>
       {/* Type icon */}
-      <span style={{ fontSize: 14, fontWeight: 700, color, flexShrink: 0, marginTop: 1 }}>
+      <span style={hz ? { width: 22, height: 22, borderRadius: "50%", background: TYPE.bg(), color, fontSize: 12, fontWeight: 700,
+          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }
+        : { fontSize: 14, fontWeight: 700, color, flexShrink: 0, marginTop: 1 }}>
         {TYPE.icon}
       </span>
       {/* Message */}

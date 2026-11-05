@@ -187,7 +187,7 @@ const DatePicker = ({
   // this is just the fixed cosmetic part, width overridden by dropStyle to match the trigger.
   const popover = {
     background: T.surface, border: `1px solid ${T.borderMid || T.border}`,
-    borderRadius: 12, boxShadow: "0 20px 50px rgba(0,0,0,.7)",
+    borderRadius: 12, boxShadow: T.popoverShadow, // HZ pages: its soft shadow; classic: the old 0 20px 50px
     padding: "14px 12px", width: 272,
   };
 
@@ -219,7 +219,7 @@ const DatePicker = ({
         border: isCurrent && !isSelected ? `1px solid ${T.accent}55` : "1px solid transparent",
         borderRadius: 6, cursor: isDisabled ? "default" : "pointer",
         background: isSelected ? T.accent : "transparent",
-        color: isSelected ? (T.btnPrimaryText || "#fff") : isDisabled ? T.border : isCurrent ? T.accent : T.text,
+        color: isSelected ? (T.btnPrimaryText || "#fff") : isDisabled ? T.textFaint : isCurrent ? T.accent : T.text,
         fontFamily: T.mono, fontSize: wide ? 12 : 11.5,
         fontWeight: isSelected || isCurrent ? 700 : 400,
         textDecoration: isCurrent && !isSelected ? "underline" : "none",
@@ -243,8 +243,9 @@ const DatePicker = ({
             ...inputBase, display: "flex", alignItems: "center", justifyContent: "space-between",
             cursor: disabled ? "not-allowed" : "pointer",
             fontFamily: datePart ? T.mono : T.body, fontSize: 13,
-            color: datePart ? T.text : T.border, opacity: disabled ? 0.45 : 1,
-            border: open ? `1px solid ${T.accent}` : inputBase.border, transition: "border-color .12s",
+            color: datePart ? T.text : T.textFaint, opacity: disabled ? 0.45 : 1,
+            border: open ? `1px solid ${T.accent}` : inputBase.border, transition: "border-color .12s, box-shadow .12s",
+            boxShadow: open && T.hz ? `0 0 0 3px ${T.ring}` : "none",
           }}>
           <span>{datePart ? `${fmtIso(datePart)}${withTime && timePart ? ` · ${timePart}` : ""}` : (placeholder || (withTime ? "Select date & time…" : "Select date…"))}</span>
           <span style={{ color: T.textMuted, fontSize: 13 }}>▾</span>

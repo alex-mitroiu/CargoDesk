@@ -54,6 +54,12 @@ const HZ_DARK = {
   good: "#22c55e", warning: "#fab219", critical: "#f0526b", available: "#a78bfa",
   chartCategorical: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"],
   cardShadow: "none",
+  // Solid fill for chart tooltips; neutral tints (inset tile, hover, bar track, the "Remaining"
+  // segment); text on a gradient chip. Light (below) darkens where dark lightens.
+  surfaceSolid: "#0d1220",
+  tint: "rgba(255,255,255,0.03)", hoverBg: "rgba(255,255,255,0.05)",
+  track: "rgba(255,255,255,0.06)", restFill: "rgba(255,255,255,0.1)",
+  chipText: "#06111f",
 };
 const HZ_LIGHT = {
   bg: "#f4f6fb", surface: "rgba(255,255,255,0.72)", surfaceStrong: "rgba(255,255,255,0.85)",
@@ -63,6 +69,10 @@ const HZ_LIGHT = {
   good: "#087736", warning: "#af4e05", critical: "#ad0e3a", available: "#8b5cf6",
   chartCategorical: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"],
   cardShadow: "0 1px 2px rgba(16,20,40,.05), 0 14px 32px -16px rgba(16,20,40,.20)",
+  surfaceSolid: "#ffffff",
+  tint: "rgba(15,20,40,0.03)", hoverBg: "rgba(15,20,40,0.05)",
+  track: "rgba(15,20,40,0.07)", restFill: "rgba(15,20,40,0.10)",
+  chipText: "#ffffff",
 };
 const HZ = {
   ...HZ_DARK,
@@ -132,9 +142,14 @@ const HorizonBackdrop = () => (
   </div>
 );
 
-const CHART_COLORS = HZ.chartCategorical.concat([
+const CHART_EXTRA = [
   "#6366f1","#8b5cf6","#06b6d4","#ef4444","#10b981","#f97316",
-]);
+];
+// Read per call: HZ switches palette after this module loads (see applyDashboardHzTheme).
+// Legend labels in muted text, not each series colour (Recharts' default): the swatch carries the
+// colour, and a faint series such as "Remaining" would otherwise leave its label unreadable.
+const legendLabel = value => <span style={{ color: HZ.inkMuted }}>{value}</span>;
+const chartColor = i => { const c = HZ.chartCategorical.concat(CHART_EXTRA); return c[i % c.length]; };
 
 // ─── Sparkline ────────────────────────────────────────────────────────────────
 
@@ -273,9 +288,9 @@ const CarrierBadgeGrid = ({ rows }) => (
       const [g1, g2] = hzGradientFor(r.carrier);
       return (
         <div key={r.carrier} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7,
-          padding: "14px 8px", background: "rgba(255,255,255,0.03)", border: `1px solid ${HZ.borderSoft}`, borderRadius: 14 }}>
+          padding: "14px 8px", background: HZ.tint, border: `1px solid ${HZ.borderSoft}`, borderRadius: 14 }}>
           <div style={{ width: 40, height: 40, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center",
-            fontFamily: HZ.fontDisplay, fontWeight: 700, fontSize: 12, color: "#06111f",
+            fontFamily: HZ.fontDisplay, fontWeight: 700, fontSize: 12, color: HZ.chipText,
             background: `linear-gradient(145deg, ${g1}, ${g2})` }}>
             {r.carrier.slice(0, 2)}
           </div>
@@ -324,7 +339,7 @@ const TabButton = ({ tab, active, onClick }) => {
     <button type="button" onClick={onClick} data-testid={`dashboard-tab-${tab.key}`}
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
       style={{
-        padding: "10px 16px", background: active ? "rgba(56,212,232,0.12)" : hov ? "rgba(255,255,255,0.05)" : "none",
+        padding: "10px 16px", background: active ? "rgba(56,212,232,0.12)" : hov ? HZ.hoverBg : "none",
         border: "none", borderRadius: "10px 10px 0 0",
         borderBottom: active ? `2px solid ${HZ.gradCyan[0]}` : "2px solid transparent",
         color: active ? HZ.gradCyan[0] : hov ? HZ.ink : HZ.inkMuted,
@@ -876,13 +891,13 @@ const MarginView = ({ financeEnabled }) => {
           <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false}
             tickFormatter={v => `${v}%`} domain={['auto', 'auto']} allowDecimals={false} />
           <ReferenceLine y={0} stroke={T.border} strokeDasharray="3 3" />
-          <Tooltip contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
+          <Tooltip contentStyle={{ background: HZ.surfaceSolid, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
             labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }} itemStyle={{ color: T.textMuted }}
             formatter={(v, name) => [v != null ? `${v}%` : "—", name]} cursor={{ fill: `${T.accent}18` }} />
-          <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
+          <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} formatter={legendLabel} />
           {dataKeys.map((k, i) => (
             <Bar key={k} dataKey={k} name={k}
-              fill={CHART_COLORS[i % CHART_COLORS.length]}
+              fill={chartColor(i)}
               radius={[3, 3, 0, 0]} maxBarSize={32} />
           ))}
         </BarChart>
@@ -1182,7 +1197,7 @@ const CarrierView = ({ rangeShipments, containers, carriers, carrierTrends, rang
               <XAxis dataKey="carrier" tick={{ fontFamily: T.mono, fontSize: 11, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
               <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
               <Tooltip
-                contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
+                contentStyle={{ background: HZ.surfaceSolid, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
                 labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }}
                 itemStyle={{ color: T.textMuted }}
                 formatter={(v, _name, props) => [`${v} TEU`, props.payload.name || props.payload.carrier]}
@@ -1205,16 +1220,16 @@ const CarrierView = ({ rangeShipments, containers, carriers, carrierTrends, rang
                 <XAxis dataKey="week" tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
                 <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip
-                  contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
+                  contentStyle={{ background: HZ.surfaceSolid, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
                   labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }}
                   itemStyle={{ color: T.textMuted }}
                   formatter={(v, name) => [`${v} TEU`, name]}
                   cursor={{ stroke: T.border }} />
-                <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
+                <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} formatter={legendLabel} />
                 {barData.map(({ carrier: code }, i) => (
                   <Line key={code} type="monotone" dataKey={code} name={code}
-                    stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2}
-                    dot={{ r: 3, fill: CHART_COLORS[i % CHART_COLORS.length] }}
+                    stroke={chartColor(i)} strokeWidth={2}
+                    dot={{ r: 3, fill: chartColor(i) }}
                     activeDot={{ r: 5 }} connectNulls />
                 ))}
               </LineChart>
@@ -1760,7 +1775,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
     if (!active || !payload?.length) return null;
     const d = chartData.find(x => x.carrier === label);
     return (
-      <div style={{ background: "#0d1220", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, padding: "12px 16px" }}>
+      <div style={{ background: HZ.surfaceSolid, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, padding: "12px 16px" }}>
         <div style={{ fontFamily: HZ.fontMono, fontWeight: 700, color: HZ.gradCyan[0], marginBottom: 8, fontSize: 13 }}>{label} · {d?.name}</div>
         <div style={{ fontFamily: HZ.fontBody, fontSize: 13, color: HZ.good }}>Confirmed: {d?.confirmed} TEU</div>
         {d?.pending > 0 && <div style={{ fontFamily: HZ.fontBody, fontSize: 13, color: HZ.warning }}>Pending: {d.pending} TEU</div>}
@@ -1786,7 +1801,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
               background: `linear-gradient(135deg, ${HZ.gradCyan[0]}, ${HZ.gradCyan[1]})`,
               boxShadow: "0 0 0 1px rgba(255,255,255,0.12) inset, 0 8px 20px -8px rgba(56,212,232,0.55)",
               display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <IconDashboard size={17} color="#04121c" />
+              <IconDashboard size={17} color={HZ.chipText} />
             </div>
             <h1 style={{ fontFamily: HZ.fontDisplay, fontSize: 26, fontWeight: 700, color: HZ.ink, margin: 0 }}>Trade Horizon</h1>
           </div>
@@ -1946,7 +1961,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
                     textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
                     Active Shipment Health
                   </div>
-                  <div style={{ height: 8, background: "rgba(255,255,255,0.06)", borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{ height: 8, background: HZ.track, borderRadius: 4, overflow: "hidden" }}>
                     <div style={{ height: "100%", width: `${barW}%`, background: overdue.length > 0 ? HZ.warning : HZ.good,
                       borderRadius: 4, transition: "width .4s" }} />
                   </div>
@@ -2032,12 +2047,12 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
                     <CartesianGrid strokeDasharray="3 3" stroke={HZ.borderSoft} vertical={false} />
                     <XAxis dataKey="carrier" tick={{ fontFamily: HZ.fontMono, fontSize: 11, fill: HZ.inkMuted }} axisLine={{ stroke: HZ.border }} tickLine={false} />
                     <YAxis tick={{ fontFamily: HZ.fontBody, fontSize: 10, fill: HZ.inkMuted }} axisLine={false} tickLine={false} />
-                    <Tooltip content={<TooltipContent />} cursor={{ fill: "rgba(255,255,255,0.06)" }} />
-                    <Legend wrapperStyle={{ fontFamily: HZ.fontBody, fontSize: 11, color: HZ.inkMuted, paddingTop: 10 }} />
+                    <Tooltip content={<TooltipContent />} cursor={{ fill: HZ.track }} />
+                    <Legend wrapperStyle={{ fontFamily: HZ.fontBody, fontSize: 11, color: HZ.inkMuted, paddingTop: 10 }} formatter={legendLabel} />
                     <Bar dataKey="confirmed" name="Confirmed" stackId="s" fill={HZ.good} />
                     <Bar dataKey="pending"   name="Pending"   stackId="s" fill={HZ.warning} />
                     <Bar dataKey="rejected"  name="Rejected"  stackId="s" fill={HZ.critical} />
-                    <Bar dataKey="remaining" name="Remaining" stackId="s" fill="rgba(255,255,255,0.1)" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="remaining" name="Remaining" stackId="s" fill={HZ.restFill} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -2051,14 +2066,14 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
                     <CartesianGrid strokeDasharray="3 3" stroke={HZ.borderSoft} vertical={false} />
                     <XAxis dataKey="week" tick={{ fontFamily: HZ.fontMono, fontSize: 10, fill: HZ.inkMuted }} axisLine={{ stroke: HZ.border }} tickLine={false} />
                     <YAxis tick={{ fontFamily: HZ.fontBody, fontSize: 10, fill: HZ.inkMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
-                    <Tooltip contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
+                    <Tooltip contentStyle={{ background: HZ.surfaceSolid, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
                       labelStyle={{ color: HZ.ink, fontWeight: 600, marginBottom: 4 }} itemStyle={{ color: HZ.inkMuted }}
                       formatter={(v, name) => [`${v} TEU`, name]} cursor={{ stroke: HZ.border, strokeWidth: 1 }} />
-                    <Legend wrapperStyle={{ fontFamily: HZ.fontBody, fontSize: 11, color: HZ.inkMuted, paddingTop: 10 }} />
+                    <Legend wrapperStyle={{ fontFamily: HZ.fontBody, fontSize: 11, color: HZ.inkMuted, paddingTop: 10 }} formatter={legendLabel} />
                     {trendCarriers.map((code, i) => (
                       <Line key={code} type="monotone" dataKey={code}
-                        stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2}
-                        dot={{ r: 3, fill: CHART_COLORS[i % CHART_COLORS.length] }} activeDot={{ r: 5 }} />
+                        stroke={chartColor(i)} strokeWidth={2}
+                        dot={{ r: 3, fill: chartColor(i) }} activeDot={{ r: 5 }} />
                     ))}
                   </LineChart>
                 </ResponsiveContainer>

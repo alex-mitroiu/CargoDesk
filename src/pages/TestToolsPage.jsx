@@ -45,13 +45,13 @@ const SI_STATUS_COLOR = {
   Draft: "#6b7280", Submitted: "#3b82f6", Confirmed: "#22c55e", Rejected: "#ef4444",
 };
 
-const inputStyle = {
+const inputStyle = () => ({
   background: T.bg, border: `1px solid ${T.border}`, color: T.text,
   borderRadius: 6, padding: "7px 10px", width: "100%", boxSizing: "border-box",
   fontFamily: T.body, fontSize: 12.5,
-};
+});
 
-const label = { display: "block", fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 5 };
+const label = () => ({ display: "block", fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 5 });
 
 const TestToolsPage = ({ navigate }) => {
   const [activeTab, setActiveTab] = useState("carrier"); // "carrier" | "generator" | …
@@ -413,47 +413,47 @@ const TestToolsPage = ({ navigate }) => {
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <VesselField vessel={vessel} onSelect={setVessel} />
               <div>
-                <label style={label}>Carrier</label>
+                <label style={label()}>Carrier</label>
                 <CarrierCombobox value={carrierCode} onChange={setCarrierCode} />
               </div>
               <div style={{ display: "flex", gap: 10 }}>
                 <div style={{ flex: 1 }}>
-                  <label style={label}>POL</label>
+                  <label style={label()}>POL</label>
                   <PortCombobox value={pol} onChange={setPol} placeholder="Search POL…" />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <label style={label}>POD</label>
+                  <label style={label()}>POD</label>
                   <PortCombobox value={pod} onChange={setPod} placeholder="Search POD…" />
                 </div>
               </div>
               <div style={{ display: "flex", gap: 10 }}>
                 <div style={{ flex: 1 }}>
-                  <label style={label}>ETD (estimated)</label>
-                  <input type="date" value={etd} onChange={e => setEtd(e.target.value)} style={inputStyle} />
+                  <label style={label()}>ETD (estimated)</label>
+                  <input type="date" value={etd} onChange={e => setEtd(e.target.value)} style={inputStyle()} />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <label style={label}>ATD (actual, optional)</label>
-                  <input type="date" value={atd} onChange={e => setAtd(e.target.value)} style={inputStyle} />
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 10 }}>
-                <div style={{ flex: 1 }}>
-                  <label style={label}>ETA (estimated)</label>
-                  <input type="date" value={eta} onChange={e => setEta(e.target.value)} style={inputStyle} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label style={label}>ATA (actual, optional)</label>
-                  <input type="date" value={ata} onChange={e => setAta(e.target.value)} style={inputStyle} />
+                  <label style={label()}>ATD (actual, optional)</label>
+                  <input type="date" value={atd} onChange={e => setAtd(e.target.value)} style={inputStyle()} />
                 </div>
               </div>
               <div style={{ display: "flex", gap: 10 }}>
                 <div style={{ flex: 1 }}>
-                  <label style={label}>Voyage (optional)</label>
-                  <input value={voyageNumber} onChange={e => setVoyageNumber(e.target.value)} style={inputStyle} />
+                  <label style={label()}>ETA (estimated)</label>
+                  <input type="date" value={eta} onChange={e => setEta(e.target.value)} style={inputStyle()} />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <label style={label}>Service (optional)</label>
-                  <input value={service} onChange={e => setService(e.target.value)} style={inputStyle} />
+                  <label style={label()}>ATA (actual, optional)</label>
+                  <input type="date" value={ata} onChange={e => setAta(e.target.value)} style={inputStyle()} />
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={label()}>Voyage (optional)</label>
+                  <input value={voyageNumber} onChange={e => setVoyageNumber(e.target.value)} style={inputStyle()} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={label()}>Service (optional)</label>
+                  <input value={service} onChange={e => setService(e.target.value)} style={inputStyle()} />
                 </div>
               </div>
 
@@ -497,14 +497,14 @@ const TestToolsPage = ({ navigate }) => {
                     gridTemplateColumns: "75px 75px 110px 115px 115px 1fr 85px 85px 26px",
                     gap: 6, alignItems: "center" }}>
                     <input value={row.pol} onChange={e => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, pol: e.target.value.toUpperCase() } : r))}
-                      placeholder="UNLOCODE" style={{ ...inputStyle, fontFamily: T.mono, fontSize: 11.5, padding: "5px 8px" }} />
+                      placeholder="UNLOCODE" style={{ ...inputStyle(), fontFamily: T.mono, fontSize: 11.5, padding: "5px 8px" }} />
                     <input value={row.pod} onChange={e => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, pod: e.target.value.toUpperCase() } : r))}
-                      placeholder="UNLOCODE" style={{ ...inputStyle, fontFamily: T.mono, fontSize: 11.5, padding: "5px 8px" }} />
+                      placeholder="UNLOCODE" style={{ ...inputStyle(), fontFamily: T.mono, fontSize: 11.5, padding: "5px 8px" }} />
                     <CarrierCombobox value={row.carrier} onChange={v => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, carrier: v } : r))} />
                     <input type="date" value={row.etd} onChange={e => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, etd: e.target.value } : r))}
-                      style={{ ...inputStyle, fontSize: 11.5, padding: "5px 8px" }} />
+                      style={{ ...inputStyle(), fontSize: 11.5, padding: "5px 8px" }} />
                     <input type="date" value={row.eta} onChange={e => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, eta: e.target.value } : r))}
-                      style={{ ...inputStyle, fontSize: 11.5, padding: "5px 8px" }} />
+                      style={{ ...inputStyle(), fontSize: 11.5, padding: "5px 8px" }} />
                     {row.vesselImo ? (
                       <div style={{ display: "flex", alignItems: "center", gap: 5, background: T.bg,
                         border: `1px solid ${T.accent}55`, borderRadius: 6, padding: "5px 7px", minWidth: 0 }}>
@@ -520,9 +520,9 @@ const TestToolsPage = ({ navigate }) => {
                         onSelect={v => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, vesselImo: v.imo, vesselName: v.name } : r))} />
                     )}
                     <input value={row.voyageNumber} onChange={e => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, voyageNumber: e.target.value } : r))}
-                      placeholder="Voyage" style={{ ...inputStyle, fontSize: 11.5, padding: "5px 8px" }} />
+                      placeholder="Voyage" style={{ ...inputStyle(), fontSize: 11.5, padding: "5px 8px" }} />
                     <input value={row.service} onChange={e => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, service: e.target.value } : r))}
-                      placeholder="Loop" style={{ ...inputStyle, fontSize: 11.5, padding: "5px 8px" }} />
+                      placeholder="Loop" style={{ ...inputStyle(), fontSize: 11.5, padding: "5px 8px" }} />
                     <button onClick={() => setLegRows(p => p.filter((_, ri) => ri !== i))}
                       title="Remove leg" style={{ background: "none", border: "none", cursor: "pointer",
                         color: T.textMuted, fontSize: 14 }}>✕</button>
@@ -709,22 +709,22 @@ const TestToolsPage = ({ navigate }) => {
                       textTransform: "uppercase", letterSpacing: ".06em" }}>Simulate Regulatory Response</div>
                     <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
                       <div style={{ flex: 1, minWidth: 220 }}>
-                        <label style={label}>
+                        <label style={label()}>
                           Confirmation number (optional — auto-generated if blank)
                         </label>
                         <input value={confNumInput} onChange={e => setConfNumInput(e.target.value)}
-                          style={{ ...inputStyle, fontFamily: T.mono, marginBottom: 8 }} />
+                          style={{ ...inputStyle(), fontFamily: T.mono, marginBottom: 8 }} />
                         <Btn size="sm" onClick={() => simulateFiling("accepted")} disabled={filingBusy}>
                           <IconCheck size={12} /> Simulate Accepted
                         </Btn>
                       </div>
                       <div style={{ flex: 1, minWidth: 220 }}>
-                        <label style={label}>
+                        <label style={label()}>
                           Rejection reason (optional)
                         </label>
                         <input value={rejReasonInput} onChange={e => setRejReasonInput(e.target.value)}
                           placeholder="Data did not pass regulatory validation…"
-                          style={{ ...inputStyle, marginBottom: 8 }} />
+                          style={{ ...inputStyle(), marginBottom: 8 }} />
                         <Btn size="sm" variant="danger" onClick={() => simulateFiling("rejected")} disabled={filingBusy}>
                           <IconClose size={12} /> Simulate Rejected
                         </Btn>
@@ -758,9 +758,9 @@ const TestToolsPage = ({ navigate }) => {
             <h2 style={{ fontFamily: T.head, fontSize: 16, fontWeight: 800, color: T.text, margin: "0 0 14px" }}>
               Search Shipping Instructions
             </h2>
-            <label style={label}>Status</label>
+            <label style={label()}>Status</label>
             <select value={siStatusFilter} onChange={e => setSiStatusFilter(e.target.value)}
-              style={{ ...inputStyle, marginBottom: 14 }}>
+              style={{ ...inputStyle(), marginBottom: 14 }}>
               {["Submitted", "Draft", "Confirmed", "Rejected", "All"].map(s => (
                 <option key={s} value={s}>{s}</option>
               ))}
@@ -818,31 +818,31 @@ const TestToolsPage = ({ navigate }) => {
                   padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display: "flex", gap: 24 }}>
                     <div>
-                      <div style={label}>Status</div>
+                      <div style={label()}>Status</div>
                       <div style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: SI_STATUS_COLOR[selectedSi.status] || T.text }}>
                         {selectedSi.status}
                       </div>
                     </div>
                     <div>
-                      <div style={label}>SI Cutoff</div>
+                      <div style={label()}>SI Cutoff</div>
                       <div style={{ fontFamily: T.mono, fontSize: 13, color: T.text }}>{selectedSi.siCutoff || "Not set"}</div>
                     </div>
                     {selectedSi.siReference && (
                       <div>
-                        <div style={label}>SI Reference</div>
+                        <div style={label()}>SI Reference</div>
                         <div style={{ fontFamily: T.mono, fontSize: 13, color: T.text }}>{selectedSi.siReference}</div>
                       </div>
                     )}
                   </div>
                   {selectedSi.specialInstructions && (
                     <div>
-                      <div style={label}>Special Instructions</div>
+                      <div style={label()}>Special Instructions</div>
                       <div style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{selectedSi.specialInstructions}</div>
                     </div>
                   )}
                   {selectedSi.status === "Rejected" && selectedSi.rejectionReason && (
                     <div>
-                      <div style={label}>Rejection Reason</div>
+                      <div style={label()}>Rejection Reason</div>
                       <div style={{ fontFamily: T.body, fontSize: 13, color: T.danger }}>{selectedSi.rejectionReason}</div>
                     </div>
                   )}
@@ -918,16 +918,16 @@ const TestToolsPage = ({ navigate }) => {
               </div>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                 <div style={{ flex: 1, minWidth: 120 }}>
-                  <label style={label}>IMO</label>
-                  <input value={staticImo} onChange={e => setStaticImo(e.target.value)} placeholder="9222568" style={{ ...inputStyle, fontFamily: T.mono }} />
+                  <label style={label()}>IMO</label>
+                  <input value={staticImo} onChange={e => setStaticImo(e.target.value)} placeholder="9222568" style={{ ...inputStyle(), fontFamily: T.mono }} />
                 </div>
                 <div style={{ flex: 1, minWidth: 120 }}>
-                  <label style={label}>MMSI</label>
-                  <input value={staticMmsi} onChange={e => setStaticMmsi(e.target.value)} placeholder="245473000" style={{ ...inputStyle, fontFamily: T.mono }} />
+                  <label style={label()}>MMSI</label>
+                  <input value={staticMmsi} onChange={e => setStaticMmsi(e.target.value)} placeholder="245473000" style={{ ...inputStyle(), fontFamily: T.mono }} />
                 </div>
                 <div style={{ flex: 2, minWidth: 180 }}>
-                  <label style={label}>Ship Name</label>
-                  <input value={staticName} onChange={e => setStaticName(e.target.value)} placeholder="EVER GIVEN" style={inputStyle} />
+                  <label style={label()}>Ship Name</label>
+                  <input value={staticName} onChange={e => setStaticName(e.target.value)} placeholder="EVER GIVEN" style={inputStyle()} />
                 </div>
               </div>
               <Btn size="sm" onClick={injectStatic} disabled={aisBusy} style={{ marginTop: 12 }}>
@@ -999,9 +999,9 @@ const TestToolsPage = ({ navigate }) => {
               <Btn size="sm" variant="secondary" onClick={copyReceiverUrl}>Copy</Btn>
             </div>
             <div>
-              <label style={label}>Verify signature with secret</label>
+              <label style={label()}>Verify signature with secret</label>
               <input value={verifySecret} onChange={e => setVerifySecret(e.target.value)}
-                placeholder="the office's configured signing secret" style={inputStyle} />
+                placeholder="the office's configured signing secret" style={inputStyle()} />
             </div>
             <Btn size="sm" variant="secondary" onClick={clearReceived} style={{ marginTop: 12, alignSelf: "flex-start" }}>
               Clear received

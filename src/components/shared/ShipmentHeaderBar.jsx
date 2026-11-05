@@ -71,7 +71,7 @@ const IconTile = ({ items }) => {
   return (
     <div id="shphdr-icontile" data-testid="shipment-detail-header-icon-tile" style={{
       display: "grid", gridTemplateColumns: `repeat(${cols}, 26px)`, gridAutoRows: "26px", gap: 3,
-      background: "rgba(255,255,255,0.03)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10,
+      background: HZ.tint, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10,
       padding: 4, flexShrink: 0,
     }}>
       <style>{`@keyframes shb-spin { to { transform: rotate(360deg); } }`}</style>
@@ -400,7 +400,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
           const r = screening?.result;
           const isHit = r === "HIT";
           const overridden = screening?.overriddenAt;
-          const bg = !r ? "rgba(255,255,255,0.06)" : isHit ? HZ.critBg : HZ.goodBg;
+          const bg = !r ? HZ.neutralBg : isHit ? HZ.critBg : HZ.goodBg;
           const color = !r ? HZ.textMuted : isHit ? HZ.crit : HZ.good;
           const label = !r ? "UNSCREENED" : isHit
             ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconWarning size={11} />Compliance review required</span>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { T } from "../../tokens";
-import { inputBase } from "../primitives/Form";
+import { inputBase, FIELD_CLASS } from "../primitives/Form";
 import { api } from "../../api";
 
 // ─── Shared: Country Combobox ────────────────────────────────────────────────
@@ -45,7 +45,7 @@ const CountryCombobox = ({ onSelect, placeholder = "Search countries…", exclud
   return (
     <div ref={box} style={{ position: "relative" }}>
       <div style={{ position: "relative" }}>
-        <input
+        <input className={FIELD_CLASS}
           value={query}
           onChange={e => search(e.target.value)}
           onFocus={() => results.length > 0 && setOpen(true)}
@@ -60,7 +60,7 @@ const CountryCombobox = ({ onSelect, placeholder = "Search countries…", exclud
       {open && results.length > 0 && (
         <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 300,
           background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
-          boxShadow: "0 12px 32px rgba(0,0,0,.5)", overflow: "hidden", maxHeight: 240, overflowY: "auto" }}>
+          boxShadow: T.hz ? T.popoverShadow : "0 12px 32px rgba(0,0,0,.5)", overflow: "hidden", maxHeight: 240, overflowY: "auto" }}>
           {results.map(c => (
             <button key={c.iso2} onClick={() => select(c)}
               style={{ display: "flex", alignItems: "center", gap: 10, width: "100%",

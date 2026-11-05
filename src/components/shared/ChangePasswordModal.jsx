@@ -8,11 +8,11 @@ import { api } from "../../api";
 import { toast } from "../../toast";
 
 const fieldStyle = { marginBottom: 16 };
-const labelStyle = { display: "block", fontFamily: T.body, fontSize: 11, fontWeight: 600,
-  color: T.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 };
-const inputStyle = { background: T.bg, border: `1px solid ${T.border}`, color: T.text,
+const labelStyle = () => ({ display: "block", fontFamily: T.body, fontSize: 11, fontWeight: 600,
+  color: T.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 });
+const inputStyle = () => ({ background: T.bg, border: `1px solid ${T.border}`, color: T.text,
   borderRadius: 6, padding: "8px 12px", outline: "none", width: "100%", boxSizing: "border-box",
-  fontFamily: T.body, fontSize: 14 };
+  fontFamily: T.body, fontSize: 14 });
 
 // forced=true: password is past the expiry policy — no dismiss without either
 // completing the change or signing out (onForceLogout).
@@ -53,22 +53,22 @@ const ChangePasswordModal = ({ forced = false, onClose, onSuccess, onForceLogout
       )}
 
       <div style={fieldStyle}>
-        <label style={labelStyle}>Current Password</label>
-        <input type="password" autoComplete="current-password" style={inputStyle}
+        <label style={labelStyle()}>Current Password</label>
+        <input type="password" autoComplete="current-password" style={inputStyle()}
           value={currentPassword} onChange={e => setCurrentPassword(e.target.value)}
           onKeyDown={e => e.key === "Enter" && submit()} />
       </div>
 
       <div style={fieldStyle}>
-        <label style={labelStyle}>New Password</label>
-        <input type="password" autoComplete="new-password" style={inputStyle}
+        <label style={labelStyle()}>New Password</label>
+        <input type="password" autoComplete="new-password" style={inputStyle()}
           value={newPassword} onChange={e => setNewPassword(e.target.value)} />
         <PasswordStrengthMeter password={newPassword} />
       </div>
 
       <div style={fieldStyle}>
-        <label style={labelStyle}>Confirm New Password</label>
-        <input type="password" autoComplete="new-password" style={{ ...inputStyle,
+        <label style={labelStyle()}>Confirm New Password</label>
+        <input type="password" autoComplete="new-password" style={{ ...inputStyle(),
           ...(confirmMismatch ? { borderColor: T.danger } : {}) }}
           value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
           onKeyDown={e => e.key === "Enter" && submit()} />

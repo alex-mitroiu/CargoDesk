@@ -35,9 +35,9 @@ const PLAN_LABEL_BY_TYPE = { Loading: "Loading Plan", Unloading: "Unloading Plan
 const RoutingCard = ({ serviceType, leg }) => {
   const isMerchant = leg?.movementType === "Merchant's Haulage";
   return (
-    <div id="svcplan-routing-card" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+    <div id="svcplan-routing-card" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: T.cardShadow,
       padding: "16px 18px", marginBottom: 18 }}>
-      <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 800, color: T.text, marginBottom: 12 }}>
+      <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 12 }}>
         Routing
       </div>
       {!leg ? (
@@ -108,7 +108,7 @@ const LoadingPlanRow = ({ line, canEdit, saving, onSave, isMerchantHaulage, onOp
   return (
     <tr id={`svcplan-row-${line.containerId}`} style={{ borderBottom: `1px solid ${T.border}` }}>
       <td style={{ padding: "8px 10px" }}>
-        <span style={{ fontFamily: T.mono, fontWeight: 700, color: T.accent, fontSize: 12.5 }}>
+        <span style={{ fontFamily: T.mono, fontWeight: 600, color: T.text, fontSize: 12.5 }}>
           {line.containerNumber || "TBC"}
         </span>
       </td>
@@ -287,7 +287,7 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
     return (
       <div id="svcplan-notfound" style={{ maxWidth: 700, margin: "60px auto", textAlign: "center" }}>
         <div style={{ marginBottom: 12, color: T.textMuted }}><IconFolder size={40} /></div>
-        <div style={{ fontFamily: T.head, fontSize: 18, fontWeight: 800, color: T.text, marginBottom: 8 }}>
+        <div style={{ fontFamily: T.head, fontSize: 17, fontWeight: 700, color: T.text, marginBottom: 8 }}>
           No {side} {serviceType} service found
         </div>
         <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
@@ -301,11 +301,11 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
     <div id="svcplan-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
 
       {/* Header / service summary */}
-      <div id="svcplan-header" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+      <div id="svcplan-header" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: T.cardShadow,
         padding: "16px 18px", marginBottom: 18, display: "flex", alignItems: "center",
         justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div>
-          <div style={{ fontFamily: T.head, fontSize: 18, fontWeight: 800, color: T.text }}>
+          <div style={{ fontFamily: T.head, fontSize: 17, fontWeight: 700, color: T.text }}>
             {side} · {serviceType} Service
           </div>
           <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginTop: 3 }}>
@@ -321,9 +321,9 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
       {isHaulageType && <RoutingCard serviceType={serviceType} leg={routingLeg} />}
 
       {/* Per-container loading plan */}
-      <div id="svcplan-table-section" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 18 }}>
+      <div id="svcplan-table-section" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: T.cardShadow, overflow: "hidden", marginBottom: 18 }}>
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`,
-          fontFamily: T.head, fontSize: 14, fontWeight: 800, color: T.text }}>
+          fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text }}>
           Container {planLabel}
         </div>
         {shipmentContainers.length === 0 ? (
@@ -361,8 +361,8 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
       </div>
 
       {/* Carrier attachment + produced document */}
-      <div id="svcplan-doc-section" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "16px 18px" }}>
-        <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 800, color: T.text, marginBottom: 12 }}>
+      <div id="svcplan-doc-section" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: T.cardShadow, padding: "16px 18px" }}>
+        <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 12 }}>
           {planLabel} Document
         </div>
 

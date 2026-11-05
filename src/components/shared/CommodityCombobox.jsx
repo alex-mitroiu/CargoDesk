@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { T } from "../../tokens";
-import { inputBase } from "../primitives/Form";
+import { inputBase, FIELD_CLASS } from "../primitives/Form";
 import { Modal } from "../primitives/Modal";
 import Pagination from "../primitives/Pagination";
 import Btn from "../primitives/Btn";
@@ -79,7 +79,7 @@ export const CommodityPickerModal = ({ onSelect, onClose }) => {
 
         {/* Search + grade filters */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-          <input
+          <input className={FIELD_CLASS}
             ref={searchRef}
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -268,7 +268,7 @@ const CommodityCombobox = ({ value, onChange, placeholder = "Search by code or d
       ) : (
         <>
           <div style={{ position: "relative" }}>
-            <input ref={inputRef} value={query} onChange={e => search(e.target.value)}
+            <input className={FIELD_CLASS} ref={inputRef} value={query} onChange={e => search(e.target.value)}
               onFocus={() => { if (results.length > 0) { computeDropPos(); setOpen(true); } }}
               onKeyDown={handleKeyDown}
               placeholder={placeholder} autoComplete="off"
@@ -296,7 +296,7 @@ const CommodityCombobox = ({ value, onChange, placeholder = "Search by code or d
               position: "fixed",
               top: dropPos.top, left: dropPos.left, width: dropPos.width,
               zIndex: 1100, background: T.surface, border: `1px solid ${T.border}`,
-              borderRadius: 10, boxShadow: "0 12px 32px rgba(0,0,0,.4)",
+              borderRadius: 10, boxShadow: T.hz ? T.popoverShadow : "0 12px 32px rgba(0,0,0,.4)",
               overflow: "hidden", maxHeight: 280, overflowY: "auto",
             }}>
               {results.map((c, idx) => (

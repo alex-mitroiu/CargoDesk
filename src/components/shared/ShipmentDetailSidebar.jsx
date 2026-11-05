@@ -36,6 +36,9 @@ const safeGet = (key, fallback) => {
   try { const v = JSON.parse(localStorage.getItem(key)); return v == null ? fallback : v; } catch { return fallback; }
 };
 const safeSet = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} };
+// Height of App.jsx's fixed footer, which is drawn over the bottom of this full-height sidebar
+// (the » Advance bar stops the same 36px short of the bottom).
+const APP_FOOTER_H = 36;
 
 const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, currentPage = "detail",
   appSettings = {}, onSidebarOrderSaved }) => {
@@ -277,7 +280,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
     ACTIVE:    { bg: HZ.goodBg, color: HZ.good },
     COMPLETED: { bg: HZ.infoBg, color: HZ.infoPillText },
     CANCELLED: { bg: HZ.critBg, color: HZ.crit },
-    DRAFT:     { bg: "rgba(255,255,255,0.06)", color: HZ.textMuted },
+    DRAFT:     { bg: HZ.neutralBg, color: HZ.textMuted },
   };
   const sc = STATUS_COLORS[shipment.status] || STATUS_COLORS.DRAFT;
 
@@ -442,7 +445,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
         <div style={{ fontFamily: HZ_DISPLAY, fontSize: 17, fontWeight: 800, color: HZ.text,
           display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ width: 26, height: 26, borderRadius: 8, background: HZ.gradCyan,
-            display: "flex", alignItems: "center", justifyContent: "center", color: "#04121c", flexShrink: 0 }}>
+            display: "flex", alignItems: "center", justifyContent: "center", color: HZ.chipText, flexShrink: 0 }}>
             <IconAnchor size={14} />
           </span>
           {!railCollapsed && "CargoDesk"}
@@ -494,8 +497,8 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
           </div>
           {vitalsFlyoutOpen && vitalsFlyoutPos && (
             <div style={{ position: "fixed", left: vitalsFlyoutPos.x, top: vitalsFlyoutPos.y, width: 220,
-              background: "#111729", border: `1px solid ${HZ.borderStrong}`, borderRadius: 10, padding: 12,
-              zIndex: 200, boxShadow: "0 20px 45px -15px rgba(0,0,0,.7)",
+              background: HZ.surfaceSolid, border: `1px solid ${HZ.borderStrong}`, borderRadius: 10, padding: 12,
+              zIndex: 200, boxShadow: HZ.popoverShadow,
               display: "flex", flexDirection: "column", gap: 7 }}>
               {vitalsBody}
             </div>
@@ -542,7 +545,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
                   onDragOver={e => { e.preventDefault(); setDragOverIdx(idx); }}
                   style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px",
                     borderRadius: 7, marginBottom: 3, cursor: "grab",
-                    background: dragOverIdx === idx ? HZ.cyanBg : "rgba(255,255,255,0.03)",
+                    background: dragOverIdx === idx ? HZ.cyanBg : HZ.tint,
                     border: `1px solid ${dragOverIdx === idx ? `${HZ.cyan}55` : HZ.border}` }}>
                   <span style={{ color: HZ.textFaint, fontSize: 13 }}>⠿</span>
                   <span style={{ width: 16, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -587,7 +590,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
                 marginBottom: 1,
               }}
               onMouseEnter={e => {
-                if (!selected) e.currentTarget.style.background = "rgba(255,255,255,0.04)";
+                if (!selected) e.currentTarget.style.background = HZ.hoverBg;
                 if (railCollapsed) {
                   const r = e.currentTarget.getBoundingClientRect();
                   setHoverTip({ label, badge, x: r.right + 8, y: r.top });
@@ -605,7 +608,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
                   display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
                   opacity: selected ? 1 : .85,
                   background: selected ? HZ.gradCyan : "transparent",
-                  color: selected ? "#04121c" : "inherit",
+                  color: selected ? HZ.chipText : "inherit",
                 }}>
                   <AnyIcon icon={icon} size={13} />
                 </span>
@@ -750,9 +753,10 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
       </nav>
 
       {/* Footer — icon-rail collapse toggle. Hidden mid-reorder so there's no path to a
-          reordering-while-rail-collapsed state, which the drag rows aren't designed for. */}
+          reordering-while-rail-collapsed state, which the drag rows aren't designed for. The bottom
+          padding keeps the button above the app's fixed footer, which would cover it otherwise. */}
       {!reorderMode && (
-        <div style={{ borderTop: `1px solid ${HZ.border}`, padding: 10, flexShrink: 0 }}>
+        <div style={{ borderTop: `1px solid ${HZ.border}`, padding: `10px 10px ${10 + APP_FOOTER_H}px`, flexShrink: 0 }}>
           <button onClick={() => { toggleRail(); setVitalsFlyoutOpen(false); setHoverTip(null); }}
             title={railCollapsed ? "Expand sidebar" : "Collapse to icon rail"}
             style={{ display: "flex", alignItems: "center", gap: 8, width: "100%",
@@ -769,10 +773,10 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
 
       {/* Rail-mode hover tooltip — floating, follows whichever row is currently hovered. */}
       {hoverTip && (
-        <div style={{ position: "fixed", left: hoverTip.x, top: hoverTip.y, background: "#151b2e",
+        <div style={{ position: "fixed", left: hoverTip.x, top: hoverTip.y, background: HZ.surfaceSolid,
           border: `1px solid ${HZ.borderStrong}`, color: HZ.text, fontFamily: HZ_BODY, fontSize: 11.5,
           padding: "6px 10px", borderRadius: 7, maxWidth: 220, lineHeight: 1.4, zIndex: 200,
-          boxShadow: "0 12px 30px -10px rgba(0,0,0,.6)", pointerEvents: "none" }}>
+          boxShadow: HZ.popoverShadow, pointerEvents: "none" }}>
           {hoverTip.label}{hoverTip.badge ? ` — ${hoverTip.badge}` : ""}
         </div>
       )}

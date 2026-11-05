@@ -1052,7 +1052,7 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                 <div style={{ width: 28, height: 28, borderRadius: "50%",
                   background: HZ.gradCyan, display: "flex", alignItems: "center", justifyContent: "center",
-                  fontFamily: HZ_DISPLAY, fontSize: 12, fontWeight: 800, color: "#06111f", flexShrink: 0 }}>
+                  fontFamily: HZ_DISPLAY, fontSize: 12, fontWeight: 800, color: HZ.chipText, flexShrink: 0 }}>
                   {m.author.charAt(0).toUpperCase()}
                 </div>
                 <div>
@@ -1103,7 +1103,7 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
             </span>
             <button onClick={handlePost} disabled={!valid || posting}
               style={{ background: valid ? HZ.gradCyan : HZ.border, border: "none", borderRadius: 7,
-                color: valid ? "#06111f" : HZ.textMuted, cursor: valid ? "pointer" : "default",
+                color: valid ? HZ.chipText : HZ.textMuted, cursor: valid ? "pointer" : "default",
                 padding: "8px 20px", fontFamily: HZ_BODY, fontSize: 13, fontWeight: 700,
                 transition: "background .15s" }}>
               {posting ? "Posting…" : "Post"}
@@ -1120,11 +1120,11 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
 
 // ─── Compliance Modal ─────────────────────────────────────────────────────────
 
-const RESULT_STYLE = {
+const RESULT_STYLE = () => ({
   HIT:    { color: HZ.crit, bg: HZ.critBg, border: `${HZ.crit}44` },
   CLEAR:  { color: HZ.good, bg: HZ.goodBg, border: `${HZ.good}44` },
   OVERRIDE: { color: HZ.warn, bg: HZ.warnBg, border: `${HZ.warn}44` },
-};
+});
 
 export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
   const [busy,           setBusy]           = useState(false);
@@ -1133,7 +1133,7 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
   const [overrideReason, setOverrideReason] = useState("");
 
   const effectiveResult = screening?.result === "CLEAR" && screening?.overriddenAt ? "OVERRIDE" : screening?.result;
-  const rs = RESULT_STYLE[effectiveResult] || RESULT_STYLE.CLEAR;
+  const rs = RESULT_STYLE()[effectiveResult] || RESULT_STYLE().CLEAR;
 
   // Organization Model Enhancement Epic 3 — this was already the app's one unified compliance
   // view (reachable from every shipment sub-page via the persistent ShipmentHeaderBar), just
@@ -2456,7 +2456,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
                       background: state === 'upcoming' ? HZ.surface : color,
                       border: `2px solid ${color}`,
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      color: state === 'upcoming' ? HZ.textMuted : "#06111f",
+                      color: state === 'upcoming' ? HZ.textMuted : HZ.chipText,
                       fontSize: state === 'completed' || state === 'overdue' ? 12 : 14,
                       fontWeight: 700, flexShrink: 0,
                       cursor: state !== 'completed' ? "pointer" : "default",
@@ -2633,7 +2633,7 @@ const ContainerEventsStepper = ({ container }) => {
                 background: state === 'upcoming' ? HZ.surface : color,
                 border: `2px solid ${color}`,
                 display: "flex", alignItems: "center", justifyContent: "center",
-                color: state === 'upcoming' ? HZ.textMuted : "#06111f",
+                color: state === 'upcoming' ? HZ.textMuted : HZ.chipText,
                 fontSize: 10, fontWeight: 700, lineHeight: 1,
                 boxShadow: state === 'current' ? `0 0 0 4px ${color}22` : "none",
               }}>
@@ -3953,8 +3953,8 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
 
 // ─── Related Tickets Panel ────────────────────────────────────────────────────
 
-const PRIORITY_COLOR = { High: HZ.crit, Medium: HZ.warn, Low: HZ.textMuted, Critical: HZ.amber2 };
-const STATUS_DOT = { Done: HZ.good, "In Progress": HZ.cyan, Ready: HZ.textMuted, Blocked: HZ.crit };
+const PRIORITY_COLOR = () => ({ High: HZ.crit, Medium: HZ.warn, Low: HZ.textMuted, Critical: HZ.amber2 });
+const STATUS_DOT = () => ({ Done: HZ.good, "In Progress": HZ.cyan, Ready: HZ.textMuted, Blocked: HZ.crit });
 
 // embedded=true skips the outer card + "Related Tickets" header (used by TicketsDrawer,
 // which supplies its own drawer header/title) and renders just the list body — same
@@ -3991,7 +3991,7 @@ export const RelatedTicketsPanel = ({ shipmentId, embedded = false }) => {
               padding: "9px 14px", background: HZ.bg,
               border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8 }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-                background: STATUS_DOT[t.status] || HZ.textMuted }} />
+                background: STATUS_DOT()[t.status] || HZ.textMuted }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text,
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -4008,7 +4008,7 @@ export const RelatedTicketsPanel = ({ shipmentId, embedded = false }) => {
                 </div>
               </div>
               <span style={{ fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600, flexShrink: 0,
-                color: PRIORITY_COLOR[t.priority] || HZ.textMuted }}>
+                color: PRIORITY_COLOR()[t.priority] || HZ.textMuted }}>
                 {t.priority}
               </span>
             </div>

@@ -15,7 +15,7 @@ import { IconPencil, IconUnlock, IconLock, IconClose, IconRefresh } from "./prim
 
 const ALL_ROLES = ["admin", "operator", "occ_bk", "occ_ay", "ccl_co", "trade_ay", "trade_manager", "sales", "viewer"];
 const ROLE_RANK = { viewer: 0, occ_bk: 1, occ_ay: 1, ccl_co: 1, trade_ay: 1, trade_manager: 1, sales: 1, operator: 2, admin: 3 };
-const ROLE_COLORS = {
+const ROLE_COLORS = () => ({
   admin:         { bg: "#3b82f618", text: "#3b82f6",  border: "#3b82f644" },
   operator:      { bg: "#10b98118", text: "#10b981",  border: "#10b98144" },
   occ_bk:        { bg: "#f59e0b18", text: "#f59e0b",  border: "#f59e0b44" },
@@ -25,7 +25,7 @@ const ROLE_COLORS = {
   trade_manager: { bg: "#8b5cf618", text: "#8b5cf6",  border: "#8b5cf644" },
   sales:         { bg: "#ec489918", text: "#ec4899",  border: "#ec489944" },
   viewer:        { bg: T.border + "30", text: T.textMuted, border: T.border },
-};
+});
 const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", occ_ay: "OCC/AY", ccl_co: "CCL/CO", trade_ay: "Trade/AY", trade_manager: "Trade Manager", sales: "Sales", viewer: "Viewer" };
 const ROLE_DESCRIPTIONS = {
   admin:         "Full system access including user management",
@@ -69,7 +69,7 @@ const FieldLabel = ({ children, required }) => (
 );
 
 const RoleBadge = ({ role }) => {
-  const c = ROLE_COLORS[role] || ROLE_COLORS.viewer;
+  const c = ROLE_COLORS()[role] || ROLE_COLORS().viewer;
   return (
     <span style={{
       display: "inline-block", padding: "2px 8px", borderRadius: 20,
@@ -109,7 +109,7 @@ const ConfigureRolesModal = ({ user, onSave, onClose }) => {
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {ALL_ROLES.map((role, i) => {
           const active = selectedRoles.includes(role);
-          const c = ROLE_COLORS[role];
+          const c = ROLE_COLORS()[role];
           return (
             <div key={role} onClick={() => toggle(role)} style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -783,7 +783,7 @@ const UserConfigPanel = ({ user, onRolesConfigure }) => {
           borderBottom: `1px solid ${T.border}`, minWidth: 640 }}>
           {(user.roles || []).map(role => {
             const isActive = activeRole === role;
-            const c = ROLE_COLORS[role] || ROLE_COLORS.viewer;
+            const c = ROLE_COLORS()[role] || ROLE_COLORS().viewer;
             return (
               <button key={role} data-testid={`role-tab-${role}`} onClick={() => setActiveRole(role)} style={{
                 padding: "7px 16px", borderRadius: "8px 8px 0 0", cursor: "pointer",
@@ -1047,7 +1047,7 @@ const UserFormModal = ({ user: existing, onSave, onClose }) => {
           <div style={{ display: "flex", gap: 7 }}>
             {ALL_ROLES.map(role => {
               const active = roles.includes(role);
-              const c = ROLE_COLORS[role];
+              const c = ROLE_COLORS()[role];
               return (
                 <button key={role} onClick={() => toggle(role)} style={{
                   flex: 1, padding: "8px 6px", borderRadius: 8, cursor: "pointer", textAlign: "center",

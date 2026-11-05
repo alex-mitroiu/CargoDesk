@@ -146,7 +146,7 @@ const ShipmentHistoryPage = ({ shipment }) => {
             <button key={r} type="button" onClick={() => setDateRange(r)}
               style={{ fontFamily: HZ_BODY, fontSize: 11, padding: "4px 10px",
                 background: dateRange === r ? HZ.cyan : "transparent",
-                color: dateRange === r ? "#06111f" : HZ.textMuted,
+                color: dateRange === r ? HZ.chipText : HZ.textMuted,
                 border: "none", borderRight: idx < 2 ? `1px solid ${HZ.border}` : "none", cursor: "pointer" }}>
               {label}
             </button>

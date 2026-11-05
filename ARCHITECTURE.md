@@ -383,31 +383,57 @@ App.jsx
 
 ### Design token system
 
-Unchanged in shape from the last review — `T.surface`, `T.bg`, `T.text`, `T.accent`, `T.head`,
-`T.body`, `T.mono`, etc., all JavaScript strings applied via `style={{ ... }}`, mutated in place
-by `applyTheme(isDark)`. No CSS variables.
+`T.surface`, `T.bg`, `T.text`, `T.accent`, `T.head`, `T.body`, `T.mono`, etc., all JavaScript
+strings applied via `style={{ ... }}`, mutated in place by `applyTheme(isDark, horizon)`.
+
+**`T` has two flavours since 2026-11-05** (step 2 of the Trade Horizon style check, approved mockup
+https://claude.ai/code/artifact/ea0e96f7-7c88-4b82-9d67-bf6e8edb2fef). Classic is `DARK_THEME` /
+`LIGHT_THEME`; Trade Horizon is `HZ_DARK_T` / `HZ_LIGHT_T`, the same keys filled from the HZ palette.
+`App.jsx` computes `horizonPage` (a shipment's own pages, the Dashboard, and Home while it shows the
+Command Center) in its render body and calls `applyTheme(isDark, horizonPage)` before anything below it
+renders. The shared building blocks (Btn, Modal, the `Form.jsx` fields, DatePicker, the comboboxes,
+Badge, Spinner, the toasts), every classic piece on that page, the top bar, the footer and the left nav
+therefore draw in Trade Horizon there, and classic everywhere else; signed-out pages are always classic.
+Rules that keep it working:
+
+- **Opaque hex only.** Code appends alpha suffixes (`${T.border}55`), so HZ's translucent border and
+  hover are pre-blended onto its surface in the HZ flavours.
+- **Keys every flavour carries:** `hz` (primitives read it for shape: radius, weight, the bordered
+  close button), `textFaint` (faint text; never `T.border` as text), `neutralBg`, `successText` /
+  `infoText` / `purpleText` (pill text), `cardShadow`, `popoverShadow`, `backdrop`, `ring`. The classic
+  values reproduce the old look exactly, so classic pages did not change.
+- **Read `T` at render time.** A module-level style object freezes the flavour that was in `T` at load
+  (classic dark), which is now wrong on every Trade Horizon page, not only in light mode. Make it a
+  function, as for `HZ`.
+- **One CSS rule.** Inline styles can't express `:focus`, so `applyTheme` injects one style element
+  (`cd-field-style`): on `body.cd-hz`, an element with the `cd-field` class (`Form.jsx` `FIELD_CLASS`, on
+  the fields and the combobox inputs) gets the cyan focus ring and a faint placeholder, from the CSS
+  variables `--cd-accent`, `--cd-ring` and `--cd-faint`. Nothing else uses CSS variables.
 
 #### Trade Horizon: a second, page-scoped token set with its own light theme (v0.91.3–v0.91.7)
 
 The Dashboard, Command Center and the whole Shipment Details experience use a distinct visual
-language, "Trade Horizon" — glass cards over a gradient ground — that deliberately does **not**
-live in `src/tokens.js`; it is page-scoped so the rest of the app's classic look is untouched.
+language, "Trade Horizon" — glass cards over a gradient ground. Its own `HZ` objects (below) do not
+live in `src/tokens.js`; they are page-scoped so the rest of the app's classic look is untouched. The
+shared pieces those pages also render follow through `T`'s Trade Horizon flavour (see above).
 **The restyle reached every remaining Shipment Details sub-page in v0.91.7** ("Landfall") — Cargo
 and History gained a stat strip above a real `<table>` (replacing Cargo's old sidebar tree),
 Involved Offices flattened its 3-level office-card nesting to one card per side (Manager/Line
 Agent inline, a Your Side/Read-only badge wired to §8.26's `myOfficeSide`), Export/Import Services
 got the same Export=cyan/Import=violet treatment, and Shipping Instructions/Documents/Carrier
 Booking (Details+Review)/Customs Filing (Details+Review) — forms and workflows rather than lists —
-took a straight token migration in their existing layout. `SailingPickerModal` is the one
-deliberate holdout, left on the classic theme since it's shared with the New Shipment form
-(explicitly out of scope); migrating it would move the classic/Trade-Horizon seam, not remove it.
+took a straight token migration in their existing layout. `SailingPickerModal` was the one
+deliberate holdout, since it's shared with the New Shipment form (explicitly out of scope); since
+`T`'s Trade Horizon flavour (2026-11-05) it draws in Trade Horizon on a shipment page and stays classic
+on the New Shipment form, without any change of its own. The New/Edit Shipment form and the Shipments
+list stay classic (decided again 2026-11-05).
 It has its own token object, `HZ`, defined twice as `HZ_DARK` / `HZ_LIGHT`:
 
 | Surface | Where the tokens live | Swap function |
 |---|---|---|
 | Shipment Details (and everything importing `shipmentDetailTheme.js`) | `src/pages/shipments/shipmentDetailTheme.js` | `applyHzTheme(dark)` |
 | Dashboard | `src/pages/DashboardPage.jsx` (its own local `HZ`) | `applyDashboardHzTheme(dark)` |
-| Command Center | none — follows `isDark` and falls back to the classic `T` in light mode | — |
+| Command Center | module-level `let` palette in `CommandCenterView.jsx`, synced each render from `isDark`: dark uses its own values, light reads `T` (Trade Horizon light on that page since 2026-11-05) plus `LIGHT_STATUS` for its status colours | — |
 
 Each swap function does `Object.assign(HZ, dark ? HZ_DARK : HZ_LIGHT)` — the same mutate-in-place
 idiom as `T`/`applyTheme`, and for the same reason: components read `HZ.x` at render time, so

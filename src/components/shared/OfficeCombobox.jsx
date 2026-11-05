@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { T } from "../../tokens";
-import { inputBase } from "../primitives/Form";
+import { inputBase, FIELD_CLASS } from "../primitives/Form";
 import { IconSearch } from "../primitives/Icon";
 
 // ─── OfficeCombobox ─────────────────────────────────────────────────────────
@@ -145,7 +145,7 @@ const OfficeCombobox = ({ offices, value, onChange, placeholder = "Search office
         // ── Search input ─────────────────────────────────────────────────────
         <>
           <div style={{ position: "relative" }}>
-            <input
+            <input className={FIELD_CLASS}
               ref={inputRef}
               value={query}
               onChange={e => { setQuery(e.target.value); openDrop(); }}
@@ -166,7 +166,7 @@ const OfficeCombobox = ({ offices, value, onChange, placeholder = "Search office
             <div ref={dropRef} style={{
               ...dropStyle,
               background: T.surface, border: `1px solid ${T.border}`,
-              borderRadius: 10, boxShadow: "0 12px 32px rgba(0,0,0,.4)",
+              borderRadius: 10, boxShadow: T.hz ? T.popoverShadow : "0 12px 32px rgba(0,0,0,.4)",
               overflow: "hidden", maxHeight: 260, overflowY: "auto",
             }}>
               {results.length === 0 ? (

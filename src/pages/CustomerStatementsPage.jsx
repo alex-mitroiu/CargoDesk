@@ -39,11 +39,11 @@ const VatChip = ({ line: l }) => {
   );
 };
 
-const th = { fontFamily: T.body, fontSize: 9.5, fontWeight: 700, color: T.textMuted, textTransform: "uppercase",
-  letterSpacing: ".07em", textAlign: "left", padding: "8px 12px", borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" };
-const td = { padding: "8px 12px", borderBottom: `1px solid ${T.border}22`, fontFamily: T.body, fontSize: 12.5, color: T.text };
-const tdNum = { ...td, textAlign: "right", fontFamily: T.mono, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" };
-const tdShip = { ...td, fontFamily: T.mono, fontSize: 11.5, color: T.textMuted, whiteSpace: "nowrap" };
+const th = () => ({ fontFamily: T.body, fontSize: 9.5, fontWeight: 700, color: T.textMuted, textTransform: "uppercase",
+  letterSpacing: ".07em", textAlign: "left", padding: "8px 12px", borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" });
+const td = () => ({ padding: "8px 12px", borderBottom: `1px solid ${T.border}22`, fontFamily: T.body, fontSize: 12.5, color: T.text });
+const tdNum = () => ({ ...td(), textAlign: "right", fontFamily: T.mono, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" });
+const tdShip = () => ({ ...td(), fontFamily: T.mono, fontSize: 11.5, color: T.textMuted, whiteSpace: "nowrap" });
 
 // Gross, VAT, Net — biggest first.
 const Totals = ({ gross, vat, net, currency }) => (
@@ -176,20 +176,20 @@ const GenerateStatementModal = ({ onClose, onGenerated }) => {
             <div style={{ overflowX: "auto", maxHeight: 300, overflowY: "auto" }}>
               <table data-testid="statement-eligible-lines" style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
                 <thead><tr>
-                  <th style={{ ...th, width: 34 }} /><th style={th}>Shipment</th><th style={th}>Charge</th><th style={th}>VAT</th>
-                  <th style={{ ...th, textAlign: "right" }}>Gross</th><th style={{ ...th, textAlign: "right" }}>VAT</th><th style={{ ...th, textAlign: "right" }}>Net</th>
+                  <th style={{ ...th(), width: 34 }} /><th style={th()}>Shipment</th><th style={th()}>Charge</th><th style={th()}>VAT</th>
+                  <th style={{ ...th(), textAlign: "right" }}>Gross</th><th style={{ ...th(), textAlign: "right" }}>VAT</th><th style={{ ...th(), textAlign: "right" }}>Net</th>
                 </tr></thead>
                 <tbody>{entityLines.map(r => {
                   const on = selected.has(r.id);
                   return (
                     <tr key={r.id} style={{ background: on ? T.accentBg : "transparent" }}>
-                      <td style={td}><input type="checkbox" checked={on} onChange={() => toggle(r.id)} aria-label={`${r.chargeCode} on ${r.shipmentId}`} style={{ accentColor: T.accent }} /></td>
-                      <td style={tdShip}>{r.shipmentId}</td>
-                      <td style={td}>{r.chargeCode}</td>
-                      <td style={td}><VatChip line={r} /></td>
-                      <td style={tdNum}>{fmtCurr(r.amount + (r.vatAmount || 0), r.currency)}</td>
-                      <td style={tdNum}>{r.vatAmount ? fmtCurr(r.vatAmount, r.currency) : "—"}</td>
-                      <td style={tdNum}>{fmtCurr(r.amount, r.currency)}</td>
+                      <td style={td()}><input type="checkbox" checked={on} onChange={() => toggle(r.id)} aria-label={`${r.chargeCode} on ${r.shipmentId}`} style={{ accentColor: T.accent }} /></td>
+                      <td style={tdShip()}>{r.shipmentId}</td>
+                      <td style={td()}>{r.chargeCode}</td>
+                      <td style={td()}><VatChip line={r} /></td>
+                      <td style={tdNum()}>{fmtCurr(r.amount + (r.vatAmount || 0), r.currency)}</td>
+                      <td style={tdNum()}>{r.vatAmount ? fmtCurr(r.vatAmount, r.currency) : "—"}</td>
+                      <td style={tdNum()}>{fmtCurr(r.amount, r.currency)}</td>
                     </tr>
                   );
                 })}</tbody>
@@ -280,17 +280,17 @@ const StatementDetailModal = ({ statement, onClose, onChanged }) => {
         <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflowX: "auto" }}>
           <table data-testid="statement-detail-lines" style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
             <thead><tr>
-              <th style={th}>Shipment</th><th style={th}>Charge</th><th style={th}>VAT</th>
-              <th style={{ ...th, textAlign: "right" }}>Gross</th><th style={{ ...th, textAlign: "right" }}>VAT</th><th style={{ ...th, textAlign: "right" }}>Net</th>
+              <th style={th()}>Shipment</th><th style={th()}>Charge</th><th style={th()}>VAT</th>
+              <th style={{ ...th(), textAlign: "right" }}>Gross</th><th style={{ ...th(), textAlign: "right" }}>VAT</th><th style={{ ...th(), textAlign: "right" }}>Net</th>
             </tr></thead>
             <tbody>{statement.lines.map(l => (
               <tr key={l.id}>
-                <td style={tdShip}>{l.shipmentId}</td>
-                <td style={td}>{l.chargeCode}</td>
-                <td style={td}><VatChip line={l} /></td>
-                <td style={tdNum}>{fmtCurr(l.grossAmount ?? l.amount, l.currency)}</td>
-                <td style={tdNum}>{l.vatAmount ? fmtCurr(l.vatAmount, l.currency) : "—"}</td>
-                <td style={tdNum}>{fmtCurr(l.amount, l.currency)}</td>
+                <td style={tdShip()}>{l.shipmentId}</td>
+                <td style={td()}>{l.chargeCode}</td>
+                <td style={td()}><VatChip line={l} /></td>
+                <td style={tdNum()}>{fmtCurr(l.grossAmount ?? l.amount, l.currency)}</td>
+                <td style={tdNum()}>{l.vatAmount ? fmtCurr(l.vatAmount, l.currency) : "—"}</td>
+                <td style={tdNum()}>{fmtCurr(l.amount, l.currency)}</td>
               </tr>
             ))}</tbody>
           </table>

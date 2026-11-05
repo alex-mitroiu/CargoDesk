@@ -50,7 +50,7 @@ const ChangeList = ({ changes, testId }) => (
 // ─── Review and Book As Instructed (OCC/BK) ──────────────────────────────────────────────────
 const SailingRow = ({ label, tone, carrier, contract, etd, eta, tt, vessel, service, status }) => (
   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-    <span style={fieldLabel}>{label}</span>
+    <span style={fieldLabel()}>{label}</span>
     <div style={{ overflowX: "auto" }}>
       <div style={{ minWidth: 860, display: "grid", gridTemplateColumns: "repeat(9, minmax(0, 1fr))", gap: "3px 14px", alignItems: "center",
         border: `1px solid ${tone}73`, background: `${tone}1a`, borderRadius: 8, padding: "10px 16px", fontFamily: T.body, fontSize: 13, color: T.text }}>
@@ -89,7 +89,7 @@ export function BookAsInstructedModal({ shipment, booking, view, onClose, onDone
   };
   const ctxItem = (label, value, mono) => (
     <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      <span style={{ ...fieldLabel, fontSize: 10 }}>{label}</span>
+      <span style={{ ...fieldLabel(), fontSize: 10 }}>{label}</span>
       <b style={{ fontFamily: mono ? T.mono : T.body, fontSize: 13.5, color: T.text }}>{value || "—"}</b>
     </div>
   );
@@ -114,9 +114,9 @@ export function BookAsInstructedModal({ shipment, booking, view, onClose, onDone
           <b>Book As Instructed</b> {booking?.status === "Pending" ? `withdraws ${booking.id} at ${booking.carrierCode}, ` : ""}puts {ins.carrierCode}{ins.contractNumber ? `, ${ins.contractNumber}` : ""} and this sailing on the shipment, and sends the DCSA booking request to {ins.carrierCode}. The escalation closes when {ins.carrierCode} confirms.
         </p>
         {asking && (
-          <label htmlFor="bai-question" style={{ display: "flex", flexDirection: "column", gap: 6, ...fieldLabel }}>Your question
+          <label htmlFor="bai-question" style={{ display: "flex", flexDirection: "column", gap: 6, ...fieldLabel() }}>Your question
             <textarea id="bai-question" rows={2} value={question} onChange={e => setQuestion(e.target.value)} data-testid="book-as-instructed-question"
-              style={{ ...inputStyle, letterSpacing: 0, textTransform: "none", resize: "vertical" }} />
+              style={{ ...inputStyle(), letterSpacing: 0, textTransform: "none", resize: "vertical" }} />
           </label>
         )}
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
@@ -136,8 +136,8 @@ export function BookAsInstructedModal({ shipment, booking, view, onClose, onDone
 }
 
 // ─── Escalate pop-up (OCC/BK) ────────────────────────────────────────────────────────────────
-const fieldLabel = { fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: ".08em", color: T.textMuted, textTransform: "uppercase" };
-const inputStyle = { background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 6, padding: "9px 10px", fontFamily: T.body, fontSize: 13.5, boxSizing: "border-box", width: "100%" };
+const fieldLabel = () => ({ fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: ".08em", color: T.textMuted, textTransform: "uppercase" });
+const inputStyle = () => ({ background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 6, padding: "9px 10px", fontFamily: T.body, fontSize: 13.5, boxSizing: "border-box", width: "100%" });
 
 export function EscalateModal({ shipment, booking, offer, onClose, onDone }) {
   const [toRole, setToRole] = useState(offer.defaultGroup || "occ_ay");
@@ -169,7 +169,7 @@ export function EscalateModal({ shipment, booking, offer, onClose, onDone }) {
           </div>
         )}
         <fieldset style={{ border: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-          <legend style={{ ...fieldLabel, padding: "0 0 8px" }}>Send to</legend>
+          <legend style={{ ...fieldLabel(), padding: "0 0 8px" }}>Send to</legend>
           {offer.groups.map(g => {
             const on = g.role === toRole;
             return (
@@ -187,15 +187,15 @@ export function EscalateModal({ shipment, booking, offer, onClose, onDone }) {
             );
           })}
         </fieldset>
-        <label htmlFor="esc-reason" style={{ display: "flex", flexDirection: "column", gap: 6, ...fieldLabel }}>Reason
-          <select id="esc-reason" value={reasonCode} onChange={e => setReasonCode(e.target.value)} style={{ ...inputStyle, letterSpacing: 0, textTransform: "none" }}>
+        <label htmlFor="esc-reason" style={{ display: "flex", flexDirection: "column", gap: 6, ...fieldLabel() }}>Reason
+          <select id="esc-reason" value={reasonCode} onChange={e => setReasonCode(e.target.value)} style={{ ...inputStyle(), letterSpacing: 0, textTransform: "none" }}>
             {offer.reasons.map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
           </select>
         </label>
-        <label htmlFor="esc-note" style={{ display: "flex", flexDirection: "column", gap: 6, ...fieldLabel }}>Note for the handler
+        <label htmlFor="esc-note" style={{ display: "flex", flexDirection: "column", gap: 6, ...fieldLabel() }}>Note for the handler
           <textarea id="esc-note" rows={3} value={note} onChange={e => setNote(e.target.value)} data-testid="escalate-note"
             placeholder="e.g. Customer needs it in New York by 10 Nov; any Central contract is fine."
-            style={{ ...inputStyle, letterSpacing: 0, textTransform: "none", resize: "vertical" }} />
+            style={{ ...inputStyle(), letterSpacing: 0, textTransform: "none", resize: "vertical" }} />
         </label>
         <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted }}>
           Everyone with the {ROLE_LABEL[toRole]} role {toRole === "occ_ay" ? "in the export office" : "in the import office"} sees it under Shipments → Escalated to me, and gets a notification.
@@ -210,7 +210,7 @@ export function EscalateModal({ shipment, booking, offer, onClose, onDone }) {
 }
 
 // ─── The panel on the shipment ───────────────────────────────────────────────────────────────
-const hzPrimary = { background: HZ.cyan, border: "none", color: "#06111f", borderRadius: 7, padding: "9px 18px", fontFamily: HZ_BODY, fontSize: 13, fontWeight: 700, cursor: "pointer" };
+const hzPrimary = () => ({ background: HZ.cyan, border: "none", color: HZ.chipText, borderRadius: 7, padding: "9px 18px", fontFamily: HZ_BODY, fontSize: 13, fontWeight: 700, cursor: "pointer" });
 
 export default function BookingEscalationPanel({ shipment, view, onChanged, onBookAsInstructed }) {
   const esc = view?.escalation;
@@ -312,7 +312,7 @@ export default function BookingEscalationPanel({ shipment, view, onChanged, onBo
           <span><b style={{ color: HZ.good }}>Instructions from {ROLE_LABEL[esc.instructedByRole]}{view.instructedByPlace ? ` · ${view.instructedByPlace}` : ""}:</b> book <b style={{ fontFamily: HZ_MONO }}>{ins.carrierCode}</b>{ins.contractNumber ? ` on ${ins.contractNumber}` : ""}, <span style={{ fontFamily: HZ_MONO }}>{ins.sailing.vesselName}{ins.sailing.voyageNumber ? ` · ${ins.sailing.voyageNumber}` : ""}</span>{ins.sailing.legs?.length > 1 ? ` (main, ${viaText(ins.sailing)})` : ""}, {fmtDay(ins.sailing.etd)} → {fmtDay(ins.sailing.eta)}</span>
           {actions.includes("book") && (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              <button type="button" style={hzPrimary} disabled={busy} onClick={() => onBookAsInstructed?.(esc)} data-testid="escalation-action-book">Review and Book As Instructed</button>
+              <button type="button" style={hzPrimary()} disabled={busy} onClick={() => onBookAsInstructed?.(esc)} data-testid="escalation-action-book">Review and Book As Instructed</button>
             </div>
           )}
           {view.booked && <span data-testid="escalation-booked" style={{ color: HZ.textMuted }}>Booked as instructed — waiting for {ins.carrierCode} to confirm.</span>}
@@ -394,7 +394,7 @@ export default function BookingEscalationPanel({ shipment, view, onChanged, onBo
 
       {(canInstruct || secondary.length > 0 || actions.includes("message") || actions.includes("impossible") || actions.includes("question") || actions.includes("withdraw")) && (
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-          {canInstruct && <button type="button" style={{ ...hzPrimary, opacity: chosen && !busy ? 1 : .42, cursor: chosen && !busy ? "pointer" : "not-allowed" }} disabled={!chosen || busy} onClick={instruct} data-testid="escalation-action-instruct">Send instructions to OCC/BK</button>}
+          {canInstruct && <button type="button" style={{ ...hzPrimary(), opacity: chosen && !busy ? 1 : .42, cursor: chosen && !busy ? "pointer" : "not-allowed" }} disabled={!chosen || busy} onClick={instruct} data-testid="escalation-action-instruct">Send instructions to OCC/BK</button>}
           {secondary.map(a => <Btn key={a.action} variant="secondary" onClick={() => run(a.action)} disabled={busy} data-testid={`escalation-action-${a.action}`}>{a.label}</Btn>)}
           {actions.includes("question") && <Btn variant="secondary" onClick={() => run("question")} disabled={busy || !message.trim()} data-testid="escalation-action-question">Send back with a question</Btn>}
           {actions.includes("message") && <Btn variant="secondary" onClick={() => run("message")} disabled={busy || !message.trim()} data-testid="escalation-action-message">Add message</Btn>}
@@ -424,9 +424,9 @@ export default function BookingEscalationPanel({ shipment, view, onChanged, onBo
         <Modal title="Mark the booking impossible" onClose={() => !busy && setImpossibleOpen(false)} width={460}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <p style={{ margin: 0, fontFamily: T.body, fontSize: 13.5, color: T.text, lineHeight: 1.55 }}>The escalation closes and OCC/BK is told. The shipment stays as it is, for OCC/BK to cancel or rework.</p>
-            <label htmlFor="esc-impossible" style={{ display: "flex", flexDirection: "column", gap: 6, ...fieldLabel }}>Why
+            <label htmlFor="esc-impossible" style={{ display: "flex", flexDirection: "column", gap: 6, ...fieldLabel() }}>Why
               <textarea id="esc-impossible" rows={3} value={reason} onChange={e => setReason(e.target.value)} data-testid="escalation-impossible-reason"
-                style={{ ...inputStyle, letterSpacing: 0, textTransform: "none", resize: "vertical" }} />
+                style={{ ...inputStyle(), letterSpacing: 0, textTransform: "none", resize: "vertical" }} />
             </label>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
               <Btn variant="secondary" onClick={() => setImpossibleOpen(false)} disabled={busy}>Back</Btn>

@@ -374,7 +374,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
                           <span>{c.containerNumber || c.id}</span>
                           {incomplete && (
                             <span title="Missing container number, HS code, cargo description, weight, or volume"
-                              style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, color: "#06111f",
+                              style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, color: HZ.chipText,
                                 background: HZ.warn, borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>⚠ Incomplete</span>
                           )}
                         </div>

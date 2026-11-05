@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { T } from "../../tokens";
-import { inputBase } from "../primitives/Form";
+import { inputBase, FIELD_CLASS } from "../primitives/Form";
 import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
 import { api } from "../../api";
@@ -23,7 +23,7 @@ const CarrierPickerModal = ({ carriers, onSelect, onClose }) => {
   return (
     <Modal title="Select Carrier" onClose={onClose} width={480}>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <input
+        <input className={FIELD_CLASS}
           ref={inputRef}
           value={query}
           onChange={e => setQuery(e.target.value)}
@@ -211,7 +211,7 @@ const CarrierCombobox = ({ value = "", onChange, required = false }) => {
         // ── Search input ─────────────────────────────────────────────────────
         <>
           <div style={{ position: "relative" }}>
-            <input
+            <input className={FIELD_CLASS}
               ref={inputRef}
               value={query}
               onChange={e => handleInput(e.target.value)}
@@ -238,7 +238,7 @@ const CarrierCombobox = ({ value = "", onChange, required = false }) => {
             <div ref={dropRef} style={{
               ...dropStyle,
               background: T.surface, border: `1px solid ${T.border}`,
-              borderRadius: 10, boxShadow: "0 12px 32px rgba(0,0,0,.4)",
+              borderRadius: 10, boxShadow: T.hz ? T.popoverShadow : "0 12px 32px rgba(0,0,0,.4)",
               overflow: "hidden", maxHeight: 260, overflowY: "auto",
             }}>
               {filtered.map((c, idx) => (

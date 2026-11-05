@@ -49,14 +49,18 @@ const greeting = () => {
 };
 
 // ─── LandingPage ──────────────────────────────────────────────────────────────
-const LandingPage = ({ shipments = [], containers = [], carriers = [], allocations = [], onNewShipment, navigate, isDark = true }) => {
-  // Command Center toggle — state only; early return is below all hooks
-  const [cmdCenter, setCmdCenter] = useState(() => localStorage.getItem("cc_active") === "1");
-  const toggleCC = () => setCmdCenter(p => {
-    const next = !p;
+const LandingPage = ({ shipments = [], containers = [], carriers = [], allocations = [], onNewShipment, navigate, isDark = true,
+  cmdCenter: cmdCenterProp, onCmdCenterChange }) => {
+  // Command Center toggle — App.jsx owns it when it passes cmdCenter (the Command Center is a Trade
+  // Horizon page, so App needs to know); otherwise it's local. Early return is below all hooks.
+  const [cmdCenterLocal, setCmdCenterLocal] = useState(() => localStorage.getItem("cc_active") === "1");
+  const cmdCenter = cmdCenterProp ?? cmdCenterLocal;
+  const toggleCC = () => {
+    const next = !cmdCenter;
     localStorage.setItem("cc_active", next ? "1" : "0");
-    return next;
-  });
+    setCmdCenterLocal(next);
+    onCmdCenterChange?.(next);
+  };
 
   // Clock
   const [now, setNow] = useState(new Date());

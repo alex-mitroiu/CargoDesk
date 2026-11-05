@@ -14,8 +14,8 @@ import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "../../pages/shipments/shi
 // cargo data from a B/L) could feed this same review step with AI-extracted rows instead of
 // parsed spreadsheet rows — no rework needed here for that to slot in later.
 
-const inputStyle = { width: "100%", fontFamily: HZ_BODY, fontSize: 12, background: HZ.bg, color: HZ.text,
-  border: `1px solid ${HZ.border}`, borderRadius: 5, padding: "5px 7px", boxSizing: "border-box" };
+const inputStyle = () => ({ width: "100%", fontFamily: HZ_BODY, fontSize: 12, background: HZ.bg, color: HZ.text,
+  border: `1px solid ${HZ.border}`, borderRadius: 5, padding: "5px 7px", boxSizing: "border-box" });
 
 const fileToBase64 = file => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -39,56 +39,56 @@ const EditableRow = ({ row, typeOptions, onChange, onRevalidate }) => {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 8 }}>
         {cell("containerNumber", <>
           <div style={{ fontSize: 9.5, color: HZ.textMuted, marginBottom: 2 }}>Container #</div>
-          <input style={inputStyle} value={d.containerNumber} onChange={e => set("containerNumber", e.target.value)} />
+          <input style={inputStyle()} value={d.containerNumber} onChange={e => set("containerNumber", e.target.value)} />
         </>)}
         {cell("sealNumber", <>
           <div style={{ fontSize: 9.5, color: HZ.textMuted, marginBottom: 2 }}>Seal #</div>
-          <input style={inputStyle} value={d.sealNumber} onChange={e => set("sealNumber", e.target.value)} />
+          <input style={inputStyle()} value={d.sealNumber} onChange={e => set("sealNumber", e.target.value)} />
         </>)}
         {cell("typeCode", <>
           <div style={{ fontSize: 9.5, color: HZ.textMuted, marginBottom: 2 }}>Type Code *</div>
-          <select style={{ ...inputStyle, cursor: "pointer" }} value={d.typeCode} onChange={e => set("typeCode", e.target.value)}>
+          <select style={{ ...inputStyle(), cursor: "pointer" }} value={d.typeCode} onChange={e => set("typeCode", e.target.value)}>
             <option value="">—</option>
             {typeOptions.map(t => <option key={t.code} value={t.code}>{t.code}</option>)}
           </select>
         </>)}
         {cell("hsCode", <>
           <div style={{ fontSize: 9.5, color: HZ.textMuted, marginBottom: 2 }}>HS Code</div>
-          <input style={inputStyle} value={d.hsCode} onChange={e => set("hsCode", e.target.value)} />
+          <input style={inputStyle()} value={d.hsCode} onChange={e => set("hsCode", e.target.value)} />
         </>)}
         {cell("cargoDescription", <>
           <div style={{ fontSize: 9.5, color: HZ.textMuted, marginBottom: 2 }}>Cargo Description</div>
-          <input style={inputStyle} value={d.cargoDescription} onChange={e => set("cargoDescription", e.target.value)} />
+          <input style={inputStyle()} value={d.cargoDescription} onChange={e => set("cargoDescription", e.target.value)} />
         </>)}
         {cell("marksAndNumbers", <>
           <div style={{ fontSize: 9.5, color: HZ.textMuted, marginBottom: 2 }}>Marks & Numbers</div>
-          <input style={inputStyle} value={d.marksAndNumbers} onChange={e => set("marksAndNumbers", e.target.value)} />
+          <input style={inputStyle()} value={d.marksAndNumbers} onChange={e => set("marksAndNumbers", e.target.value)} />
         </>)}
         {cell("grossWeightKg", <>
           <div style={{ fontSize: 9.5, color: HZ.textMuted, marginBottom: 2 }}>Gross Weight (kg)</div>
-          <input style={inputStyle} value={d.grossWeightKg ?? ""} onChange={e => set("grossWeightKg", e.target.value)} />
+          <input style={inputStyle()} value={d.grossWeightKg ?? ""} onChange={e => set("grossWeightKg", e.target.value)} />
         </>)}
         {cell("volumeCbm", <>
           <div style={{ fontSize: 9.5, color: HZ.textMuted, marginBottom: 2 }}>Volume (CBM)</div>
-          <input style={inputStyle} value={d.volumeCbm ?? ""} onChange={e => set("volumeCbm", e.target.value)} />
+          <input style={inputStyle()} value={d.volumeCbm ?? ""} onChange={e => set("volumeCbm", e.target.value)} />
         </>)}
         {cell("isDg", <>
           <div style={{ fontSize: 9.5, color: HZ.textMuted, marginBottom: 2 }}>Is DG?</div>
-          <select style={{ ...inputStyle, cursor: "pointer" }} value={d.isDg ? "Y" : "N"} onChange={e => set("isDg", e.target.value === "Y")}>
+          <select style={{ ...inputStyle(), cursor: "pointer" }} value={d.isDg ? "Y" : "N"} onChange={e => set("isDg", e.target.value === "Y")}>
             <option value="N">N</option>
             <option value="Y">Y</option>
           </select>
         </>)}
         {cell("dgClass", <>
           <div style={{ fontSize: 9.5, color: HZ.textMuted, marginBottom: 2 }}>DG Class</div>
-          <select style={{ ...inputStyle, cursor: "pointer" }} value={d.dgClass} onChange={e => set("dgClass", e.target.value)} disabled={!d.isDg}>
+          <select style={{ ...inputStyle(), cursor: "pointer" }} value={d.dgClass} onChange={e => set("dgClass", e.target.value)} disabled={!d.isDg}>
             <option value="">—</option>
             {IMDG_CLASSES.map(c => <option key={c.code} value={c.code}>{c.code}</option>)}
           </select>
         </>)}
         {cell("setTemperatureC", <>
           <div style={{ fontSize: 9.5, color: HZ.textMuted, marginBottom: 2 }}>Reefer Temp (°C)</div>
-          <input style={inputStyle} value={d.setTemperatureC ?? ""} onChange={e => set("setTemperatureC", e.target.value)} />
+          <input style={inputStyle()} value={d.setTemperatureC ?? ""} onChange={e => set("setTemperatureC", e.target.value)} />
         </>)}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -180,7 +180,7 @@ const ImportContainersModal = ({ shipment, onClose, onImported }) => {
             <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginBottom: 6 }}>Filled-in template (.xlsx)</div>
             <input type="file" accept=".xlsx" onChange={e => setFile(e.target.files?.[0] || null)}
               data-testid="shipment-containers-import-file-input"
-              style={{ ...inputStyle, cursor: "pointer" }} />
+              style={{ ...inputStyle(), cursor: "pointer" }} />
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${HZ.border}`, paddingTop: 14 }}>
             <Btn variant="secondary" onClick={onClose} disabled={parsing} data-testid="shipment-containers-import-cancel-btn">Cancel</Btn>

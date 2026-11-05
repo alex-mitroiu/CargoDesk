@@ -53,8 +53,8 @@ import { SpotOfferCard, AddSpotOfferModal, useShipmentSpotOffer, equipmentOfCont
 // exactly like the New Shipment form already behaves; Save's validation is the real safety net
 // now, not a separate lock/unlock mechanic.
 
-const sectionLabel = { fontFamily: HZ_MONO, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
-  letterSpacing: "0.08em", color: HZ.textMuted, marginBottom: 10 };
+const sectionLabel = () => ({ fontFamily: HZ_MONO, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
+  letterSpacing: "0.08em", color: HZ.textMuted, marginBottom: 10 });
 
 const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -699,7 +699,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
       )}
 
       <div id="shpsched-line-agents-section" data-testid="shipment-schedules-line-agents-section" style={{ marginBottom: 22 }}>
-        <div style={sectionLabel}>Line Agents</div>
+        <div style={sectionLabel()}>Line Agents</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <LineAgentField label="Export Line Agent" role="Line Agent (Export)" party={exportLineAgent}
             canEdit={canEditExportLineAgent} onAssign={(id, cid, cname) => handleAssignLineAgent("Line Agent (Export)", id, cid, cname)}
@@ -711,7 +711,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
       </div>
 
       <div id="shpsched-legs-section" data-testid="shipment-schedules-legs-section">
-        <div style={sectionLabel}>Route Legs</div>
+        <div style={sectionLabel()}>Route Legs</div>
         <LegsTable key={`legs-${legsVersion}`} shipmentId={null} draftLegs={draftLegs} onDraftLegsChange={handleDraftLegsChange}
           canEdit={canEditExportSide} showContractCols={false}
           extraAction={addSailingBtn}
@@ -722,7 +722,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
       <div style={{ marginTop: 22, marginBottom: 22,
         ...(hasSpaceConfig ? { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 } : {}) }}>
         <div id="shpsched-contract-section" data-testid="shipment-schedules-contract-section">
-          <div style={sectionLabel}>Contract</div>
+          <div style={sectionLabel()}>Contract</div>
           {contractMismatch && (
             <div id="shpsched-contract-mismatch" data-testid="shipment-schedules-contract-mismatch" style={{ background: HZ.critBg, border: `1px solid ${HZ.crit}55`, borderLeft: `3px solid ${HZ.crit}`,
               borderRadius: 8, padding: "12px 16px", marginBottom: 12,
@@ -846,7 +846,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
         {hasSpaceConfig && (
           <div id="shpsched-space-config-section" data-testid="shipment-schedules-space-config-section"
             style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-            <div style={sectionLabel}>Space Configuration</div>
+            <div style={sectionLabel()}>Space Configuration</div>
             {linkedAlloc ? (
               <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8, padding: "12px 14px",
                 flex: 1, display: "flex", flexDirection: "column" }}>
@@ -883,7 +883,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
 
       {shipment.contractType !== "Central" && spot.offer !== undefined && (
         <div id="shpsched-spot-offer-section" data-testid="shipment-schedules-spot-offer-section" style={{ marginBottom: 22 }}>
-          <div style={sectionLabel}>Spot offer</div>
+          <div style={sectionLabel()}>Spot offer</div>
           {pendingSpotOffer && (
             <div data-testid="spot-offer-pending" style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, background: HZ.cyanBg, border: `1px solid ${HZ.cyan}55`, borderRadius: 8, padding: "9px 12px", marginBottom: 10 }}>
               On Save: {shipment.carrierCode}'s offer <b style={{ fontFamily: HZ_MONO }}>{pendingSpotOffer.offerRef}</b> (USD {Math.round(pendingSpotOffer.totalUsd).toLocaleString("en-US")}) for the new sailing{spot.offer ? " replaces the current one" : ""}.

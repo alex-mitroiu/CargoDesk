@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { T, applyTheme, teuOf, buildTeuLookup } from "./tokens";
-import { applyHzTheme } from "./pages/shipments/shipmentDetailTheme";
+import { applyHzTheme, loadHorizonFonts } from "./pages/shipments/shipmentDetailTheme";
 import { applyDashboardHzTheme } from "./pages/DashboardPage";
 import { toast } from "./toast";
 import ToastContainer from "./components/primitives/ToastContainer";
@@ -290,6 +290,9 @@ function App() {
     const saved = localStorage.getItem("cd_theme");
     return saved !== "light"; // default dark
   });
+  // Home shows the Command Center instead of the landing page (LandingPage's toggle). Held here, not in
+  // LandingPage, because the Command Center is a Trade Horizon page (see horizonPage below).
+  const [ccActive, setCcActive] = useState(() => localStorage.getItem("cc_active") === "1");
 
   // Apply saved theme once on mount — before first paint
   useEffect(() => {
@@ -735,6 +738,17 @@ function App() {
   const isMdmActive = MDM_PAGES.includes(page);
   const isOrgActive = ORG_PAGES.includes(page);
 
+  // Trade Horizon pages: a shipment's own pages, the Dashboard, and Home while it shows the Command
+  // Center. T is swapped here, before anything below renders, so the shared building blocks, the top
+  // bar and the footer follow the page (src/tokens.js, "Trade Horizon flavour of T"); every other page
+  // keeps the classic T. Signed-out pages (login, tracking, password reset) are always classic.
+  const horizonPage = !!user && !authLoading && (page === "detail" || page === "dashboard" || (page === "home" && ccActive)
+    || Object.values(SHIPMENT_SUBPAGES).includes(page) || Object.values(ACCOUNTING_SUBPAGES).includes(page)
+    || Object.values(CARRIER_BOOKING_SUBPAGES).includes(page) || Object.values(CUSTOMS_FILING_SUBPAGES).includes(page)
+    || SERVICE_PAGE_KEYS.includes(page));
+  if (T.hz !== horizonPage) applyTheme(isDark, horizonPage);
+  if (horizonPage) loadHorizonFonts();
+
   if (page === "track") return <TrackingPage token={selectedId} />;
   if (page === "forgot-password") return <ForgotPasswordPage />;
   if (page === "reset-password")  return <ResetPasswordPage token={selectedId} />;
@@ -1101,7 +1115,7 @@ function App() {
           <div style={{ fontFamily: T.body, fontSize: 13, color: disabled ? T.textMuted : T.text, fontWeight: 500 }}>
             {label}
           </div>
-          {sub && <div style={{ fontFamily: T.body, fontSize: 11, color: T.border, marginTop: 1 }}>{sub}</div>}
+          {sub && <div style={{ fontFamily: T.body, fontSize: 11, color: T.textFaint, marginTop: 1 }}>{sub}</div>}
         </div>
       </button>
     );
@@ -1121,10 +1135,10 @@ function App() {
       }}>
         {/* Left — breadcrumb */}
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>CargoDesk</span>
+          <span style={{ fontFamily: T.body, fontSize: 12, color: T.textFaint }}>CargoDesk</span>
           {(page === "detail" || SHIPMENT_SUBPAGE_LABELS[page]) && selectedShipment ? (
             <>
-              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border }}>›</span>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textFaint }}>›</span>
               <button onClick={() => navigate("shipments")}
                 style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
                   fontFamily: T.body, fontSize: 12, color: T.textMuted }}
@@ -1132,19 +1146,19 @@ function App() {
                 onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
                 Shipments
               </button>
-              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border }}>›</span>
-              <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textFaint }}>›</span>
+              <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: T.hz ? 600 : 700, color: T.accent }}>
                 {selectedShipment.id}
               </span>
-              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border }}>›</span>
-              <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.textMuted }}>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textFaint }}>›</span>
+              <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.hz ? T.text : T.textMuted }}>
                 {SHIPMENT_SUBPAGE_LABELS[page] || "Details"}
               </span>
             </>
           ) : (
             <>
-              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border }}>›</span>
-              <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.textMuted }}>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textFaint }}>›</span>
+              <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.hz ? T.text : T.textMuted }}>
                 {pageTitle}
               </span>
             </>
@@ -2136,6 +2150,8 @@ function App() {
             navigate={navigate}
             onNewShipment={() => navigate("shipment-new")}
             isDark={isDark}
+            cmdCenter={ccActive}
+            onCmdCenterChange={setCcActive}
           />
         )}
 
@@ -2538,15 +2554,15 @@ function App() {
         display: "flex", alignItems: "center", justifyContent: "space-between",
         background: T.bg,
       }}>
-        <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border,
+        <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textFaint,
           display: "inline-flex", alignItems: "center", gap: 5 }}>
           <IconAnchor size={11} />CargoDesk · v{VERSION}
         </span>
-        <span style={{ fontFamily: T.body, fontSize: 11, color: T.border }}>
+        <span style={{ fontFamily: T.body, fontSize: 11, color: T.textFaint }}>
           © {COPYRIGHT_YEAR} {COPYRIGHT_OWNER} ·{" "}
           <button type="button" onClick={() => navigate("license")}
             style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
-              fontFamily: T.body, fontSize: 11, color: T.border, textDecoration: "underline" }}>
+              fontFamily: T.body, fontSize: 11, color: T.textFaint, textDecoration: "underline" }}>
             License & Terms
           </button>
         </span>

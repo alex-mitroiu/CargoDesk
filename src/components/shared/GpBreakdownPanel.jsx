@@ -4,6 +4,27 @@ import ShipmentGpSankey from "./ShipmentGpSankey";
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtSigned = v => v == null ? "—" : `${v > 0 ? "+" : ""}${fmtUsd(v)}`;
 
+// The headline figures, shared with ShipmentAccountingGpPage's Profitability card so the two can
+// never disagree. Actual uses a line's actualized/posted amount; a still-accrued line its estimate.
+export const gpTotals = lines => {
+  const actualOf = l => l.actualAmountUsd ?? l.amountUsd;
+  const buyLines  = lines.filter(l => l.type === "BUY");
+  const sellLines = lines.filter(l => l.type === "SELL");
+  const estBuy  = buyLines.reduce((s, l) => s + l.amountUsd, 0);
+  const estSell = sellLines.reduce((s, l) => s + l.amountUsd, 0);
+  const actBuy  = buyLines.reduce((s, l) => s + actualOf(l), 0);
+  const actSell = sellLines.reduce((s, l) => s + actualOf(l), 0);
+  const estGp   = estSell - estBuy;
+  const actGp   = actSell - actBuy;
+  return {
+    estBuy, estSell, actBuy, actSell, estGp, actGp, varGp: actGp - estGp,
+    estPct: estSell > 0 ? Math.round((estGp / estSell) * 1000) / 10 : null,
+    actPct: actSell > 0 ? Math.round((actGp / actSell) * 1000) / 10 : null,
+    vatTotal: sellLines.reduce((s, l) => s + (l.vatAmountUsd || 0), 0),
+    actualizedCount: lines.filter(l => l.status && l.status !== "accrued").length,
+  };
+};
+
 // ─── GP Breakdown Panel ─────────────────────────────────────────────────────
 // Estimated vs Actual vs Variance stat cards + the Profit Breakdown Sankey + By Payment
 // Indicator / By Charge Code tables, over any flat array of cost-line-shaped objects
@@ -11,25 +32,18 @@ const fmtSigned = v => v == null ? "—" : `${v > 0 ? "+" : ""}${fmtUsd(v)}`;
 // Extracted out of ShipmentAccountingGpPage.jsx (its own render, byte-identical, only the ids
 // changed from a literal `idPrefix` prop) so ReportsPage.jsx's region/country aggregates can
 // reuse the exact same view over a differently-scoped `lines` array instead of duplicating it.
-const GpBreakdownPanel = ({ lines, loading, contextNode, idPrefix = "shpacct-gp", emptyLabel = "No cost or invoice lines yet." }) => {
+//
+// summaryAbove: the host page already shows Buy / Sell / GP / Margin, estimated against actual
+// (ShipmentAccountingGpPage's Profitability card, decided 2026-11-05 to stop repeating the same
+// figures), so the stat rows and the variance strip are left out. ReportsPage passes nothing.
+// On a Trade Horizon page (T.hz) the two tables sit side by side as cards.
+const GpBreakdownPanel = ({ lines, loading, contextNode, idPrefix = "shpacct-gp", emptyLabel = "No cost or invoice lines yet.",
+  summaryAbove = false }) => {
   const actualOf = l => l.actualAmountUsd ?? l.amountUsd;
-
-  const buyLines  = lines.filter(l => l.type === "BUY");
-  const sellLines = lines.filter(l => l.type === "SELL");
-  const vatTotal  = sellLines.reduce((s, l) => s + (l.vatAmountUsd || 0), 0);
-  const hasVat    = vatTotal > 0;
-
-  const estBuy  = buyLines.reduce((s, l) => s + l.amountUsd, 0);
-  const estSell = sellLines.reduce((s, l) => s + l.amountUsd, 0);
-  const actBuy  = buyLines.reduce((s, l) => s + actualOf(l), 0);
-  const actSell = sellLines.reduce((s, l) => s + actualOf(l), 0);
-  const estGp   = estSell - estBuy;
-  const actGp   = actSell - actBuy;
-  const varGp   = actGp - estGp;
-  const estPct  = estSell > 0 ? Math.round((estGp / estSell) * 1000) / 10 : null;
-  const actPct  = actSell > 0 ? Math.round((actGp / actSell) * 1000) / 10 : null;
-
-  const actualizedCount = lines.filter(l => l.status && l.status !== 'accrued').length;
+  const { estBuy, estSell, actBuy, actSell, estGp, actGp, varGp, estPct, actPct, vatTotal, actualizedCount } = gpTotals(lines);
+  const hasVat = vatTotal > 0;
+  const hz = T.hz;
+  const colW = hz ? 104 : 110;
 
   const byCharge = {};
   for (const l of lines) {
@@ -66,6 +80,78 @@ const GpBreakdownPanel = ({ lines, loading, contextNode, idPrefix = "shpacct-gp"
     </div>
   );
 
+  const num = (extra = {}) => ({ width: colW, textAlign: "right", fontFamily: T.mono, fontSize: 12, ...extra });
+  const headRow = minWidth => ({ display: "flex", alignItems: "center", padding: hz ? "8px 16px" : "7px 16px",
+    borderBottom: `1px solid ${T.border}`, background: T.bg, minWidth });
+  const bodyRow = minWidth => ({ display: "flex", alignItems: "center", padding: "9px 16px",
+    borderBottom: hz ? `1px solid ${T.border}` : `1px solid ${T.border}22`, minWidth });
+  const cpiMin = hz ? 520 : 560, codeMin = hz ? 420 : 640;
+
+  const cpiTable = (
+    <>
+      <div style={headRow(cpiMin)}>
+        <div style={{ ...th, flex: 1 }}>Indicator</div>
+        <div style={{ ...th, ...num() }}>Est. Buy</div>
+        <div style={{ ...th, ...num() }}>Est. Sell</div>
+        <div style={{ ...th, ...num() }}>Est. GP</div>
+        <div style={{ ...th, ...num() }}>Actual GP</div>
+      </div>
+      {cpiRows.map(r => (
+        <div key={r.pi} id={`${idPrefix}-cpi-row-${r.pi}`} style={bodyRow(cpiMin)}>
+          <div style={{ flex: 1, fontFamily: T.body, fontSize: 13, color: T.text }}>
+            {r.pi} <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+              — {r.pi === "Prepaid" ? "paid at origin" : "paid at destination"}</span>
+          </div>
+          <div style={num({ color: T.text })}>{fmtUsd(r.estBuy)}</div>
+          <div style={num({ color: T.text })}>{fmtUsd(r.estSell)}</div>
+          <div style={num({ color: r.estGp >= 0 ? T.success : T.danger })}>{fmtUsd(r.estGp)}</div>
+          <div style={num({ fontWeight: 700, color: r.actGp >= 0 ? T.success : T.danger })}>{fmtUsd(r.actGp)}</div>
+        </div>
+      ))}
+    </>
+  );
+
+  const codeTable = (
+    <>
+      <div style={headRow(codeMin)}>
+        <div style={{ ...th, flex: 1 }}>Charge Code</div>
+        <div style={{ ...th, ...num() }}>Est. GP</div>
+        <div style={{ ...th, ...num() }}>Actual GP</div>
+        <div style={{ ...th, ...num() }}>Variance</div>
+      </div>
+      {rows.map(r => (
+        <div key={r.chargeCode} id={`${idPrefix}-row-${r.chargeCode}`} style={bodyRow(codeMin)}>
+          <div style={{ flex: 1, fontFamily: T.body, fontSize: 13, color: T.text }}>{r.chargeCode}</div>
+          <div style={num({ color: r.estGp >= 0 ? T.success : T.danger })}>{fmtUsd(r.estGp)}</div>
+          <div style={num({ fontWeight: 700, color: r.actGp >= 0 ? T.success : T.danger })}>{fmtUsd(r.actGp)}</div>
+          <div style={num({ color: r.variance === 0 ? T.textMuted : r.variance > 0 ? T.success : T.danger })}>{fmtSigned(r.variance)}</div>
+        </div>
+      ))}
+      <div style={{ display: "flex", alignItems: "center", padding: "9px 16px", background: T.bg, minWidth: codeMin }}>
+        <div style={{ flex: 1, fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.text }}>Total</div>
+        <div style={num({ fontWeight: 700, color: estGp >= 0 ? T.success : T.danger })}>{fmtUsd(estGp)}</div>
+        <div style={num({ fontWeight: 700, color: actGp >= 0 ? T.success : T.danger })}>{fmtUsd(actGp)}</div>
+        <div style={num({ fontWeight: 700, color: varGp === 0 ? T.textMuted : varGp > 0 ? T.success : T.danger })}>{fmtSigned(varGp)}</div>
+      </div>
+    </>
+  );
+
+  const emptyBox = (
+    <div id={`${idPrefix}-empty`} style={{ padding: 48, textAlign: "center", fontFamily: T.body,
+      fontSize: 13, color: T.textMuted, fontStyle: "italic",
+      background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: T.cardShadow }}>
+      {emptyLabel}
+    </div>
+  );
+
+  // Trade Horizon: a card with a title bar over the table.
+  const hzCard = (id, title, table) => (
+    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: T.cardShadow, overflow: "hidden" }}>
+      <div style={{ padding: "13px 16px", borderBottom: `1px solid ${T.border}`, fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text }}>{title}</div>
+      <div id={id} style={{ overflowX: "auto" }}>{table}</div>
+    </div>
+  );
+
   if (loading) {
     return <div style={{ padding: 40, textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Loading…</div>;
   }
@@ -79,6 +165,7 @@ const GpBreakdownPanel = ({ lines, loading, contextNode, idPrefix = "shpacct-gp"
         </div>
       )}
 
+      {!summaryAbove && <>
       <div style={{ ...th, marginBottom: 8 }}>Estimated (Accrued)</div>
       <div id={`${idPrefix}-est-stats`} style={{ display: "flex", gap: 14, marginBottom: 18, flexWrap: "wrap" }}>
         {statCard(`${idPrefix}-est-buy`,  "Est. Buy",  fmtUsd(estBuy),  T.warning)}
@@ -104,38 +191,25 @@ const GpBreakdownPanel = ({ lines, loading, contextNode, idPrefix = "shpacct-gp"
         <span style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 800,
           color: varGp === 0 ? T.textMuted : varGp > 0 ? T.success : T.danger }}>{fmtSigned(varGp)}</span>
       </div>
+      </>}
 
       <ShipmentGpSankey lines={lines} />
 
+      {hz ? (
+        rows.length === 0 ? emptyBox : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 440px), 1fr))", gap: 16 }}>
+            {hzCard(`${idPrefix}-cpi-table`, "By payment indicator", cpiTable)}
+            {hzCard(`${idPrefix}-table`, "By charge code", codeTable)}
+          </div>
+        )
+      ) : (<>
       <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
         textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
         By Payment Indicator (CPI) — who pays where
       </div>
       {rows.length === 0 ? null : (
         <div id={`${idPrefix}-cpi-table`} style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface, overflowX: "auto", marginBottom: 22 }}>
-          <div style={{ display: "flex", alignItems: "center", padding: "7px 16px",
-            borderBottom: `1px solid ${T.border}`, background: T.bg, minWidth: 560 }}>
-            <div style={{ ...th, flex: 1 }}>Indicator</div>
-            <div style={{ ...th, width: 110, textAlign: "right" }}>Est. Buy</div>
-            <div style={{ ...th, width: 110, textAlign: "right" }}>Est. Sell</div>
-            <div style={{ ...th, width: 110, textAlign: "right" }}>Est. GP</div>
-            <div style={{ ...th, width: 110, textAlign: "right" }}>Actual GP</div>
-          </div>
-          {cpiRows.map(r => (
-            <div key={r.pi} id={`${idPrefix}-cpi-row-${r.pi}`} style={{ display: "flex", alignItems: "center", padding: "9px 16px",
-              borderBottom: `1px solid ${T.border}22`, minWidth: 560 }}>
-              <div style={{ flex: 1, fontFamily: T.body, fontSize: 13, color: T.text }}>
-                {r.pi} <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                  — {r.pi === "Prepaid" ? "paid at origin" : "paid at destination"}</span>
-              </div>
-              <div style={{ width: 110, textAlign: "right", fontFamily: T.mono, fontSize: 12, color: T.text }}>{fmtUsd(r.estBuy)}</div>
-              <div style={{ width: 110, textAlign: "right", fontFamily: T.mono, fontSize: 12, color: T.text }}>{fmtUsd(r.estSell)}</div>
-              <div style={{ width: 110, textAlign: "right", fontFamily: T.mono, fontSize: 12,
-                color: r.estGp >= 0 ? T.success : T.danger }}>{fmtUsd(r.estGp)}</div>
-              <div style={{ width: 110, textAlign: "right", fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-                color: r.actGp >= 0 ? T.success : T.danger }}>{fmtUsd(r.actGp)}</div>
-            </div>
-          ))}
+          {cpiTable}
         </div>
       )}
 
@@ -143,44 +217,12 @@ const GpBreakdownPanel = ({ lines, loading, contextNode, idPrefix = "shpacct-gp"
         textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
         By Charge Code
       </div>
-      {rows.length === 0 ? (
-        <div id={`${idPrefix}-empty`} style={{ padding: 48, textAlign: "center", fontFamily: T.body,
-          fontSize: 13, color: T.textMuted, fontStyle: "italic",
-          background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10 }}>
-          {emptyLabel}
-        </div>
-      ) : (
+      {rows.length === 0 ? emptyBox : (
         <div id={`${idPrefix}-table`} style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface, overflowX: "auto" }}>
-          <div style={{ display: "flex", alignItems: "center", padding: "7px 16px",
-            borderBottom: `1px solid ${T.border}`, background: T.bg, minWidth: 640 }}>
-            <div style={{ ...th, flex: 1 }}>Charge Code</div>
-            <div style={{ ...th, width: 110, textAlign: "right" }}>Est. GP</div>
-            <div style={{ ...th, width: 110, textAlign: "right" }}>Actual GP</div>
-            <div style={{ ...th, width: 110, textAlign: "right" }}>Variance</div>
-          </div>
-          {rows.map(r => (
-            <div key={r.chargeCode} id={`${idPrefix}-row-${r.chargeCode}`} style={{ display: "flex", alignItems: "center", padding: "9px 16px",
-              borderBottom: `1px solid ${T.border}22`, minWidth: 640 }}>
-              <div style={{ flex: 1, fontFamily: T.body, fontSize: 13, color: T.text }}>{r.chargeCode}</div>
-              <div style={{ width: 110, textAlign: "right", fontFamily: T.mono, fontSize: 12,
-                color: r.estGp >= 0 ? T.success : T.danger }}>{fmtUsd(r.estGp)}</div>
-              <div style={{ width: 110, textAlign: "right", fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-                color: r.actGp >= 0 ? T.success : T.danger }}>{fmtUsd(r.actGp)}</div>
-              <div style={{ width: 110, textAlign: "right", fontFamily: T.mono, fontSize: 12,
-                color: r.variance === 0 ? T.textMuted : r.variance > 0 ? T.success : T.danger }}>{fmtSigned(r.variance)}</div>
-            </div>
-          ))}
-          <div style={{ display: "flex", alignItems: "center", padding: "9px 16px", background: T.bg, minWidth: 640 }}>
-            <div style={{ flex: 1, fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.text }}>Total</div>
-            <div style={{ width: 110, textAlign: "right", fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-              color: estGp >= 0 ? T.success : T.danger }}>{fmtUsd(estGp)}</div>
-            <div style={{ width: 110, textAlign: "right", fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-              color: actGp >= 0 ? T.success : T.danger }}>{fmtUsd(actGp)}</div>
-            <div style={{ width: 110, textAlign: "right", fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-              color: varGp === 0 ? T.textMuted : varGp > 0 ? T.success : T.danger }}>{fmtSigned(varGp)}</div>
-          </div>
+          {codeTable}
         </div>
       )}
+      </>)}
     </>
   );
 };

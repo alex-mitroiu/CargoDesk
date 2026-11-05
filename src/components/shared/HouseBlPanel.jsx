@@ -60,10 +60,10 @@ const EVENT_TEXT = {
 };
 export const eventText = e => (EVENT_TEXT[e.eventType] ? EVENT_TEXT[e.eventType](e.detail || {}) : e.eventType);
 
-const card = { padding: "16px 18px", borderRadius: 10, background: HZ.surface, border: `1px solid ${HZ.border}`, display: "flex", flexDirection: "column", gap: 12 };
-const box = { display: "flex", flexDirection: "column", gap: 8, padding: "11px 13px", borderRadius: 8, border: `1px solid ${HZ.borderStrong}` };
-const inputStyle = { padding: "6px 8px", borderRadius: 6, border: `1px solid ${HZ.borderStrong}`, background: HZ.bg, color: HZ.text, fontFamily: HZ_BODY, fontSize: 12.5 };
-const fieldLabel = { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: HZ.textMuted };
+const card = () => ({ padding: "16px 18px", borderRadius: 10, background: HZ.surface, border: `1px solid ${HZ.border}`, display: "flex", flexDirection: "column", gap: 12 });
+const box = () => ({ display: "flex", flexDirection: "column", gap: 8, padding: "11px 13px", borderRadius: 8, border: `1px solid ${HZ.borderStrong}` });
+const inputStyle = () => ({ padding: "6px 8px", borderRadius: 6, border: `1px solid ${HZ.borderStrong}`, background: HZ.bg, color: HZ.text, fontFamily: HZ_BODY, fontSize: 12.5 });
+const fieldLabel = () => ({ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: HZ.textMuted });
 const chipStyle = (bg, fg, border) => ({ fontFamily: HZ_MONO, fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", padding: "3px 9px",
   borderRadius: 999, background: bg, color: fg, border: `1px solid ${border}`, whiteSpace: "nowrap" });
 
@@ -317,7 +317,7 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
       </ol>
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.25fr)", gap: 14 }}>
-        <div style={card}>
+        <div style={card()}>
           <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800 }}>The record</h3>
           <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "130px minmax(0, 1fr)", gap: "8px 12px" }}>
             <Row label="B/L number"><span data-testid="house-bl-record-number" style={{ fontFamily: HZ_MONO }}>{live?.reference
@@ -334,7 +334,7 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
             <Row label="DCSA document">{live?.hasPayload ? (live.payloadErrors ? "Kept; not valid for an eBL yet" : "Kept as issued, passes eBL 3.0") : "Built at issue"}</Row>
           </dl>
           {(versions.length > 1 || amends) && versions.length > 0 && (
-            <div data-testid="house-bl-versions" style={{ ...box, fontSize: 12.5 }}>
+            <div data-testid="house-bl-versions" style={{ ...box(), fontSize: 12.5 }}>
               <b>Versions under {versions[0].reference}</b>
               {versions.map(v => (
                 <span key={v.id}><span style={{ fontFamily: HZ_MONO, color: HZ.textMuted }}>v{v.version}</span> {v.status === "SURRENDERED_FOR_AMENDMENT"
@@ -359,11 +359,11 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
           )}
         </div>
 
-        <div style={{ ...card, background: HZ.surfaceSolid, border: `1px solid ${HZ.cyan}44` }}>
+        <div style={{ ...card(), background: HZ.surfaceSolid, border: `1px solid ${HZ.cyan}44` }}>
           {!live && (
             <>
               {amends && (
-                <div data-testid="house-bl-amending" style={{ ...box, background: HZ.warnBg, border: `1px solid ${HZ.warn}55`, fontSize: 12.5 }}>
+                <div data-testid="house-bl-amending" style={{ ...box(), background: HZ.warnBg, border: `1px solid ${HZ.warn}55`, fontSize: 12.5 }}>
                   <b style={{ fontSize: 13.5 }}>Version {nextVersion} replaces version {amends.version}</b>
                   <span style={{ color: HZ.textMuted }}>{amends.reference} v{amends.version} was surrendered for amendment on {fmtDay(amends.surrenderedAt)}{amends.amendmentReason ? `: ${amends.amendmentReason}` : ""}. Correct the shipment, then issue version {nextVersion} under the same number.</span>
                 </div>
@@ -420,14 +420,14 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
                 )}
                 <div style={{ height: 1, background: HZ.border }} />
                 <div style={{ display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
-                  <label style={fieldLabel}>Originals
+                  <label style={fieldLabel()}>Originals
                     <input type="number" data-testid="house-bl-originals" min={swb ? 0 : 1} max={9} value={swb ? 0 : counts.originals} disabled={swb}
                       onChange={e => setCounts(c => ({ ...c, originals: e.target.value === "" ? "" : Number(e.target.value) }))}
-                      style={{ ...inputStyle, width: 70, fontFamily: HZ_MONO }} /></label>
-                  <label style={fieldLabel}>Copies, not negotiable
+                      style={{ ...inputStyle(), width: 70, fontFamily: HZ_MONO }} /></label>
+                  <label style={fieldLabel()}>Copies, not negotiable
                     <input type="number" data-testid="house-bl-copies" min={0} max={20} value={counts.copies}
                       onChange={e => setCounts(c => ({ ...c, copies: e.target.value === "" ? "" : Number(e.target.value) }))}
-                      style={{ ...inputStyle, width: 70, fontFamily: HZ_MONO }} /></label>
+                      style={{ ...inputStyle(), width: 70, fontFamily: HZ_MONO }} /></label>
                   <span style={{ fontSize: 12, color: HZ.textMuted, paddingBottom: 7 }}>{swb ? "A Sea Waybill has no originals." : countsOk ? "A Sea Waybill has no originals; an eBL is one." : "1 to 9 originals."}</span>
                 </div>
                 <div role="radiogroup" aria-label="Freight on the B/L" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -457,7 +457,7 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
           )}
 
           {live && !live.releasedAt && live.status === "ISSUED" && changed.length > 0 && !live.isElectronic && (
-            <div data-testid="house-bl-changed" style={{ ...box, background: HZ.warnBg, border: `1px solid ${HZ.warn}66` }}>
+            <div data-testid="house-bl-changed" style={{ ...box(), background: HZ.warnBg, border: `1px solid ${HZ.warn}66` }}>
               <b style={{ fontSize: 13.5, color: HZ.warn }}>Changed since issue: {changed.join(", ")}</b>
               <span style={{ fontSize: 12.5, color: HZ.textMuted }}>The shipment no longer matches the issued B/L. To correct the B/L, the originals come back: surrender it for amendment, then issue version {live.version + 1} under the same number.</span>
             </div>
@@ -467,9 +467,9 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
             <>
               <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800 }}>Issued. What next</h3>
               {live.typeCode === "SWB" ? (
-                <div style={box}><span style={{ fontSize: 13 }}><b>Sea Waybill:</b> no originals. The named consignee takes delivery.</span></div>
+                <div style={box()}><span style={{ fontSize: 13 }}><b>Sea Waybill:</b> no originals. The named consignee takes delivery.</span></div>
               ) : (
-                <div data-testid="house-bl-originals-log" style={box}>
+                <div data-testid="house-bl-originals-log" style={box()}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                     <b style={{ fontSize: 13.5 }}>Originals</b>
                     {canEdit && !handover && <Btn variant="secondary" size="sm" data-testid="house-bl-handover-open" disabled={!!busy} onClick={openHandover}>＋ Record handover</Btn>}
@@ -490,20 +490,20 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
                   )}
                   {handover && (
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "8px 10px" }}>
-                      <label style={{ ...fieldLabel, gridColumn: "span 2" }}>To
-                        <input id="house-bl-handover-to" value={handover.to} onChange={e => setHandover(h => ({ ...h, to: e.target.value }))} style={inputStyle} /></label>
-                      <label style={fieldLabel}>How
-                        <select id="house-bl-handover-method" value={handover.method} onChange={e => setHandover(h => ({ ...h, method: e.target.value }))} style={{ ...inputStyle, background: HZ.surfaceSolid }}>
+                      <label style={{ ...fieldLabel(), gridColumn: "span 2" }}>To
+                        <input id="house-bl-handover-to" value={handover.to} onChange={e => setHandover(h => ({ ...h, to: e.target.value }))} style={inputStyle()} /></label>
+                      <label style={fieldLabel()}>How
+                        <select id="house-bl-handover-method" value={handover.method} onChange={e => setHandover(h => ({ ...h, method: e.target.value }))} style={{ ...inputStyle(), background: HZ.surfaceSolid }}>
                           {(summary.handoverMethods || ["In person", "Courier", "Mail"]).map(m => <option key={m} value={m}>{m}</option>)}
                         </select></label>
-                      <label style={fieldLabel}>Tracking number{handover.method === "Courier" ? "" : " (optional)"}
-                        <input id="house-bl-handover-tracking" value={handover.trackingRef} onChange={e => setHandover(h => ({ ...h, trackingRef: e.target.value }))} style={{ ...inputStyle, fontFamily: HZ_MONO }} /></label>
-                      <label style={fieldLabel}>Originals
+                      <label style={fieldLabel()}>Tracking number{handover.method === "Courier" ? "" : " (optional)"}
+                        <input id="house-bl-handover-tracking" value={handover.trackingRef} onChange={e => setHandover(h => ({ ...h, trackingRef: e.target.value }))} style={{ ...inputStyle(), fontFamily: HZ_MONO }} /></label>
+                      <label style={fieldLabel()}>Originals
                         <input id="house-bl-handover-count" type="number" min={1} max={live.originals ?? 3} value={handover.count}
-                          onChange={e => setHandover(h => ({ ...h, count: e.target.value }))} style={{ ...inputStyle, fontFamily: HZ_MONO }} /></label>
-                      <label style={fieldLabel}>Date
+                          onChange={e => setHandover(h => ({ ...h, count: e.target.value }))} style={{ ...inputStyle(), fontFamily: HZ_MONO }} /></label>
+                      <label style={fieldLabel()}>Date
                         <input id="house-bl-handover-date" type="date" max={todayIso()} value={handover.handedOverOn}
-                          onChange={e => setHandover(h => ({ ...h, handedOverOn: e.target.value }))} style={{ ...inputStyle, fontFamily: HZ_MONO }} /></label>
+                          onChange={e => setHandover(h => ({ ...h, handedOverOn: e.target.value }))} style={{ ...inputStyle(), fontFamily: HZ_MONO }} /></label>
                       <div style={{ gridColumn: "span 2", display: "flex", justifyContent: "flex-end", gap: 8 }}>
                         <Btn variant="secondary" size="sm" onClick={() => setHandover(null)}>Cancel</Btn>
                         <Btn size="sm" data-testid="house-bl-handover-save" disabled={!!busy || !handover.to.trim() || (handover.method === "Courier" && !handover.trackingRef.trim())}
@@ -514,13 +514,13 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
                 </div>
               )}
               {canEdit && live.typeCode !== "SWB" && (
-                <div style={box}>
+                <div style={box()}>
                   <b style={{ fontSize: 13.5 }}>{releaseType === "Original" ? "At destination" : "At origin"}</b>
                   <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
                     {releaseType === "Original" && (
-                      <label style={{ ...fieldLabel, flex: 1, minWidth: 220 }}>Presented by (the holder; for a to-order B/L, the last endorsee)
+                      <label style={{ ...fieldLabel(), flex: 1, minWidth: 220 }}>Presented by (the holder; for a to-order B/L, the last endorsee)
                         <input id="house-bl-presented-by" value={presentedBy} onChange={e => setPresentedBy(e.target.value)}
-                          placeholder={toOrderMode ? "e.g. the bank the B/L was endorsed to" : shipment.consigneeName || ""} style={inputStyle} /></label>
+                          placeholder={toOrderMode ? "e.g. the bank the B/L was endorsed to" : shipment.consigneeName || ""} style={inputStyle()} /></label>
                     )}
                     <Btn variant="secondary" size="sm" data-testid="house-bl-surrender" disabled={!!busy} onClick={surrender}>
                       {releaseType === "Original" ? "Originals presented at destination" : "Surrendered at origin"}
@@ -569,7 +569,7 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
                 </div>
               )}
               {amendOpen && (
-                <div data-testid="house-bl-amend-form" style={box}>
+                <div data-testid="house-bl-amend-form" style={box()}>
                   <b style={{ fontSize: 13.5 }}>Surrender for amendment</b>
                   <span style={{ fontSize: 12.5, color: HZ.textMuted }}>{live.typeCode === "SWB"
                     ? `Version ${live.version} stays on record; version ${live.version + 1} is issued under ${live.reference}.`
@@ -614,7 +614,7 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
             <>
               <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800 }}>{live.surrenderKind === "origin" ? "Surrendered at origin. Ready to release" : "Surrendered. Ready to release"}</h3>
               {telex && (
-                <div data-testid="house-bl-telex-notice" style={{ ...box, background: telex.detail.sent ? HZ.cyanBg : HZ.warnBg, border: `1px solid ${(telex.detail.sent ? HZ.cyan : HZ.warn)}55`, fontSize: 13 }}>
+                <div data-testid="house-bl-telex-notice" style={{ ...box(), background: telex.detail.sent ? HZ.cyanBg : HZ.warnBg, border: `1px solid ${(telex.detail.sent ? HZ.cyan : HZ.warn)}55`, fontSize: 13 }}>
                   <b>{telex.detail.sent ? `Telex release notice sent to ${telex.detail.office}` : "Telex release: nobody was told"}</b>
                   <span style={{ color: HZ.textMuted }}>{telex.detail.sent
                     ? `A Kanban task for the import office's manager${telex.detail.ticketId ? ` (${telex.detail.ticketId})` : ""}: it releases without originals once the checks pass.`

@@ -48,10 +48,10 @@ import { IconClose } from "../primitives/Icon";
 //   header button doesn't inherit text-transform, so every table has always mixed the two); Space
 //   Configurations turns it on so its whole header row reads the same.
 
-const HEADER_CELL = {
+const HEADER_CELL = () => ({
   position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
   color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em",
-};
+});
 const ALIGN = { left: "flex-start", center: "center", right: "flex-end" };
 const ACCENT_W = 3;
 
@@ -107,7 +107,7 @@ const DataTable = ({
             padding: `10px 20px 10px ${20 + (rowAccent ? ACCENT_W : 0)}px`, borderBottom: `1px solid ${T.border}` }}>
             {grouped && groupRuns.map(g => (
               <div key={`group-${g.group}-${g.start}`} data-testid={`${tableId}-group-${g.group}`}
-                style={{ ...HEADER_CELL, gridColumn: `${g.start + 1} / span ${g.end - g.start + 1}`, gridRow: 1,
+                style={{ ...HEADER_CELL(), gridColumn: `${g.start + 1} / span ${g.end - g.start + 1}`, gridRow: 1,
                   textAlign: "center", margin: "0 6px", paddingBottom: 4, borderBottom: `1px solid ${T.borderMid}` }}>
                 {g.group}
               </div>
@@ -116,14 +116,14 @@ const DataTable = ({
               const align = c.align || "left";
               return (
                 <div key={c.key} data-testid={`${tableId}-col-${c.key}`}
-                  style={{ ...HEADER_CELL, ...placement(i, !!c.group), paddingLeft: align === "center" ? 0 : 6, textAlign: align }}>
+                  style={{ ...HEADER_CELL(), ...placement(i, !!c.group), paddingLeft: align === "center" ? 0 : 6, textAlign: align }}>
                   {headerLabel(c)}
                   {i < columnCount - 1 && <ColResizer onStart={e => startResize(i, e)} />}
                 </div>
               );
             })}
             {rowActions && (
-              <div style={{ ...HEADER_CELL, ...placement(columns.length, false), paddingLeft: 6 }}>Actions</div>
+              <div style={{ ...HEADER_CELL(), ...placement(columns.length, false), paddingLeft: 6 }}>Actions</div>
             )}
           </div>
 

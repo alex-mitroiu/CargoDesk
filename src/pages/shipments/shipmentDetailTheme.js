@@ -60,6 +60,12 @@ const HZ_DARK = {
   // Floating popovers/tooltips (not cards) need a real drop shadow in BOTH themes to lift off the
   // page — cardShadow is "none" in dark, so it cannot double as this.
   popoverShadow: "0 8px 24px rgba(0,0,0,.45)",
+  // Neutral tints, weakest to strongest: an inset tile, a row's hover, a neutral pill (DRAFT,
+  // UNSCREENED). Dark lightens the surface; light (see HZ_LIGHT) darkens it, since a white tint on
+  // a white surface is invisible.
+  tint: "rgba(255,255,255,0.03)",
+  hoverBg: "rgba(255,255,255,0.04)",
+  neutralBg: "rgba(255,255,255,0.06)",
 };
 
 // Light — TKT-198GZH, published as a design exploration and validated (WCAG contrast pass +
@@ -112,11 +118,17 @@ const HZ_LIGHT = {
   cardShadow: "0 1px 2px rgba(16,20,40,.05), 0 14px 32px -16px rgba(16,20,40,.20)",
   // Softer than dark's: a 45%-black shadow reads as a smudge on a light page.
   popoverShadow: "0 4px 8px -2px rgba(16,20,40,.08), 0 12px 28px -8px rgba(16,20,40,.28)",
+  tint: "rgba(15,20,40,0.03)",
+  hoverBg: "rgba(15,20,40,0.05)",
+  neutralBg: "rgba(15,20,40,0.07)",
 };
 
 // T is mutated in place when the theme switches (src/tokens.js) — HZ follows the identical
 // pattern, driven by the exact same app-wide dark/light toggle (see applyHzTheme below and its
 // call site in App.jsx), not a separate Trade-Horizon-only control.
+// Read HZ at render time, never at module load: App.jsx applies the saved theme in its mount
+// effect, after every module has been evaluated, so a module-level `const style = { color: HZ.x }`
+// keeps the dark value forever. A shared style goes in a function (`const card = () => ({ … })`).
 export const HZ = { ...HZ_DARK };
 
 export const applyHzTheme = (dark) => {
@@ -139,14 +151,16 @@ export const HZ_LEGACY_THEME = {
   get info() { return HZ.info; }, get warning() { return HZ.warn; }, get danger() { return HZ.crit; },
 };
 
+// Idempotent; App.jsx calls it for every Trade Horizon page (the swapped T uses these faces too).
+export const loadHorizonFonts = () => {
+  if (document.getElementById("hz-fonts")) return;
+  const link = document.createElement("link");
+  link.id = "hz-fonts"; link.rel = "stylesheet";
+  link.href = "https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap";
+  document.head.appendChild(link);
+};
 export const useHorizonFonts = () => {
-  useEffect(() => {
-    if (document.getElementById("hz-fonts")) return;
-    const link = document.createElement("link");
-    link.id = "hz-fonts"; link.rel = "stylesheet";
-    link.href = "https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap";
-    document.head.appendChild(link);
-  }, []);
+  useEffect(loadHorizonFonts, []);
 };
 
 // Deterministic decorative gradient per carrier code — same derivation as the Dashboard's

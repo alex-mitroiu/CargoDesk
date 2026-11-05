@@ -661,7 +661,7 @@ const UserManualPage = () => {
             subtraction for you — no spreadsheet required. "Estimated" is what you've accrued so
             far; "Actual" fills in with the real number the moment a line is actualized or posted,
             so the two only ever disagree when something genuinely changed.</P>
-          <Screenshot src={imgGpOverview} alt="The GP Overview page showing estimated and actual figures matching, both at $260 gross profit" caption="GP Overview for one shipment — Estimated and Actual currently agree, since nothing's been revised since booking." />
+          <Screenshot src={imgGpOverview} alt="The GP Overview page: the Profitability card with estimated and actual figures matching, both at $386 gross profit, above the Profit Breakdown" caption="GP Overview for one shipment — Estimated and Actual currently agree, since nothing's been revised since booking." />
         </StepBody>
         <Step n={4}>Multiple entities? See profit broken out by branch</Step>
         <StepBody>

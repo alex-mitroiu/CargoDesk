@@ -172,7 +172,7 @@ const VgmRow = ({ shipment, container, declarations, canEdit, saving, onSave, on
     <>
     <tr id={`svcvgm-row-${container.id}`} style={{ borderBottom: open ? "none" : `1px solid ${T.border}` }}>
       <td style={{ padding: "8px 10px" }}>
-        <span style={{ fontFamily: T.mono, fontWeight: 700, color: T.accent, fontSize: 12.5 }}>
+        <span style={{ fontFamily: T.mono, fontWeight: 600, color: T.text, fontSize: 12.5 }}>
           {container.containerNumber || "TBC"}
         </span>
       </td>
@@ -331,7 +331,7 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
     return (
       <div id="svcvgm-notfound" style={{ maxWidth: 700, margin: "60px auto", textAlign: "center" }}>
         <div style={{ marginBottom: 12, color: T.textMuted }}><IconFolder size={40} /></div>
-        <div style={{ fontFamily: T.head, fontSize: 18, fontWeight: 800, color: T.text, marginBottom: 8 }}>
+        <div style={{ fontFamily: T.head, fontSize: 17, fontWeight: 700, color: T.text, marginBottom: 8 }}>
           No {side} VGM service found
         </div>
         <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
@@ -345,11 +345,11 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
     <div id="svcvgm-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
 
       {/* Header / service summary */}
-      <div id="svcvgm-header" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+      <div id="svcvgm-header" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: T.cardShadow,
         padding: "16px 18px", marginBottom: 18, display: "flex", alignItems: "center",
         justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div>
-          <div style={{ fontFamily: T.head, fontSize: 18, fontWeight: 800, color: T.text }}>
+          <div style={{ fontFamily: T.head, fontSize: 17, fontWeight: 700, color: T.text }}>
             {side} · VGM Service
           </div>
           <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginTop: 3 }}>
@@ -378,9 +378,9 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
       </div>
 
       {/* Per-container VGM table */}
-      <div id="svcvgm-table-section" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 18 }}>
+      <div id="svcvgm-table-section" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: T.cardShadow, overflow: "hidden", marginBottom: 18 }}>
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`,
-          fontFamily: T.head, fontSize: 14, fontWeight: 800, color: T.text }}>
+          fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text }}>
           Container VGM
         </div>
         {shipmentContainers.length === 0 ? (
@@ -413,8 +413,8 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
       </div>
 
       {/* Service-level notes */}
-      <div id="svcvgm-details-section" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "16px 18px" }}>
-        <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 800, color: T.text, marginBottom: 12 }}>
+      <div id="svcvgm-details-section" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: T.cardShadow, padding: "16px 18px" }}>
+        <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 12 }}>
           Details
         </div>
         <Textarea id="svcvgm-notes" value={notes} onChange={setNotes} disabled={!canEdit} rows={6}

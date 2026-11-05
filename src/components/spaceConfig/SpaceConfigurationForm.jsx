@@ -23,10 +23,10 @@ import { contractLines, loopsOf, lineOnLoop, commodityCodesOf, findClashes, over
 // the server applies the same ones (routes/allocations.js resolveConfig).
 
 const box = (tone) => ({ background: T.bg, border: `1px solid ${tone || T.border}`, borderRadius: 8, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 });
-const boxTitle = { display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "baseline", gap: "4px 8px",
-  fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" };
-const hint = { fontFamily: T.body, fontSize: 11.5, fontWeight: 500, color: T.textMuted, textTransform: "none", letterSpacing: 0 };
-const note = { fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.5, margin: 0 };
+const boxTitle = () => ({ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "baseline", gap: "4px 8px",
+  fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" });
+const hint = () => ({ fontFamily: T.body, fontSize: 11.5, fontWeight: 500, color: T.textMuted, textTransform: "none", letterSpacing: 0 });
+const note = () => ({ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.5, margin: 0 });
 const msg = tone => ({ fontFamily: T.body, fontSize: 12, lineHeight: 1.5, borderRadius: 6, padding: "8px 11px",
   color: tone === "bad" ? T.danger : T.info, background: tone === "bad" ? T.dangerBg : T.infoBg });
 const choice = on => ({ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: "4px 10px", alignItems: "center", padding: "9px 11px",
@@ -49,7 +49,7 @@ const TradeCard = ({ testId, label, code, name, from }) => (
 );
 
 const ChainChips = ({ chain }) => {
-  if (!chain) return <span style={note}>No legs</span>;
+  if (!chain) return <span style={note()}>No legs</span>;
   const parts = [["PKU", chain.pku], ["POL", chain.pol], ["VIA ORIGIN", chain.viaOrigin], ["VIA DEST.", chain.viaDestination], ["POD", chain.pod], ["DEL", chain.del]].filter(([, v]) => v);
   return (
     <span style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 4, fontFamily: T.mono, fontSize: 12, fontWeight: 600, color: T.text }}>
@@ -273,8 +273,8 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
 
       {number && (
         <div role="radiogroup" aria-labelledby="scf-ref" style={box(contract ? T.success : null)}>
-          <div id="scf-ref" style={boxTitle}><span>Contract reference <span style={{ color: T.danger }}>*</span></span>
-            <span style={hint}>{records.length === 1 ? "Only reference on this contract, selected for you" : `${records.length} references on this contract number`}</span></div>
+          <div id="scf-ref" style={boxTitle()}><span>Contract reference <span style={{ color: T.danger }}>*</span></span>
+            <span style={hint()}>{records.length === 1 ? "Only reference on this contract, selected for you" : `${records.length} references on this contract number`}</span></div>
           {records.map(c => {
             const n = configs.filter(x => x.contractId === c.id).length;
             return (
@@ -298,8 +298,8 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
       {contract && (<>
         {loops.length > 0 ? (
           <div role="radiogroup" aria-labelledby="scf-loop" style={box(loopCode ? T.success : null)}>
-            <div id="scf-loop" style={boxTitle}><span>Loop <span style={{ color: T.danger }}>*</span></span>
-              <span style={hint}>{loops.length === 1 ? "Only loop on this reference's routings, selected for you" : "One loop per configuration"}</span></div>
+            <div id="scf-loop" style={boxTitle()}><span>Loop <span style={{ color: T.danger }}>*</span></span>
+              <span style={hint()}>{loops.length === 1 ? "Only loop on this reference's routings, selected for you" : "One loop per configuration"}</span></div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {loops.map(lp => {
                 const n = lines.filter(l => l.loops.includes(lp)).length;
@@ -315,19 +315,19 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
               })}
             </div>
             {lines.some(l => !l.loops.length) && (
-              <p style={note}>{lines.filter(l => !l.loops.length).map(l => l.label).join(", ")} {lines.filter(l => !l.loops.length).length === 1 ? "has" : "have"} no loop code on the contract, so {lines.filter(l => !l.loops.length).length === 1 ? "it goes" : "they go"} with any loop.</p>
+              <p style={note()}>{lines.filter(l => !l.loops.length).map(l => l.label).join(", ")} {lines.filter(l => !l.loops.length).length === 1 ? "has" : "have"} no loop code on the contract, so {lines.filter(l => !l.loops.length).length === 1 ? "it goes" : "they go"} with any loop.</p>
             )}
           </div>
         ) : (
           <div style={box()}>
-            <div style={boxTitle}><span>Loop</span><span style={hint}>None on this reference</span></div>
-            <p style={note}>This reference's routings have no loop codes on the contract, so the configuration applies to any loop.</p>
+            <div style={boxTitle()}><span>Loop</span><span style={hint()}>None on this reference</span></div>
+            <p style={note()}>This reference's routings have no loop codes on the contract, so the configuration applies to any loop.</p>
           </div>
         )}
 
         <div role="group" aria-labelledby="scf-lines" style={box(routingIds.length ? T.success : null)}>
-          <div id="scf-lines" style={boxTitle}><span>Routings <span style={{ color: T.danger }}>*</span></span>
-            <span style={hint}>{lines.length === 1 ? "Only routing on this reference" : loopCode ? `Tick every routing on ${loopCode} this space covers` : "Tick every routing this space covers"}</span></div>
+          <div id="scf-lines" style={boxTitle()}><span>Routings <span style={{ color: T.danger }}>*</span></span>
+            <span style={hint()}>{lines.length === 1 ? "Only routing on this reference" : loopCode ? `Tick every routing on ${loopCode} this space covers` : "Tick every routing this space covers"}</span></div>
           {lines.map(l => {
             const on = routingIds.includes(l.id), fits = lineOnLoop(l, loopCode);
             const clash = clashes.find(c => c.routingId === l.id);
@@ -352,8 +352,8 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
 
         {firstLine && (
           <div style={box()}>
-            <div style={boxTitle}>
-              <span>Trade <span style={hint}>· from the first ticked routing</span></span>
+            <div style={boxTitle()}>
+              <span>Trade <span style={hint()}>· from the first ticked routing</span></span>
               <button type="button" onClick={() => setLaneOverride(o => !o)}
                 style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5, color: T.textMuted, cursor: "pointer",
                   padding: "4px 10px", fontFamily: T.body, fontSize: 11, textTransform: "none", letterSpacing: 0 }}>
@@ -374,15 +374,15 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
 
         {locked ? (
           <div style={box(T.success)}>
-            <div style={boxTitle}><span>Customer</span><span style={hint}>Set by the contract reference</span></div>
+            <div style={boxTitle()}><span>Customer</span><span style={hint()}>Set by the contract reference</span></div>
             <div style={{ fontFamily: T.body, fontSize: 13, color: T.text }}><strong>{contract.namedAccount}</strong> <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textMuted }}>{contract.namedAccountId}</span></div>
-            <p style={note}>{contract.contractRef || "This reference"} is reserved for this named account, so the configuration is too. It is offered only on shipments where this customer is the principal.</p>
+            <p style={note()}>{contract.contractRef || "This reference"} is reserved for this named account, so the configuration is too. It is offered only on shipments where this customer is the principal.</p>
           </div>
         ) : (
           <div style={box(customer.id ? T.success : null)}>
-            <div style={boxTitle}><span>Customer (optional)</span><span style={hint}>Empty = all customers</span></div>
+            <div style={boxTitle()}><span>Customer (optional)</span><span style={hint()}>Empty = all customers</span></div>
             <CustomerCombobox value={customer} onChange={v => setCustomer({ id: v.id || "", name: v.name || "" })} />
-            <p style={note}>{customer.id ? `Offered only on shipments where ${customer.name} is the principal.` : "Offered on shipments for any customer."}</p>
+            <p style={note()}>{customer.id ? `Offered only on shipments where ${customer.name} is the principal.` : "Offered on shipments for any customer."}</p>
           </div>
         )}
 
@@ -395,7 +395,7 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
         </Field>
 
         <div style={box(periodBad ? T.danger : dates ? T.success : null)}>
-          <div style={boxTitle}><span>Effective period <span style={{ color: T.danger }}>*</span></span><span style={hint}>Contract valid {range(contract.validFrom, contract.validTo)}</span></div>
+          <div style={boxTitle()}><span>Effective period <span style={{ color: T.danger }}>*</span></span><span style={hint()}>Contract valid {range(contract.validFrom, contract.validTo)}</span></div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <DatePicker id="scf-from" label="Effective From" value={effectiveDate} placeholder="Start date…"
               minDate={isEdit ? undefined : todayIso()} maxDate={contract.validTo || undefined}
@@ -411,7 +411,7 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
               current={dates ? { from: effectiveDate, to: endDate, label: `${isEdit ? "editing" : "new"} · ${loopCode || "any loop"} · ${customerName || "all"}` } : null}
               bad={periodBad} clashIds={clashes.map(c => c.config.id)} />
           )}
-          <p style={note}>Upper rows: this reference's other configurations. Bottom row: {isEdit ? "the one you are editing" : "this new one"}.{dates ? ` ${periodDays(effectiveDate, endDate)} day period.` : ""}</p>
+          <p style={note()}>Upper rows: this reference's other configurations. Bottom row: {isEdit ? "the one you are editing" : "this new one"}.{dates ? ` ${periodDays(effectiveDate, endDate)} day period.` : ""}</p>
           {overlapping.length > 0 && (
             <div style={{ overflowX: "auto" }}>
               <table data-testid="scf-overlapping" style={{ width: "100%", borderCollapse: "collapse", fontFamily: T.body, fontSize: 12 }}>
@@ -469,7 +469,7 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
           <Inp id="scf-teu" label={weekly ? "Allocated space (TEU per week)" : "Allocated space (TEU)"} type="number" value={teuStr} onChange={setTeuStr} required
             hint={routingIds.length > 1 ? `One pool shared by the ${routingIds.length} ticked routings.` : weekly ? "TEU awarded by this carrier for each week." : "Total TEU awarded by this carrier for the period."} />
           {weekly && (
-            <p data-testid="scf-weekly-note" style={note}>
+            <p data-testid="scf-weekly-note" style={note()}>
               This TEU every ISO week (Monday to Sunday) of the period, nothing carried over. A shipment counts in the week of its ETD,
               or of its cargo-ready date until it has one.{weeksInPeriod ? ` ${weeksInPeriod} week${weeksInPeriod === 1 ? "" : "s"}, ${periodTeu} TEU in all.` : ""}
             </p>
@@ -477,13 +477,13 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
           {ed && (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               <ConsumptionBar allocated={teu || ed.allocatedTEU} confirmed={ed.confirmedTEU} pending={ed.pendingTEU} rejected={ed.rejectedTEU} height={6} width="100%" />
-              <span style={note}>{ed.spaceBasis === "week" ? `Week ${ed.weekNumber}: ` : ""}{ed.confirmedTEU} confirmed + {ed.pendingTEU} pending of {teu || ed.allocatedTEU} TEU. Ticking another routing doesn't move existing bookings; new bookings on it draw from the same pool.</span>
+              <span style={note()}>{ed.spaceBasis === "week" ? `Week ${ed.weekNumber}: ` : ""}{ed.confirmedTEU} confirmed + {ed.pendingTEU} pending of {teu || ed.allocatedTEU} TEU. Ticking another routing doesn't move existing bookings; new bookings on it draw from the same pool.</span>
             </div>
           )}
         </div>
 
         <div style={box()}>
-          <div style={boxTitle}><span>Utilisation alert threshold</span></div>
+          <div style={boxTitle()}><span>Utilisation alert threshold</span></div>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <input type="range" min={10} max={100} step={5} value={thresh} aria-label="Utilisation alert threshold"
               onChange={e => setAlertThreshold(Number(e.target.value))} style={{ flex: 1, accentColor: threshColour, cursor: "pointer" }} />
@@ -492,12 +492,12 @@ const SpaceConfigurationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }
         </div>
 
         <div style={box()}>
-          <div style={boxTitle}><span>Minimum quantity commitment (optional)</span></div>
+          <div style={boxTitle()}><span>Minimum quantity commitment (optional)</span></div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <input type="number" min={0} max={periodTeu || undefined} value={minTeuStr} onChange={e => setMinTeuStr(e.target.value)}
               placeholder="No minimum set" aria-label="Minimum quantity commitment"
               style={{ ...inputBase, width: 180, fontFamily: T.mono, fontSize: 13 }} />
-            <span style={note}>TEU by end of period</span>
+            <span style={note()}>TEU by end of period</span>
           </div>
           {minTeu !== null && minTeu > periodTeu && <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.danger }}>Can't exceed the {periodTeu} TEU allocated {weekly ? "over the period" : "above"}.</div>}
         </div>

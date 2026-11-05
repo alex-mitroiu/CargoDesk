@@ -200,15 +200,103 @@ export const LIGHT_THEME = {
   body: "-apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif",
 };
 
+// ─── Trade Horizon flavour of T ──────────────────────────────────────────────
+// A Trade Horizon page (a shipment's own pages, the Dashboard, the Command Center) swaps T to
+// these values (App.jsx, `horizonPage`), so the shared building blocks — Btn, Modal, the fields,
+// DatePicker, the comboboxes, Badge, Spinner, the toasts — and every classic piece on that page
+// draw in Trade Horizon, and the top bar and footer follow the page. Every other page keeps
+// DARK_THEME / LIGHT_THEME exactly. Same keys as those two, from the HZ palette in
+// src/pages/shipments/shipmentDetailTheme.js. Colours are opaque hex, never rgba: code appends
+// alpha suffixes (`${T.border}55`), so HZ's translucent border/hover are pre-blended onto its
+// surface here. Approved mockup: https://claude.ai/code/artifact/ea0e96f7-7c88-4b82-9d67-bf6e8edb2fef
+const HZ_FONTS = {
+  mono: "'IBM Plex Mono', ui-monospace, monospace",
+  head: "'Sora', ui-sans-serif, system-ui, sans-serif",
+  body: "'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif",
+};
+const HZ_DARK_T = {
+  bg: "#080b15", surface: "#0c1120", surfaceHover: "#181d2b",
+  border: "#242936", borderMid: "#383c48",
+  accent: "#38d4e8", accentBg: "rgba(56,212,232,0.12)", accentHover: "#62dfef",
+  text: "#f3f5fc", textMuted: "#8c93b5", textCode: "#38d4e8",
+  success: "#22c55e", successBg: "rgba(34,197,94,0.13)",
+  danger:  "#f0526b", dangerBg:  "rgba(240,82,107,0.13)",
+  warning: "#fab219", warningBg: "rgba(250,178,25,0.13)",
+  info:    "#3987e5", infoBg:    "rgba(57,135,229,0.14)",
+  purple:  "#9085e9", purpleBg:  "rgba(144,133,233,0.14)",
+  btnPrimaryText: "#06111f",
+  btnSecondaryHoverBg: "#1b1f2d",
+  btnDangerHoverBg: "rgba(240,82,107,0.13)",
+  ...HZ_FONTS,
+};
+const HZ_LIGHT_T = {
+  bg: "#f4f6fb", surface: "#ffffff", surfaceHover: "#f0f2f7",
+  border: "#dcdee5", borderMid: "#c4c7d0",
+  accent: "#006970", accentBg: "rgba(0,105,112,0.10)", accentHover: "#007d85",
+  text: "#10142a", textMuted: "#5b6178", textCode: "#006795",
+  success: "#087736", successBg: "rgba(8,119,54,0.10)",
+  danger:  "#ad0e3a", dangerBg:  "rgba(173,14,58,0.10)",
+  warning: "#af4e05", warningBg: "rgba(175,78,5,0.10)",
+  info:    "#034da8", infoBg:    "rgba(3,77,168,0.10)",
+  purple:  "#8d45b3", purpleBg:  "rgba(141,69,179,0.10)",
+  btnPrimaryText: "#ffffff",
+  btnSecondaryHoverBg: "#eceef4",
+  btnDangerHoverBg: "rgba(173,14,58,0.10)",
+  ...HZ_FONTS,
+};
+
+// Keys every flavour carries so a swap back never leaves a Trade Horizon value behind. The classic
+// values reproduce today's look exactly (textFaint IS the border colour classic pages already use
+// for faint text; neutralBg IS the surface a default Badge already uses).
+//   hz            — true on a Trade Horizon page; primitives read it for shape (radius, weight, case).
+//   textFaint     — faint text (breadcrumb root, placeholders, footer). Never T.border as text.
+//   neutralBg     — a default/neutral pill.
+//   successText / infoText / purpleText — pill text on its own tinted background.
+//   cardShadow / popoverShadow / backdrop / ring — card depth, floating panels, a dialog's
+//                   backdrop, and a field's focus ring.
+Object.assign(DARK_THEME, { hz: false, textFaint: DARK_THEME.border, neutralBg: DARK_THEME.surface,
+  successText: DARK_THEME.success, infoText: DARK_THEME.info, purpleText: DARK_THEME.purple,
+  cardShadow: "none", popoverShadow: "0 20px 50px rgba(0,0,0,.7)", backdrop: "rgba(0,0,0,.78)", ring: "transparent" });
+Object.assign(LIGHT_THEME, { hz: false, textFaint: LIGHT_THEME.border, neutralBg: LIGHT_THEME.surface,
+  successText: LIGHT_THEME.success, infoText: LIGHT_THEME.info, purpleText: LIGHT_THEME.purple,
+  cardShadow: "none", popoverShadow: "0 20px 50px rgba(0,0,0,.7)", backdrop: "rgba(0,0,0,.78)", ring: "transparent" });
+Object.assign(HZ_DARK_T, { hz: true, textFaint: "#565d80", neutralBg: "rgba(255,255,255,0.06)",
+  successText: "#7fe3a5", infoText: "#7db2f2", purpleText: "#c6bffb",
+  cardShadow: "none", popoverShadow: "0 8px 24px rgba(0,0,0,.45)", backdrop: "rgba(3,5,12,.72)", ring: "rgba(56,212,232,0.18)" });
+Object.assign(HZ_LIGHT_T, { hz: true, textFaint: "#7c8299", neutralBg: "rgba(15,20,40,0.07)",
+  successText: "#087736", infoText: "#034da8", purpleText: "#8d45b3",
+  cardShadow: "0 1px 2px rgba(16,20,40,.05), 0 14px 32px -16px rgba(16,20,40,.20)",
+  popoverShadow: "0 4px 8px -2px rgba(16,20,40,.08), 0 12px 28px -8px rgba(16,20,40,.28)",
+  backdrop: "rgba(16,20,40,.34)", ring: "rgba(0,105,112,0.16)" });
+
 // T is mutated in place when the theme switches — all components re-render
 // automatically since they're children of App which holds the theme state.
 export const T = { ...DARK_THEME };
 
-export const applyTheme = (dark) => {
-  Object.assign(T, dark ? DARK_THEME : LIGHT_THEME);
-  document.documentElement.style.background = T.bg;
+// The shared fields' focus ring and placeholder on a Trade Horizon page (Form.jsx FIELD_CLASS). Inline
+// styles can't express :focus, so this one rule lives in CSS, keyed to body.cd-hz and the CSS variables
+// applyTheme sets. Classic pages get nothing from it.
+const ensureFieldCss = () => {
+  if (document.getElementById("cd-field-style")) return;
+  const s = document.createElement("style");
+  s.id = "cd-field-style";
+  s.textContent = `body.cd-hz .cd-field:focus { border-color: var(--cd-accent) !important; box-shadow: 0 0 0 3px var(--cd-ring); }
+body.cd-hz .cd-field::placeholder { color: var(--cd-faint); }`;
+  document.head.appendChild(s);
+};
+
+// horizon defaults to whatever T is now, so the dark/light toggle keeps the page's flavour.
+export const applyTheme = (dark, horizon = T.hz) => {
+  Object.assign(T, horizon ? (dark ? HZ_DARK_T : HZ_LIGHT_T) : (dark ? DARK_THEME : LIGHT_THEME));
+  const root = document.documentElement;
+  root.style.background = T.bg;
+  root.style.setProperty("--cd-accent", T.accent);
+  root.style.setProperty("--cd-ring", T.ring);
+  root.style.setProperty("--cd-faint", T.textFaint);
   document.body.style.background            = T.bg;
   document.body.style.color                 = T.text;
+  document.body.classList.toggle("cd-hz", !!horizon);
+  ensureFieldCss();
 };
 
 export const MONTHS_LONG = ["January","February","March","April","May","June","July","August","September","October","November","December"];

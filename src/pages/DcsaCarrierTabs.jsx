@@ -12,9 +12,9 @@ import Btn from "../components/primitives/Btn";
 // Vessel Schedules 3.0 (its vessels' planned, estimated and actual times). Each decision reaches
 // CargoDesk the way a real carrier's would (routes/dcsa-simulator.js).
 
-const box = { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 12 };
-const input = { minHeight: 34, padding: "0 8px", borderRadius: 7, border: `1px solid ${T.border}`, background: T.bg, color: T.text, fontFamily: T.body, fontSize: 12.5, boxSizing: "border-box" };
-const lbl = { display: "block", fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 };
+const box = () => ({ border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 12 });
+const input = () => ({ minHeight: 34, padding: "0 8px", borderRadius: 7, border: `1px solid ${T.border}`, background: T.bg, color: T.text, fontFamily: T.body, fontSize: 12.5, boxSizing: "border-box" });
+const lbl = () => ({ display: "block", fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 });
 const fmt = iso => (iso ? new Date(iso).toLocaleString([], { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
 const empty = text => <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>{text}</div>;
 const errorText = text => <div style={{ fontFamily: T.body, fontSize: 13, color: T.warning }}>{text}</div>;
@@ -116,9 +116,9 @@ export function ShippingInstructionsTab({ navigate }) {
             </dd>
           </dl>
           <div>
-            <label htmlFor="dcsa-si-message" style={lbl}>The carrier's message (optional, shown on the instructions)</label>
+            <label htmlFor="dcsa-si-message" style={lbl()}>The carrier's message (optional, shown on the instructions)</label>
             <input id="dcsa-si-message" data-testid="dcsa-si-message" value={message} onChange={e => setMessage(e.target.value)}
-              placeholder="e.g. Consignee tax ID missing for US customs" style={{ ...input, width: "100%" }} />
+              placeholder="e.g. Consignee tax ID missing for US customs" style={{ ...input(), width: "100%" }} />
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {SI_ACTIONS.map(a => {
@@ -197,23 +197,23 @@ export function TrackTraceTab() {
   if (error) return errorText(error);
   if (!bookings.length) return empty("No confirmed bookings with the demo carrier yet: confirm one under Bookings first.");
   return (
-    <div style={box}>
+    <div style={box()}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
         <div>
-          <label htmlFor="dcsa-tnt-shipment" style={lbl}>Booking with the demo carrier</label>
-          <select id="dcsa-tnt-shipment" data-testid="dcsa-tnt-shipment" value={shipmentId} onChange={e => setShipmentId(e.target.value)} style={{ ...input, width: "100%" }}>
+          <label htmlFor="dcsa-tnt-shipment" style={lbl()}>Booking with the demo carrier</label>
+          <select id="dcsa-tnt-shipment" data-testid="dcsa-tnt-shipment" value={shipmentId} onChange={e => setShipmentId(e.target.value)} style={{ ...input(), width: "100%" }}>
             {bookings.map(b => <option key={b.shipmentId} value={b.shipmentId}>{b.shipmentId} · {b.carrierBookingReference} · {b.pol} → {b.pod}</option>)}
           </select>
         </div>
         <div>
-          <label htmlFor="dcsa-tnt-classifier" style={lbl}>Classifier (departure and arrival)</label>
-          <select id="dcsa-tnt-classifier" data-testid="dcsa-tnt-classifier" value={classifier} onChange={e => setClassifier(e.target.value)} style={{ ...input, width: "100%" }}>
+          <label htmlFor="dcsa-tnt-classifier" style={lbl()}>Classifier (departure and arrival)</label>
+          <select id="dcsa-tnt-classifier" data-testid="dcsa-tnt-classifier" value={classifier} onChange={e => setClassifier(e.target.value)} style={{ ...input(), width: "100%" }}>
             <option value="ACTUAL">Actual</option><option value="ESTIMATED">Estimated</option><option value="PLANNED">Planned</option>
           </select>
         </div>
         <div>
-          <label htmlFor="dcsa-tnt-when" style={lbl}>When (empty = now)</label>
-          <input id="dcsa-tnt-when" data-testid="dcsa-tnt-when" type="datetime-local" value={at} onChange={e => setAt(e.target.value)} style={{ ...input, width: "100%" }} />
+          <label htmlFor="dcsa-tnt-when" style={lbl()}>When (empty = now)</label>
+          <input id="dcsa-tnt-when" data-testid="dcsa-tnt-when" type="datetime-local" value={at} onChange={e => setAt(e.target.value)} style={{ ...input(), width: "100%" }} />
         </div>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -286,15 +286,15 @@ export function VesselTimesTab() {
   if (calls === null) return <Spinner size="sm" />;
   if (error) return errorText(error);
   return (
-    <div style={box}>
+    <div style={box()}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, alignItems: "end" }}>
-        <div><label htmlFor="dcsa-ovs-vessel" style={lbl}>Vessel</label><input id="dcsa-ovs-vessel" value={form.vesselName} onChange={set("vesselName")} style={{ ...input, width: "100%" }} /></div>
-        <div><label htmlFor="dcsa-ovs-imo" style={lbl}>IMO number</label><input id="dcsa-ovs-imo" value={form.vesselImo} onChange={set("vesselImo")} style={{ ...input, width: "100%" }} /></div>
-        <div><label htmlFor="dcsa-ovs-voyage" style={lbl}>Voyage</label><input id="dcsa-ovs-voyage" value={form.voyage} onChange={set("voyage")} style={{ ...input, width: "100%" }} /></div>
-        <div><label htmlFor="dcsa-ovs-port" style={lbl}>Port (UN/LOCODE)</label><input id="dcsa-ovs-port" value={form.unLocationCode} onChange={set("unLocationCode")} style={{ ...input, width: "100%" }} /></div>
-        <div><label htmlFor="dcsa-ovs-kind" style={lbl}>Time</label>
-          <select id="dcsa-ovs-kind" value={form.kind} onChange={set("kind")} style={{ ...input, width: "100%" }}>{TIME_KINDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
-        <div><label htmlFor="dcsa-ovs-when" style={lbl}>Date and time</label><input id="dcsa-ovs-when" type="datetime-local" value={form.at} onChange={set("at")} style={{ ...input, width: "100%" }} /></div>
+        <div><label htmlFor="dcsa-ovs-vessel" style={lbl()}>Vessel</label><input id="dcsa-ovs-vessel" value={form.vesselName} onChange={set("vesselName")} style={{ ...input(), width: "100%" }} /></div>
+        <div><label htmlFor="dcsa-ovs-imo" style={lbl()}>IMO number</label><input id="dcsa-ovs-imo" value={form.vesselImo} onChange={set("vesselImo")} style={{ ...input(), width: "100%" }} /></div>
+        <div><label htmlFor="dcsa-ovs-voyage" style={lbl()}>Voyage</label><input id="dcsa-ovs-voyage" value={form.voyage} onChange={set("voyage")} style={{ ...input(), width: "100%" }} /></div>
+        <div><label htmlFor="dcsa-ovs-port" style={lbl()}>Port (UN/LOCODE)</label><input id="dcsa-ovs-port" value={form.unLocationCode} onChange={set("unLocationCode")} style={{ ...input(), width: "100%" }} /></div>
+        <div><label htmlFor="dcsa-ovs-kind" style={lbl()}>Time</label>
+          <select id="dcsa-ovs-kind" value={form.kind} onChange={set("kind")} style={{ ...input(), width: "100%" }}>{TIME_KINDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
+        <div><label htmlFor="dcsa-ovs-when" style={lbl()}>Date and time</label><input id="dcsa-ovs-when" type="datetime-local" value={form.at} onChange={set("at")} style={{ ...input(), width: "100%" }} /></div>
       </div>
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>

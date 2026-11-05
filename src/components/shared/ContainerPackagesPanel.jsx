@@ -37,7 +37,7 @@ const NavRow = ({ id, icon, label, badge, dgClass, incomplete, depth, selected, 
     {incomplete && (
       <span title="Missing container number, HS code, cargo description, weight, or volume"
         style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700,
-        color: "#06111f", background: HZ.warn, borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>⚠ Incomplete</span>
+        color: HZ.chipText, background: HZ.warn, borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>⚠ Incomplete</span>
     )}
     {badge != null && (
       <span style={{ fontFamily: HZ_MONO, fontSize: 10, color: HZ.cyan, fontWeight: 700, flexShrink: 0 }}>× {badge}</span>

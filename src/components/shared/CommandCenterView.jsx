@@ -73,6 +73,20 @@ let CCON  = "#04121c";  // text on top of CC-coloured background
 const DARK_PAL = { BG:"#080b15", S1:"#0d1220", S2:"rgba(255,255,255,0.06)", BD:"rgba(255,255,255,0.09)",
   CC:"#38d4e8", CC2:"#3987e5", MUTED:"#8c93b5", TEXT:"#f3f5fc", CCON:"#04121c" };
 
+// Status colours and neutral tints, same mechanism. Dark keeps the values tuned for it; light uses
+// Trade Horizon light (src/pages/shipments/shipmentDetailTheme.js HZ_LIGHT), since the dark gold and
+// green sit near 2:1 on white (Trade Horizon rollout, decided 2026-11-05). *_RGB feed rgba() tints.
+let CRIT = "#f0526b", WARN = "#fab219", GOOD = "#22c55e", BLUE = "#3b82f6", INFO = "#3987e5";
+let CRIT_RGB = "240,82,107", WARN_RGB = "250,178,25";
+let TINT = "rgba(255,255,255,.03)", TINT2 = "rgba(255,255,255,.04)";
+let SCRIM = "rgba(2,6,14,.82)", SCRIM2 = "rgba(0,2,8,.75)", DEEP = "rgba(0,0,0,.7)", DEEP2 = "rgba(0,0,0,.8)";
+const DARK_STATUS = { CRIT:"#f0526b", WARN:"#fab219", GOOD:"#22c55e", BLUE:"#3b82f6", INFO:"#3987e5",
+  CRIT_RGB:"240,82,107", WARN_RGB:"250,178,25", TINT:"rgba(255,255,255,.03)", TINT2:"rgba(255,255,255,.04)",
+  SCRIM:"rgba(2,6,14,.82)", SCRIM2:"rgba(0,2,8,.75)", DEEP:"rgba(0,0,0,.7)", DEEP2:"rgba(0,0,0,.8)" };
+const LIGHT_STATUS = { CRIT:"#ad0e3a", WARN:"#af4e05", GOOD:"#087736", BLUE:"#034da8", INFO:"#034da8",
+  CRIT_RGB:"173,14,58", WARN_RGB:"175,78,5", TINT:"rgba(15,20,40,0.03)", TINT2:"rgba(15,20,40,0.05)",
+  SCRIM:"rgba(16,20,40,.34)", SCRIM2:"rgba(16,20,40,.34)", DEEP:"rgba(16,20,40,.28)", DEEP2:"rgba(16,20,40,.28)" };
+
 // ─── CSS keyframes (injected once) ───────────────────────────────────────────
 const CC_STYLES = `
 @keyframes cc-cw  { to { transform: rotate(360deg);  } }
@@ -167,7 +181,7 @@ function Bar({ pct, color, height = 5 }) {
   return (
     <div style={{ height, borderRadius: height / 2, background: BD, overflow: "hidden" }}>
       <div style={{ width: `${capped}%`, height: "100%", borderRadius: height / 2,
-        background: pct >= 100 ? "#f0526b" : pct >= 80 ? "#fab219" : color,
+        background: pct >= 100 ? CRIT : pct >= 80 ? WARN : color,
         transition: "width .4s ease" }} />
     </div>
   );
@@ -201,12 +215,12 @@ function CommandPalette({ onClose }) {
   };
   return (
     <div style={{ position:"fixed", inset:0, zIndex:9999,
-      background:"rgba(2,6,14,.82)", backdropFilter:"blur(6px)",
+      background:SCRIM, backdropFilter:"blur(6px)",
       display:"flex", alignItems:"flex-start", justifyContent:"center", paddingTop:"18vh" }}
       onClick={onClose}>
       <div data-testid="cc-command-palette" style={{ width:560, background:S1, backdropFilter:"blur(18px)",
         border:`1px solid ${CC}55`, borderRadius:14, overflow:"hidden",
-        boxShadow:`0 32px 80px rgba(0,0,0,.7)`, animation:"cc-cmd-in .14s ease" }}
+        boxShadow:`0 32px 80px ${DEEP}`, animation:"cc-cmd-in .14s ease" }}
         onClick={e => e.stopPropagation()}>
         <div style={{ padding:"13px 18px", borderBottom:`1px solid ${BD}`,
           display:"flex", alignItems:"center", gap:10 }}>
@@ -377,8 +391,8 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
     </div>
   ) : null;
 
-  const STATUS_COLOR = { Active:"#22c55e", Pending:"#fab219", "Requires Review":"#f0526b",
-    Completed:"#3b82f6", Cancelled:"#475569" };
+  const STATUS_COLOR = { Active:GOOD, Pending:WARN, "Requires Review":CRIT,
+    Completed:BLUE, Cancelled:"#475569" };
   const sc = STATUS_COLOR[s.status] || MUTED;
 
   const openInNewTab = () => {
@@ -396,7 +410,7 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
     <>
       {/* Backdrop */}
       <div onClick={onClose} style={{
-        position:"fixed", inset:0, background:"rgba(0,2,8,.75)",
+        position:"fixed", inset:0, background:SCRIM2,
         backdropFilter:"blur(3px)", zIndex:3000,
       }} />
 
@@ -410,7 +424,7 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
         borderRadius:12, zIndex:3001,
         display:"flex", flexDirection:"column",
         overflow:"hidden",
-        boxShadow:`0 32px 80px rgba(0,0,0,.8), 0 0 0 1px ${BD}`,
+        boxShadow:`0 32px 80px ${DEEP2}, 0 0 0 1px ${BD}`,
       }}>
 
         {/* Header */}
@@ -442,7 +456,7 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
           {/* Close */}
           <button type="button" data-testid="cc-shipment-preview-close-btn" onClick={onClose}
             style={btnBase}
-            onMouseEnter={e => { e.currentTarget.style.borderColor="#f0526b"; e.currentTarget.style.color="#f0526b"; }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor=CRIT; e.currentTarget.style.color=CRIT; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor=BD; e.currentTarget.style.color=MUTED; }}>
             ✕
           </button>
@@ -525,7 +539,7 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
                     borderRadius:6, background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, color:TEXT }}>
                     {c.size}ft {c.type}
                     {c.containerNumber ? <span style={{ color:MUTED }}> · {c.containerNumber}</span> : ""}
-                    {c.isDg ? <span style={{ color:"#f0526b", marginLeft:4 }}>DG</span> : ""}
+                    {c.isDg ? <span style={{ color:CRIT, marginLeft:4 }}>DG</span> : ""}
                   </div>
                 ))}
               </div>
@@ -590,7 +604,7 @@ async function fetchWeatherByCity(cityName, setter) {
 }
 
 const DONE_STATUSES = new Set(["Done", "Ready to Deploy", "Released"]);
-const PRIORITY_COLOR = { High:"#f0526b", Medium:"#fab219", Low:"#3b82f6" };
+const PRIORITY_COLOR = { get High() { return CRIT; }, get Medium() { return WARN; }, get Low() { return BLUE; } };
 
 // ─── Integration board overdue card ──────────────────────────────────────────
 function TicketAlertCard({ overdueTickets, dueSoonTickets, today, onNavigate }) {
@@ -600,17 +614,17 @@ function TicketAlertCard({ overdueTickets, dueSoonTickets, today, onNavigate }) 
   const daysUntil = iso => Math.round((new Date(iso)   - new Date(today)) / 86400000);
   return (
     <div data-testid="cc-ticket-alert-card" style={{ marginBottom:20, background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`,
-      borderTop:`2px solid #f0526b88`, borderRadius:16, overflow:"hidden" }}>
+      borderTop:`2px solid ${CRIT}88`, borderRadius:16, overflow:"hidden" }}>
       {/* Header */}
       <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px 8px" }}>
         <span style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700,
-          color:"#f0526b", textTransform:"uppercase", letterSpacing:".12em" }}>
+          color:CRIT, textTransform:"uppercase", letterSpacing:".12em" }}>
           🎫 Integration Board
         </span>
         <div style={{ display:"flex", gap:6, marginLeft:4 }}>
           {[
-            { key:"overdue",   label:"Overdue",       count:overdueTickets.length,  color:"#f0526b" },
-            { key:"due-soon",  label:"Due this week", count:dueSoonTickets.length,  color:"#fab219" },
+            { key:"overdue",   label:"Overdue",       count:overdueTickets.length,  color:CRIT },
+            { key:"due-soon",  label:"Due this week", count:dueSoonTickets.length,  color:WARN },
           ].map(tab => {
             const active = ticketTab === tab.key;
             return (
@@ -657,7 +671,7 @@ function TicketAlertCard({ overdueTickets, dueSoonTickets, today, onNavigate }) 
           const pColor = PRIORITY_COLOR[t.priority] || MUTED;
           const isOD   = ticketTab === "overdue";
           const dLabel = isOD ? `+${daysLate(t.dueDate)}d` : `${daysUntil(t.dueDate)}d`;
-          const dColor = isOD ? "#f0526b" : (daysUntil(t.dueDate) <= 2 ? "#fab219" : MUTED);
+          const dColor = isOD ? CRIT : (daysUntil(t.dueDate) <= 2 ? WARN : MUTED);
           return (
             <div key={t.id} style={{ display:"flex", alignItems:"center", gap:8,
               padding:"7px 14px", borderTop:`1px solid ${BD}` }}>
@@ -706,9 +720,9 @@ function TicketAlertCard({ overdueTickets, dueSoonTickets, today, onNavigate }) 
 
 // ─── Exception queue, classified by root cause (TKT-FKJPBO) ─────────────────
 const EXC_TABS = [
-  { key:"scheduleSlip",       label:"Schedule Slip",       color:"#fab219" },
-  { key:"unconfirmedBooking", label:"Unconfirmed Booking", color:"#f0526b" },
-  { key:"stalledMilestone",   label:"Stalled Milestone",   color:"#fab219" },
+  { key:"scheduleSlip",       label:"Schedule Slip",       get color() { return WARN; } },
+  { key:"unconfirmedBooking", label:"Unconfirmed Booking", get color() { return CRIT; } },
+  { key:"stalledMilestone",   label:"Stalled Milestone",   get color() { return WARN; } },
 ];
 function ExceptionQueueCard({ queue, onOpenShipment }) {
   const [tab, setTab] = useState("scheduleSlip");
@@ -724,10 +738,10 @@ function ExceptionQueueCard({ queue, onOpenShipment }) {
 
   return (
     <div data-testid="cc-exception-queue-card" style={{ marginBottom:20, background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`,
-      borderTop:`2px solid #fab21988`, borderRadius:16, overflow:"hidden" }}>
+      borderTop:`2px solid ${WARN}88`, borderRadius:16, overflow:"hidden" }}>
       <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px 8px", flexWrap:"wrap" }}>
         <span style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700,
-          color:"#fab219", textTransform:"uppercase", letterSpacing:".12em" }}>
+          color:WARN, textTransform:"uppercase", letterSpacing:".12em" }}>
           ⚠ Exceptions
         </span>
         <div style={{ display:"flex", gap:6, marginLeft:4, flexWrap:"wrap" }}>
@@ -798,6 +812,9 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
     MUTED: T.textMuted, TEXT: T.text, CCON: T.btnPrimaryText,
   };
   [BG, S1, S2, BD, CC, CC2, MUTED, TEXT, CCON] = [pal.BG, pal.S1, pal.S2, pal.BD, pal.CC, pal.CC2, pal.MUTED, pal.TEXT, pal.CCON];
+  const st = isDark ? DARK_STATUS : LIGHT_STATUS;
+  [CRIT, WARN, GOOD, BLUE, INFO, CRIT_RGB, WARN_RGB, TINT, TINT2] = [st.CRIT, st.WARN, st.GOOD, st.BLUE, st.INFO, st.CRIT_RGB, st.WARN_RGB, st.TINT, st.TINT2];
+  [SCRIM, SCRIM2, DEEP, DEEP2] = [st.SCRIM, st.SCRIM2, st.DEEP, st.DEEP2];
   const [cmdOpen,         setCmdOpen]         = useState(false);
   const [previewShipment, setPreviewShipment] = useState(null);
   const [activeFilter,    setActiveFilter]    = useState(null);
@@ -898,10 +915,10 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
   const byStatus = {};
   shipments.forEach(s => { byStatus[s.status] = (byStatus[s.status] || 0) + 1; });
   const donutSegs = [
-    { label:"Active",   value: byStatus["Active"]          || 0, color:"#22c55e" },
-    { label:"Pending",  value: byStatus["Pending"]         || 0, color:"#fab219" },
-    { label:"Review",   value: byStatus["Requires Review"] || 0, color:"#f0526b" },
-    { label:"Completed",value: byStatus["Completed"]       || 0, color:"#3b82f6" },
+    { label:"Active",   value: byStatus["Active"]          || 0, color:GOOD },
+    { label:"Pending",  value: byStatus["Pending"]         || 0, color:WARN },
+    { label:"Review",   value: byStatus["Requires Review"] || 0, color:CRIT },
+    { label:"Completed",value: byStatus["Completed"]       || 0, color:BLUE },
     { label:"Other",    value: shipments.length - (byStatus["Active"]||0) - (byStatus["Pending"]||0)
                                - (byStatus["Requires Review"]||0) - (byStatus["Completed"]||0), color:"#475569" },
   ].filter(s => s.value > 0);
@@ -1029,7 +1046,7 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
     .filter(c => c.shipmentId === sid)
     .reduce((n, c) => n + (c.size === "40" || c.size === "45" ? 2 : 1), 0);
 
-  const STATUS_DOT = { Active:"#22c55e", Pending:"#fab219", "Requires Review":"#f0526b" };
+  const STATUS_DOT = { Active:GOOD, Pending:WARN, "Requires Review":CRIT };
 
   useHorizonFonts();
 
@@ -1069,15 +1086,15 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
             boxShadow:`0 0 0 1px rgba(255,255,255,0.12) inset, 0 6px 16px -6px ${CC}88`,
             display:"flex", alignItems:"center", justifyContent:"center" }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-              <path d="M3 17h18M5 17V9l4-4h6l4 4v8M9 17V11h6v6" stroke="#04121c" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M3 17h18M5 17V9l4-4h6l4 4v8M9 17V11h6v6" stroke={CCON} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
           <span style={{ fontFamily:HZ_DISPLAY, fontSize:19, fontWeight:700, color:TEXT }}>
             Command Center
           </span>
           <div style={{ display:"flex", alignItems:"center", gap:5, marginLeft:4 }}>
-            <div style={{ width:8, height:8, borderRadius:"50%", background:"#22c55e",
-              boxShadow:"0 0 6px #22c55e", animation:"cc-blink 2.5s ease-in-out infinite" }} />
+            <div style={{ width:8, height:8, borderRadius:"50%", background:GOOD,
+              boxShadow:`0 0 6px ${GOOD}`, animation:"cc-blink 2.5s ease-in-out infinite" }} />
             <span style={{ fontFamily:HZ_MONO, fontSize:11, color:MUTED }}>LIVE</span>
           </div>
           {/* Live clock */}
@@ -1104,7 +1121,7 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
               border:`1px solid ${BD}`, background:"none",
               cursor:"pointer", fontFamily:HZ_BODY, fontSize:11, color:MUTED,
               transition:"all .15s" }}
-            onMouseEnter={e=>{ e.currentTarget.style.borderColor="#f0526b"; e.currentTarget.style.color="#f0526b"; }}
+            onMouseEnter={e=>{ e.currentTarget.style.borderColor=CRIT; e.currentTarget.style.color=CRIT; }}
             onMouseLeave={e=>{ e.currentTarget.style.borderColor=BD; e.currentTarget.style.color=MUTED; }}>
             Exit ✕
           </button>
@@ -1131,10 +1148,10 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
             const isActiveFor = f => activeFilter && filterKey(activeFilter) === filterKey(f);
             const toggle = f => { setActiveFilter(af => af && filterKey(af) === filterKey(f) ? null : f); setShowAllRecent(false); };
             const legendItems = [
-              { label:"Active", value: byStatus["Active"]||0, color:"#22c55e", filter:{ status:"Active" } },
-              { label:"Pending", value: byStatus["Pending"]||0, color:"#fab219", filter:{ status:"Pending" } },
-              { label:"Requires Review", value: byStatus["Requires Review"]||0, color:"#f0526b", filter:{ status:"Requires Review" } },
-              { label:"Completed", value: byStatus["Completed"]||0, color:"#3987e5", filter:null },
+              { label:"Active", value: byStatus["Active"]||0, color:GOOD, filter:{ status:"Active" } },
+              { label:"Pending", value: byStatus["Pending"]||0, color:WARN, filter:{ status:"Pending" } },
+              { label:"Requires Review", value: byStatus["Requires Review"]||0, color:CRIT, filter:{ status:"Requires Review" } },
+              { label:"Completed", value: byStatus["Completed"]||0, color:INFO, filter:null },
             ];
             return (
           <div data-testid="cc-kpi-hero" style={{ display:"grid", gridTemplateColumns:"5fr 4fr 3fr", gap:16, marginBottom:20 }}>
@@ -1178,10 +1195,10 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
                 return (<>
               <button type="button" data-testid="cc-overdue-btn" onClick={() => toggle({ status:"_overdue" })}
                 style={{ display:"flex", alignItems:"center", gap:14, padding:"12px 14px", borderRadius:14, textAlign:"left",
-                  background: overdueActive ? "rgba(240,82,107,.12)" : "rgba(255,255,255,.03)",
-                  border:`1px solid ${overdueActive ? "rgba(240,82,107,.5)" : "rgba(240,82,107,.3)"}`,
+                  background: overdueActive ? `rgba(${CRIT_RGB},.12)` : TINT,
+                  border:`1px solid ${overdueActive ? `rgba(${CRIT_RGB},.5)` : `rgba(${CRIT_RGB},.3)`}`,
                   cursor:"pointer", animation: overdueShipments.length > 0 && !overdueActive ? "cc-pulse-border 2s ease-in-out infinite" : "none" }}>
-                <div style={{ fontFamily:HZ_DISPLAY, fontSize:26, fontWeight:700, lineHeight:1, color:"#f0526b" }}>{overdueShipments.length}</div>
+                <div style={{ fontFamily:HZ_DISPLAY, fontSize:26, fontWeight:700, lineHeight:1, color:CRIT }}>{overdueShipments.length}</div>
                 <div>
                   <div style={{ fontFamily:HZ_BODY, fontSize:12, fontWeight:600, color:TEXT }}>Overdue Shipments</div>
                   <div style={{ fontFamily:HZ_BODY, fontSize:11.5, color:MUTED }}>ETD passed, not closed</div>
@@ -1189,10 +1206,10 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
               </button>
               <button type="button" data-testid="cc-milestone-breach-btn" onClick={() => toggle({ milestoneBreach:true })}
                 style={{ display:"flex", alignItems:"center", gap:14, padding:"12px 14px", borderRadius:14, textAlign:"left",
-                  background: msActive ? "rgba(250,178,25,.14)" : "rgba(250,178,25,.06)",
-                  border:`1px solid ${msActive ? "rgba(250,178,25,.5)" : "rgba(250,178,25,.3)"}`,
+                  background: msActive ? `rgba(${WARN_RGB},.14)` : `rgba(${WARN_RGB},.06)`,
+                  border:`1px solid ${msActive ? `rgba(${WARN_RGB},.5)` : `rgba(${WARN_RGB},.3)`}`,
                   cursor:"pointer", animation: msOverdueSummary?.shipmentsWithBreach && !msActive ? "cc-pulse-border 2s ease-in-out infinite" : "none" }}>
-                <div style={{ fontFamily:HZ_DISPLAY, fontSize:26, fontWeight:700, lineHeight:1, color:"#fab219" }}>{msOverdueSummary?.shipmentsWithBreach ?? "—"}</div>
+                <div style={{ fontFamily:HZ_DISPLAY, fontSize:26, fontWeight:700, lineHeight:1, color:WARN }}>{msOverdueSummary?.shipmentsWithBreach ?? "—"}</div>
                 <div>
                   <div style={{ fontFamily:HZ_BODY, fontSize:12, fontWeight:600, color:TEXT }}>Milestone Breaches</div>
                   <div style={{ fontFamily:HZ_BODY, fontSize:11.5, color:MUTED }}>{msOverdueSummary ? `${msOverdueSummary.onTimePct}% fleet-wide on-time` : "loading…"}</div>
@@ -1211,16 +1228,16 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
               </div>
               <div style={{ fontFamily:HZ_BODY, fontSize:12, color:MUTED, marginTop:4 }}>{containers.length} containers · {carrierStats.length} active carriers</div>
               <div style={{ display:"flex", gap:8, marginTop:16, flexWrap:"wrap" }}>
-                <div style={{ flex:1, minWidth:60, textAlign:"center", background:"rgba(255,255,255,.03)", border:`1px solid ${BD}`, borderRadius:10, padding:"8px 4px" }}>
-                  <div style={{ fontFamily:HZ_MONO, fontSize:15, fontWeight:600, color:"#22c55e" }}>{byStatus["Active"]||0}</div>
+                <div style={{ flex:1, minWidth:60, textAlign:"center", background:TINT, border:`1px solid ${BD}`, borderRadius:10, padding:"8px 4px" }}>
+                  <div style={{ fontFamily:HZ_MONO, fontSize:15, fontWeight:600, color:GOOD }}>{byStatus["Active"]||0}</div>
                   <div style={{ fontFamily:HZ_BODY, fontSize:9.5, color:MUTED, textTransform:"uppercase", letterSpacing:".06em", marginTop:2 }}>Active</div>
                 </div>
-                <div style={{ flex:1, minWidth:60, textAlign:"center", background:"rgba(255,255,255,.03)", border:`1px solid ${BD}`, borderRadius:10, padding:"8px 4px" }}>
-                  <div style={{ fontFamily:HZ_MONO, fontSize:15, fontWeight:600, color:"#fab219" }}>{byStatus["Pending"]||0}</div>
+                <div style={{ flex:1, minWidth:60, textAlign:"center", background:TINT, border:`1px solid ${BD}`, borderRadius:10, padding:"8px 4px" }}>
+                  <div style={{ fontFamily:HZ_MONO, fontSize:15, fontWeight:600, color:WARN }}>{byStatus["Pending"]||0}</div>
                   <div style={{ fontFamily:HZ_BODY, fontSize:9.5, color:MUTED, textTransform:"uppercase", letterSpacing:".06em", marginTop:2 }}>Pending</div>
                 </div>
-                <div style={{ flex:1, minWidth:60, textAlign:"center", background:"rgba(255,255,255,.03)", border:`1px solid ${BD}`, borderRadius:10, padding:"8px 4px" }}>
-                  <div style={{ fontFamily:HZ_MONO, fontSize:15, fontWeight:600, color:"#f0526b" }}>{byStatus["Requires Review"]||0}</div>
+                <div style={{ flex:1, minWidth:60, textAlign:"center", background:TINT, border:`1px solid ${BD}`, borderRadius:10, padding:"8px 4px" }}>
+                  <div style={{ fontFamily:HZ_MONO, fontSize:15, fontWeight:600, color:CRIT }}>{byStatus["Requires Review"]||0}</div>
                   <div style={{ fontFamily:HZ_BODY, fontSize:9.5, color:MUTED, textTransform:"uppercase", letterSpacing:".06em", marginTop:2 }}>Review</div>
                 </div>
               </div>
@@ -1278,7 +1295,7 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
                       {a.pol}›{a.pod}
                     </span>
                     <span style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700,
-                      color: daysLeft <= 7 ? "#f0526b" : "#fab219" }}>
+                      color: daysLeft <= 7 ? CRIT : WARN }}>
                       {daysLeft}d
                     </span>
                   </div>
@@ -1305,7 +1322,7 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
                     overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                     {m.label}
                   </span>
-                  <span style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700, color:"#fab219" }}>
+                  <span style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700, color:WARN }}>
                     {m.count}
                   </span>
                 </div>
@@ -1345,9 +1362,9 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
                     {otp && (
                       <span title={`${otp.onTimeCount}/${otp.sampleSize} AIS-confirmed legs on time`}
                         style={{ fontFamily:HZ_MONO, fontSize:10, fontWeight:700, padding:"1px 6px",
-                          borderRadius:4, color: otp.onTimePct >= 80 ? "#22c55e" : otp.onTimePct >= 50 ? "#fab219" : "#f0526b",
-                          background: `${otp.onTimePct >= 80 ? "#22c55e" : otp.onTimePct >= 50 ? "#fab219" : "#f0526b"}18`,
-                          border:`1px solid ${otp.onTimePct >= 80 ? "#22c55e" : otp.onTimePct >= 50 ? "#fab219" : "#f0526b"}44` }}>
+                          borderRadius:4, color: otp.onTimePct >= 80 ? GOOD : otp.onTimePct >= 50 ? WARN : CRIT,
+                          background: `${otp.onTimePct >= 80 ? GOOD : otp.onTimePct >= 50 ? WARN : CRIT}18`,
+                          border:`1px solid ${otp.onTimePct >= 80 ? GOOD : otp.onTimePct >= 50 ? WARN : CRIT}44` }}>
                         {otp.onTimePct}% on-time
                       </span>
                     )}
@@ -1357,12 +1374,12 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
                     </span>
                     {c.pct !== null && (
                       <span style={{ fontFamily:HZ_MONO, fontSize:12,
-                        color: c.pct >= 100 ? "#f0526b" : c.pct >= 80 ? "#fab219" : MUTED }}>
+                        color: c.pct >= 100 ? CRIT : c.pct >= 80 ? WARN : MUTED }}>
                         {c.pct}%
                       </span>
                     )}
                   </div>
-                  <Bar pct={Math.round(c.consumed / maxConsumed * 100)} color={i===0 ? CC : "#3b82f6"} />
+                  <Bar pct={Math.round(c.consumed / maxConsumed * 100)} color={i===0 ? CC : BLUE} />
                   {c.allocated > 0 && (
                     <div style={{ fontFamily:HZ_BODY, fontSize:10, color:MUTED, marginTop:2 }}>
                       {c.consumed} / {c.allocated} allocated
@@ -1382,16 +1399,16 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
                 <div key={route} style={{ marginBottom:11 }}>
                   <div style={{ display:"flex", alignItems:"baseline", gap:6, marginBottom:4 }}>
                     <span style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700,
-                      color: i===0 ? "#22c55e" : TEXT, flex:1 }}>
+                      color: i===0 ? GOOD : TEXT, flex:1 }}>
                       {route}
                     </span>
                     <span style={{ fontFamily:HZ_MONO, fontSize:14, fontWeight:700,
-                      color: i===0 ? "#22c55e" : TEXT }}>
+                      color: i===0 ? GOOD : TEXT }}>
                       {count}
                     </span>
                     <span style={{ fontFamily:HZ_BODY, fontSize:11, color:MUTED }}>shipments</span>
                   </div>
-                  <Bar pct={Math.round(count / maxRoute * 100)} color="#22c55e" height={4} />
+                  <Bar pct={Math.round(count / maxRoute * 100)} color={GOOD} height={4} />
                 </div>
               ))}
             </div>
@@ -1405,7 +1422,7 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
               <SLabel>Transit-Time Variance by Lane</SLabel>
               {laneVariance.map(l => {
                 const over = l.varianceDays != null && l.varianceDays > 0;
-                const vColor = l.varianceDays == null ? MUTED : over ? "#f0526b" : "#22c55e";
+                const vColor = l.varianceDays == null ? MUTED : over ? CRIT : GOOD;
                 return (
                   <div key={l.tradeLane} style={{ display:"flex", alignItems:"center", gap:12,
                     padding:"7px 0", borderBottom:`1px solid ${BD}` }}>
@@ -1468,7 +1485,7 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
                 style={{ marginLeft:"auto", fontFamily:HZ_MONO, fontSize:11, color:MUTED,
                   background:"none", border:`1px solid ${BD}`, borderRadius:4,
                   padding:"4px 10px", cursor:"pointer", lineHeight:1 }}
-                onMouseEnter={e => { e.currentTarget.style.color="#f0526b"; e.currentTarget.style.borderColor="#f0526b55"; }}
+                onMouseEnter={e => { e.currentTarget.style.color=CRIT; e.currentTarget.style.borderColor=`${CRIT}55`; }}
                 onMouseLeave={e => { e.currentTarget.style.color=MUTED; e.currentTarget.style.borderColor=BD; }}>
                 ✕ clear
               </button>
@@ -1490,10 +1507,10 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
                   style={{ display:"flex", alignItems:"center", gap:10,
                     padding:"9px 14px", borderRadius:7,
                     background: isOD ? `${S2}` : S2,
-                    border:`1px solid ${isOD ? "#f0526b33" : BD}`,
+                    border:`1px solid ${isOD ? `${CRIT}33` : BD}`,
                     cursor:"pointer", transition:"border-color .12s" }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor=isOD ? "#f0526baa" : `${CC}55`}
-                  onMouseLeave={e => e.currentTarget.style.borderColor=isOD ? "#f0526b33" : BD}>
+                  onMouseEnter={e => e.currentTarget.style.borderColor=isOD ? `${CRIT}aa` : `${CC}55`}
+                  onMouseLeave={e => e.currentTarget.style.borderColor=isOD ? `${CRIT}33` : BD}>
                   <div style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700,
                     color:TEXT, minWidth:110, flexShrink:0 }}>{s.id}</div>
                   <div style={{ flex:1, fontFamily:HZ_BODY, fontSize:11, color:MUTED,
@@ -1512,7 +1529,7 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
                   )}
                   {isOD ? (
                     <div style={{ fontFamily:HZ_MONO, fontSize:11, fontWeight:700,
-                      color:"#f0526b", flexShrink:0 }}>+{daysLate}d late</div>
+                      color:CRIT, flexShrink:0 }}>+{daysLate}d late</div>
                   ) : s.etd ? (
                     <div style={{ fontFamily:HZ_MONO, fontSize:11, color:MUTED, flexShrink:0 }}>
                       {s.etd}
@@ -1592,7 +1609,7 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
                   <div style={{ display:"flex", justifyContent:"space-between",
                     fontFamily:HZ_MONO, fontSize:11.5, marginBottom:4 }}>
                     <span style={{ color:TEXT }}>{a.carrierCode}</span>
-                    <span style={{ fontWeight:600, color: pct>=100 ? "#f0526b" : pct>=80 ? "#fab219" : MUTED }}>
+                    <span style={{ fontWeight:600, color: pct>=100 ? CRIT : pct>=80 ? WARN : MUTED }}>
                       {pct}%
                     </span>
                   </div>
@@ -1662,12 +1679,12 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
               <SLabel>FX Converter</SLabel>
               <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8 }}>
                 <input data-testid="cc-fx-amount-input" value={fxAmt} onChange={e => setFxAmt(e.target.value)}
-                  style={{ width:68, background:"rgba(255,255,255,.04)", border:`1px solid ${BD}`, borderRadius:7,
+                  style={{ width:68, background:TINT2, border:`1px solid ${BD}`, borderRadius:7,
                     padding:"6px 9px", fontFamily:HZ_MONO, fontSize:11.5, color:TEXT,
                     outline:"none", textAlign:"right" }} />
                 <select value={fxFrom} data-testid="cc-fx-from-select"
                   onChange={e => { setFxFrom(e.target.value); localStorage.setItem("cc_fx_from", e.target.value); }}
-                  style={{ background:"rgba(255,255,255,.04)", border:`1px solid ${BD}`, borderRadius:7,
+                  style={{ background:TINT2, border:`1px solid ${BD}`, borderRadius:7,
                     padding:"6px 4px", fontFamily:HZ_MONO, fontSize:11.5, color:TEXT,
                     outline:"none", cursor:"pointer", flex:1 }}>
                   {FX_CCYS.map(c => <option key={c} value={c}>{c}</option>)}
@@ -1678,7 +1695,7 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
                     fontFamily:HZ_MONO, flexShrink:0 }}>⇄</button>
                 <select value={fxTo} data-testid="cc-fx-to-select"
                   onChange={e => { setFxTo(e.target.value); localStorage.setItem("cc_fx_to", e.target.value); }}
-                  style={{ background:"rgba(255,255,255,.04)", border:`1px solid ${BD}`, borderRadius:7,
+                  style={{ background:TINT2, border:`1px solid ${BD}`, borderRadius:7,
                     padding:"6px 4px", fontFamily:HZ_MONO, fontSize:11.5, color:TEXT,
                     outline:"none", cursor:"pointer", flex:1 }}>
                   {FX_CCYS.map(c => <option key={c} value={c}>{c}</option>)}

@@ -13,7 +13,6 @@ import { HZ, HZ_MONO, HZ_BODY } from "../../pages/shipments/shipmentDetailTheme"
 // Schedules page) or a quote (QuoteSpotOffer). The rules are the server's (lib/spot-offers.js); these
 // components show them and call the routes in routes/spot-offers.js.
 
-const AMBER = "#fbc531";
 export const fmtMoney = (n, cur = "USD") =>
   `${cur} ${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDay = d => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "");
@@ -57,7 +56,7 @@ export const equipmentOfQuoteLines = lines => {
 const equipmentText = eq => (eq || []).map(e => `${e.quantity} × ${e.containerType}`).join(", ");
 
 const chipStyle = (color, bg) => ({ fontFamily: HZ_MONO, fontSize: 10.5, fontWeight: 700, letterSpacing: ".04em", color, background: bg, borderRadius: 4, padding: "2px 9px", whiteSpace: "nowrap" });
-const hzLabel = { fontFamily: HZ_BODY, fontSize: 10.5, fontWeight: 600, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".08em" };
+const hzLabel = () => ({ fontFamily: HZ_BODY, fontSize: 10.5, fontWeight: 600, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".08em" });
 
 // ─── On the shipment (Schedules page, under the contract) ───────────────────────────────────────
 // `locked` = the carrier already holds the booking (Pending/Confirmed): the offer can't change.
@@ -68,7 +67,7 @@ export const SpotOfferCard = ({ offer, carrierCode, locked, lockedText, canEdit,
         <div style={{ flex: "1 1 420px", display: "flex", flexDirection: "column", gap: 6, fontFamily: HZ_BODY }}>
           <span style={{ fontSize: 15, fontWeight: 700, color: HZ.text }}>No spot offer yet</span>
           <span style={{ fontSize: 12.5, color: HZ.textMuted, lineHeight: 1.55 }}>Put {carrierCode || "the carrier"}'s quote here: the booking then carries its quotation reference, and its charges become this shipment's BUY lines.</span>
-          <span style={{ fontSize: 12, color: AMBER }}>Without one, the booking goes to {carrierCode || "the carrier"} with no quotation reference.</span>
+          <span style={{ fontSize: 12, color: HZ.amber }}>Without one, the booking goes to {carrierCode || "the carrier"} with no quotation reference.</span>
         </div>
         {canEdit && <>
           <Btn size="sm" onClick={() => onAdd("type")} data-testid="spot-offer-add">＋ Add spot offer</Btn>
@@ -85,7 +84,7 @@ export const SpotOfferCard = ({ offer, carrierCode, locked, lockedText, canEdit,
         <span data-testid="spot-offer-ref" style={{ fontFamily: HZ_MONO, fontSize: 15, fontWeight: 700 }}>{offer.offerRef}</span>
         <span style={chipStyle(HZ.text, HZ.surface2)}>{KIND_LABEL[offer.kind] || offer.kind}</span>
         {offer.status === "Booked" && <span data-testid="spot-offer-booked" style={chipStyle(HZ.goodPillText, HZ.goodBg)}>Booked on</span>}
-        {offer.expired && <span data-testid="spot-offer-expired" style={chipStyle(blocked ? HZ.crit : AMBER, blocked ? HZ.critBg : `${AMBER}24`)}>Expired</span>}
+        {offer.expired && <span data-testid="spot-offer-expired" style={chipStyle(blocked ? HZ.crit : HZ.amber, blocked ? HZ.critBg : `${HZ.amber}24`)}>Expired</span>}
         <span style={{ flex: 1 }} />
         {canEdit && <>
           <Btn size="sm" variant="secondary" disabled={locked} onClick={() => onAdd("type")} data-testid="spot-offer-replace">Replace offer</Btn>
@@ -103,13 +102,13 @@ export const SpotOfferCard = ({ offer, carrierCode, locked, lockedText, canEdit,
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", margin: "14px 18px 0", border: `1px solid ${HZ.border}`, borderRadius: 8 }}>
         {[
-          ["Valid until", fmtValidUntil(offer.validUntil), validityNote(offer), offer.expired ? (blocked ? HZ.crit : AMBER) : HZ.textMuted],
+          ["Valid until", fmtValidUntil(offer.validUntil), validityNote(offer), offer.expired ? (blocked ? HZ.crit : HZ.amber) : HZ.textMuted],
           ["Price locks", offer.priceLockLabel || "—", "", HZ.textMuted],
           ["Containers", equipmentText(offer.equipment) || "—", "", HZ.textMuted],
           ["Source", SOURCE_LABEL[offer.source] || offer.source, fmtDay(offer.createdAt), HZ.textMuted],
         ].map(([label, value, note, noteColor], i) => (
           <div key={label} style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 4, borderRight: i < 3 ? `1px solid ${HZ.border}` : "none", minWidth: 0 }}>
-            <span style={hzLabel}>{label}</span>
+            <span style={hzLabel()}>{label}</span>
             <span style={{ fontFamily: HZ_MONO, fontSize: 13, fontWeight: 700 }}>{value}</span>
             {note && <span style={{ fontSize: 11.5, color: noteColor }}>{note}</span>}
           </div>
@@ -125,7 +124,7 @@ export const SpotOfferCard = ({ offer, carrierCode, locked, lockedText, canEdit,
         {offer.subjectToUsd > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <span style={{ fontSize: 11.5, color: HZ.textMuted }}>Subject to, at shipment</span>
-            <span data-testid="spot-offer-subject" style={{ fontFamily: HZ_MONO, fontSize: 21, fontWeight: 700, color: AMBER }}>{fmtMoney(offer.subjectToUsd)}</span>
+            <span data-testid="spot-offer-subject" style={{ fontFamily: HZ_MONO, fontSize: 21, fontWeight: 700, color: HZ.amber }}>{fmtMoney(offer.subjectToUsd)}</span>
             <span style={{ fontSize: 11.5, color: HZ.textMuted }}>at its level on the shipment date</span>
           </div>
         )}
@@ -141,7 +140,7 @@ export const SpotOfferCard = ({ offer, carrierCode, locked, lockedText, canEdit,
           <thead>
             <tr style={{ background: HZ.bg, textAlign: "left" }}>
               {["Code", "Charge", "Basis", "Qty", "Unit price", "Amount", "USD", "Terms", "Price"].map((h, i) => (
-                <th key={h} scope="col" style={{ ...hzLabel, padding: "9px 12px", textAlign: [3, 4, 5, 6].includes(i) ? "right" : "left" }}>{h}</th>
+                <th key={h} scope="col" style={{ ...hzLabel(), padding: "9px 12px", textAlign: [3, 4, 5, 6].includes(i) ? "right" : "left" }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -156,7 +155,7 @@ export const SpotOfferCard = ({ offer, carrierCode, locked, lockedText, canEdit,
                 <td style={{ padding: "8px 12px", fontFamily: HZ_MONO, textAlign: "right" }}>{fmtMoney(l.amount, l.currency)}</td>
                 <td style={{ padding: "8px 12px", fontFamily: HZ_MONO, textAlign: "right", fontWeight: 700 }}>{Number(l.amountUsd).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 <td style={{ padding: "8px 12px", fontFamily: HZ_MONO, color: HZ.textMuted }}>{l.paymentTerm}</td>
-                <td style={{ padding: "8px 12px" }}>{l.included ? <span style={chipStyle(HZ.textMuted, HZ.surface2)}>In price</span> : <span style={chipStyle(AMBER, `${AMBER}24`)}>Subject to</span>}</td>
+                <td style={{ padding: "8px 12px" }}>{l.included ? <span style={chipStyle(HZ.textMuted, HZ.surface2)}>In price</span> : <span style={chipStyle(HZ.amber, `${HZ.amber}24`)}>Subject to</span>}</td>
               </tr>
             ))}
           </tbody>
@@ -180,7 +179,7 @@ const PenaltyTerms = ({ penalties: p }) => {
   ].filter(Boolean);
   return (
     <div data-testid="spot-offer-penalties" style={{ display: "flex", flexWrap: "wrap", gap: "8px 26px", padding: "12px 18px 16px", fontSize: 12.5, color: HZ.textMuted }}>
-      <span style={{ ...hzLabel, alignSelf: "center" }}>Penalty terms</span>
+      <span style={{ ...hzLabel(), alignSelf: "center" }}>Penalty terms</span>
       {items}
     </div>
   );
@@ -284,7 +283,7 @@ export const AddSpotOfferModal = ({ ctx, targetLabel, initialTab = "type", onClo
   const tabBtn = on => ({ padding: "9px 14px", border: "none", borderBottom: `2px solid ${on ? T.accent : "transparent"}`, background: "transparent", cursor: "pointer",
     fontFamily: T.body, fontSize: 13, fontWeight: 700, color: on ? T.text : T.textMuted });
   const seg = on => ({ flex: 1, padding: "7px 10px", borderRadius: 6, border: "none", cursor: "pointer", fontFamily: T.body, fontSize: 12.5, fontWeight: 600,
-    background: on ? T.accent : "transparent", color: on ? "#06111f" : T.textMuted });
+    background: on ? T.accent : "transparent", color: on ? T.btnPrimaryText : T.textMuted });
   const pickable = (pool || []).filter(o => !(o.expired && o.kind === "digital"));
 
   return (
@@ -357,7 +356,7 @@ export const AddSpotOfferModal = ({ ctx, targetLabel, initialTab = "type", onClo
               </select>
             </label>
           </div>
-          <span style={{ fontFamily: T.body, fontSize: 12, color: kind === "digital" ? AMBER : T.textMuted, marginTop: -8 }}>
+          <span style={{ fontFamily: T.body, fontSize: 12, color: kind === "digital" ? T.warning : T.textMuted, marginTop: -8 }}>
             {kind === "digital" ? "A digital offer can't be attached or booked once it expires: get a fresh one." : "An expired quote only warns: its terms may still hold, so check with the carrier."}</span>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -387,7 +386,7 @@ export const AddSpotOfferModal = ({ ctx, targetLabel, initialTab = "type", onClo
                 <button type="button" aria-pressed={!c.included} onClick={() => setCharge(i, { included: !c.included })} data-testid={`spot-charge-included-${i}`}
                   title="In the offered price, or 'subject to' at its level on the shipment date"
                   style={{ padding: "5px 6px", borderRadius: 5, cursor: "pointer", fontFamily: T.body, fontSize: 11.5, fontWeight: 700,
-                    border: `1px solid ${c.included ? T.border : `${AMBER}73`}`, background: c.included ? "transparent" : `${AMBER}1f`, color: c.included ? T.textMuted : AMBER }}>
+                    border: `1px solid ${c.included ? T.border : `${T.warning}73`}`, background: c.included ? "transparent" : `${T.warning}1f`, color: c.included ? T.textMuted : T.warning }}>
                   {c.included ? "In price" : "Subject to"}</button>
                 <button type="button" aria-label="Remove charge" disabled={charges.length === 1} onClick={() => setCharges(cs => cs.filter((_, j) => j !== i))}
                   style={{ background: "none", border: "none", color: T.textMuted, cursor: charges.length === 1 ? "not-allowed" : "pointer", opacity: charges.length === 1 ? 0.3 : 1, padding: 0 }}>×</button>
@@ -395,7 +394,7 @@ export const AddSpotOfferModal = ({ ctx, targetLabel, initialTab = "type", onClo
             ))}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 28, padding: "4px 8px 0", fontFamily: T.body, fontSize: 12.5, color: T.textMuted }}>
               <span>In the price <b data-testid="spot-total-in" style={{ fontFamily: T.mono, color: T.text, fontSize: 14 }}>{fmtMoney(totals.inPrice)}</b></span>
-              <span>Subject to <b data-testid="spot-total-subject" style={{ fontFamily: T.mono, color: AMBER, fontSize: 14 }}>{fmtMoney(totals.subject)}</b></span>
+              <span>Subject to <b data-testid="spot-total-subject" style={{ fontFamily: T.mono, color: T.warning, fontSize: 14 }}>{fmtMoney(totals.subject)}</b></span>
             </div>
           </div>
 
@@ -428,7 +427,7 @@ export const AddSpotOfferModal = ({ ctx, targetLabel, initialTab = "type", onClo
                     <span style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>{SOURCE_LABEL[o.source] || o.source}{o.createdBy ? ` by ${o.createdBy}` : ""} · {fmtDay(o.createdAt)} · {equipmentText(o.equipment)}</span>
                   </div>
                   <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 4, background: T.surface, color: T.textMuted, justifySelf: "start" }}>{KIND_LABEL[o.kind]}</span>
-                  <span style={{ fontFamily: T.body, fontSize: 12.5, color: o.expired ? (dead ? T.danger || "#f0526b" : AMBER) : T.textMuted }}>
+                  <span style={{ fontFamily: T.body, fontSize: 12.5, color: o.expired ? (dead ? T.danger || "#f0526b" : T.warning) : T.textMuted }}>
                     {o.expired ? `expired ${fmtValidUntil(o.validUntil)}${dead ? "" : ": warns"}` : `until ${fmtValidUntil(o.validUntil)}`}</span>
                   <span style={{ fontFamily: T.mono, fontSize: 13.5, fontWeight: 700, color: T.text, textAlign: "right" }}>{fmtMoney(o.totalUsd)}</span>
                   <Btn size="sm" variant={dead ? "secondary" : "primary"} disabled={dead || busy} onClick={() => pick(o)} data-testid={`spot-pool-pick-${i}`}>{dead ? "Expired" : "Pick"}</Btn>
@@ -479,8 +478,8 @@ export const AddSpotOfferModal = ({ ctx, targetLabel, initialTab = "type", onClo
                 </div>
               ))}
               {live.demo && (
-                <div data-testid="spot-carrier-demo" style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 8, background: `${AMBER}14`, border: `1px solid ${AMBER}4d`, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, color: AMBER }}>DEMO CARRIER</span>
+                <div data-testid="spot-carrier-demo" style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 8, background: `${T.warning}14`, border: `1px solid ${T.warning}4d`, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, color: T.warning }}>DEMO CARRIER</span>
                   {carrierCode} has no spot connection yet: CargoDesk's demo carrier answered, with generated prices.
                 </div>
               )}
@@ -540,12 +539,12 @@ export const QuoteSpotOffer = ({ offer, sellUsd, onAdd, onRemove, editable = tru
           <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, color: "#fff", background: "#d6322a", borderRadius: 3, padding: "2px 7px" }}>{offer.carrierCode}</span>
           <span data-testid="quote-spot-ref" style={{ fontFamily: T.mono, fontSize: 14.5, fontWeight: 700, color: T.text }}>{offer.offerRef}</span>
           <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, padding: "2px 9px", borderRadius: 4, background: T.surface, color: T.textMuted }}>{KIND_LABEL[offer.kind]}</span>
-          {offer.expired && <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 4, background: `${AMBER}24`, color: AMBER }}>Expired</span>}
+          {offer.expired && <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 4, background: `${T.warning}24`, color: T.warning }}>Expired</span>}
           <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted }}>{equipmentText(offer.equipment)} · valid until {fmtValidUntil(offer.validUntil)} · price locks {String(offer.priceLockLabel || "").toLowerCase()}</span>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 22px", fontFamily: T.body, fontSize: 12.5, color: T.textMuted }}>
           {offer.lines.map(l => (
-            <span key={l.id}>{l.serviceCode} <b style={{ fontFamily: T.mono, color: l.included ? T.text : AMBER }}>{fmtMoney(l.amount, l.currency).replace("USD ", "")}{l.included ? "" : " subject to"}</b></span>
+            <span key={l.id}>{l.serviceCode} <b style={{ fontFamily: T.mono, color: l.included ? T.text : T.warning }}>{fmtMoney(l.amount, l.currency).replace("USD ", "")}{l.included ? "" : " subject to"}</b></span>
           ))}
         </div>
       </div>

@@ -45,10 +45,10 @@ const WORLD_LAND_PATH = LAND_POLYGONS.map(polygon =>
   polygon.map(ring => ringToPath(ring, projectWorld, W)).join(" ")
 ).join(" ");
 
-const linkBtnStyle = {
+const linkBtnStyle = () => ({
   background: "none", border: "none", padding: 0, fontFamily: T.body, fontSize: 11.5,
   fontWeight: 600, color: T.accent, cursor: "pointer",
-};
+});
 
 const LoopSidebarRow = ({ loop, color, checked, disabled, disabledReason, hovered, onToggle, onHover }) => (
   <label
@@ -270,8 +270,8 @@ const LoopMapExplorerPage = () => {
           <div style={{ padding: 12, borderBottom: `1px solid ${T.border}` }}>
             <Inp value={search} onChange={setSearch} placeholder="Search code, name, carrier..." />
             <div style={{ display: "flex", gap: 10, marginTop: 8, alignItems: "center" }}>
-              <button type="button" onClick={selectAll} style={linkBtnStyle}>Select all</button>
-              <button type="button" onClick={clearAll} style={linkBtnStyle}>Clear</button>
+              <button type="button" onClick={selectAll} style={linkBtnStyle()}>Select all</button>
+              <button type="button" onClick={clearAll} style={linkBtnStyle()}>Clear</button>
               <span style={{ marginLeft: "auto", fontFamily: T.mono, fontSize: 11, fontWeight: 700,
                 color: selected.size >= OVERLAY_CAP ? T.danger : T.textMuted }}>
                 {selected.size} / {OVERLAY_CAP}

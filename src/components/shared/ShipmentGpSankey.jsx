@@ -182,7 +182,8 @@ const ShipmentGpSankey = ({ lines }) => {
   const { nodes, links, totalSell, totalVat, gp } = data;
 
   return (
-    <div id="shpacct-gp-sankey" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "18px 18px 14px", marginBottom: 22 }}>
+    <div id="shpacct-gp-sankey" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "18px 18px 14px", marginBottom: 22,
+      boxShadow: T.cardShadow }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
         <div>
           <h2 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 3px" }}>Profit Breakdown</h2>
@@ -190,13 +191,15 @@ const ShipmentGpSankey = ({ lines }) => {
             Revenue by charge code flowing through to {gp >= 0 ? "Gross Profit" : "Net Loss"}
           </p>
         </div>
-        <div id="shpacct-gp-sankey-mode" style={{ display: "inline-flex", gap: 2, padding: 3, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 9 }}>
+        {/* On a Trade Horizon page (T.hz) the chosen side is a tinted segment, HZ's segmented control. */}
+        <div id="shpacct-gp-sankey-mode" style={{ display: "inline-flex", gap: 2, padding: 3, background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.hz ? 8 : 9 }}>
           {[["estimated", "Estimated"], ["actual", "Actual"]].map(([key, label]) => (
             <button key={key} onClick={() => setMode(key)} style={{
               padding: "5px 12px", fontFamily: T.body, fontSize: 12, fontWeight: mode === key ? 700 : 500,
-              color: mode === key ? T.btnPrimaryText : T.textMuted,
-              background: mode === key ? T.accent : "transparent",
-              border: "none", borderRadius: 6, cursor: "pointer", transition: "background .12s, color .12s",
+              color: mode === key ? (T.hz ? T.accent : T.btnPrimaryText) : T.textMuted,
+              background: mode === key ? (T.hz ? T.accentBg : T.accent) : "transparent",
+              border: !T.hz ? "none" : mode === key ? `1px solid ${T.accent}55` : "1px solid transparent",
+              borderRadius: 6, cursor: "pointer", transition: "background .12s, color .12s",
             }}>{label}</button>
           ))}
         </div>
@@ -220,7 +223,7 @@ const ShipmentGpSankey = ({ lines }) => {
           <div style={{
             position: "absolute", left: tip.x + 14, top: tip.y + 14, pointerEvents: "none", zIndex: 5,
             background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
-            boxShadow: "0 4px 20px rgba(0,0,0,.18)", padding: "8px 12px", minWidth: 140,
+            boxShadow: T.hz ? T.popoverShadow : "0 4px 20px rgba(0,0,0,.18)", padding: "8px 12px", minWidth: 140,
           }}>
             <div style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 800, color: tip.color }}>{fmtUsd(tip.value)}</div>
             <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 2 }}>{tip.title}</div>

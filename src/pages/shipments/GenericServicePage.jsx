@@ -91,7 +91,7 @@ const GenericServicePage = ({ shipment, side, serviceType, canEdit, onViewDocume
     return (
       <div id="svcgen-notfound" style={{ maxWidth: 700, margin: "60px auto", textAlign: "center" }}>
         <div style={{ marginBottom: 12, color: T.textMuted }}><IconFolder size={40} /></div>
-        <div style={{ fontFamily: T.head, fontSize: 18, fontWeight: 800, color: T.text, marginBottom: 8 }}>
+        <div style={{ fontFamily: T.head, fontSize: 17, fontWeight: 700, color: T.text, marginBottom: 8 }}>
           No {side} {serviceType} service found
         </div>
         <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
@@ -105,11 +105,11 @@ const GenericServicePage = ({ shipment, side, serviceType, canEdit, onViewDocume
     <div id="svcgen-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
 
       {/* Header / service summary */}
-      <div id="svcgen-header" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+      <div id="svcgen-header" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: T.cardShadow,
         padding: "16px 18px", marginBottom: 18, display: "flex", alignItems: "center",
         justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div>
-          <div style={{ fontFamily: T.head, fontSize: 18, fontWeight: 800, color: T.text }}>
+          <div style={{ fontFamily: T.head, fontSize: 17, fontWeight: 700, color: T.text }}>
             {side} · {serviceType} Service
           </div>
           <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginTop: 3 }}>
@@ -123,8 +123,8 @@ const GenericServicePage = ({ shipment, side, serviceType, canEdit, onViewDocume
       </div>
 
       {/* Details */}
-      <div id="svcgen-details-section" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "16px 18px", marginBottom: 18 }}>
-        <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 800, color: T.text, marginBottom: 12 }}>
+      <div id="svcgen-details-section" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: T.cardShadow, padding: "16px 18px", marginBottom: 18 }}>
+        <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 12 }}>
           Details
         </div>
         <Textarea id="svcgen-notes" value={notes} onChange={setNotes} disabled={!canEdit} rows={6}
@@ -139,8 +139,8 @@ const GenericServicePage = ({ shipment, side, serviceType, canEdit, onViewDocume
       </div>
 
       {/* Generic produced document */}
-      <div id="svcgen-doc-section" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "16px 18px" }}>
-        <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 800, color: T.text, marginBottom: 12 }}>
+      <div id="svcgen-doc-section" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: T.cardShadow, padding: "16px 18px" }}>
+        <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 12 }}>
           Document
         </div>
         <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 12 }}>

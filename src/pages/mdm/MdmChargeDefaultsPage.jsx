@@ -43,8 +43,8 @@ const GlobalToggle = ({ checked, onChange }) => (
 // CountryCombobox is a search-only typeahead (no persistent "selected" display of its own,
 // unlike PortCombobox) — same real component MdmTradeLanesPage/MdmCountriesPage already use, just
 // wrapped here with a PortCombobox-style selected chip so Country reads the same as Location.
-const fieldLabelStyle = { fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted,
-  textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 5 };
+const fieldLabelStyle = () => ({ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted,
+  textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 5 });
 const CountryField = ({ value, onChange }) => (
   value?.iso2 ? (
     <div style={{ background: T.bg, border: `1px solid ${T.accent}55`, borderRadius: 7, padding: "7px 10px",
@@ -69,11 +69,11 @@ const LocationColumn = ({ label, region, onRegion, country, onCountry, location,
     <Sel label="Region" value={region} onChange={onRegion}
       options={[{ value: "", label: "—" }, ...regions.map(r => ({ value: r.code, label: r.name }))]} />
     <div>
-      <div style={fieldLabelStyle}>Country</div>
+      <div style={fieldLabelStyle()}>Country</div>
       <CountryField value={country} onChange={onCountry} />
     </div>
     <div>
-      <div style={fieldLabelStyle}>Location</div>
+      <div style={fieldLabelStyle()}>Location</div>
       <PortCombobox value={location} onChange={onLocation} placeholder="Search port or UN/LOCODE…" />
     </div>
     <div style={{ fontFamily: T.body, fontSize: 11, color: T.textFaint }}>Fill exactly one of the three — picking one clears the other two.</div>

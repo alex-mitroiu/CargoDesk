@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { T } from "../../tokens";
 import { api } from "../../api";
-import { inputBase, Field } from "../primitives/Form";
+import { inputBase, Field, FIELD_CLASS } from "../primitives/Form";
 
 // ─── Shared: Vessel Combobox ──────────────────────────────────────────────────
 // Async typeahead searching vessels by name, IMO, or asset type.
@@ -40,7 +40,7 @@ const VesselCombobox = ({ onSelect, placeholder = "Search vessels…", excludeIm
   return (
     <div ref={box} style={{ position: "relative" }}>
       <div style={{ position: "relative" }}>
-        <input value={query} onChange={e => search(e.target.value)}
+        <input className={FIELD_CLASS} value={query} onChange={e => search(e.target.value)}
           onFocus={() => results.length > 0 && setOpen(true)}
           placeholder={placeholder}
           style={{ ...inputBase, fontFamily: T.body, fontSize: 13, paddingRight: 32 }} />
@@ -49,7 +49,7 @@ const VesselCombobox = ({ onSelect, placeholder = "Search vessels…", excludeIm
       {open && results.length > 0 && (
         <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 300,
           background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
-          boxShadow: "0 12px 32px rgba(0,0,0,.5)", overflow: "hidden", maxHeight: 260, overflowY: "auto" }}>
+          boxShadow: T.hz ? T.popoverShadow : "0 12px 32px rgba(0,0,0,.5)", overflow: "hidden", maxHeight: 260, overflowY: "auto" }}>
           {results.map(v => (
             <button key={v.imo} onClick={() => select(v)}
               style={{ display: "flex", alignItems: "center", gap: 10, width: "100%",

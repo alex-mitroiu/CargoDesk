@@ -16,18 +16,18 @@ import PageSizeSelect, { getStoredPageSize } from "../primitives/PageSizeSelect"
 // as BillingPerformancePanel next to it — the point here is "what needs my attention right now",
 // not a groupBy summary.
 
-const STATUS_META = {
+const STATUS_META = () => ({
   paid:       { label: "Paid",       color: T.success },
   not_paid:   { label: "Not Paid",   color: T.warning },
   overdue:    { label: "Overdue",    color: T.danger },
   missing:    { label: "Missing",    color: T.textMuted },
   cancelled:  { label: "Cancelled",  color: T.info },
   overridden: { label: "Overridden", color: T.accent },
-};
+});
 const STATUS_ORDER = ["overdue", "missing", "not_paid", "overridden", "paid", "cancelled"];
 
 const Pill = ({ status }) => {
-  const meta = STATUS_META[status] || { label: status, color: T.textMuted };
+  const meta = STATUS_META()[status] || { label: status, color: T.textMuted };
   return (
     <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
       padding: "3px 9px", borderRadius: 20, color: meta.color, background: `${meta.color}18`,
@@ -139,10 +139,10 @@ const InvoiceCollectionsPanel = () => {
           <button key={s} type="button" onClick={() => toggleStatus(s)} style={{
             padding: "5px 12px", borderRadius: 20, cursor: "pointer",
             fontFamily: T.body, fontSize: 12, fontWeight: 600,
-            border: `1px solid ${statusFilter.has(s) ? STATUS_META[s].color : T.border}`,
-            background: statusFilter.has(s) ? `${STATUS_META[s].color}18` : "transparent",
-            color: statusFilter.has(s) ? STATUS_META[s].color : T.textMuted,
-          }}>{STATUS_META[s].label}</button>
+            border: `1px solid ${statusFilter.has(s) ? STATUS_META()[s].color : T.border}`,
+            background: statusFilter.has(s) ? `${STATUS_META()[s].color}18` : "transparent",
+            color: statusFilter.has(s) ? STATUS_META()[s].color : T.textMuted,
+          }}>{STATUS_META()[s].label}</button>
         ))}
         <div style={{ flex: 1 }} />
         <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{filtered.length} of {rows.length} shipments</span>

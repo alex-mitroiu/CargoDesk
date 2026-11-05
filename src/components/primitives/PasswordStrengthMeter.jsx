@@ -1,11 +1,11 @@
 import { T } from "../../tokens";
 import { scorePassword, PASSWORD_MIN_LENGTH, PASSWORD_MIN_CLASSES } from "../../utils/passwordPolicy";
 
-const SCORE_COLOR = [T.danger, T.danger, T.warning, T.success, T.success];
+const SCORE_COLOR = () => [T.danger, T.danger, T.warning, T.success, T.success];
 
 const PasswordStrengthMeter = ({ password }) => {
   const { score, label, isCommon, meetsMinimum } = scorePassword(password);
-  const color = SCORE_COLOR[score];
+  const color = SCORE_COLOR()[score];
   const empty = !password;
   const filledBars = empty ? 0 : Math.max(1, score); // "Very Weak" still lights 1 bar, not 0
 

@@ -40,8 +40,8 @@ const SORT_OPTIONS = [
   { value: "customer", label: "By customer" },
   { value: "validTo",  label: "Ending soonest" },
 ];
-const cellText = { fontFamily: T.body, fontSize: 13, color: T.text };
-const muted = { fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" };
+const cellText = () => ({ fontFamily: T.body, fontSize: 13, color: T.text });
+const muted = () => ({ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" });
 
 const RuleModal = ({ init, tradeLanes, onClose, onSaved }) => {
   const editing = !!init?.id;
@@ -141,17 +141,17 @@ const MdmMarginRulesPage = () => {
 
   const columns = [
     { key: "customer", header: "Customer", width: 200, filter: true,
-      render: r => <span style={{ display: "flex", alignItems: "center", gap: 6, ...cellText, color: r.customerName ? T.text : T.textMuted }}>
+      render: r => <span style={{ display: "flex", alignItems: "center", gap: 6, ...cellText(), color: r.customerName ? T.text : T.textMuted }}>
         {r.customerName || "Everyone"}{r.isDefault && <Badge size={9.5}>DEFAULT</Badge>}</span> },
     { key: "lane", header: "Trade lane", width: 150, filter: true,
       render: r => r.originLane ? <span style={{ display: "flex", alignItems: "center", gap: 6 }}><LanePill code={r.originLane} /><span style={{ color: T.textMuted }}>→</span><LanePill code={r.destLane} /></span>
-        : <span style={muted}>any lane</span> },
+        : <span style={muted()}>any lane</span> },
     { key: "container", header: "Container", width: 90, filter: true,
-      render: r => r.containerType ? <span style={{ fontFamily: T.mono, fontSize: 12.5, color: T.text }}>{r.containerType}</span> : <span style={muted}>any</span> },
+      render: r => r.containerType ? <span style={{ fontFamily: T.mono, fontSize: 12.5, color: T.text }}>{r.containerType}</span> : <span style={muted()}>any</span> },
     { key: "kind", header: "Margin", width: 190, filter: true,
       render: r => <span style={{ fontFamily: T.mono, fontSize: 12.5, fontWeight: 700, color: T.text }}>{marginOf(r)}</span> },
     { key: "min", header: "Minimum", width: 80, align: "center",
-      render: r => r.minMarginPct != null ? <span style={{ fontFamily: T.mono, fontSize: 12.5, color: T.text }}>{r.minMarginPct}%</span> : <span style={muted}>—</span> },
+      render: r => r.minMarginPct != null ? <span style={{ fontFamily: T.mono, fontSize: 12.5, color: T.text }}>{r.minMarginPct}%</span> : <span style={muted()}>—</span> },
     { key: "valid", header: "Valid", width: 190,
       render: r => <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{validOf(r)}</span> },
   ];
@@ -187,7 +187,7 @@ const MdmMarginRulesPage = () => {
       {deleting && (
         <Modal title="Remove Margin Rule" onClose={() => setDeleting(null)} width={480}>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <p style={{ ...cellText, margin: 0, lineHeight: 1.6 }}>Remove the rule for <b>{deleting.customerName || "everyone"}</b>, {laneOf(deleting)}{deleting.containerType ? `, ${deleting.containerType}` : ""} ({marginOf(deleting)})? Quotes it applied to fall back to the next rule.</p>
+            <p style={{ ...cellText(), margin: 0, lineHeight: 1.6 }}>Remove the rule for <b>{deleting.customerName || "everyone"}</b>, {laneOf(deleting)}{deleting.containerType ? `, ${deleting.containerType}` : ""} ({marginOf(deleting)})? Quotes it applied to fall back to the next rule.</p>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <Btn variant="secondary" onClick={() => setDeleting(null)}>Cancel</Btn>
               <Btn variant="danger" onClick={remove} data-testid="margin-rule-delete-confirm">Remove</Btn>

@@ -47,9 +47,9 @@ const SORT_OPTIONS = [
   { value: "validTo", label: "Ending soonest" },
 ];
 
-const labelStyle = { fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" };
-const cellText = { fontFamily: T.body, fontSize: 13, color: T.text };
-const iconBtn = { width: 28, height: 28, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 6, color: T.textMuted, cursor: "pointer", fontSize: 13, lineHeight: 1 };
+const labelStyle = () => ({ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" });
+const cellText = () => ({ fontFamily: T.body, fontSize: 13, color: T.text });
+const iconBtn = () => ({ width: 28, height: 28, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 6, color: T.textMuted, cursor: "pointer", fontSize: 13, lineHeight: 1 });
 
 // ─── The edit pop-up ──────────────────────────────────────────────────────────────────────────
 // An on/off line in the steering pop-up: what it does, and the switch.
@@ -131,7 +131,7 @@ const SteeringModal = ({ init, tradeLanes, noAnswerHours, onClose, onSaved }) =>
           <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>Leave it empty to steer the lane for everyone. A customer's own steering wins over everyone's.</span>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <span style={labelStyle}>Note on the line</span>
+          <span style={labelStyle()}>Note on the line</span>
           <input aria-label="Note on the line" data-testid="lane-steering-note" value={note} maxLength={300} placeholder="e.g. Book MAEU first; CMDU only when MAEU is full"
             onChange={e => setNote(e.target.value)} style={{ ...inputBase, fontFamily: T.body, fontSize: 13 }} />
           <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>Shown with the options wherever a contract is assigned on this lane.</span>
@@ -147,9 +147,9 @@ const SteeringModal = ({ init, tradeLanes, noAnswerHours, onClose, onSaved }) =>
         </SwitchRow>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <span style={labelStyle}>Options, in order</span>
+          <span style={labelStyle()}>Options, in order</span>
           <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "44px 80px 1.4fr 110px 1.6fr 104px", gap: 10, padding: "8px 14px", borderBottom: `1px solid ${T.border}`, ...labelStyle }}>
+            <div style={{ display: "grid", gridTemplateColumns: "44px 80px 1.4fr 110px 1.6fr 104px", gap: 10, padding: "8px 14px", borderBottom: `1px solid ${T.border}`, ...labelStyle() }}>
               <span>#</span><span>Carrier</span><span>Contract</span><span>Valid to</span><span>Note</span><span>Order</span>
             </div>
             {options.length === 0 && (
@@ -168,9 +168,9 @@ const SteeringModal = ({ init, tradeLanes, noAnswerHours, onClose, onSaved }) =>
                   onChange={e => { const v = e.target.value; setOptions(list => list.map((x, j) => (j === i ? { ...x, note: v } : x))); }}
                   style={{ ...inputBase, fontFamily: T.body, fontSize: 12.5, padding: "6px 10px" }} />
                 <span style={{ display: "flex", gap: 4 }}>
-                  <button type="button" aria-label={`Move option ${i + 1} up`} disabled={i === 0} onClick={() => move(i, -1)} style={{ ...iconBtn, opacity: i === 0 ? .4 : 1 }}>↑</button>
-                  <button type="button" aria-label={`Move option ${i + 1} down`} disabled={i === options.length - 1} onClick={() => move(i, 1)} style={{ ...iconBtn, opacity: i === options.length - 1 ? .4 : 1 }}>↓</button>
-                  <button type="button" aria-label={`Remove option ${i + 1}`} onClick={() => setOptions(list => list.filter((_, j) => j !== i))} style={{ ...iconBtn, color: T.danger }}>×</button>
+                  <button type="button" aria-label={`Move option ${i + 1} up`} disabled={i === 0} onClick={() => move(i, -1)} style={{ ...iconBtn(), opacity: i === 0 ? .4 : 1 }}>↑</button>
+                  <button type="button" aria-label={`Move option ${i + 1} down`} disabled={i === options.length - 1} onClick={() => move(i, 1)} style={{ ...iconBtn(), opacity: i === options.length - 1 ? .4 : 1 }}>↓</button>
+                  <button type="button" aria-label={`Remove option ${i + 1}`} onClick={() => setOptions(list => list.filter((_, j) => j !== i))} style={{ ...iconBtn(), color: T.danger }}>×</button>
                 </span>
                 {/* The space behind the option: the contract's space configurations that haven't ended. */}
                 <span data-testid={`lane-steering-option-${i + 1}-space`} style={{ gridColumn: "2 / -1", display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -191,7 +191,7 @@ const SteeringModal = ({ init, tradeLanes, noAnswerHours, onClose, onSaved }) =>
           </div>
           {adding ? (
             <div data-testid="lane-steering-add-row" style={{ display: "grid", gridTemplateColumns: "180px 1fr auto auto", gap: 10, alignItems: "end" }}>
-              <div><span style={labelStyle}>Carrier</span><CarrierCombobox value={newCarrier} onChange={v => setNewCarrier(typeof v === "string" ? v : v?.code || "")} /></div>
+              <div><span style={labelStyle()}>Carrier</span><CarrierCombobox value={newCarrier} onChange={v => setNewCarrier(typeof v === "string" ? v : v?.code || "")} /></div>
               <Sel id="ls-new-contract" label="Contract" value={newContract} onChange={setNewContract} disabled={!newCarrier || !contracts?.length}
                 options={[{ value: "", label: !newCarrier ? "Pick the carrier first" : !contracts ? "Loading contracts…" : contracts.length ? "Pick a contract…" : `No active ${newCarrier} contracts` },
                   ...(contracts || []).map(c => ({ value: c.id, label: `${c.contractNumber} · until ${fmtDay(c.validTo)}${c.namedAccount ? ` · ${c.namedAccount} only` : ""}` }))]} />
@@ -238,8 +238,8 @@ const CheckModal = ({ onClose }) => {
         <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted }}>What the booking desk would be told for a shipment like this. Nothing is saved or booked.</span>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, alignItems: "end" }}>
           <CustomerCombobox label="Customer" value={customer} onChange={v => setCustomer({ id: v.id || "", name: v.name || "" })} />
-          <div><span style={labelStyle}>POL</span><PortCombobox value={pol} onChange={setPol} /></div>
-          <div><span style={labelStyle}>POD</span><PortCombobox value={pod} onChange={setPod} /></div>
+          <div><span style={labelStyle()}>POL</span><PortCombobox value={pol} onChange={setPol} /></div>
+          <div><span style={labelStyle()}>POD</span><PortCombobox value={pod} onChange={setPod} /></div>
           <DatePicker id="ls-check-etd" label="ETD" value={etd} onChange={setEtd} />
           <Inp id="ls-check-commodity" label="Commodity" value={commodity} onChange={setCommodity} mono />
           <Inp id="ls-check-loop" label="Loop (optional)" value={loop} onChange={setLoop} mono />
@@ -290,7 +290,7 @@ const MdmLaneSteeringPage = () => {
     { key: "lane", header: "Lane", width: 150, filter: true,
       render: s => <span style={{ display: "flex", alignItems: "center", gap: 6 }}><LanePill code={s.originLane} /><span style={{ color: T.textMuted }}>→</span><LanePill code={s.destLane} /></span> },
     { key: "customer", header: "Customer", width: 180, filter: true,
-      render: s => <span style={{ ...cellText, color: s.customerName ? T.text : T.textMuted }}>{s.customerName || "Everyone"}</span> },
+      render: s => <span style={{ ...cellText(), color: s.customerName ? T.text : T.textMuted }}>{s.customerName || "Everyone"}</span> },
     { key: "carriers", header: "Options in order", width: 250, filter: true,
       render: s => (
         <span style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 8px", fontFamily: T.mono, fontSize: 12 }}>
@@ -357,7 +357,7 @@ const MdmLaneSteeringPage = () => {
       {deleting && (
         <Modal title="Remove Lane Steering" onClose={() => setDeleting(null)} width={480}>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <p style={{ ...cellText, margin: 0, lineHeight: 1.6 }}>
+            <p style={{ ...cellText(), margin: 0, lineHeight: 1.6 }}>
               Remove the steering for <b>{laneOf(deleting)}</b>{deleting.customerName ? <> for <b>{deleting.customerName}</b></> : " for everyone"}? Escalations on this lane go back to the contract search, Central first.
             </p>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>

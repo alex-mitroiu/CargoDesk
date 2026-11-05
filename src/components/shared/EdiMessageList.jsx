@@ -38,6 +38,61 @@ const EdiMessageList = ({ messages, emptyText = "No EDI messages yet." }) => {
     );
   }
 
+  // A shipment page (Trade Horizon, T.hz): each message is a card with a direction tile and a status
+  // pill in the theme's status tones; the fixed hexes above only stand in for those tones there.
+  if (T.hz) {
+    const TONE = {
+      "#22c55e": [T.successBg, T.successText], "#3b82f6": [T.infoBg, T.infoText], "#ef4444": [T.dangerBg, T.danger],
+      "#eab308": [T.warningBg, T.warning], "#6b7280": [T.neutralBg, T.textMuted],
+    };
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {messages.map(m => {
+          const [pillBg, pillText] = TONE[EDI_STATUS_COLOR[m.status]] || [T.neutralBg, T.textMuted];
+          const expanded = expandedId === m.id;
+          const out = m.direction === "out";
+          return (
+            <div key={m.id} style={{ background: T.surface, border: `1px solid ${T.border}`, boxShadow: T.cardShadow,
+              borderRadius: 10, padding: "11px 14px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <span title={out ? "Sent" : "Received"} style={{ width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                  background: out ? T.accentBg : T.purpleBg, color: out ? T.accent : T.purpleText,
+                  display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {out ? <IconUpload size={14} /> : <IconDownload size={14} />}
+                </span>
+                <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
+                  <span style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, color: T.text }}>
+                    {out ? "Sent" : "Received"} · <span style={{ fontFamily: T.mono, fontWeight: 500, color: T.textMuted }}>
+                      {m.messageType.replace(/_/g, " ")}</span>
+                  </span>
+                  <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textFaint }}>{fmtTs(m.createdAt)}</span>
+                </div>
+                <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+                  <button onClick={() => setExpandedId(expanded ? null : m.id)}
+                    style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
+                      fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.accent }}>
+                    {expanded ? "Hide payload" : "View payload"}
+                  </button>
+                  <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: ".06em",
+                    color: pillText, background: pillBg, borderRadius: 5, padding: "3px 8px", textTransform: "uppercase" }}>
+                    {m.status}{m.isMock ? " · demo" : ""}
+                  </span>
+                </span>
+              </div>
+              {expanded && (
+                <pre style={{ margin: "10px 0 0", fontFamily: T.mono, fontSize: 10.5, color: T.text,
+                  background: T.bg, border: `1px solid ${T.border}`, borderRadius: 7,
+                  padding: "10px 12px", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  {payloadFor(m)}
+                </pre>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       {messages.map(m => {

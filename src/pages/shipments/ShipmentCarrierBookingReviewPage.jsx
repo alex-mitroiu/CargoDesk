@@ -228,7 +228,7 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
             {escView?.offer?.allowed && (
               <button type="button" onClick={() => setEscalateOpen(true)} data-testid="escalate-btn"
                 title={escView.offer.triggerLabel}
-                style={{ background: HZ.cyan, border: "none", color: "#06111f", borderRadius: 7, padding: "7px 16px",
+                style={{ background: HZ.cyan, border: "none", color: HZ.chipText, borderRadius: 7, padding: "7px 16px",
                   fontFamily: HZ_BODY, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Escalate…</button>
             )}
           </div>

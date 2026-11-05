@@ -441,7 +441,7 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
       {canEdit && (
         <button onClick={handleSend} disabled={!canSend || sending}
           style={{ background: canSend ? HZ.cyan : HZ.surface2, border: "none", borderRadius: 7,
-            color: canSend ? "#06111f" : HZ.textMuted, cursor: canSend && !sending ? "pointer" : "default",
+            color: canSend ? HZ.chipText : HZ.textMuted, cursor: canSend && !sending ? "pointer" : "default",
             padding: "9px 20px", fontFamily: HZ_BODY, fontSize: 13, fontWeight: 700,
             display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 24 }}>
           {sending ? "Sending…" : <><IconSendPlane size={13} />Send Booking Request</>}

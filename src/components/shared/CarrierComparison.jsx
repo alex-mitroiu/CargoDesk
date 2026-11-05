@@ -10,12 +10,11 @@ import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY } from "../../pages/shipments/shipment
 // (GET …/carrier-booking/comparison, lib/carrier-confirmation.js). Replaces "Sent vs. Received", which
 // only ever echoed what was sent (a DCSA notification carries just the status).
 
-const AMBER = "#fbc531";
 const fmtWhen = iso => (iso ? new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
 const chip = (text, color, bg) => (
   <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: ".06em", color, background: bg, borderRadius: 4, padding: "2px 8px", whiteSpace: "nowrap" }}>{text}</span>
 );
-const btnPrimary = { background: HZ.cyan, border: "none", color: "#06111f", borderRadius: 7, padding: "10px 20px", fontFamily: HZ_BODY, fontSize: 13, fontWeight: 700, cursor: "pointer" };
+const btnPrimary = () => ({ background: HZ.cyan, border: "none", color: HZ.chipText, borderRadius: 7, padding: "10px 20px", fontFamily: HZ_BODY, fontSize: 13, fontWeight: 700, cursor: "pointer" });
 
 const CarrierComparison = ({ shipment, booking, canEdit, onEscalate, onDecided }) => {
   const [data, setData] = useState(null);
@@ -79,8 +78,8 @@ const CarrierComparison = ({ shipment, booking, canEdit, onEscalate, onDecided }
     <section data-testid="comparison-panel" aria-labelledby="cmp-h" style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 24 }}>
       {pending && (
         <div role="status" data-testid="comparison-banner" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 16px",
-          border: `1px solid ${AMBER}73`, background: `${AMBER}14`, borderRadius: 12, padding: "14px 18px", fontFamily: HZ_BODY, color: HZ.text }}>
-          {chip("CONFIRMED WITH CHANGES", AMBER, `${AMBER}24`)}
+          border: `1px solid ${HZ.amber}73`, background: `${HZ.amber}14`, borderRadius: 12, padding: "14px 18px", fontFamily: HZ_BODY, color: HZ.text }}>
+          {chip("CONFIRMED WITH CHANGES", HZ.amber, `${HZ.amber}24`)}
           <span style={{ fontSize: 14 }}>{carrier} confirmed booking <b style={{ fontFamily: HZ_MONO }}>{data.bookingRef}</b>, but not as requested: <b>{data.changeCount} detail{data.changeCount === 1 ? " differs" : "s differ"}</b>. Compare them below and decide how to go on.</span>
           {data.feedback.map((f, i) => <span key={i} style={{ flexBasis: "100%", fontSize: 13, color: HZ.textMuted }}>{carrier}'s note: <i>“{f}”</i></span>)}
         </div>
@@ -114,7 +113,7 @@ const CarrierComparison = ({ shipment, booking, canEdit, onEscalate, onDecided }
               <th scope="col" style={{ textAlign: "left", padding: "9px 16px", width: "33%", fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: ".08em", color: HZ.textMuted }}>
                 <span style={{ color: HZ.text, background: HZ.border, borderRadius: 4, padding: "1px 7px", marginRight: 8 }}>A</span>WE REQUESTED</th>
               <th scope="col" style={{ textAlign: "left", padding: "9px 16px", width: "33%", fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: ".08em", color: HZ.textMuted }}>
-                <span style={{ color: "#06111f", background: HZ.cyan, borderRadius: 4, padding: "1px 7px", marginRight: 8 }}>B</span>{carrier.toUpperCase()} CONFIRMED</th>
+                <span style={{ color: HZ.chipText, background: HZ.cyan, borderRadius: 4, padding: "1px 7px", marginRight: 8 }}>B</span>{carrier.toUpperCase()} CONFIRMED</th>
               <th scope="col" style={{ width: "12%", padding: "9px 16px" }}><span style={{ position: "absolute", left: -9999 }}>Status</span></th>
             </tr>
           </thead>
@@ -125,17 +124,17 @@ const CarrierComparison = ({ shipment, booking, canEdit, onEscalate, onDecided }
               </tr>
             ) : (
               <tr key={`r${i}`} data-testid={`comparison-row-${r.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`} data-kind={r.kind}
-                style={{ borderBottom: `1px solid ${HZ.border}`, ...(r.kind === "changed" ? { background: `${AMBER}0f`, boxShadow: `inset 3px 0 0 ${AMBER}` } : null) }}>
+                style={{ borderBottom: `1px solid ${HZ.border}`, ...(r.kind === "changed" ? { background: `${HZ.amber}0f`, boxShadow: `inset 3px 0 0 ${HZ.amber}` } : null) }}>
                 <th scope="row" style={{ textAlign: "left", padding: "9px 16px", fontFamily: HZ_BODY, fontSize: 13, fontWeight: 500, color: HZ.textMuted }}>{r.label}</th>
                 <td style={{ padding: "9px 16px", fontFamily: HZ_MONO, fontSize: 12.5, color: HZ.text }}>{r.a}</td>
                 <td style={{ padding: "9px 16px", fontSize: 12.5,
-                  ...(r.kind === "changed" ? { fontFamily: HZ_MONO, color: AMBER, fontWeight: 700 }
+                  ...(r.kind === "changed" ? { fontFamily: HZ_MONO, color: HZ.amber, fontWeight: 700 }
                     : r.kind === "missing" ? { fontFamily: HZ_BODY, color: HZ.textMuted, fontStyle: "italic" }
                     : r.kind === "new" ? { fontFamily: HZ_MONO, color: HZ.cyan, fontWeight: 600 } : { fontFamily: HZ_MONO, color: HZ.text }) }}>
-                  {r.b}{r.delta && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: AMBER }}>{r.delta}</span>}
+                  {r.b}{r.delta && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: HZ.amber }}>{r.delta}</span>}
                 </td>
                 <td style={{ padding: "9px 16px" }}>
-                  {r.kind === "changed" && chip("CHANGED", AMBER, `${AMBER}24`)}
+                  {r.kind === "changed" && chip("CHANGED", HZ.amber, `${HZ.amber}24`)}
                   {r.kind === "new" && chip(`FROM ${carrier.toUpperCase()}`, HZ.cyan, `${HZ.cyan}1f`)}
                 </td>
               </tr>
@@ -165,7 +164,7 @@ const CarrierComparison = ({ shipment, booking, canEdit, onEscalate, onDecided }
           {choice === "accept" && (
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, borderTop: `1px solid ${HZ.border}`, paddingTop: 14, fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>
               <span>The vessel, voyage, dates and every leg in column B, and {carrier}'s cut-offs (documentation, VGM, FCL delivery), go on the shipment. The History records who accepted.</span>
-              <button type="button" onClick={accept} disabled={busy} style={btnPrimary} data-testid="decision-accept-submit">{busy ? "Applying…" : "Accept and update the shipment"}</button>
+              <button type="button" onClick={accept} disabled={busy} style={btnPrimary()} data-testid="decision-accept-submit">{busy ? "Applying…" : "Accept and update the shipment"}</button>
             </div>
           )}
           {choice === "amend" && (
@@ -176,14 +175,14 @@ const CarrierComparison = ({ shipment, booking, canEdit, onEscalate, onDecided }
               <textarea id="amend-note" rows={2} value={note} onChange={e => setNote(e.target.value)} data-testid="decision-amend-note"
                 style={{ background: HZ.bg, color: HZ.text, border: `1px solid ${HZ.border}`, borderRadius: 8, padding: "8px 10px", fontFamily: HZ_BODY, fontSize: 13, resize: "vertical" }} />
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <button type="button" onClick={amend} disabled={busy} style={btnPrimary} data-testid="decision-amend-submit">{busy ? "Sending…" : `Send the amendment to ${carrier}`}</button>
+                <button type="button" onClick={amend} disabled={busy} style={btnPrimary()} data-testid="decision-amend-submit">{busy ? "Sending…" : `Send the amendment to ${carrier}`}</button>
               </div>
             </div>
           )}
           {choice === "escalate" && (
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, borderTop: `1px solid ${HZ.border}`, paddingTop: 14, fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>
               <span>{onEscalate ? "The Escalate pop-up opens with “Confirmed with changes” and these changes." : "This booking is already escalated, or you can't escalate it from this office."}</span>
-              <button type="button" onClick={() => onEscalate?.()} disabled={!onEscalate} style={{ ...btnPrimary, opacity: onEscalate ? 1 : 0.45, cursor: onEscalate ? "pointer" : "not-allowed" }} data-testid="decision-escalate-submit">Escalate…</button>
+              <button type="button" onClick={() => onEscalate?.()} disabled={!onEscalate} style={{ ...btnPrimary(), opacity: onEscalate ? 1 : 0.45, cursor: onEscalate ? "pointer" : "not-allowed" }} data-testid="decision-escalate-submit">Escalate…</button>
             </div>
           )}
         </div>
