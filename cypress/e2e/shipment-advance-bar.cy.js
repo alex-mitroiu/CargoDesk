@@ -79,15 +79,19 @@ describe("» Advance bar", () => {
       const labels = leaves.map(el => el.dataset.navLabel);
       expect(labels).to.include.members(["Overview", "Carrier Booking", "Customs Filing", "Delivery Service", "VGM", "History"]);
 
-      cy.wrap(leaves[0]).click();
-      cy.get(`[data-testid="${leaves[0].dataset.testid}"][aria-current="page"]`, { timeout: 20000 });
+      // Click through fresh queries, never a captured element: the sidebar re-renders its rows when its
+      // own services list arrives, and a wrapped element from before that is detached (CI #129, 2026-11-04:
+      // "the page updated while this command was executing" on this very click).
+      const firstRow = `[data-testid="${leaves[0].dataset.testid}"]`;
+      cy.get(firstRow).click();
+      cy.get(`${firstRow}[aria-current="page"]`, { timeout: 20000 });
       const visited = [labels[0]];
       const step = () => cy.get("body").then($body => {
         const $bar = $body.find('[data-testid="shipment-advance-bar"]');
         if (!$bar.length) return;
         const next = $bar.find('[data-testid="shipment-advance-bar-next"]').text().replace(/^Next · /, "");
         visited.push(next);
-        cy.wrap($bar).click();
+        cy.get('[data-testid="shipment-advance-bar"]').click();
         // The sidebar now highlights the row » named.
         cy.get(`[data-nav-label="${next}"][aria-current="page"]`, { timeout: 20000 }).should("exist");
         if (visited.length <= labels.length) step();
