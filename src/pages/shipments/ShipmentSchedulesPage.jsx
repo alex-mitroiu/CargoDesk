@@ -11,13 +11,14 @@ import SailingPickerModal from "../../components/shared/SailingPickerModal";
 import ContractAssignModal from "../../components/shared/ContractAssignModal";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
 import { ScheduleHistoryPanel, PendingRevalidationModal } from "./ShipmentDetailPage";
-import { LegsTable, deriveHaulageNeeds } from "./ShipmentFormPage";
+import { LegsTable, deriveHaulageNeeds, haulageMatchParams } from "./ShipmentFormPage";
 import { IconWarning, IconPackage, IconAnchor } from "../../components/primitives/Icon";
 import useContractMismatch from "../../hooks/useContractMismatch";
 import ConsumptionBar from "../../components/shared/ConsumptionBar";
 import { steeringChipOf } from "../../components/shared/WhereToBook";
 import { deriveLoopCode } from "../../utils/scheduleLoop";
 import { legChainProblems } from "../../utils/legChain";
+import useContractLineHubs from "../../hooks/useContractLineHubs";
 import { canEditShipmentSide } from "../../utils/officeSide";
 import { emitLegsScheduleChanged } from "../../legsScheduleBus";
 import useSaving from "../../hooks/useSaving";
@@ -403,6 +404,11 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
   const [routeOverride, setRouteOverride] = useState(null);
   const sailingPol = routeOverride?.pol || pol;
   const sailingPod = routeOverride?.pod || pod;
+  // The sailing search follows the contract's routing line (agreed 2026-11-05): the one just picked,
+  // else the shipment's own. Its transshipment ports, or [] for a direct line; null = no line known.
+  const routingHubs = useContractLineHubs(
+    routeOverride?.contractId ?? (shipment.contractType === "Central" ? shipment.contractId : ""),
+    routeOverride?.contractId ? routeOverride.routingId : shipment.contractRoutingId);
   // Whether the draft's SEA leg currently carries real sailing data — from the original
   // committed schedule, untouched, or a freshly staged pick. No longer disables Add Sailing;
   // it only decides the button's own label/tooltip and whether picking a different sailing
@@ -506,12 +512,10 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
     // Only worth checking the contract against pol/pod once we know every leg actually has
     // real values — otherwise this would be matching against the same masked/fallback data.
     if (errors.length === 0 && shipment.contractType === "Central" && shipment.contractId && pol && pod) {
-      const { needsPolHaulage, needsPodHaulage, pkuLocation, delLocation } = deriveHaulageNeeds(draftLegs || []);
+      const haulage = deriveHaulageNeeds(draftLegs || []);
       const dateRef = shipment.cargoReadyDate || shipment.etd || "";
       try {
-        const matches = await api.contracts.match({ pol, pod, ...(dateRef && { crd: dateRef }),
-          ...(needsPolHaulage && { needsPolHaulage: "1" }), ...(needsPodHaulage && { needsPodHaulage: "1" }),
-          ...(pkuLocation && { pkuLocation }), ...(delLocation && { delLocation }) });
+        const matches = await api.contracts.match({ pol, pod, ...(dateRef && { crd: dateRef }), ...haulageMatchParams(haulage) });
         const stillMatches = matches.some(m => m.id === shipment.contractId && (m.routingId || "") === (shipment.contractRoutingId || ""));
         if (!stillMatches) errors.push(`${shipment.contractRef || "This contract"} does not cover ${pol} → ${pod}.`);
       } catch { /* a validation-check network hiccup shouldn't itself block Save */ }
@@ -960,6 +964,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
           routingTerm={shipment.routingTerm}
           expectedHub={routeOverride?.hub || null} expectedService={routeOverride?.service || null}
           requiredService={spaceSailingFilter?.loop || null} requiredHub={spaceSailingFilter?.hub || null}
+          routingHubs={routingHubs}
           activeSailing={draftSailing || scheduleList[0] || null}
           onSelect={s => { setPendingSpotOffer(null); handleSelectSailing(s); }}
           spotPricing={shipment.contractType === "SPOT" && carrier === shipment.carrierCode && !spotLocked

@@ -17,7 +17,7 @@ module.exports = function laneSteeringRoutes(app, ctx) {
   const mapOption = r => ({ id: r.id, rank: r.rank, carrierCode: r.carrier_code, contractId: r.contract_id, contractNumber: r.contract_number || "", note: r.note || "" });
   const mapSteering = (r, options = []) => ({
     id: r.id, originLane: r.origin_lane, destLane: r.dest_lane, customerId: r.customer_id || "", customerName: r.customer_name || "",
-    validFrom: r.valid_from, validTo: r.valid_to, autoSwitch: !!r.auto_switch, note: r.note || "",
+    validFrom: r.valid_from, validTo: r.valid_to, autoSwitch: !!r.auto_switch, allowLinkedPorts: !!r.allow_linked_ports, note: r.note || "",
     createdByName: r.created_by_name || "", updatedByName: r.updated_by_name || "", createdAt: r.created_at, updatedAt: r.updated_at,
     options,
   });
@@ -71,7 +71,8 @@ module.exports = function laneSteeringRoutes(app, ctx) {
         AND valid_from<=$4 AND valid_to>=$5 AND id<>$6 LIMIT 1`, [originLane, destLane, customerId, validTo, validFrom, excludeId || ""]))[0];
     if (clash) return { error: `${describe(clash)} is already steered ${clash.valid_from} → ${clash.valid_to}: change that one, or pick dates that don't overlap`, status: 409 };
 
-    return { value: { originLane, destLane, customerId, customerName, validFrom, validTo, autoSwitch: !!b.autoSwitch, options,
+    return { value: { originLane, destLane, customerId, customerName, validFrom, validTo, autoSwitch: !!b.autoSwitch,
+      allowLinkedPorts: !!b.allowLinkedPorts, options,
       note: String(b.note || "").trim().slice(0, 300) } };
   }
 
@@ -110,12 +111,12 @@ module.exports = function laneSteeringRoutes(app, ctx) {
     if (r.error) return err(res, r.error, r.status || 400);
     const v = r.value, id = `LST-${uid()}`, now = nowIso(), who = req.user?.name || req.user?.email || "";
     await transaction(async tx => {
-      await tx.query(`INSERT INTO lane_steerings (id, origin_lane, dest_lane, customer_id, customer_name, valid_from, valid_to, auto_switch, note, created_by_name, updated_by_name, created_at, updated_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$11)`, [id, v.originLane, v.destLane, v.customerId, v.customerName, v.validFrom, v.validTo, v.autoSwitch, v.note, who, now]);
+      await tx.query(`INSERT INTO lane_steerings (id, origin_lane, dest_lane, customer_id, customer_name, valid_from, valid_to, auto_switch, note, created_by_name, updated_by_name, created_at, updated_at, allow_linked_ports)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$11,$12)`, [id, v.originLane, v.destLane, v.customerId, v.customerName, v.validFrom, v.validTo, v.autoSwitch, v.note, who, now, v.allowLinkedPorts]);
       await saveOptions(tx, id, v.options);
     });
     await logEntityEvent("lane_steering", id, "CREATED", null, null, null,
-      JSON.stringify({ lane: `${v.originLane} → ${v.destLane}`, customer: v.customerName || "Everyone", validFrom: v.validFrom, validTo: v.validTo, autoSwitch: v.autoSwitch, options: optionsText(v.options), by: who }));
+      JSON.stringify({ lane: `${v.originLane} → ${v.destLane}`, customer: v.customerName || "Everyone", validFrom: v.validFrom, validTo: v.validTo, autoSwitch: v.autoSwitch, allowLinkedPorts: v.allowLinkedPorts, options: optionsText(v.options), by: who }));
     ok(res, await loadOne(id), 201);
   });
 
@@ -127,8 +128,8 @@ module.exports = function laneSteeringRoutes(app, ctx) {
     const v = r.value, who = req.user?.name || req.user?.email || "";
     await transaction(async tx => {
       await tx.query(`UPDATE lane_steerings SET origin_lane=$1, dest_lane=$2, customer_id=$3, customer_name=$4, valid_from=$5, valid_to=$6, auto_switch=$7,
-          note=$8, updated_by_name=$9, updated_at=$10 WHERE id=$11`,
-        [v.originLane, v.destLane, v.customerId, v.customerName, v.validFrom, v.validTo, v.autoSwitch, v.note, who, nowIso(), req.params.id]);
+          note=$8, updated_by_name=$9, updated_at=$10, allow_linked_ports=$12 WHERE id=$11`,
+        [v.originLane, v.destLane, v.customerId, v.customerName, v.validFrom, v.validTo, v.autoSwitch, v.note, who, nowIso(), req.params.id, v.allowLinkedPorts]);
       await saveOptions(tx, req.params.id, v.options);
     });
     const changes = [
@@ -136,6 +137,7 @@ module.exports = function laneSteeringRoutes(app, ctx) {
       ["customer", before.customerName || "Everyone", v.customerName || "Everyone"],
       ["valid", `${before.validFrom} → ${before.validTo}`, `${v.validFrom} → ${v.validTo}`],
       ["autoSwitch", String(before.autoSwitch), String(v.autoSwitch)],
+      ["allowLinkedPorts", String(before.allowLinkedPorts), String(v.allowLinkedPorts)],
       ["options", optionsText(before.options), optionsText(v.options)],
       ["note", before.note || "", v.note],
     ].filter(([, a, b]) => a !== b);

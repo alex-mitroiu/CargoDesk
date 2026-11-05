@@ -16,6 +16,7 @@ module.exports = function allocationsRoutes(app, ctx) {
     pol_linked_allowed: !!l.polLinkedAllowed, pod_linked_allowed: !!l.podLinkedAllowed,
     pol_carrier_haulage: !!l.polCarrierHaulage, pod_carrier_haulage: !!l.podCarrierHaulage,
     pol_haulage_locations: l.polHaulageLocations || "", pod_haulage_locations: l.podHaulageLocations || "",
+    pol_loc_type: l.polLocType || "Terminal", pod_loc_type: l.podLocType || "Terminal",
     vessel_service: l.vesselService || "",
   });
 
@@ -367,9 +368,12 @@ module.exports = function allocationsRoutes(app, ctx) {
   // The match itself, shared: the escalation alternatives (lib/booking-escalations.js, Epic
   // TKT-ASIYFL) use exactly this search as their "general contract search" fallback, so the two
   // can never disagree about which space fits a shipment.
-  async function matchAllocations(params = {}) {
+  // opts.allowLinked: a Lane Steering line that allows linked ports (lib/where-to-book.js) widens every
+  // contract line's POL/POD to its linked ports; never taken from the request.
+  async function matchAllocations(params = {}, opts = {}) {
     const { pol = "", pod = "", etd = "", needsPolHaulage = "", needsPodHaulage = "",
-            pkuLocation = "", delLocation = "", principalId = "", commodityCode = "", loopCode = "" } = params;
+            pkuLocation = "", delLocation = "", pkuLocType = "", delLocType = "",
+            principalId = "", commodityCode = "", loopCode = "" } = params;
     // No etd means "don't filter by validity window", not "return nothing" — during shipment
     // creation the sea leg's ETD is often still blank when Central is picked (real bug, fixed).
     if (!pol || !pod) return [];
@@ -397,7 +401,8 @@ module.exports = function allocationsRoutes(app, ctx) {
         const lines = ids.map(id => c.lines.find(l => l.id === id)).filter(Boolean);
         routings = lines.map(l => ({ id: l.id, label: l.label, pol: l.pol, pod: l.pod, loops: [...l.loops] }));
         for (const l of lines) {
-          const m = await findMatchingContractLegs(l.legs, { pol: polU, pod: podU, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation });
+          const m = await findMatchingContractLegs(l.legs, { pol: polU, pod: podU, needsPolHaulage: needsPol, needsPodHaulage: needsPod,
+            pkuLocation, delLocation, pkuLocType, delLocType, allowLinked: !!opts.allowLinked });
           if (m.length) { matched = { routingId: l.id, kind: m[0].matchKind, pol: m[0].firstLeg.pol, pod: m[0].lastLeg.pod }; break; }
         }
         if (!matched) continue;

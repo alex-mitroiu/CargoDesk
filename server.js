@@ -3590,7 +3590,15 @@ async function checkLineAgentCapabilityGaps(shipmentId) {
 // only attaches at the outer edges of a matched run: the first leg's POL haulage (pre-carriage into
 // the run's own first port) and the last leg's POD haulage (on-carriage out of its own last port)
 // — never the legs in between. A single-leg run is the simple case.
-const findMatchingContractLegs = async (legs, { pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation = '', delLocation = '' }) => {
+//
+// A carrier-haulage end is judged on its location AND its type (agreed 2026-11-05): the routing term
+// comes from the first and last location on both sides, so a shipment picked up by the carrier at a
+// Door needs a contract line whose origin haulage is a Door too (contract_legs.pol_loc_type; one left
+// at Terminal means a terminal pick-up). pkuLocType/delLocType are the shipment's own types
+// (deriveHaulageNeeds); blank = don't judge the type. allowLinked lets a Lane Steering line that
+// allows linked ports widen every leg's POL/POD to its linked ports, as the leg's own flag does.
+const findMatchingContractLegs = async (legs, { pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation = '', delLocation = '',
+                                                pkuLocType = '', delLocType = '', allowLinked = false }) => {
   if (legs.length === 0) return [];
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
   const pkuU = pkuLocation.toUpperCase(), delU = delLocation.toUpperCase();
@@ -3599,18 +3607,21 @@ const findMatchingContractLegs = async (legs, { pol, pod, needsPolHaulage, needs
   // port up front so the actual matching walk below can stay synchronous.
   const linkedCache = new Map();
   const distinctPorts = new Set();
+  const polLinked = leg => allowLinked || !!leg.pol_linked_allowed;
+  const podLinked = leg => allowLinked || !!leg.pod_linked_allowed;
   for (const leg of legs) {
-    if (leg.pol_linked_allowed) distinctPorts.add(leg.pol);
-    if (leg.pod_linked_allowed) distinctPorts.add(leg.pod);
+    if (polLinked(leg)) distinctPorts.add(leg.pol);
+    if (podLinked(leg)) distinctPorts.add(leg.pod);
   }
   await Promise.all([...distinctPorts].map(async p => linkedCache.set(p, await linkedPortCodes(p))));
 
-  const polMatches = leg => (leg.pol_linked_allowed ? [leg.pol, ...(linkedCache.get(leg.pol) || [])] : [leg.pol]).includes(polU);
-  const podMatches = leg => (leg.pod_linked_allowed ? [leg.pod, ...(linkedCache.get(leg.pod) || [])] : [leg.pod]).includes(podU);
+  const polMatches = leg => (polLinked(leg) ? [leg.pol, ...(linkedCache.get(leg.pol) || [])] : [leg.pol]).includes(polU);
+  const podMatches = leg => (podLinked(leg) ? [leg.pod, ...(linkedCache.get(leg.pod) || [])] : [leg.pod]).includes(podU);
 
   const haulageOk = (first, last) => {
     if (needsPolHaulage) {
       if (!first.pol_carrier_haulage) return false;
+      if (pkuLocType && (first.pol_loc_type || 'Terminal') !== pkuLocType) return false;
       if (first.pol_haulage_locations) {
         const allowed = first.pol_haulage_locations.split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
         if (allowed.length > 0 && pkuU && !allowed.includes(pkuU)) return false;
@@ -3618,6 +3629,7 @@ const findMatchingContractLegs = async (legs, { pol, pod, needsPolHaulage, needs
     }
     if (needsPodHaulage) {
       if (!last.pod_carrier_haulage) return false;
+      if (delLocType && (last.pod_loc_type || 'Terminal') !== delLocType) return false;
       if (last.pod_haulage_locations) {
         const allowed = last.pod_haulage_locations.split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
         if (allowed.length > 0 && delU && !allowed.includes(delU)) return false;

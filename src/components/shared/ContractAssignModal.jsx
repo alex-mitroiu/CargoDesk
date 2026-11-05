@@ -6,7 +6,7 @@ import { Inp, ContractTypeInput } from "../primitives/Form";
 import DatePicker from "../primitives/DatePicker";
 import CarrierCombobox from "./CarrierCombobox";
 import { steeringCheck, SteeringWarningDialog } from "./WhereToBook";
-import { ContractPickerModal, deriveHaulageNeeds } from "../../pages/shipments/ShipmentFormPage";
+import { ContractPickerModal, deriveHaulageNeeds, haulageMatchParams } from "../../pages/shipments/ShipmentFormPage";
 import { HZ, HZ_BODY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
 
 // ─── Contract Assign Modal ──────────────────────────────────────────────────
@@ -47,16 +47,14 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, contai
   // Derived straight from the shipment's own Pick-up/Delivery legs — NOT shipment.routingTerm
   // (the door-to-door bookend term), so this agrees with every other haulage-aware match in
   // the app (ShipmentFormPage's ContractField, the header mismatch badge).
-  const { needsPolHaulage, needsPodHaulage, pkuLocation, delLocation } = deriveHaulageNeeds(legs);
+  const haulage = deriveHaulageNeeds(legs);
 
   useEffect(() => {
     if (step !== "contract") return;
     let live = true;
     setMatches(null); setAllocs(null);
     const dateRef = shipment.cargoReadyDate || shipment.etd || "";
-    const haulageParams = { ...(needsPolHaulage && { needsPolHaulage: "1" }),
-      ...(needsPodHaulage && { needsPodHaulage: "1" }),
-      ...(pkuLocation && { pkuLocation }), ...(delLocation && { delLocation }) };
+    const haulageParams = haulageMatchParams(haulage);
     const matchParams = { pol, pod, ...(dateRef && { crd: dateRef }), ...haulageParams };
     // Deliberately NOT filtered by shipment.carrierCode — picking a contract from a
     // different carrier is exactly what pickContract/pickAllocation below already support
@@ -78,12 +76,15 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, contai
       setAllocs(a);
     }).catch(() => { if (live) { setMatches([]); setAllocs([]); } });
     return () => { live = false; };
-  }, [step, pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [step, pol, pod, haulage.needsPolHaulage, haulage.needsPodHaulage, haulage.pkuLocation, haulage.delLocation, haulage.pkuLocType, haulage.delLocType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const finish = (fields, matchedRoute = null) => {
     onUpdate(shipment.id, { ...shipment, contractType: type, ...fields });
+    // The picked contract and routing line travel with the route, so the chained sailing search follows
+    // that line before the page has the updated shipment back (useContractLineHubs).
     onDone({ isCentral: type === "Central", contractPicked: !!fields.contractId,
-      carrierCode: fields.carrierCode || shipment.carrierCode || "", matchedRoute });
+      carrierCode: fields.carrierCode || shipment.carrierCode || "",
+      matchedRoute: matchedRoute && { ...matchedRoute, contractId: fields.contractId || "", routingId: fields.contractRoutingId || "" } });
   };
 
   const pickContract = (c, skipReason = "", steeringReason = "") => {
@@ -143,7 +144,7 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, contai
           // Deliberately no carrierCode here — this search is intentionally NOT carrier-filtered
           // (see the comment above the match useEffect), so showing one would misrepresent what
           // was actually searched for.
-          needsPolHaulage, needsPodHaulage, pkuLocation, delLocation }}
+          ...haulage }}
         // The shipment's own already-assigned Central contract/space-config, if any — lets the
         // picker mark that exact card as already selected and block re-picking it, instead of
         // silently re-running finish()/onDone() (which chains into a fresh sailing search on the

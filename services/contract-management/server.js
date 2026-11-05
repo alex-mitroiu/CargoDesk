@@ -239,17 +239,22 @@ async function toUsd(amount, currency) {
 // the original — a contract's legs can each have a different port needing its own expansion.
 // Unchanged by the Postgres migration — every boolean field it reads is used as a plain truthy
 // check, which works identically whether the underlying value is SQLite's 1/0 or a real boolean.
-const findMatchingContractLegs = (legs, { pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation = "", delLocation = "", linkedPortCodes = () => [] }) => {
+// A carrier-haulage end is judged on its location AND its type, and allowLinked (a Lane Steering
+// line allowing linked ports) widens every leg like its own flag — same as the monolith's copy
+// (server.js findMatchingContractLegs, agreed 2026-11-05).
+const findMatchingContractLegs = (legs, { pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation = "", delLocation = "",
+                                          pkuLocType = "", delLocType = "", allowLinked = false, linkedPortCodes = () => [] }) => {
   if (legs.length === 0) return [];
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
   const pkuU = pkuLocation.toUpperCase(), delU = delLocation.toUpperCase();
 
-  const polMatches = leg => (leg.pol_linked_allowed ? [leg.pol, ...linkedPortCodes(leg.pol)] : [leg.pol]).includes(polU);
-  const podMatches = leg => (leg.pod_linked_allowed ? [leg.pod, ...linkedPortCodes(leg.pod)] : [leg.pod]).includes(podU);
+  const polMatches = leg => (allowLinked || leg.pol_linked_allowed ? [leg.pol, ...linkedPortCodes(leg.pol)] : [leg.pol]).includes(polU);
+  const podMatches = leg => (allowLinked || leg.pod_linked_allowed ? [leg.pod, ...linkedPortCodes(leg.pod)] : [leg.pod]).includes(podU);
 
   const haulageOk = (first, last) => {
     if (needsPolHaulage) {
       if (!first.pol_carrier_haulage) return false;
+      if (pkuLocType && (first.pol_loc_type || "Terminal") !== pkuLocType) return false;
       if (first.pol_haulage_locations) {
         const allowed = first.pol_haulage_locations.split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
         if (allowed.length > 0 && pkuU && !allowed.includes(pkuU)) return false;
@@ -257,6 +262,7 @@ const findMatchingContractLegs = (legs, { pol, pod, needsPolHaulage, needsPodHau
     }
     if (needsPodHaulage) {
       if (!last.pod_carrier_haulage) return false;
+      if (delLocType && (last.pod_loc_type || "Terminal") !== delLocType) return false;
       if (last.pod_haulage_locations) {
         const allowed = last.pod_haulage_locations.split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
         if (allowed.length > 0 && delU && !allowed.includes(delU)) return false;
@@ -488,7 +494,7 @@ app.use("/internal", (req, res, next) => {
 app.get("/internal/contracts/match", async (req, res) => {
   const { pol = "", pod = "", etd = "", crd = "", carrier = "",
           needsPolHaulage = "", needsPodHaulage = "", pkuLocation = "", delLocation = "",
-          linkedPorts = "" } = req.query;
+          pkuLocType = "", delLocType = "", linkedPorts = "" } = req.query;
   if (!pol || !pod) return ok(res, []);
 
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
@@ -519,7 +525,8 @@ app.get("/internal/contracts/match", async (req, res) => {
   const results = [];
   for (const c of candidates) {
     const legs = await query("SELECT * FROM contract_legs WHERE contract_id=$1 ORDER BY leg_order", [c.id]);
-    const matches = findMatchingContractLegs(legs, { pol, pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation, linkedPortCodes });
+    const matches = findMatchingContractLegs(legs, { pol, pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation,
+      pkuLocType, delLocType, linkedPortCodes });
     if (matches.length === 0) continue;
     const routingRows = await query("SELECT * FROM contract_routings WHERE contract_id=$1", [c.id]);
     const routingsById = Object.fromEntries(routingRows.map(r => [r.id, mapContractRouting(r)]));
@@ -580,19 +587,22 @@ app.get("/internal/contracts", async (req, res) => {
   if (namedAccount.trim()) { const n = `%${namedAccount.trim()}%`; clauses.push(`(c.named_account ILIKE ${p(n)} OR c.named_account_id ILIKE ${p(n)})`); }
   if (pol.trim()) { clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pol)=UPPER(${p(pol.trim())}))`); }
   if (pod.trim()) { clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pod)=UPPER(${p(pod.trim())}))`); }
-  if (polOrigin.trim()) {
-    clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pol_carrier_haulage=true AND (COALESCE(l.pol_haulage_locations,'')='' OR UPPER(' '||l.pol_haulage_locations||' ') LIKE UPPER('% '||${p(polOrigin.trim())}||' %')))`);
-  }
-  if (podDestination.trim()) {
-    clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pod_carrier_haulage=true AND (COALESCE(l.pod_haulage_locations,'')='' OR UPPER(' '||l.pod_haulage_locations||' ') LIKE UPPER('% '||${p(podDestination.trim())}||' %')))`);
-  }
-  if (routingTerm.trim()) {
-    const hasPol = "EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pol_carrier_haulage=true)";
-    const hasPod = "EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pod_carrier_haulage=true)";
-    if (routingTerm === "P2P") clauses.push(`NOT ${hasPol} AND NOT ${hasPod}`);
-    if (["D2P","CY2P"].includes(routingTerm)) clauses.push(`${hasPol} AND NOT ${hasPod}`);
-    if (["P2D","P2CY"].includes(routingTerm)) clauses.push(`NOT ${hasPol} AND ${hasPod}`);
-    if (["D2D","D2CY","CY2D","CY2CY"].includes(routingTerm)) clauses.push(`${hasPol} AND ${hasPod}`);
+  // Each end of the routing term (Schedule Search): a DR or CY end needs carrier haulage of that type there
+  // (contract_legs.pol_loc_type / pod_loc_type, agreed 2026-11-05) — at the Pick-up / Delivery location
+  // typed in, if any; a PT end needs none. The location alone (no term) needs haulage of any type.
+  const TERM_ENDS = { P2P: ["PT", "PT"], D2P: ["Door", "PT"], CY2P: ["Container Yard", "PT"], P2D: ["PT", "Door"], P2CY: ["PT", "Container Yard"],
+    D2D: ["Door", "Door"], D2CY: ["Door", "Container Yard"], CY2D: ["Container Yard", "Door"], CY2CY: ["Container Yard", "Container Yard"] };
+  const haulageAt = (side, type, location) => {
+    const conds = [`l.${side}_carrier_haulage=true`];
+    if (type) conds.push(`l.${side}_loc_type=${p(type)}`);
+    if (location) conds.push(`(COALESCE(l.${side}_haulage_locations,'')='' OR UPPER(' '||l.${side}_haulage_locations||' ') LIKE UPPER('% '||${p(location)}||' %'))`);
+    return `EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND ${conds.join(" AND ")})`;
+  };
+  const ends = TERM_ENDS[routingTerm.trim()];
+  for (const [i, side, location] of [[0, "pol", polOrigin.trim()], [1, "pod", podDestination.trim()]]) {
+    const type = ends ? ends[i] : "";
+    if (type === "PT") clauses.push(`NOT ${haulageAt(side, "", "")}`);
+    else if (type || location) clauses.push(haulageAt(side, type, location));
   }
   if (search.trim()) {
     const s = `%${search.trim()}%`;

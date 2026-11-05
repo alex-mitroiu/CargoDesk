@@ -52,6 +52,22 @@ const cellText = { fontFamily: T.body, fontSize: 13, color: T.text };
 const iconBtn = { width: 28, height: 28, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 6, color: T.textMuted, cursor: "pointer", fontSize: 13, lineHeight: 1 };
 
 // ─── The edit pop-up ──────────────────────────────────────────────────────────────────────────
+// An on/off line in the steering pop-up: what it does, and the switch.
+const SwitchRow = ({ title, ariaLabel, testId, checked, onChange, children }) => (
+  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 16px" }}>
+    <span style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      <b style={{ fontFamily: T.body, fontSize: 13.5, color: T.text }}>{title}</b>
+      <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, lineHeight: 1.5 }}>{children}</span>
+    </span>
+    <button type="button" role="switch" aria-checked={checked} aria-label={ariaLabel} data-testid={testId}
+      onClick={() => onChange(!checked)}
+      style={{ flexShrink: 0, width: 42, height: 24, borderRadius: 999, border: "none", cursor: "pointer", position: "relative",
+        background: checked ? T.accent : T.border, transition: "background .15s" }}>
+      <span style={{ position: "absolute", top: 3, left: checked ? 21 : 3, width: 18, height: 18, borderRadius: "50%", background: "#fff", transition: "left .15s" }} />
+    </button>
+  </div>
+);
+
 const SteeringModal = ({ init, tradeLanes, noAnswerHours, onClose, onSaved }) => {
   const editing = !!init?.id;
   const [originLane, setOriginLane] = useState(init?.originLane || "");
@@ -60,6 +76,7 @@ const SteeringModal = ({ init, tradeLanes, noAnswerHours, onClose, onSaved }) =>
   const [validFrom,  setValidFrom]  = useState(init?.validFrom || today());
   const [validTo,    setValidTo]    = useState(init?.validTo || "");
   const [autoSwitch, setAutoSwitch] = useState(!!init?.autoSwitch);
+  const [allowLinkedPorts, setAllowLinkedPorts] = useState(!!init?.allowLinkedPorts);
   const [note,       setNote]       = useState(init?.note || "");
   const [options,    setOptions]    = useState(() => (init?.options || []).map(o => ({ ...o })));
   const [adding,     setAdding]     = useState(false);
@@ -89,7 +106,7 @@ const SteeringModal = ({ init, tradeLanes, noAnswerHours, onClose, onSaved }) =>
   };
   const save = async () => {
     setBusy(true);
-    const body = { originLane, destLane, customerId: customer.id, customerName: customer.name, validFrom, validTo, autoSwitch, note,
+    const body = { originLane, destLane, customerId: customer.id, customerName: customer.name, validFrom, validTo, autoSwitch, allowLinkedPorts, note,
       options: options.map(o => ({ carrierCode: o.carrierCode, contractId: o.contractId, note: o.note || "" })) };
     try {
       const saved = editing ? await api.laneSteerings.update(init.id, body) : await api.laneSteerings.create(body);
@@ -120,20 +137,14 @@ const SteeringModal = ({ init, tradeLanes, noAnswerHours, onClose, onSaved }) =>
           <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>Shown with the options wherever a contract is assigned on this lane.</span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 16px" }}>
-          <span style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            <b style={{ fontFamily: T.body, fontSize: 13.5, color: T.text }}>Switch to the next option when the carrier doesn't answer</b>
-            <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, lineHeight: 1.5 }}>
-              After the no-answer time ({noAnswerHours} h, App Settings) the request is cancelled and the shipment is booked on the next option's first sailing with space. After the last option it escalates to OCC/AY.
-            </span>
-          </span>
-          <button type="button" role="switch" aria-checked={autoSwitch} aria-label="Switch automatically" data-testid="lane-steering-switch"
-            onClick={() => setAutoSwitch(v => !v)}
-            style={{ flexShrink: 0, width: 42, height: 24, borderRadius: 999, border: "none", cursor: "pointer", position: "relative",
-              background: autoSwitch ? T.accent : T.border, transition: "background .15s" }}>
-            <span style={{ position: "absolute", top: 3, left: autoSwitch ? 21 : 3, width: 18, height: 18, borderRadius: "50%", background: "#fff", transition: "left .15s" }} />
-          </button>
-        </div>
+        <SwitchRow title="Switch to the next option when the carrier doesn't answer" ariaLabel="Switch automatically" testId="lane-steering-switch"
+          checked={autoSwitch} onChange={setAutoSwitch}>
+          After the no-answer time ({noAnswerHours} h, App Settings) the request is cancelled and the shipment is booked on the next option's first sailing with space. After the last option it escalates to OCC/AY.
+        </SwitchRow>
+        <SwitchRow title="Allow linked ports" ariaLabel="Allow linked ports" testId="lane-steering-linked-ports"
+          checked={allowLinkedPorts} onChange={setAllowLinkedPorts}>
+          The options also match a shipment from or to a port linked to their contract's POL or POD (Master Data → Linked Ports), even where the contract line itself only takes its own ports.
+        </SwitchRow>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <span style={labelStyle}>Options, in order</span>

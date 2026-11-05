@@ -23,8 +23,8 @@ import { Modal } from "../components/primitives/Modal";
 
 const CONTRACT_STATUSES = ["Active", "Draft", "Expired", "On Hold"];
 
-// CY and Door share the same pol/pod_carrier_haulage flag at DB level.
-// A future contract_legs.pol_loc_type column would allow exact CY vs Door filtering.
+// A DR or CY end matches contract lines whose carrier haulage there is of that type
+// (contract_legs.pol_loc_type / pod_loc_type — GET /api/contracts, agreed 2026-11-05).
 const ROUTING_TERMS = [
   { value: "P2P",   label: "PT–PT",  polOriginLabel: "Pick-up",         podDestLabel: "Delivery"         },
   { value: "D2P",   label: "DR–PT",  polOriginLabel: "Door pick-up",    podDestLabel: "Delivery"         },

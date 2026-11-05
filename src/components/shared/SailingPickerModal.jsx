@@ -1,4 +1,5 @@
 import { deriveLoopCode } from "../../utils/scheduleLoop";
+import { sailingFollowsLine, lineRouteText } from "../../utils/sailingRouting";
 import { useState, useEffect, useRef } from "react";
 import { T } from "../../tokens";
 import { api } from "../../api";
@@ -52,7 +53,7 @@ const JourneyBreadcrumb = ({ pol, pod, routingTerm }) => {
 
 const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing, onSelect, onClose,
   selectLabel = "Select →", expectedHub = null, expectedService = null,
-  requiredService = null, requiredHub = null, spotPricing = null, onSelectWithOffer = null }) => {
+  requiredService = null, requiredHub = null, routingHubs = null, spotPricing = null, onSelectWithOffer = null }) => {
   const [sailings, setSailings] = useState(null);
   const [showAll,  setShowAll]  = useState(false);
   const [loading,  setLoading]  = useState(true);
@@ -67,14 +68,19 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
     if (expectedService) return s.service === expectedService;
     return false;
   };
-  const hasExpectation = !!(expectedHub || expectedService);
+  // A known contract line (routingHubs) is a hard filter below, so the soft hint stands aside.
+  const hasLine = Array.isArray(routingHubs);
+  const hasExpectation = !hasLine && !!(expectedHub || expectedService);
 
-  // Hard filter (decided 2026-09-30): a shipment on a space configuration searches sailings by
-  // that configuration's routing — its loop, and its first transshipment port when it has one.
-  // A sailing on another loop would drop the space link on save (revalidateSpaceLoop), so those
-  // are hidden unless the user deliberately asks to see them.
-  const hasRequirement = !!(requiredService || requiredHub);
-  const fitsRequirement = s => (!requiredService || deriveLoopCode(s).toUpperCase() === String(requiredService).toUpperCase())
+  // Hard filters, hidden unless the user deliberately asks to see every sailing:
+  //  • the contract's routing line (agreed 2026-11-05): its own transshipment ports in order, plus the
+  //    direct sailings (src/utils/sailingRouting.js);
+  //  • a space configuration (decided 2026-09-30): its loop, and its first transshipment port when it
+  //    has one — a sailing on another loop would drop the space link on save (revalidateSpaceLoop).
+  const hasSpace = !!(requiredService || requiredHub);
+  const hasRequirement = hasLine || hasSpace;
+  const fitsRequirement = s => (!hasLine || sailingFollowsLine(s, routingHubs))
+    && (!requiredService || deriveLoopCode(s).toUpperCase() === String(requiredService).toUpperCase())
     && (!requiredHub || !!(s.legs && s.legs.some(l => l.pod === requiredHub)));
 
   // Only the newest search may fill the list (2026-10-15): StrictMode runs the mount effect twice in
@@ -195,10 +201,18 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
                 fontFamily: T.body, fontSize: 12, color: T.text, padding: "8px 12px",
                 background: T.accentBg, border: `1px solid ${T.accent}33`, borderRadius: 6 }}>
                 <span>
-                  This shipment is on a space configuration for
-                  {requiredService && <> loop <strong style={{ fontFamily: T.mono }}>{requiredService}</strong></>}
-                  {requiredHub && <> via <strong style={{ fontFamily: T.mono }}>{requiredHub}</strong></>}
-                  {showAll ? ". Showing every sailing — picking one on another loop drops the shipment from that space." : ", so only those sailings are shown."}
+                  {hasLine && <>
+                    The contract line runs <strong style={{ fontFamily: T.mono }}>{lineRouteText(routingHubs)}</strong>
+                    {routingHubs.length ? " (direct sailings fit too)" : ""}.{" "}
+                  </>}
+                  {hasSpace && <>
+                    This shipment is on a space configuration for
+                    {requiredService && <> loop <strong style={{ fontFamily: T.mono }}>{requiredService}</strong></>}
+                    {requiredHub && <> via <strong style={{ fontFamily: T.mono }}>{requiredHub}</strong></>}.{" "}
+                  </>}
+                  {showAll
+                    ? (hasSpace && requiredService ? "Showing every sailing — picking one on another loop drops the shipment from that space." : "Showing every sailing.")
+                    : "Only the sailings that fit are shown."}
                 </span>
                 <button type="button" onClick={() => setShowAll(v => !v)}
                   style={{ marginLeft: "auto", background: "none", border: `1px solid ${T.border}`, borderRadius: 5, padding: "3px 10px",
@@ -211,7 +225,7 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
               <div style={{ textAlign: "center", padding: "24px 0",
                 fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
                 {hasRequirement && !showAll && (sailings.sailings || []).length > 0
-                  ? <>No sailings{requiredService ? ` on loop ${requiredService}` : ""}{requiredHub ? ` via ${requiredHub}` : ""} in the {weeks}-week window. Widen the window, or show all sailings.</>
+                  ? <>No sailings fit in the {weeks}-week window. Widen the window, or show all sailings.</>
                   : <>No sailings found for this route in the {weeks}-week window.</>}
               </div>
             ) : (

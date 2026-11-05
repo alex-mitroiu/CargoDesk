@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { api } from "../api";
-import { deriveHaulageNeeds } from "../pages/shipments/ShipmentFormPage";
+import { deriveHaulageNeeds, haulageMatchParams } from "../pages/shipments/ShipmentFormPage";
 
 // A Central contract is matched against POL/POD (route, haulage coverage, and validity window)
 // at the time it's picked, but nothing re-checks it if the route changes or the contract's own
@@ -13,7 +13,7 @@ import { deriveHaulageNeeds } from "../pages/shipments/ShipmentFormPage";
 // ContractAssignModal uses to pick the contract in the first place.
 export default function useContractMismatch(shipment, matchPol, matchPod, legs) {
   const [contractMismatch, setContractMismatch] = useState(false);
-  const { needsPolHaulage, needsPodHaulage, pkuLocation, delLocation } = deriveHaulageNeeds(legs);
+  const haulage = deriveHaulageNeeds(legs);
   const dateRef = shipment.cargoReadyDate || shipment.etd || "";
 
   useEffect(() => {
@@ -22,9 +22,7 @@ export default function useContractMismatch(shipment, matchPol, matchPod, legs) 
       setContractMismatch(false);
       return;
     }
-    api.contracts.match({ pol: matchPol, pod: matchPod, ...(dateRef && { crd: dateRef }),
-      ...(needsPolHaulage && { needsPolHaulage: "1" }), ...(needsPodHaulage && { needsPodHaulage: "1" }),
-      ...(pkuLocation && { pkuLocation }), ...(delLocation && { delLocation }) })
+    api.contracts.match({ pol: matchPol, pod: matchPod, ...(dateRef && { crd: dateRef }), ...haulageMatchParams(haulage) })
       .then(matches => {
         // GET /api/contracts/match now returns one entry per (contract, routing) pair — a
         // shipment must match on BOTH its stored contract id AND its stored routing id (''
@@ -40,7 +38,8 @@ export default function useContractMismatch(shipment, matchPol, matchPod, legs) 
       })
       .catch(() => { if (live) setContractMismatch(false); });
     return () => { live = false; };
-  }, [shipment.contractType, shipment.contractId, shipment.contractRoutingId, matchPol, matchPod, dateRef, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation]);
+  }, [shipment.contractType, shipment.contractId, shipment.contractRoutingId, matchPol, matchPod, dateRef,
+      haulage.needsPolHaulage, haulage.needsPodHaulage, haulage.pkuLocation, haulage.delLocation, haulage.pkuLocType, haulage.delLocType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return contractMismatch;
 }

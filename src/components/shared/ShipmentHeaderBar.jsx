@@ -292,7 +292,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
   const seaLegs = legs.filter(l => l.legType === "SEA");
   const matchPol = seaLegs[0]?.pol || shipment.pol || "";
   const matchPod = seaLegs[seaLegs.length - 1]?.pod || shipment.pod || "";
-  const { needsPolHaulage, needsPodHaulage, pkuLocation, delLocation } = deriveHaulageNeeds(legs);
+  const haulage = deriveHaulageNeeds(legs);
 
   // Silent revalidation: a Central contract was matched against POL/POD (and haulage coverage,
   // and validity window) at the time it was picked, but nothing re-checks it if the route
@@ -613,9 +613,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
       )}
 
       {contractMismatch && onUpdate && (
-        <ContractMismatchModal shipment={shipment} pol={matchPol} pod={matchPod}
-          needsPolHaulage={needsPolHaulage} needsPodHaulage={needsPodHaulage}
-          pkuLocation={pkuLocation} delLocation={delLocation}
+        <ContractMismatchModal shipment={shipment} pol={matchPol} pod={matchPod} haulage={haulage}
           onUpdate={onUpdate} />
       )}
 

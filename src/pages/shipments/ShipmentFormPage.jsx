@@ -21,6 +21,7 @@ import SailingPickerModal from "../../components/shared/SailingPickerModal";
 import { IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconRefresh, IconLock, IconAnchor, IconShip } from "../../components/primitives/Icon";
 import { GPS_LOC_TYPE, formatLegPoint, isGpsLeg, legLocType, LOC_TYPE_OPTIONS } from "../../utils/legLocation";
 import { legChainProblems } from "../../utils/legChain";
+import useContractLineHubs from "../../hooks/useContractLineHubs";
 import { countryCodeOf } from "../../utils/countryTag";
 import useResolvedPortName from "../../hooks/useResolvedPortName";
 import ConsumptionBar from "../../components/shared/ConsumptionBar";
@@ -525,8 +526,8 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
               <SearchTermChip label="POD" value={searchCriteria.pod} />
               <SearchTermChip label="Cargo Ready" value={searchCriteria.crd} />
               <SearchTermChip label="Carrier" value={searchCriteria.carrierCode} />
-              <SearchTermChip label="POL Haulage" value={searchCriteria.needsPolHaulage ? (searchCriteria.pkuLocation || "Required") : null} />
-              <SearchTermChip label="POD Haulage" value={searchCriteria.needsPodHaulage ? (searchCriteria.delLocation || "Required") : null} />
+              <SearchTermChip label="POL Haulage" value={searchCriteria.needsPolHaulage ? haulageChip(searchCriteria.pkuLocation, searchCriteria.pkuLocType) : null} />
+              <SearchTermChip label="POD Haulage" value={searchCriteria.needsPodHaulage ? haulageChip(searchCriteria.delLocation, searchCriteria.delLocType) : null} />
             </div>
           </div>
         )}
@@ -683,18 +684,38 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
 // form, Schedules page, header mismatch badge) agrees on what "needs haulage" means, instead
 // of each recomputing it — or worse, passing shipment.routingTerm (the door-to-door bookend
 // term) straight through unexamined.
+// The route's first leg when it's a Pick-up the carrier hauls, and its last when it's a Delivery the carrier hauls.
+export const carrierPickUpLeg = legs => (legs[0]?.legType === "Pick-up" && legs[0]?.movementType === "Carrier's Haulage" ? legs[0] : null);
+export const carrierDeliveryLeg = legs => {
+  const last = legs[legs.length - 1];
+  return last?.legType === "Delivery" && last?.movementType === "Carrier's Haulage" ? last : null;
+};
 export const deriveHaulageNeeds = (legs) => {
-  const pkuLeg = legs[0]?.legType === "Pick-up" && legs[0]?.movementType === "Carrier's Haulage" ? legs[0] : null;
-  const delLeg = legs[legs.length - 1]?.legType === "Delivery" && legs[legs.length - 1]?.movementType === "Carrier's Haulage" ? legs[legs.length - 1] : null;
+  const pkuLeg = carrierPickUpLeg(legs), delLeg = carrierDeliveryLeg(legs);
   return {
     needsPolHaulage: !!pkuLeg,
     needsPodHaulage: !!delLeg,
     pkuLocation: pkuLeg?.pol || "",
     delLocation: delLeg?.pod || "",
+    // Each carrier-haulage end's location type: the contract line must offer haulage of that same type
+    // there, since the routing term comes from the first and last location (agreed 2026-11-05).
+    pkuLocType: pkuLeg ? haulageEndType(pkuLeg, "pol") : "",
+    delLocType: delLeg ? haulageEndType(delLeg, "pod") : "",
   };
 };
+// A classified site given by GPS coordinates is a door (same rule server-side, lib/where-to-book.js).
+const haulageEndType = (leg, side) => { const t = legLocType(leg, side); return t === GPS_LOC_TYPE ? "Door" : t; };
+// The haulage part of a contract, space or Where-to-book search, as query params (only what's set).
+export const haulageMatchParams = h => ({
+  ...(h.needsPolHaulage && { needsPolHaulage: "1" }), ...(h.needsPodHaulage && { needsPodHaulage: "1" }),
+  ...(h.pkuLocation && { pkuLocation: h.pkuLocation }), ...(h.delLocation && { delLocation: h.delLocation }),
+  ...(h.needsPolHaulage && h.pkuLocType && { pkuLocType: h.pkuLocType }),
+  ...(h.needsPodHaulage && h.delLocType && { delLocType: h.delLocType }),
+});
+// "CNTAG · Door" for the Search Terms chips; "Required" when the location isn't filled in yet.
+export const haulageChip = (location, type) => [location || "Required", type].filter(Boolean).join(" · ");
 
-export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation, contractType, carrierCode, shipmentTEU = 0, cargo = {} }) => {
+export const ContractField = ({ value, onChange, pol, pod, etd, crd, haulage = {}, contractType, carrierCode, shipmentTEU = 0, cargo = {} }) => {
   const isCentral = contractType === "Central";
   const [matches,    setMatches]    = useState(null);
   const [allocs,     setAllocs]     = useState(null);
@@ -713,13 +734,10 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
     setMatching(true);
     matchTimer.current = setTimeout(async () => {
       try {
-        // needsPolHaulage/needsPodHaulage are booleans the caller already knows (derived from
-        // the shipment's own Pick-up/Delivery legs), not a routingTerm string to re-parse — a
-        // contract and its own space-config allocations are judged by the identical rule.
-        const haulageParams = { ...(needsPolHaulage && { needsPolHaulage: "1" }),
-          ...(needsPodHaulage && { needsPodHaulage: "1" }),
-          ...(pkuLocation && { pkuLocation }),
-          ...(delLocation && { delLocation }) };
+        // `haulage` is deriveHaulageNeeds' answer for the shipment's own Pick-up/Delivery legs, not a
+        // routingTerm string to re-parse — a contract and its own space-config allocations are judged
+        // by the identical rule.
+        const haulageParams = haulageMatchParams(haulage);
         const matchParams = { pol, pod, ...(dateRef && { crd: dateRef }), ...haulageParams };
         // Where to book: the Lane Steering answer for these values (Epic TKT-KFGL81).
         api.whereToBook({ pol, pod, ...(etd || crd ? { etd: etd || crd } : {}), ...haulageParams, teu: String(shipmentTEU || 0),
@@ -748,7 +766,7 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
         setMatches([]); setAllocs([]);
       } finally { setMatching(false); }
     }, 400);
-  }, [isCentral, pol, pod, dateRef, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation, carrierCode, cargo.principalId, cargo.commodityCode, cargo.loopCode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isCentral, pol, pod, dateRef, haulage.needsPolHaulage, haulage.needsPodHaulage, haulage.pkuLocation, haulage.delLocation, haulage.pkuLocType, haulage.delLocType, carrierCode, cargo.principalId, cargo.commodityCode, cargo.loopCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearContract = () => { onChange({ id: "", ref: "", carrierCode: null, routingId: "", allocationId: "", spaceSkipReason: "", spaceOverageReason: "", spaceSelection: "" }); autoSelected.current = false; };
   // c.routingId is '' for a contract with no named routings, or the specific routing (e.g.
@@ -801,8 +819,7 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
       )}
       {pickerOpen && (
         <ContractPickerModal pol={pol} pod={pod} matches={matches} allocs={allocs} shipmentTEU={shipmentTEU} cargo={cargo}
-          searchCriteria={{ pol, pod, crd: dateRef || null, carrierCode: carrierCode || null,
-            needsPolHaulage, needsPodHaulage, pkuLocation, delLocation }}
+          searchCriteria={{ pol, pod, crd: dateRef || null, carrierCode: carrierCode || null, ...haulage }}
           onSelectContract={pickContract} onSelectAllocation={pickAllocation}
           whereToBook={whereToBook} preselect={!value.id}
           onClose={() => setPickerOpen(false)} />
@@ -1797,10 +1814,10 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
   const contractMatchRoutingTerm = cLegsForMatch.length > 0
     ? (LEG_LOC_ABBR_C[legLocType(cLegsForMatch[0], "pol")] || "PT") + "-" + (LEG_LOC_ABBR_C[legLocType(cLegsForMatch[cLegsForMatch.length - 1], "pod")] || "PT")
     : "";
-  const pkuLeg = legs[0]?.legType === "Pick-up" && legs[0]?.movementType === "Carrier's Haulage" ? legs[0] : null;
-  const delLeg = legs[legs.length - 1]?.legType === "Delivery" && legs[legs.length - 1]?.movementType === "Carrier's Haulage" ? legs[legs.length - 1] : null;
-  const contractPkuLocation = pkuLeg?.pol || "";
-  const contractDelLocation = delLeg?.pod || "";
+  const pkuLeg = carrierPickUpLeg(legs), delLeg = carrierDeliveryLeg(legs);
+  const contractHaulage = deriveHaulageNeeds(legs);
+  // The sailing search follows the picked contract's routing line (agreed 2026-11-05).
+  const contractLineHubs = useContractLineHubs(f.contractType === "Central" ? f.contractId : "", f.contractRoutingId);
   // Contract match uses the seaport POL/POD, not the door pickup/delivery location —
   // POL from the first SEA leg, POD from the last, so a multi-leg TSP journey resolves
   // to its true end-to-end sea route instead of just the first hop.
@@ -2535,10 +2552,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
           pod={contractMatchPod}
           etd={derivedEtd}
           crd={f.cargoReadyDate || ""}
-          needsPolHaulage={!!pkuLeg}
-          needsPodHaulage={!!delLeg}
-          pkuLocation={contractPkuLocation}
-          delLocation={contractDelLocation}
+          haulage={contractHaulage}
           contractType={f.contractType}
           carrierCode={effectiveCarrierCode || undefined}
         />
@@ -2901,6 +2915,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
               <SailingPickerModal
                 pol={pol} pod={pod} carrierCode={carrier}
                 routingTerm={contractMatchRoutingTerm}
+                routingHubs={contractLineHubs}
                 activeSailing={savedSchedules[0] || selectedSailing || null}
                 onSelect={handleSelectSailing}
                 onClose={() => setSailingPickerOpen(false)} />

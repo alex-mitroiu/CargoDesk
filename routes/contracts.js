@@ -485,7 +485,8 @@ module.exports = function contractsRoutes(app, ctx) {
       catch (e) { return err(res, e.message, e.status || 502); }
     }
     const { pol = "", pod = "", etd = "", crd = "", carrier = "",
-            needsPolHaulage = "", needsPodHaulage = "", pkuLocation = "", delLocation = "" } = req.query;
+            needsPolHaulage = "", needsPodHaulage = "", pkuLocation = "", delLocation = "",
+            pkuLocType = "", delLocType = "" } = req.query;
     if (!pol || !pod) return ok(res, []);
 
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
@@ -506,7 +507,8 @@ module.exports = function contractsRoutes(app, ctx) {
     const results = [];
     for (const c of candidates) {
       const legs = await query("SELECT * FROM contract_legs WHERE contract_id=$1 ORDER BY leg_order", [c.id]);
-      const matches = await findMatchingContractLegs(legs, { pol, pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation });
+      const matches = await findMatchingContractLegs(legs, { pol, pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation,
+        pkuLocType, delLocType });
       if (matches.length === 0) continue;
       const routingsById = Object.fromEntries(
         (await query("SELECT * FROM contract_routings WHERE contract_id=$1", [c.id])).map(r => [r.id, mapContractRouting(r)])
@@ -586,21 +588,22 @@ module.exports = function contractsRoutes(app, ctx) {
     if (namedAccount.trim())  { const n = `%${namedAccount.trim()}%`; clauses.push(`(c.named_account ILIKE ${p(n)} OR c.named_account_id ILIKE ${p(n)})`); }
     if (pol.trim()) clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pol)=UPPER(${p(pol.trim())}))`);
     if (pod.trim()) clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pod)=UPPER(${p(pod.trim())}))`);
-    if (polOrigin.trim()) {
-      // Match legs where pol_carrier_haulage is enabled AND either no specific haulage locations
-      // are listed (blank = accept any) OR the requested origin appears in the space-separated list.
-      clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pol_carrier_haulage=TRUE AND (COALESCE(l.pol_haulage_locations,'')='' OR UPPER(' '||l.pol_haulage_locations||' ') LIKE UPPER('% '||${p(polOrigin.trim())}||' %')))`);
-    }
-    if (podDestination.trim()) {
-      clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pod_carrier_haulage=TRUE AND (COALESCE(l.pod_haulage_locations,'')='' OR UPPER(' '||l.pod_haulage_locations||' ') LIKE UPPER('% '||${p(podDestination.trim())}||' %')))`);
-    }
-    if (routingTerm.trim()) {
-      const hasPol = "EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pol_carrier_haulage=TRUE)";
-      const hasPod = "EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pod_carrier_haulage=TRUE)";
-      if (routingTerm === "P2P")                                  clauses.push(`NOT ${hasPol} AND NOT ${hasPod}`);
-      if (["D2P","CY2P"].includes(routingTerm))                   clauses.push(`${hasPol} AND NOT ${hasPod}`);
-      if (["P2D","P2CY"].includes(routingTerm))                   clauses.push(`NOT ${hasPol} AND ${hasPod}`);
-      if (["D2D","D2CY","CY2D","CY2CY"].includes(routingTerm))   clauses.push(`${hasPol} AND ${hasPod}`);
+    // Each end of the routing term (Schedule Search): a DR or CY end needs carrier haulage of that type there
+    // (contract_legs.pol_loc_type / pod_loc_type, agreed 2026-11-05) — at the Pick-up / Delivery location
+    // typed in, if any; a PT end needs none. The location alone (no term) needs haulage of any type.
+    const TERM_ENDS = { P2P: ["PT", "PT"], D2P: ["Door", "PT"], CY2P: ["Container Yard", "PT"], P2D: ["PT", "Door"], P2CY: ["PT", "Container Yard"],
+      D2D: ["Door", "Door"], D2CY: ["Door", "Container Yard"], CY2D: ["Container Yard", "Door"], CY2CY: ["Container Yard", "Container Yard"] };
+    const haulageAt = (side, type, location) => {
+      const conds = [`l.${side}_carrier_haulage=TRUE`];
+      if (type) conds.push(`l.${side}_loc_type=${p(type)}`);
+      if (location) conds.push(`(COALESCE(l.${side}_haulage_locations,'')='' OR UPPER(' '||l.${side}_haulage_locations||' ') LIKE UPPER('% '||${p(location)}||' %'))`);
+      return `EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND ${conds.join(" AND ")})`;
+    };
+    const ends = TERM_ENDS[routingTerm.trim()];
+    for (const [i, side, location] of [[0, "pol", polOrigin.trim()], [1, "pod", podDestination.trim()]]) {
+      const type = ends ? ends[i] : "";
+      if (type === "PT") clauses.push(`NOT ${haulageAt(side, "", "")}`);
+      else if (type || location) clauses.push(haulageAt(side, type, location));
     }
     if (search.trim()) {
       const s = `%${search.trim()}%`;

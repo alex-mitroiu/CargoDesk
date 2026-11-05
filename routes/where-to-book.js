@@ -23,6 +23,7 @@ module.exports = function whereToBookRoutes(app, ctx) {
       customerId: q.customerId, pol: q.pol, pod: q.pod, etd: q.etd, cargoReadyDate: q.cargoReadyDate,
       commodityCode: q.commodityCode, loopCode: q.loopCode, teu: q.teu,
       needsPolHaulage: flag(q.needsPolHaulage), needsPodHaulage: flag(q.needsPodHaulage), pkuLocation: q.pkuLocation, delLocation: q.delLocation,
+      pkuLocType: q.pkuLocType, delLocType: q.delLocType,
     }));
   });
 

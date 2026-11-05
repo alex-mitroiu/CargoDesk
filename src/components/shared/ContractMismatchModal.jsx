@@ -12,7 +12,7 @@ import { ContractField } from "../../pages/shipments/ShipmentFormPage";
 // actually resolve it — pick a matching contract/space config, or switch to a
 // manual contract type (SPOT / Pending / Customer Own).
 
-const ContractMismatchModal = ({ shipment, pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation, onUpdate }) => {
+const ContractMismatchModal = ({ shipment, pol, pod, haulage, onUpdate }) => {
   const [refVal, setRefVal] = useState(shipment.contractRef || "");
 
   const updateType = v => {
@@ -57,8 +57,7 @@ const ContractMismatchModal = ({ shipment, pol, pod, needsPolHaulage, needsPodHa
               });
             }}
             pol={pol} pod={pod} etd={shipment.etd} crd={shipment.cargoReadyDate}
-            needsPolHaulage={needsPolHaulage} needsPodHaulage={needsPodHaulage}
-            pkuLocation={pkuLocation} delLocation={delLocation}
+            haulage={haulage}
             contractType={shipment.contractType} carrierCode={shipment.carrierCode}
           />
         ) : (

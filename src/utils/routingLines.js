@@ -55,6 +55,7 @@ export function lineChain(legs) {
     viaOrigin: tsps[0] || null,
     viaDestination: tsps.length > 1 ? tsps[tsps.length - 1] : null,
     pod: up(sea[sea.length - 1].pod),
+    hubs: tsps, // every transshipment port in order ([] = direct) — the sailing search follows them
     del: end(last.podCarrierHaulage, last.podHaulageLocations, last.podLocType, last.pod),
     services: [...new Set(set.map(l => up(l.vesselService)).filter(Boolean))],
     transitDays: set.reduce((s, l) => s + (Number(l.transitDays) || 0), 0),

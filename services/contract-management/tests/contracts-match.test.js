@@ -93,6 +93,21 @@ function assert(label, condition, detail = "") {
     const linkedMatch = await request("GET", `/internal/contracts/match?pol=NLAMS&pod=USNYC&linkedPorts=${linkedPorts}`);
     assert("match succeeds once the caller supplies the resolved linked-port pair", linkedMatch.body.some(m => m.id === linkedCreate.body.id));
 
+    // Same rule as the monolith's matcher (tests/contract-haulage-types.test.js), for contract_source=remote.
+    console.log("\nCarrier haulage judged on location AND type");
+    const drcy = await request("POST", "/internal/contracts", {
+      contractNumber: `SVC-DRCY-${Date.now()}`, carrierCode: "HLCU", status: "Active", validFrom: "2026-01-01", validTo: "2027-01-01",
+      legs: [{ pol: "NLRTM", pod: "USNYC", polCarrierHaulage: true, polLocType: "Door", polHaulageLocations: "NLAMS",
+        podCarrierHaulage: true, podLocType: "Container Yard", podHaulageLocations: "USCHI" }],
+      rates: [{ serviceCode: "OF", amount: 900, currency: "USD" }],
+    });
+    cleanupIds.push(drcy.body.id);
+    const typed = async q => (await request("GET", `/internal/contracts/match?pol=NLRTM&pod=USNYC&${q}`)).body.some(m => m.id === drcy.body.id);
+    assert("door pick-up + CY delivery matches the DR-CY line",
+      await typed("needsPolHaulage=1&pkuLocation=NLAMS&pkuLocType=Door&needsPodHaulage=1&delLocation=USCHI&delLocType=Container%20Yard"));
+    assert("a CY pick-up doesn't", !(await typed("needsPolHaulage=1&pkuLocation=NLAMS&pkuLocType=Container%20Yard")));
+    assert("no carrier haulage on the shipment: POL and POD alone", await typed("crd=2026-06-01"));
+
     console.log(`\n${passed} passed, ${failed} failed`);
     process.exitCode = failed > 0 ? 1 : 0;
   } catch (e) {
