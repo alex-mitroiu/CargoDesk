@@ -19,7 +19,8 @@ import InfoHint from "../../components/primitives/InfoHint";
 import { ContainerTypeField } from "../../components/shared/ContainerTypePickerModal";
 import SailingPickerModal from "../../components/shared/SailingPickerModal";
 import { IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconRefresh, IconLock, IconAnchor, IconShip } from "../../components/primitives/Icon";
-import { GPS_LOC_TYPE, formatLegPoint, isGpsLeg, LOC_TYPE_OPTIONS } from "../../utils/legLocation";
+import { GPS_LOC_TYPE, formatLegPoint, isGpsLeg, legLocType, LOC_TYPE_OPTIONS } from "../../utils/legLocation";
+import { legChainProblems } from "../../utils/legChain";
 import { countryCodeOf } from "../../utils/countryTag";
 import useResolvedPortName from "../../hooks/useResolvedPortName";
 import ConsumptionBar from "../../components/shared/ConsumptionBar";
@@ -814,8 +815,14 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
 
 const LEG_TYPE_OPTIONS      = ["Pick-up", "SEA", "Delivery"];
 const MOVEMENT_TYPE_OPTIONS = ["Carrier's Haulage", "Merchant's Haulage", "Customer Arranged"];
-// GPS Coordinates is offered only for Pick-up/Delivery legs — a SEA leg always needs a real port.
-const legLocTypeOptions     = legType => legType === "SEA" ? LOC_TYPE_OPTIONS : [...LOC_TYPE_OPTIONS, GPS_LOC_TYPE];
+// Pick-up/Delivery legs only: a SEA leg's ends are always Terminal (legLocType) and show no choice.
+const LEG_END_LOC_OPTIONS   = [...LOC_TYPE_OPTIONS, GPS_LOC_TYPE];
+const SeaLegTerminal = () => (
+  <span title="A SEA leg always runs terminal to terminal. Add a Pick-up or Delivery leg to reach a container yard, CFS or door."
+    style={{ display: "inline-flex", alignItems: "center", gap: 5, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+    Terminal <IconLock size={10} />
+  </span>
+);
 // Pick-up/Delivery-only (SEA legs always show "—" here) — inland/short-haul movement modes.
 // "Air" removed: a loaded FCL container can't realistically move by air for a door leg.
 const MOVEMENT_BY_OPTIONS   = ["", "Barge", "Rail", "Truck", "Vessel"];
@@ -954,6 +961,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
             : c.key === "loopCode" ? (legIsTrucking ? "—" : (loopCode || "—"))
             : c.key === "carrierCode" && (d.legType === "Pick-up" || d.legType === "Delivery") ? "—"
             : isPort ? (portPoint.code || "—")
+            : c.key === "polLocType" || c.key === "podLocType" ? legLocType(d, c.key.slice(0, 3))
             : (d[c.key] || "—");
           return (
             <div key={c.key} id={`leg-${d.id}-${c.key}`} data-testid={`shipment-form-leg-${d.id}-${c.key}`}
@@ -1016,7 +1024,10 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
         <select value={d.legType || "SEA"} onChange={e => {
           const lt = e.target.value;
-          const newD = { ...d, legType: lt, movementType: LEG_TYPE_DEFAULT_MT[lt] || d.movementType };
+          const newD = { ...d, legType: lt, movementType: LEG_TYPE_DEFAULT_MT[lt] || d.movementType,
+            // Becoming a SEA leg: both ends are terminals from now on (legLocType).
+            ...(lt === "SEA" && { polLocType: "Terminal", podLocType: "Terminal",
+              polLatitude: null, polLongitude: null, podLatitude: null, podLongitude: null }) };
           setD(newD); onSave(newD);
         }} style={{ ...cellInput(), cursor: "pointer", color: legTypeColor(d.legType) || T.textMuted, fontWeight: 700 }}>
           {LEG_TYPE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
@@ -1063,6 +1074,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       {/* Loc. Type (From) */}
       <div id={`leg-${d.id}-polLocType`} data-testid={`shipment-form-leg-${d.id}-polLocType`} style={{ width: widths[3], minWidth: widths[3], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
+        {(d.legType || "SEA") === "SEA" ? <SeaLegTerminal /> : (
         <select value={d.polLocType || "Terminal"} onChange={e => {
             const lt = e.target.value;
             // Switching away from GPS clears the coordinates client-side too (belt-and-suspenders
@@ -1072,8 +1084,9 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
             setD(newD); onSave(newD);
           }}
           style={{ ...cellInput(), cursor: "pointer" }}>
-          {legLocTypeOptions(d.legType).map(t => <option key={t} value={t}>{t}</option>)}
+          {LEG_END_LOC_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
+        )}
       </div>
 
       {/* Date (ETD) — once AIS confirms the vessel has actually departed, this field is updated
@@ -1118,6 +1131,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       {/* Loc. Type (To) */}
       <div id={`leg-${d.id}-podLocType`} data-testid={`shipment-form-leg-${d.id}-podLocType`} style={{ width: widths[6], minWidth: widths[6], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
+        {(d.legType || "SEA") === "SEA" ? <SeaLegTerminal /> : (
         <select value={d.podLocType || "Terminal"} onChange={e => {
             const lt = e.target.value;
             const newD = lt === GPS_LOC_TYPE ? { ...d, podLocType: lt }
@@ -1125,8 +1139,9 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
             setD(newD); onSave(newD);
           }}
           style={{ ...cellInput(), cursor: "pointer" }}>
-          {legLocTypeOptions(d.legType).map(t => <option key={t} value={t}>{t}</option>)}
+          {LEG_END_LOC_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
+        )}
       </div>
 
       {/* Date (ETA) — same confirmed-in-place behavior as ETD above */}
@@ -1446,11 +1461,28 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
           })}
         </div>
       </div>
+      {/* Where the legs don't meet, or their dates run backwards (legChainProblems) — shown as
+          the route is edited; the pages that save a whole route at once also refuse to save it. */}
+      {!loading && (() => {
+        const problems = legChainProblems(legs);
+        if (!problems.length) return null;
+        return (
+          <div data-testid="shipment-form-leg-chain-problems" style={{ padding: "8px 14px", background: T.warning + "14",
+            borderTop: `1px solid ${T.warning}44`, fontFamily: T.body, fontSize: 12, color: T.warning }}>
+            {problems.map((p, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, alignItems: "baseline", padding: "2px 0" }}>
+                <IconWarning size={11} style={{ flexShrink: 0, position: "relative", top: 1 }} />
+                <span>{p.message}</span>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
       {(() => {
         const cLegs = legs.filter(l => !["Merchant's Haulage", "Customer Arranged"].includes(l.movementType));
         const routingChip = cLegs.length > 0
-          ? (LEG_LOC_ABBR_C[cLegs[0].polLocType] || cLegs[0].polLocType || "PT") + "-" +
-            (LEG_LOC_ABBR_C[cLegs[cLegs.length-1].podLocType] || cLegs[cLegs.length-1].podLocType || "PT")
+          ? (LEG_LOC_ABBR_C[legLocType(cLegs[0], "pol")] || "PT") + "-" +
+            (LEG_LOC_ABBR_C[legLocType(cLegs[cLegs.length-1], "pod")] || "PT")
           : null;
         return (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -1763,7 +1795,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
   // Contract match routing context — excludes Merchant's Haulage and Customer Arranged
   const LEG_LOC_ABBR_C = { Door: "DR", Terminal: "PT", "Container Yard": "CY", CFS: "CFS", [GPS_LOC_TYPE]: "GPS" };
   const contractMatchRoutingTerm = cLegsForMatch.length > 0
-    ? (LEG_LOC_ABBR_C[cLegsForMatch[0].polLocType] || "PT") + "-" + (LEG_LOC_ABBR_C[cLegsForMatch[cLegsForMatch.length - 1].podLocType] || "PT")
+    ? (LEG_LOC_ABBR_C[legLocType(cLegsForMatch[0], "pol")] || "PT") + "-" + (LEG_LOC_ABBR_C[legLocType(cLegsForMatch[cLegsForMatch.length - 1], "pod")] || "PT")
     : "";
   const pkuLeg = legs[0]?.legType === "Pick-up" && legs[0]?.movementType === "Carrier's Haulage" ? legs[0] : null;
   const delLeg = legs[legs.length - 1]?.legType === "Delivery" && legs[legs.length - 1]?.movementType === "Carrier's Haulage" ? legs[legs.length - 1] : null;
@@ -1805,16 +1837,16 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       ? draftContainers
       : Array.from({ length: parseInt(quickCargo.count, 10) || 0 }, () => ({ size: quickCargo.size, type: quickCargo.type, isDg: quickCargo.isDg }));
   const effectiveCarrierCode = firstSeaLeg?.carrierCode || firstLeg?.carrierCode || f.carrierCode || "";
-  // Chronological order hard block (TKT-YGIAXG) — ETD/ETA are ISO "YYYY-MM-DD" strings
-  // everywhere in this codebase, so a plain string compare is a correct date compare too.
-  // Only flags a leg where BOTH dates are actually set — a leg mid-entry with just one date
-  // filled in isn't a violation yet, just incomplete.
-  const legDateViolation = legs.find(l => l.etd && l.eta && l.etd > l.eta);
+  // Chronological order hard block (TKT-YGIAXG), widened to the whole route (2026-11-03,
+  // src/utils/legChain.js): no leg arrives before it departs, and each leg starts where and after
+  // the previous one ended. Only dates/ends actually filled in are judged — a leg mid-entry isn't
+  // a violation yet, just incomplete.
+  const legProblems = legChainProblems(legs);
   const valid = f.incoterm !== ""
     && f.commodityCode.trim().length > 0
     && !!f.shipperId && !!f.consigneeId && !!f.principalId
     && !!f.emoOfficeId && !!f.imoOfficeId
-    && !legDateViolation
+    && legProblems.length === 0
     && (!isCentral || f.contractId.trim().length > 0)
     && (!init.id ? (legs.length > 0 && !!derivedPol && !!derivedPod && !!effectiveCarrierCode) : true);
 
@@ -1826,14 +1858,15 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       if (!f.incoterm) missing.push("Incoterm");
       if (!f.commodityCode.trim()) missing.push("Commodity");
       if (!f.emoOfficeId || !f.imoOfficeId) missing.push("EMO/IMO offices");
-      if (legDateViolation) missing.push(`${legDateViolation.pol || "leg"} → ${legDateViolation.pod || "?"}: ETA before ETD`);
       if (!init.id) {
         if (legs.length === 0) missing.push("at least one Leg");
         else if (!derivedPol || !derivedPod) missing.push("Leg POL/POD");
         else if (!effectiveCarrierCode) missing.push("Carrier on leg");
       }
       if (isCentral && !f.contractId.trim()) missing.push("Contract (required for Central)");
-      toast.error(`Missing required fields: ${missing.join(", ") || "unknown"}.`);
+      if (missing.length) toast.error(`Missing required fields: ${missing.join(", ")}.`);
+      if (legProblems.length) toast.error(`Route legs: ${legProblems[0].message}` +
+        (legProblems.length > 1 ? ` (${legProblems.length - 1} more listed under the legs)` : ""));
       return;
     }
     // Containers managed via modal take priority; otherwise rebuild from quickCargo.
@@ -2165,11 +2198,6 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
         loopCode={savedSchedules[0]?.service || ""}
         canEdit={canEdit}
       />
-      {touched.legs && legDateViolation && (
-        <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.danger, marginTop: 6 }}>
-          {legDateViolation.pol || "A leg"} → {legDateViolation.pod || "?"}: ETA ({legDateViolation.eta}) is before ETD ({legDateViolation.etd}) — fix before saving
-        </div>
-      )}
 
       {/* ── Route summary (derived from legs) ─────────────────────────────────── */}
       {(() => {

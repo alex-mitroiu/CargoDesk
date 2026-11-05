@@ -2151,6 +2151,18 @@ const CUSTOMS_FILING_TYPES = ["AES_EEI", "ISF_AMS"];
 const LEG_LOC_ABBR = { 'Door': 'DR', 'Terminal': 'PT', 'Container Yard': 'CY', 'CFS': 'CFS', 'GPS Coordinates': 'GPS' };
 const GPS_LOC_TYPE = 'GPS Coordinates';
 
+// Routing term (DR-CY, PT-PT, ...) of shipment_legs rows in leg order: from where the first
+// carrier-arranged leg starts to where the last one ends. Merchant's Haulage and Customer Arranged
+// legs are the customer's own, so they don't count; a SEA leg's ends are always Terminal.
+const routingTermOf = legs => {
+  const cLegs = legs.filter(l => !["Merchant's Haulage", "Customer Arranged"].includes(l.movement_type || l.mot));
+  if (!cLegs.length) return null;
+  const isSea = l => l.leg_type ? l.leg_type === 'SEA' : l.mot === 'SEA'; // same test as syncShipmentFromLegs
+  const endType = (leg, side) => isSea(leg) ? 'Terminal' : (leg[`${side}_loc_type`] || 'Terminal');
+  const a = endType(cLegs[0], 'pol'), b = endType(cLegs[cLegs.length - 1], 'pod');
+  return (LEG_LOC_ABBR[a] || a) + '-' + (LEG_LOC_ABBR[b] || b);
+};
+
 const syncShipmentFromLegs = async (shipmentId, actorId = null) => {
   const legs = await query("SELECT * FROM shipment_legs WHERE shipment_id=$1 ORDER BY leg_order ASC", [shipmentId]);
   if (!legs.length) {
@@ -2191,14 +2203,7 @@ const syncShipmentFromLegs = async (shipmentId, actorId = null) => {
   // ATHENA). ETD stays the first sea leg's and ETA the last's.
   const seaLegs = legs.filter(isSeaLeg);
   const mainSeaLeg = seaLegs[mainLegIndex(seaLegs)] || seaLeg;
-  // Routing term: span from first carrier-arranged leg to last — Merchant's Haulage legs excluded
-  const cLegs = legs.filter(l => !["Merchant's Haulage", "Customer Arranged"].includes(l.movement_type || l.mot));
-  let routingTerm = null;
-  if (cLegs.length > 0) {
-    const a = cLegs[0].pol_loc_type || 'Terminal';
-    const b = cLegs[cLegs.length - 1].pod_loc_type || 'Terminal';
-    routingTerm = (LEG_LOC_ABBR[a] || a) + '-' + (LEG_LOC_ABBR[b] || b);
-  }
+  const routingTerm = routingTermOf(legs);
   // Real bug found on a live shipment (SHP-L46XMM): this used to unconditionally roll the SEA
   // leg's own carrier up onto the shipment via COALESCE(NULLIF(?,''), carrier_code) — correct
   // for the "carrier decided leg-by-leg" case (blank shipment carrier, or no contract driving
@@ -3102,6 +3107,26 @@ async function backfillMainVessel() {
   if (fixed > 0) console.log(`  ✔ ${fixed} open shipment(s) with a transshipment now name their main vessel`);
 }
 schemaReadyPromise = schemaReadyPromise.then(() => backfillMainVessel());
+
+// A SEA leg runs terminal to terminal (2026-11-03; routes/shipments.js seaLegLocType). The leg screen
+// used to offer Door / Container Yard / CFS on a SEA leg too, so an open shipment can hold one: set its
+// ends to Terminal and its routing term again (routingTermOf — not syncShipmentFromLegs, which can drop
+// a contract or supersede a booking). Completed and Cancelled shipments keep what they were closed
+// with, like backfillMainVessel. Idempotent — nothing to do once every open SEA leg is Terminal.
+async function backfillSeaLegTerminals() {
+  const fixed = await query(`UPDATE shipment_legs l SET pol_loc_type='Terminal', pod_loc_type='Terminal'
+    FROM shipments s WHERE s.id = l.shipment_id AND (l.leg_type = 'SEA' OR (COALESCE(l.leg_type, '') = '' AND l.mot = 'SEA'))
+      AND COALESCE(s.status, '') NOT IN ('Completed', 'Cancelled')
+      AND (COALESCE(l.pol_loc_type, '') <> 'Terminal' OR COALESCE(l.pod_loc_type, '') <> 'Terminal')
+    RETURNING l.shipment_id`);
+  const shipmentIds = [...new Set(fixed.map(r => r.shipment_id))];
+  for (const id of shipmentIds) {
+    const legs = await query("SELECT * FROM shipment_legs WHERE shipment_id=$1 ORDER BY leg_order ASC", [id]);
+    await query("UPDATE shipments SET routing_term=$1 WHERE id=$2", [routingTermOf(legs), id]);
+  }
+  if (fixed.length) console.log(`  ✔ ${fixed.length} SEA leg(s) on ${shipmentIds.length} open shipment(s) set to Terminal at both ends`);
+}
+schemaReadyPromise = schemaReadyPromise.then(() => backfillSeaLegTerminals());
 
 // ─── Ops-automation sweep: auto-create Kanban tickets from stuck process signals ──────────────
 // Previously the app had zero automatic ticket creation anywhere — a stuck carrier booking, an

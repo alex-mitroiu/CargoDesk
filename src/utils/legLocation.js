@@ -13,6 +13,12 @@ export const LOC_TYPE_OPTIONS = ["Door", "Terminal", "Container Yard", "CFS"];
 
 export const isGpsLeg = (leg, side) => leg?.[`${side}LocType`] === GPS_LOC_TYPE;
 
+// A SEA leg runs terminal to terminal, both ends, whatever is stored (agreed 2026-11-03; the server
+// forces it too, routes/shipments.js). Reaching a container yard, CFS or door is its own Pick-up or
+// Delivery leg. Every other leg's type is its own, blank meaning Terminal.
+export const legLocType = (leg, side) =>
+  (leg?.legType || "SEA") === "SEA" ? "Terminal" : (leg?.[`${side}LocType`] || "Terminal");
+
 export const formatLegPoint = (leg, side) => {
   if (isGpsLeg(leg, side)) {
     const lat = leg[`${side}Latitude`], lng = leg[`${side}Longitude`];

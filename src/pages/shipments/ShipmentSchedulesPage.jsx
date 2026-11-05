@@ -17,6 +17,7 @@ import useContractMismatch from "../../hooks/useContractMismatch";
 import ConsumptionBar from "../../components/shared/ConsumptionBar";
 import { steeringChipOf } from "../../components/shared/WhereToBook";
 import { deriveLoopCode } from "../../utils/scheduleLoop";
+import { legChainProblems } from "../../utils/legChain";
 import { canEditShipmentSide } from "../../utils/officeSide";
 import { emitLegsScheduleChanged } from "../../legsScheduleBus";
 import useSaving from "../../hooks/useSaving";
@@ -515,6 +516,8 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
         if (!stillMatches) errors.push(`${shipment.contractRef || "This contract"} does not cover ${pol} → ${pod}.`);
       } catch { /* a validation-check network hiccup shouldn't itself block Save */ }
     }
+    // Legs that don't meet (place + location type) or whose dates run backwards (legChain.js).
+    for (const p of legChainProblems(draftLegs || [])) errors.push(p.message);
     return errors;
   };
 

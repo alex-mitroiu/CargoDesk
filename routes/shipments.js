@@ -122,6 +122,12 @@ module.exports = function shipmentsRoutes(app, ctx) {
     };
   };
 
+  // A SEA leg runs terminal to terminal: both its ends are stored as Terminal whatever was sent
+  // (agreed 2026-11-03; src/utils/legLocation.js legLocType is the screen's copy). Getting to or from
+  // a container yard, CFS or door is a Pick-up or Delivery leg of its own. GPS Coordinates stays a
+  // refusal (resolveLegPoint): it says the leg has no port at all, which a SEA leg can't be.
+  const seaLegLocType = (legType, locType) => legType === 'SEA' && locType !== GPS_LOC_TYPE ? 'Terminal' : locType;
+
   // Organization Model Enhancement Epic 3 — re-screens a shipment whenever an additional party
   // (shipment_parties) is added/reassigned/removed, since screenShipmentById now covers all 9
   // of those roles too, not just the 4 fixed columns. Honors the same "don't silently overwrite
@@ -2251,10 +2257,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (await blockIfWrongSide(req, res, shipmentRow, 'export')) return;
     const { legType='SEA', movementType='SEA', movementBy='',
             mot: rawMot, pol='', pod='', polName='', podName='', etd=null, eta=null, carrierCode='',
-            polLocType='Terminal', podLocType='Terminal',
+            polLocType: sentPolLocType='Terminal', podLocType: sentPodLocType='Terminal',
             polLatitude=null, polLongitude=null, podLatitude=null, podLongitude=null,
             vessel='', vesselImo='', voyage='', contractType='', contractRef='' } = req.body;
     const mot = rawMot || LEG_TO_MOT[legType] || 'SEA';
+    const polLocType = seaLegLocType(legType, sentPolLocType), podLocType = seaLegLocType(legType, sentPodLocType);
     const polPoint = resolveLegPoint(legType, polLocType, pol, polLatitude, polLongitude);
     if (polPoint.error) return err(res, polPoint.error);
     const podPoint = resolveLegPoint(legType, podLocType, pod, podLatitude, podLongitude);
@@ -2291,12 +2298,13 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (await blockIfWrongSide(req, res, shipmentRow, 'export')) return;
     const { legType='SEA', movementType='SEA', movementBy='',
             mot: rawMot, pol='', pod='', polName='', podName='', etd=null, eta=null, carrierCode='',
-            polLocType='Terminal', podLocType='Terminal',
+            polLocType: sentPolLocType='Terminal', podLocType: sentPodLocType='Terminal',
             polLatitude=null, polLongitude=null, podLatitude=null, podLongitude=null,
             vessel='', vesselImo='', voyage='', contractType='', contractRef='', legOrder } = req.body;
     const mot = rawMot || LEG_TO_MOT[legType] || 'SEA';
     const [existing] = await query("SELECT * FROM shipment_legs WHERE id=$1 AND shipment_id=$2", [req.params.legId, req.params.id]);
     if (!existing) return err(res, "Not found", 404);
+    const polLocType = seaLegLocType(legType, sentPolLocType), podLocType = seaLegLocType(legType, sentPodLocType);
     const polPoint = resolveLegPoint(legType, polLocType, pol, polLatitude, polLongitude);
     if (polPoint.error) return err(res, polPoint.error);
     const podPoint = resolveLegPoint(legType, podLocType, pod, podLatitude, podLongitude);
