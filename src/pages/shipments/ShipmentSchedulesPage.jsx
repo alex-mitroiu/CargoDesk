@@ -507,7 +507,11 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
       const label = seaLegsForSearch.length > 1 ? ` (leg ${i + 1})` : "";
       if (!leg.pol) errors.push(`Port of Loading (POL) is required${label}.`);
       if (!leg.pod) errors.push(`Port of Discharge (POD) is required${label}.`);
-      if (!leg.carrierCode) errors.push(`Carrier is required${label}.`);
+      // A carrier is needed only once the leg carries a sailing (a vessel or voyage, picked from a carrier's
+      // schedule or typed): a sailing always belongs to a carrier, and saving one sends it on. A hand-typed
+      // leg with no sailing yet saves without one; the shipment keeps its own carrier (the user's call,
+      // 2026-11-06, SHP-0XXN99: "the most logical path"). The server never required it.
+      if (!leg.carrierCode && (leg.vessel || leg.voyage)) errors.push(`Carrier is required${label} when the leg has a vessel or voyage.`);
     });
     // Only worth checking the contract against pol/pod once we know every leg actually has
     // real values — otherwise this would be matching against the same masked/fallback data.
