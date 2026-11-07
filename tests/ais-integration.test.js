@@ -151,9 +151,11 @@ async function login() {
     // very thing this test exercises never fires — computed relative to now rather than a
     // hardcoded literal for exactly that reason.
     const manualEtd = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
+    // The arrival after the departure: the server refuses a leg that arrives before it departs (lib/route-rules.js, 2026-11-06).
+    const manualEta = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);
     const manualCorrect = await request("PUT", `/api/shipments/${shipmentId}/legs/${legId}`, {
       legType: "SEA", movementType: "SEA", pol: "NLRTM", pod: "USNYC",
-      etd: manualEtd, eta: "2026-09-15", carrierCode: "MAEU",
+      etd: manualEtd, eta: manualEta, carrierCode: "MAEU",
       vessel: "AIS TEST VESSEL RENAMED", vesselImo: imo,
     }, token);
     assert("manual PUT can override a confirmed etd", manualCorrect.body.etd === manualEtd);

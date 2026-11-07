@@ -112,6 +112,12 @@ function lineProblems(legs) {
   if (nP && types[0] !== "Pick-up") problems.push("The Pick-up leg comes first, before the SEA legs.");
   if (nD && types[types.length - 1] !== "Delivery") problems.push("The Delivery leg comes last, after the SEA legs.");
   if (legs.length && !types.includes("SEA")) problems.push("A line needs at least one SEA leg.");
+  // A Pick-up leg ends where the line loads, a Delivery leg starts where it discharges: without that port it would be cut off
+  // into a line of its own (audit 2026-11-07, A3 TKT-19CS91).
+  legs.forEach((l, i) => {
+    if (types[i] === "Pick-up" && !up(l.pod)) problems.push("The Pick-up leg needs its To: the port of loading it takes the container to.");
+    if (types[i] === "Delivery" && !up(l.pol)) problems.push("The Delivery leg needs its From: the port of discharge it collects the container at.");
+  });
   const pIdx = types.indexOf("Pick-up"), dIdx = types.lastIndexOf("Delivery");
   const next = legs[pIdx + 1], prev = legs[dIdx - 1];
   if (nP === 1 && pIdx === 0 && next && legTypeOf(next) === "SEA" && legs[0].pod && next.pol && up(legs[0].pod) !== up(next.pol))

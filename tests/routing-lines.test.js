@@ -98,6 +98,9 @@ console.log("\nTyped lines: the barge example saves; a line out of order is refu
   const two = normalizeRoutingLines({ routings: [{ name: "" }], legs: [
     { ...leg("NLAMS", "NLRTM", { legType: "Pick-up" }), routingIndex: 0 }, { ...leg("DEBER", "NLRTM", { legType: "Pick-up" }), routingIndex: 0 },
     { ...leg("NLRTM", "USNYC", { legType: "SEA" }), routingIndex: 0 }] });
+  const noTo = normalizeRoutingLines({ routings: [{ name: "" }], legs: [
+    { ...leg("NLAMS", "", { legType: "Pick-up", polLocType: "Door" }), routingIndex: 0 }, { ...leg("NLRTM", "USNYC", { legType: "SEA" }), routingIndex: 0 }] });
+  assert("refused: a Pick-up leg with no To, not cut into a line of its own (audit A3)", noTo.problems[0]?.messages.includes("The Pick-up leg needs its To: the port of loading it takes the container to.") && noTo.routings.length === 1, JSON.stringify(noTo.problems));
   assert("refused: at most one Pick-up leg", JSON.stringify(two.problems[0] && two.problems[0].messages) === JSON.stringify(["A line has at most one Pick-up leg."]), JSON.stringify(two.problems));
 }
 

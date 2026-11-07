@@ -108,6 +108,10 @@ const leg = (legType, pol, pod, extra = {}) => ({ legType, pol, pod, polLocType:
         { ...leg("SEA", "NLRTM", "USNYC"), routingIndex: 0 }] }, token);
     assert("two Pick-up legs: 400, at most one", r.status === 400 && /at most one Pick-up leg/.test(r.body?.error || ""), `${r.status} ${JSON.stringify(r.body)}`);
     if (r.body?.id) contracts.push(r.body.id);
+    r = await request("POST", "/api/contracts", { contractNumber: `TYPED-BAD3-${stamp}`, carrierCode: "HLCU", status: "Draft", ...VALID,
+      routings: [{ name: "" }], legs: [{ ...leg("Pick-up", "NLAMS", ""), routingIndex: 0 }, { ...leg("SEA", "NLRTM", "USNYC"), routingIndex: 0 }] }, token);
+    assert("a Pick-up leg with no To: 400, not a line of its own (audit A3)", r.status === 400 && /The Pick-up leg needs its To/.test(r.body?.error || ""), `${r.status} ${JSON.stringify(r.body)}`);
+    if (r.body?.id) contracts.push(r.body.id);
 
     const match = async (pol, pod, extra) => {
       const res = await request("GET", `/api/contracts/match?${qs({ pol, pod, crd: DATE, ...extra })}`, null, token);

@@ -276,7 +276,8 @@ const UserManualPage = () => {
             port's country. Each shows <Tag>AUTO</Tag> and the reason underneath. If two offices fit and
             neither is yours, the field says so and you choose. Click an office to search for a different
             one; the offices that fit the route come first, marked <Tag>FITS</Tag>. Your pick stays when
-            the ports change, and <Tag>Use automatic</Tag> goes back to the automatic one.</P>
+            the ports change, and <Tag>Use automatic</Tag> goes back to the automatic one. If neither office
+            is yours, your office becomes the shipment's controlling office, so you still see the shipment.</P>
         </StepBody>
         <Step n={3}>Know your shipment's home screen</Step>
         <StepBody>
@@ -392,7 +393,9 @@ const UserManualPage = () => {
             route no longer fits the shipment's contract (other ports, another carrier, or haulage the
             contract doesn't offer), <Tag>Save route</Tag> tells you before saving:{" "}
             <Tag>Save and remove the contract</Tag> saves the route and takes the contract off, and{" "}
-            <Tag>Add Contract</Tag> then picks one that fits. <Tag>Back</Tag> leaves everything as it was.</P>
+            <Tag>Add Contract</Tag> then picks one that fits. <Tag>Back</Tag> leaves everything as it was.
+            If the carrier already has the booking on that contract (sent or confirmed), the contract stays
+            and the route can't be saved until you ask the carrier to amend the booking (Booking &amp; Review).</P>
           <P>On a Central shipment, <Tag>Change Contract</Tag> picks the contract and its space. When
             the trade lane is steered (Master Data → Lane Steering), a <strong>Where to book</strong>{" "}
             panel comes first: each carrier option in order, marked <Tag>THE PICK</Tag>,{" "}

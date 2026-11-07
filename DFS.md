@@ -277,13 +277,15 @@ order or the dates, saying what is wrong and what the order should be. Routes st
 they are until they are next saved. A change the table refuses is explained in the page's dialog, and the row keeps
 what it had. When the route no longer fits the shipment's contract (other ports, another carrier, haulage the contract
 doesn't offer), saving says so in the same dialog and, once confirmed, takes the contract off; the shipment then asks
-for a contract that fits.
+for a contract that fits. Not while the carrier has the booking (sent or confirmed) on that contract: then the route
+can't be saved until the booking is amended with the carrier.
 **Managing offices**: every shipment has an Export (EMO) and an Import (IMO) managing office. On a new
 shipment they fill themselves from the ports: the export office at the port of loading (the import office at the
 port of discharge), otherwise the one in that port's country; the user's own office only breaks a tie, and with
 several or none the user chooses. An office the user picks is never replaced; an existing shipment changes office
 only by hand (Reassign Office). The same rule fills a side left empty when a shipment is created through the API
-or converted from a quote (ARCHITECTURE.md §8.46).
+or converted from a quote (ARCHITECTURE.md §8.46). When the creator's own office is neither managing office, it
+becomes the shipment's controlling office, so the creator keeps seeing the shipment they created.
 
 ### 5.3 Commercial — Contracts & Space Allocation (P3 / P3a)
 **Purpose**: the commercial terms a shipment books against, and the physical capacity a carrier has

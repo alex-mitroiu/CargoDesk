@@ -1102,3 +1102,25 @@ Found on the way:
   counted legs in the old shape; updated to the typed shape (decision 1: several places on one leg).
 - The editor's new By column made the line wider than the contract modal; columns tightened, the modal widened
   (820 → 900 px), and the table's horizontal scrollbar follows dark mode.
+
+### 2026-11-07: v0.91.13 "Drayage" release — pre-release audit TKT-YZ2EON and the full regression
+
+The pre-release audit of everything since v0.91.12 (ARCHITECTURE.md §11) found 2 medium and 2 low; all four were fixed
+before the release (TC-095–TC-097). Then the full regression, run CI-style: the monolith on the developer's data, the
+document-distribution and contract-management services from scratchpad copies of their databases, pdf-render, CI's
+rate-limit settings, Vite started and stopped by the runner.
+
+| Check | Result |
+|---|---|
+| New `tests/release-audit-0913.test.js` (A1, A2) | **9/9** |
+| Full backend: every file in `npm test` plus the distribution and contract-service suites, each on its own | **130/130** files (first run 128: two fixed, below) |
+| Vitest | **514/514** in 43 files |
+| Full Cypress suite in Edge | **303/303** in 41 specs, first run |
+| Build | OK |
+
+Found on the way:
+- `tests/ais-integration.test.js` sent a manual correction whose ETA (15 Sep) came before its ETD (three days ago): the
+  server now refuses a leg that arrives before it departs (the route rules). The test's dates now run forward.
+- `tests/main-vessel-carrier-changes.test.js` found no demo transshipments: the new audit test had saved a real HLCU
+  NLRTM → USNYC sailing, and a real (catalog) sailing on a lane hides the demo ones. The test no longer saves a sailing
+  (the sea leg is enough for the booking), and the three fixture sailing rows left on that lane were removed.

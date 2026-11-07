@@ -520,9 +520,18 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
           const why = legCarrier && contractCarrier && legCarrier !== contractCarrier
             ? `it's a ${contractCarrier} contract and the route now sails with ${legCarrier}`
             : `it doesn't cover ${pol} → ${pod} as the route now stands`;
-          dropContract = `${ref} comes off this shipment when you save: ${why}.`
-            + (shipment.allocationId ? ` Its space configuration ${shipment.allocationId} goes with it.` : "")
-            + " Add a contract that fits once the route is saved.";
+          // The carrier holds a booking on this contract (sent, or confirmed): it stays, and the route can't be saved
+          // while it no longer fits (pre-release audit 2026-11-07, A1 TKT-ZX70NT; PUT /api/shipments/:id refuses the same).
+          const booking = await api.carrierBooking.get(shipment.id).catch(() => null);
+          if (["Pending", "Confirmed"].includes(booking?.status)) {
+            errors.push(`${ref} no longer fits the route (${why}), and ${booking.carrierCode || "the carrier"} has the booking on it`
+              + ` (${booking.status === "Pending" ? "sent, awaiting the carrier's answer" : "confirmed"}). The contract can't come off while the carrier`
+              + " has the booking: ask the carrier to amend it first (Booking & Review), or put the route back.");
+          } else {
+            dropContract = `${ref} comes off this shipment when you save: ${why}.`
+              + (shipment.allocationId ? ` Its space configuration ${shipment.allocationId} goes with it.` : "")
+              + " Add a contract that fits once the route is saved.";
+          }
         }
       } catch { /* a validation-check network hiccup shouldn't itself block Save */ }
     }

@@ -626,6 +626,15 @@ module.exports = function shipmentsRoutes(app, ctx) {
       const missing = [!emoOfficeId && `emoOfficeId required (${r.emo.reason})`, !imoOfficeId && `imoOfficeId required (${r.imo.reason})`].filter(Boolean);
       if (missing.length) return err(res, missing.join("; "));
     }
+    // The creator keeps seeing what they create (pre-release audit 2026-11-07, A2 TKT-72U6CG): the managing offices come
+    // from the ports, and a shipment shows only to its EMO / IMO / controlling / backup offices, so a user whose active
+    // office is neither managing office lost the shipment the moment it was saved. Their office becomes its controlling
+    // office (changeable on Parties & Offices); a controlling office the caller names is kept.
+    let effControllingOfficeId = controllingOfficeId || null;
+    if (!effControllingOfficeId) {
+      const active = await ctx.resolveActiveOffice(req).catch(() => null);
+      if (active?.id && active.id !== emoOfficeId && active.id !== imoOfficeId) effControllingOfficeId = active.id;
+    }
     if (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '' && Number(declaredValue) < 0)
       return err(res, "declaredValue cannot be negative");
     if (!CONTRACT_TYPES.includes(contractType)) return err(res, `contractType must be one of: ${CONTRACT_TYPES.join(", ")}`);
@@ -643,7 +652,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const createdAt = new Date().toISOString();
     try {
       await query(`INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,bl_release_type,master_bl_number,master_bl_release_type,coload_tariff_reference,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency,emo_office_id,imo_office_id,controlling_office_id,contract_routing_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46)`,
-        [id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, blReleaseType, masterBlNumber, masterBlReleaseType, coloadTariffReference, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId || null, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractRoutingId || ""]);
+        [id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, blReleaseType, masterBlNumber, masterBlReleaseType, coloadTariffReference, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId || null, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, effControllingOfficeId, contractRoutingId || ""]);
     } catch (e) {
       // Gap #3 (2026-09 Space Configuration spec): allocation_id now carries a real FK.
       if (isForeignKeyViolation(e)) return err(res, "allocationId does not match any existing space configuration", 400);
@@ -750,6 +759,15 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const vesselImo = field('vesselImo', 'vessel_imo');
     const contractId = field('contractId', 'contract_id');
     const contractRef = field('contractRef', 'contract_ref');
+    // The carrier holds a booking on this contract (sent and awaiting its answer, or confirmed): taking the contract off a
+    // Central shipment would leave the carrier with a booking CargoDesk no longer knows the contract of (pre-release audit
+    // 2026-11-07, A1 TKT-ZX70NT: Contracts & Schedules' Save did this when the route no longer fit the contract). Changing
+    // to another contract, or to another contract type, is unchanged.
+    if (existing.contract_id && !contractId && contractType === 'Central') {
+      const [booked] = await query("SELECT status, carrier_code FROM carrier_bookings WHERE shipment_id=$1 AND status IN ('Pending','Confirmed') LIMIT 1", [existing.id]);
+      if (booked) return res.status(409).json({ code: "BOOKING_WITH_CARRIER",
+        error: `${existing.contract_ref || "The contract"} can't come off ${existing.id}: ${booked.carrier_code || "the carrier"} has the booking on it (${booked.status === "Pending" ? "sent, awaiting the carrier's answer" : "confirmed"}). Ask the carrier to amend the booking first (Booking & Review).` });
+    }
     const commodityCode = field('commodityCode', 'commodity_code');
     const commodityError = await commodityCodeError(commodityCode, existing.commodity_code);
     if (commodityError) return err(res, commodityError);

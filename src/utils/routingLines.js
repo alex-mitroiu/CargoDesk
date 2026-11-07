@@ -54,6 +54,12 @@ export function lineProblems(legs) {
   if (nP && types[0] !== "Pick-up") problems.push("The Pick-up leg comes first, before the SEA legs.");
   if (nD && types[types.length - 1] !== "Delivery") problems.push("The Delivery leg comes last, after the SEA legs.");
   if (legs.length && !types.includes("SEA")) problems.push("A line needs at least one SEA leg.");
+  // A Pick-up leg ends where the line loads, a Delivery leg starts where it discharges: without that port it would be cut off
+  // into a line of its own (audit 2026-11-07, A3 TKT-19CS91).
+  legs.forEach((l, i) => {
+    if (types[i] === "Pick-up" && !up(l.pod)) problems.push("The Pick-up leg needs its To: the port of loading it takes the container to.");
+    if (types[i] === "Delivery" && !up(l.pol)) problems.push("The Delivery leg needs its From: the port of discharge it collects the container at.");
+  });
   const pIdx = types.indexOf("Pick-up"), dIdx = types.lastIndexOf("Delivery");
   const next = legs[pIdx + 1], prev = legs[dIdx - 1];
   if (nP === 1 && pIdx === 0 && next && legTypeOf(next) === "SEA" && legs[0].pod && next.pol && up(legs[0].pod) !== up(next.pol))
@@ -128,6 +134,16 @@ export function lineChain(legs) {
 }
 
 export const chainLabel = c => c ? [c.pol, c.viaOrigin, c.viaDestination, c.pod].filter(Boolean).join(" → ") : "";
+
+// One contract leg as a chip (the Dashboard's contract card): a SEA leg as its ports, a Pick-up / Delivery leg as what the
+// carrier does there, e.g. "PKU NLAMS DEBER · Door · Truck" or "DEL any · CY" (audit 2026-11-07, A4: it read " → NLRTM").
+export function legChipLabel(leg) {
+  const t = legTypeOf(leg);
+  if (t === "SEA") return `${up(leg.pol)} → ${up(leg.pod)}`;
+  const places = placesOf(leg);
+  const kind = shortLocType(canonLocType(t === "Pick-up" ? leg.polLocType : leg.podLocType));
+  return `${t === "Pick-up" ? "PKU" : "DEL"} ${[places.length ? places.join(" ") : "any", kind, leg.movementBy].filter(Boolean).join(" · ")}`;
+}
 
 // Every line whose key repeats an earlier line's, as { [lineIndex]: firstLineIndex }. Lines with
 // no complete leg yet are skipped, so a half-filled new line never shows as a duplicate. A Pick-up

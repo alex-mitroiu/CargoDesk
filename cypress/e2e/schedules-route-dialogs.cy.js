@@ -52,6 +52,19 @@ describe("Contracts & Schedules: route dialogs and a contract that no longer fit
           carrier: "HLCU", vesselName: vessel, voyageNumber: voyage, pol: "NLRTM", pod: "USNYC", etd: inDays(4), eta: inDays(14),
         }).then(res => expect(res.status, JSON.stringify(res.body)).to.eq(201)));
     });
+  // The built-in DCSA carrier confirms the shipment's booking (as in main-vessel-carrier-changes.cy.js).
+  const confirmBooking = id => {
+    const waitRef = (tries = 40) => api("GET", `/shipments/${id}/carrier-booking`).then(res => {
+      if (res.body?.carrierBookingRequestReference && res.body.lastResponseStatus) return res.body.carrierBookingRequestReference;
+      if (tries <= 0) throw new Error("No carrier reference");
+      return cy.wait(250).then(() => waitRef(tries - 1));
+    });
+    return api("POST", `/shipments/${id}/edi-messages/booking-request`, {})
+      .then(res => expect(res.status, JSON.stringify(res.body)).to.eq(201))
+      .then(() => waitRef())
+      .then(ref => api("POST", `/test-tools/dcsa-sim/bookings/${ref}/confirm`, {}))
+      .then(res => expect(res.status, JSON.stringify(res.body)).to.eq(200));
+  };
   const seaLeg = (vessel = "", voyage = "") => ({ legType: "SEA", movementType: "SEA", pol: "NLRTM", pod: "USNYC",
     polLocType: "Terminal", podLocType: "Terminal", etd: inDays(4), eta: inDays(14), carrierCode: "HLCU", vessel, voyage });
 
@@ -76,7 +89,10 @@ describe("Contracts & Schedules: route dialogs and a contract that no longer fit
       ]))
       // B and C: the sea leg on a saved HLCU sailing.
       .then(() => newShipment("drop", [seaLeg("CY ROUTE DIALOG", "RD1W")], { vessel: "CY ROUTE DIALOG", voyage: "RD1W" }))
-      .then(() => newShipment("keep", [seaLeg("CY ROUTE KEEP", "RK1W")], { vessel: "CY ROUTE KEEP", voyage: "RK1W" }));
+      .then(() => newShipment("keep", [seaLeg("CY ROUTE KEEP", "RK1W")], { vessel: "CY ROUTE KEEP", voyage: "RK1W" }))
+      // D: the same, with its booking confirmed by the carrier (audit 2026-11-07, A1).
+      .then(() => newShipment("booked", [seaLeg("CY ROUTE BOOKED", "RB1W")], { vessel: "CY ROUTE BOOKED", voyage: "RB1W" }))
+      .then(() => confirmBooking(shipments.booked));
   });
 
   after(() => {
@@ -150,6 +166,20 @@ describe("Contracts & Schedules: route dialogs and a contract that no longer fit
     // The contract button is free again, to add one that fits.
     cy.get('[data-testid="shipment-schedules-contract-btn"]', { timeout: 10000 }).should("not.be.disabled").and("contain", "Add Contract");
     cy.screenshot("route-dialogs-3-dropped", { capture: "viewport" });
+  });
+
+  it("a contract the carrier has the booking on stays: Save is refused, saying why (audit A1)", () => {
+    openRoute(shipments.booked);
+    cy.get('[data-testid$="-pod"]').first().within(() => { cy.contains("button", "✕").click(); });
+    cy.get('[data-testid$="-pod"]').first().find('input[placeholder="Search To…"]').should("be.visible").type("USBAL");
+    cy.contains("button", /^USBAL/, { timeout: 10000 }).trigger("mousedown");
+    cy.get('[data-testid="shipment-schedules-save-btn"]').click();
+    cy.get('[data-testid="shipment-schedules-validation-errors-modal"]', { timeout: 10000 })
+      .should("contain", "Can't save yet").and("contain", "has the booking on it (confirmed)").and("contain", "amend it first");
+    cy.get('[data-testid="shipment-schedules-drop-contract-modal"]').should("not.exist");
+    cy.screenshot("route-dialogs-4-booked", { capture: "viewport" });
+    cy.get('[data-testid="shipment-schedules-validation-discard-btn"]').click();
+    api("GET", `/shipments/${shipments.booked}`).then(res => expect(res.body.contractId).to.eq(contractId));
   });
 
   it("a change the contract still covers saves without the dialog", () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createRequire } from "node:module";
 import { lineKey, lineChain, chainLabel, legKind, findDuplicateLines, findChainGaps, locationsOf, lineProblems, applyLegType,
-  placesOf, legMissingPorts, LINE_ORDER_HELP } from "./routingLines";
+  placesOf, legMissingPorts, legChipLabel, LINE_ORDER_HELP } from "./routingLines";
 
 const require = createRequire(import.meta.url);
 const server = require("../../lib/routingLines.js");
@@ -34,6 +34,9 @@ describe("lineProblems: the order on a contract line, the same messages as the s
     [[delivery("USNYC", "USCHI"), leg("NLRTM", "USNYC")], ["The Delivery leg comes last, after the SEA legs."]],
     [[pickup("NLAMS", "NLRTM")], ["A line needs at least one SEA leg."]],
     [[pickup("VNSGN", "VNVUT"), leg("VNCMT", "USSAV")], ["The Pick-up leg ends at VNVUT, but the leg after it loads at VNCMT."]],
+    // A Pick-up leg with no To / a Delivery leg with no From (audit 2026-11-07, A3).
+    [[pickup("NLAMS", ""), leg("NLRTM", "USNYC")], ["The Pick-up leg needs its To: the port of loading it takes the container to."]],
+    [[leg("NLRTM", "USNYC"), delivery("", "USCHI")], ["The Delivery leg needs its From: the port of discharge it collects the container at."]],
   ];
   it.each(cases.map((c, i) => [i, ...c]))("case %i", (_, legs, expected) => {
     expect(lineProblems(legs)).toEqual(expected);
@@ -91,6 +94,15 @@ describe("lineChain", () => {
   });
   it("returns null for a line with no ports yet", () => {
     expect(lineChain([leg("", "")])).toBeNull();
+  });
+});
+
+describe("legChipLabel: the Dashboard contract card (audit A4)", () => {
+  it("shows a SEA leg as its ports and a Pick-up / Delivery leg as what the carrier does", () => {
+    expect(legChipLabel(leg("NLRTM", "USNYC"))).toBe("NLRTM → USNYC");
+    expect(legChipLabel(pickup("NLAMS DEBER", "NLRTM", { movementBy: "Truck" }))).toBe("PKU NLAMS DEBER · Door · Truck");
+    expect(legChipLabel(pickup("", "NLRTM"))).toBe("PKU any · Door");
+    expect(legChipLabel(delivery("USNYC", "USCHI", { podLocType: "Container Yard" }))).toBe("DEL USCHI · CY");
   });
 });
 

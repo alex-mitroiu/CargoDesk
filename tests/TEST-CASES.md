@@ -1571,6 +1571,54 @@ NLAMS → NLRTM (Carrier's Haulage, 16 Nov), as Save stored them before the fix 
 
 ---
 
+### TC-095: A contract stays while the carrier has the booking on it (release audit A1)
+**Feature:** Contracts & Schedules Save (validateDraft); PUT /api/shipments/:id (409 BOOKING_WITH_CARRIER)
+**Precondition:** A Central HLCU shipment NLRTM → USNYC (FOB, real parties, one 40HC) on a sailing; its booking sent and confirmed by the carrier
+**Steps:**
+1. Contracts & Schedules → Edit route → change the sea leg's To to USBAL → Save route
+2. PUT /api/shipments/:id with the contract cleared (what "Save and remove the contract" sends)
+3. Change it to another contract; on a second shipment whose booking isn't sent, clear the contract
+
+**Expected Result:**
+- 1: "Can't save yet": the contract no longer fits, HLCU has the booking on it (confirmed), amend it first; no "Save the route?" dialog; Discard keeps the contract
+- 2: 409 BOOKING_WITH_CARRIER, the contract stays
+- 3: both saved as before
+
+**Status:** PASS (2026-11-07, automated: tests/release-audit-0913.test.js; cypress/e2e/schedules-route-dialogs.cy.js)
+
+---
+
+### TC-096: The creator keeps seeing a shipment whose ports resolve to other offices (release audit A2)
+**Feature:** POST /api/shipments, quote conversion: controlling_office_id
+**Precondition:** An occ_bk user of the NLRTM export office, working in it
+**Steps:**
+1. Create a shipment from a port whose export office is another country's
+2. Open it as that user
+3. Create one from NLRTM
+
+**Expected Result:**
+- 1: the export office is that other office; the controlling office is the user's
+- 2: it opens (it used to be 404)
+- 3: the export office is the user's; no controlling office is added
+
+**Status:** PASS (2026-11-07, automated: tests/release-audit-0913.test.js)
+
+---
+
+### TC-097: Contract lines: a Pick-up leg needs its To; the Dashboard shows it as a pick-up (release audit A3, A4)
+**Feature:** lineProblems (lib/routingLines.js, the service copy, src/utils/routingLines.js); DashboardPage legChipLabel
+**Steps:**
+1. POST /api/contracts with a Pick-up leg NLAMS → (blank) and a SEA leg NLRTM → USNYC
+2. Open a contract with typed legs on the Dashboard's contract card
+
+**Expected Result:**
+- 1: 400 "The Pick-up leg needs its To…"; nothing saved (it used to save two lines, one with no SEA leg)
+- 2: chips read "NLRTM → USNYC", "PKU NLAMS DEBER · Door · Truck", "DEL USCHI · Door" ("PKU any · Door" for a pick-up anywhere)
+
+**Status:** PASS (2026-11-07, automated: tests/contract-typed-legs.test.js, tests/routing-lines.test.js, src/utils/routingLines.test.js)
+
+---
+
 ### TC-087: The contract card shows the space (and the steering), never the charges
 **Feature:** The contract card's space figures (total, used, pending, remaining); the Lane steering block; no charges
 **Precondition:** A weekly space configuration of 20 TEU on the shipment's contract and routing line; in the shipment's ETD

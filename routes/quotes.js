@@ -383,6 +383,11 @@ module.exports = function quotesRoutes(app, ctx) {
       const open = [!quoteEmoOfficeId && `export managing office (${r.emo.reason})`, !quoteImoOfficeId && `import managing office (${r.imo.reason})`].filter(Boolean);
       if (open.length) officeWarning = `No ${open.join(" and no ")}. Set it on the shipment's Parties & Offices page with Reassign Office.`;
     }
+    // The converting user keeps seeing the shipment (pre-release audit 2026-11-07, A2): their active office becomes its
+    // controlling office when it is neither managing office (the same rule as POST /api/shipments).
+    const convertingOffice = await ctx.resolveActiveOffice(req).catch(() => null);
+    const quoteControllingOfficeId = convertingOffice?.id && convertingOffice.id !== quoteEmoOfficeId && convertingOffice.id !== quoteImoOfficeId
+      ? convertingOffice.id : null;
 
     // Only the columns a quote actually has a value for are listed — every other shipments
     // column (etd, vessel, bookingRef, ...) is genuinely unknown at this point and correctly
@@ -399,14 +404,14 @@ module.exports = function quotesRoutes(app, ctx) {
        consignee_id, consignee_name, principal_id, principal_name, notify_id, notify_name,
        movement_type, service_type, incoterm, cargo_ready_date,
        declared_value, declared_value_currency, freight_terms, source_quote_id,
-       emo_office_id, imo_office_id)
-      VALUES ($1,$2,$3,$4,$5,'Active',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
+       emo_office_id, imo_office_id, controlling_office_id)
+      VALUES ($1,$2,$3,$4,$5,'Active',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
       [id, q.pol, q.pod, q.carrier_code, contractType, now,
            q.contract_id, q.contract_ref, q.commodity_code, q.customer_id, q.customer_name,
            q.consignee_id, q.consignee_name, q.principal_id, q.principal_name, q.notify_id, q.notify_name,
            q.movement_type, q.service_type, q.incoterm, q.cargo_ready_date,
            q.declared_value, q.declared_value_currency, q.freight_terms, req.params.id,
-           quoteEmoOfficeId, quoteImoOfficeId]);
+           quoteEmoOfficeId, quoteImoOfficeId, quoteControllingOfficeId]);
     await logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: q.pol, pod: q.pod, carrier: q.carrier_code, status: 'Active', contractType, source: 'quote', quoteId: req.params.id }), req.user?.name || req.user?.email || "");
     await maybeAssignLineAgents(id, q.carrier_code, q.pol, q.pod, req.user?.name || req.user?.email || "");

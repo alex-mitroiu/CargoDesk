@@ -18,6 +18,7 @@ import SteeringReport from "../components/dashboard/SteeringReport";
 import InfoHint from "../components/primitives/InfoHint";
 import { inputBase } from "../components/primitives/Form";
 import ColumnFilter from "../components/shared/ColumnFilter";
+import { legChipLabel } from "../utils/routingLines";
 
 // Booking-status badge — Confirmed is the only bucket that actively deducts from allocated
 // space (v0.86.0); shown next to a shipment's own lifecycle Status wherever this dashboard
@@ -764,7 +765,7 @@ const ContractConsumptionView = ({ shipments, rangeShipments, containers, carrie
                     {contract.legs.map((l, i) => (
                       <span key={i} style={{ fontFamily: T.mono, fontSize: 11, background: T.surface,
                         border: `1px solid ${T.border}`, borderRadius: 4, padding: "2px 8px", color: T.text }}>
-                        {l.pol} → {l.pod}
+                        {legChipLabel(l)}
                       </span>
                     ))}
                   </div>

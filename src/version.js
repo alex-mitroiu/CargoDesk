@@ -2,12 +2,18 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.91.12";
-export const BUILD     = "2026-10-29";
-export const CODENAME  = "Endorsement";
-export const BUILD_FINGERPRINT = "70a9a986";
+export const VERSION   = "0.91.13";
+export const BUILD     = "2026-11-07";
+export const CODENAME  = "Drayage";
+export const BUILD_FINGERPRINT = "4c7d19e2";
 
 export const CHANGELOG = [
+  {
+    version:  "0.91.13",
+    date:     "2026-11-07",
+    codename: "Drayage",
+    summary:  "Bundled release — Contracts & Schedules on the Trade Horizon next design (the header's facts, one blank leg to start a route, the space and the Lane Steering line instead of the charges); the route's rules on every save (pick-up, sea and delivery legs in that order, one Carrier's Haulage leg per side, dates that run forward), the whole route saved at once and refused with what's wrong and the order it should have; route problems in one dialog, and a contract that no longer fits the route taken off on Save after a warning, never while the carrier has the booking on it; typed contract legs (Pick-up, SEA, Delivery, with several places, the kind of place and the mode, so a barge pre-carriage can be priced) and the contract search reading the shipment's Carrier's Haulage leg wherever it sits (a container-yard pick-up never matched a contract before); the export and import offices filled from the ports, the creator's own office kept as the controlling office; and the four findings of the pre-release audit (TKT-YZ2EON) fixed.",
+  },
   {
     version:  "0.91.12",
     date:     "2026-10-29",
