@@ -7,7 +7,8 @@ date 2026-10-27 for the DCSA message review: Shipping Instructions and VGM as DC
 office on the booking; and 2026-10-28 for the carrier's Master B/L, VGM declarations with their evidence, and
 the carrier's events and vessel times; 2026-10-29 for the House B/L audit's rules (§5.9), dangerous goods in
 the booking (§5.12) and the shipper's DG emergency contact (§5.8); 2026-11-02 for the » Advance bar on shipment
-pages (§5.2)). **Scope**:
+pages (§5.2); 2026-11-06 for the managing offices from the ports, the shipment header's facts and routing after
+entry (§5.2), and the space position on Contracts & Schedules (§5.3)). **Scope**:
 whole application, at the level of its major
 functional domains and system-to-system data flows — not an exhaustive per-route specification.
 **Companion documents**: [`ARCHITECTURE.md`](ARCHITECTURE.md) (technical architecture, module
@@ -259,6 +260,30 @@ service pages only once ordered), read-only and prerequisite-locked pages includ
 It never skips: after ordering a service on Overview, » goes to the next item, not to the service. A
 save that fails keeps the user on the page with the reason; there is no bar on the last item
 (ARCHITECTURE.md §8.45).
+**The shipment header** on Contracts & Schedules (for now; every shipment page once the design is approved) always
+shows the Principal, Shipper, Consignee and Incoterm, the container count with a dangerous-goods flag beside it, and
+the port of loading with its ETD and the port of discharge with its ETA. Once the carrier or AIS reports a departure
+or arrival, ETD reads ATD and ETA reads ATA.
+**Routing after entry**: the route of an existing shipment is configured on Contracts & Schedules, in the route
+table: add, change or remove legs, ports, dates, carrier, vessel and voyage, at any time, not only on the New Shipment
+form. The legs read as a rail (main vessel and feeders, sailed or planned, whether they meet); Edit route opens the
+table, which runs the Save checks live: a port of loading and discharge on every sea leg, legs that meet end to
+end, dates in order, a carrier wherever a leg has a vessel (ARCHITECTURE.md §8.47). Pick-up legs always come before
+the sea legs and Delivery legs after them, on screen and as saved, and within each side the merchant's haulage comes
+first on a pick-up (then the carrier's to the port) and last on a delivery (after the carrier's from the port); a leg can't leave before the leg before it, so a
+pick-up dated after the sailing's ETD has to be corrected before the route saves. Each side has at most one
+carrier's haulage leg, and the server refuses any change, from any screen or through the API, that would break the
+order or the dates, saying what is wrong and what the order should be. Routes stored before these rules are left as
+they are until they are next saved. A change the table refuses is explained in the page's dialog, and the row keeps
+what it had. When the route no longer fits the shipment's contract (other ports, another carrier, haulage the contract
+doesn't offer), saving says so in the same dialog and, once confirmed, takes the contract off; the shipment then asks
+for a contract that fits.
+**Managing offices**: every shipment has an Export (EMO) and an Import (IMO) managing office. On a new
+shipment they fill themselves from the ports: the export office at the port of loading (the import office at the
+port of discharge), otherwise the one in that port's country; the user's own office only breaks a tie, and with
+several or none the user chooses. An office the user picks is never replaced; an existing shipment changes office
+only by hand (Reassign Office). The same rule fills a side left empty when a shipment is created through the API
+or converted from a quote (ARCHITECTURE.md §8.46).
 
 ### 5.3 Commercial — Contracts & Space Allocation (P3 / P3a)
 **Purpose**: the commercial terms a shipment books against, and the physical capacity a carrier has
@@ -280,12 +305,27 @@ table system, ARCHITECTURE.md §8.23). Schedule Search finds contracts for a lan
 Pick-up / Delivery points — renamed from "Via Origin / Via Destination", a name kept free for the first / last
 transshipment port in a planned contract-routing rework — as-of date, carrier, account, routing term) and lets the user request sailings on any result; its results can be
 narrowed by column and sorted (including cheapest-first once a container mix is chosen), in the browser.
+**Carrier haulage on a contract** (since 2026-11-07): each leg of a contract line is a Pick-up, SEA or Delivery leg,
+the same leg types as a shipment's route. A Pick-up leg is the carrier's pre-carriage to the port of loading: it
+collects from its places (several, or anywhere), from a kind of place (Door, Container Yard, Terminal, CFS), by a mode
+(barge, rail, truck, or any). A Delivery leg is the same after the port of discharge. A line has at most one of each,
+the Pick-up first and the Delivery last. A shipment whose route has the carrier collect (its Carrier's Haulage
+pick-up leg, wherever it sits in the route) is offered only contract lines whose Pick-up leg serves that place, kind
+and mode; the same for the delivery. For example, a barge from a door in Ho Chi Minh City to the Vung Tau terminal
+before the sea leg to Savannah is a Pick-up leg VNSGN Door → VNVUT Terminal by Barge.
 The Space Configurations list shows each configuration's trade as an Origin Trade and a Destination Trade
 (lanes not stored on an older configuration are worked out from its ports and marked as such), and can be
 searched, filtered by carrier / route / trade / contract / status, and sorted by awarded TEU or consumption.
 A space configuration holds its TEU **per period** or **per week** (that TEU every Monday-to-Sunday week of
 the period, nothing carried over; a shipment counts in the week of its ETD, or of its cargo-ready date until
 it has one); weekly ones show their week everywhere, and the Dashboard counts them per week of its dates.
+**Space on Contracts & Schedules** (the tab shows no charges: Cost Entry has them): a shipment whose lane and customer
+have a Lane Steering line sees the line's options in order, each with its space in the shipment's week (total, used,
+pending, remaining), which one it is booked on and whether that followed the steering. Otherwise, a shipment that books
+against a space configuration shows that space ahead of the
+contract's charges (which stay one click away): allocated, used (confirmed by the carrier), awaiting the carrier's
+answer, not booked yet, rejected, remaining, what stays free once every open booking is confirmed, and which of these
+the shipment itself is in (ARCHITECTURE.md §8.47).
 **Where to book**: when a contract is assigned (the shipment form or the Schedules page), CargoDesk shows the
 Lane Steering line for the shipment's customer and trade lane, each option as skipped (with the reason), full or
 available with its free space in the ETD's week, and pre-selects the first available one (the pick) for the user

@@ -5,20 +5,26 @@ import Btn from "../primitives/Btn";
 import { Modal } from "../primitives/Modal";
 import { inputBase } from "../primitives/Form";
 import PortCombobox from "../shared/PortCombobox";
-import { lineChain, legKind, LEG_KIND_LABEL, findDuplicateLines, findChainGaps, tooManyLocations } from "../../utils/routingLines";
+import { lineChain, findDuplicateLines, findChainGaps, lineProblems, applyLegType, legTypeOf, placesOf, canonLocType, shortLocType,
+  LEG_TYPES, CONTRACT_LOC_TYPES, CONTRACT_MODES, LINE_ORDER_HELP } from "../../utils/routingLines";
 
 // Contract routing lines editor — Option 1 of the approved mockup
 // (https://claude.ai/artifact/YMjKwCQDPdSFYP5auHrki9): one block per routing line, a header with
 // the line's chain (PKU → POL → Via origin → Via destination → POD → DEL), service codes and
-// transit, then its legs as a table. A line is one connected run of legs with at most one
-// pick-up and one delivery location; two lines can't describe the same routing. The server
+// transit, then its legs as a table. Two lines can't describe the same routing. The server
 // enforces the same rules (lib/routingLines.js); this shows them while editing.
 //
+// Typed legs (the user's pick 2026-11-07, mockup https://claude.ai/code/artifact/ff9c67cb-1556-48b4-a4f8-420c4084e91e
+// option D): the Leg column is a choice, Pick-up / SEA / Delivery, the shipment route table's leg types. A Pick-up
+// leg's From is where the carrier collects: its places (several, blank = anywhere), the kind of place and, in the
+// By column, the mode (blank = any); a Delivery leg's To the same. Choosing a type puts the leg in the line's order
+// (Pick-up first, Delivery last), and a second Pick-up or Delivery on one line is refused with what's wrong and the
+// order it should have, the way the route table refuses a second Carrier's Haulage leg.
+//
 // Stateless about the contract itself: ContractModal owns routings/legs (legs carry routingIndex)
-// and passes the edit callbacks in.
+// and passes the edit callbacks in; onSetLineLegs(ri, legs) takes a line's legs back re-typed and re-ordered.
 
-const LOC_TYPES = ["Terminal", "Door", "CY"];
-const kindColor = kind => (kind === "sea" ? { fg: T.success, bg: T.successBg } : { fg: T.info, bg: T.infoBg });
+const typeColor = type => (type === "SEA" ? { fg: T.success, bg: T.successBg } : { fg: T.info, bg: T.infoBg });
 
 const LinkedPortsModal = ({ code, onClose }) => {
   const [rows, setRows] = useState(null);
@@ -48,55 +54,74 @@ const LinkedPortsModal = ({ code, onClose }) => {
   );
 };
 
-// One end of a leg: the port, its location type, the linked-ports flag, and — only where the line
-// starts (From of its first leg) or ends (To of its last leg) with carrier haulage — the single
-// pick-up / delivery location.
-const PortCell = ({ leg, side, endLabel, onUpdate, onShowLinked }) => {
-  const k = side === "pol" ? { code: "pol", name: "polName", loc: "polLocType", linked: "polLinkedAllowed", haul: "polCarrierHaulage", locs: "polHaulageLocations" }
-                           : { code: "pod", name: "podName", loc: "podLocType", linked: "podLinkedAllowed", haul: "podCarrierHaulage", locs: "podHaulageLocations" };
+// The kind of place at a Pick-up leg's From / a Delivery leg's To: the shipment's location types.
+const LocTypeGroup = ({ value, onChange, testId }) => (
+  <div role="group" aria-label="Location type" data-testid={testId} style={{ display: "flex", flexWrap: "wrap", borderRadius: 5, overflow: "hidden", border: `1px solid ${T.border}`, alignSelf: "flex-start" }}>
+    {CONTRACT_LOC_TYPES.map((lt, i) => (
+      <button key={lt} type="button" aria-pressed={value === lt} onClick={() => onChange(lt)} title={lt}
+        style={{ fontFamily: T.body, fontSize: 10.5, padding: "2px 7px", border: "none", cursor: "pointer",
+          borderRight: i < CONTRACT_LOC_TYPES.length - 1 ? `1px solid ${T.border}` : "none",
+          background: value === lt ? T.accent : T.surface, color: value === lt ? "#fff" : T.textMuted }}>{shortLocType(lt)}</button>
+    ))}
+  </div>
+);
+
+// A SEA port end: the port, its linked-ports flag (SEA legs only). A Pick-up leg's To and a Delivery leg's From are
+// the line's port of loading / discharge, shown the same way without the flag.
+const PortCell = ({ leg, side, linkable, onUpdate, onShowLinked }) => {
+  const k = side === "pol" ? { code: "pol", name: "polName", linked: "polLinkedAllowed" } : { code: "pod", name: "podName", linked: "podLinkedAllowed" };
   const code = leg[k.code];
-  const locType = leg[k.loc] || "Terminal";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
       {code ? (
         <div style={{ display: "flex", alignItems: "center", gap: 6, background: T.surface, border: `1px solid ${T.accent}55`, borderRadius: 6, padding: "5px 8px", minWidth: 0 }}>
           <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{code}</span>
-          {leg[k.linked] && (
+          {linkable && leg[k.linked] && (
             <button type="button" onClick={() => onShowLinked(code)} title="Linked ports accepted — show list"
               aria-label={`Show ports linked to ${code}`} data-testid={`linked-${side}-${code}`}
               style={{ background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 12, lineHeight: 1 }}>📎</button>
           )}
           {leg[k.name] && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{leg[k.name]}</span>}
           <button type="button" aria-label={`Clear ${side === "pol" ? "from" : "to"} port`}
-            onClick={() => onUpdate({ [k.code]: "", [k.name]: "", [k.linked]: false, [k.haul]: false, [k.locs]: "", [k.loc]: "Terminal" })}
+            onClick={() => onUpdate({ [k.code]: "", [k.name]: "", [k.linked]: false })}
             style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 10, padding: 0, flexShrink: 0, marginLeft: "auto" }}>✕</button>
         </div>
       ) : (
-        <PortCombobox placeholder={side === "pol" ? "From port…" : "To port…"} onChange={r => onUpdate({ [k.code]: r.unlocode, [k.name]: r.name })} />
+        <PortCombobox placeholder={side === "pol" ? "From port…" : "To port…"} onChange={r => r && onUpdate({ [k.code]: r.unlocode, [k.name]: r.name })} />
       )}
-      {code && (
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-          <div role="group" aria-label="Location type" style={{ display: "flex", borderRadius: 5, overflow: "hidden", border: `1px solid ${T.border}` }}>
-            {LOC_TYPES.map(lt => (
-              <button key={lt} type="button" aria-pressed={locType === lt}
-                onClick={() => onUpdate({ [k.loc]: lt, [k.haul]: lt !== "Terminal", ...(lt === "Terminal" ? { [k.locs]: "" } : {}) })}
-                style={{ fontFamily: T.body, fontSize: 10.5, padding: "2px 7px", border: "none", cursor: "pointer",
-                  borderRight: lt !== "CY" ? `1px solid ${T.border}` : "none",
-                  background: locType === lt ? T.accent : T.surface, color: locType === lt ? "#fff" : T.textMuted }}>{lt}</button>
-            ))}
-          </div>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-            <input type="checkbox" checked={!!leg[k.linked]} onChange={e => onUpdate({ [k.linked]: e.target.checked })}
-              style={{ width: 12, height: 12, accentColor: T.info, cursor: "pointer" }} />
-            Linked ports
-          </label>
-        </div>
+      {code && linkable && (
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer", fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+          <input type="checkbox" checked={!!leg[k.linked]} onChange={e => onUpdate({ [k.linked]: e.target.checked })}
+            style={{ width: 12, height: 12, accentColor: T.info, cursor: "pointer" }} />
+          Linked ports
+        </label>
       )}
-      {code && endLabel && locType !== "Terminal" && (
-        <input value={leg[k.locs] || ""} onChange={e => onUpdate({ [k.locs]: e.target.value.toUpperCase() })}
-          placeholder={`${endLabel} location, one UN/LOCODE (blank = any)`} aria-label={`${endLabel} location`}
-          style={{ ...inputBase, fontFamily: T.mono, fontSize: 11, padding: "4px 7px" }} />
-      )}
+    </div>
+  );
+};
+
+// A Pick-up leg's From / a Delivery leg's To: the places the carrier collects from / delivers to (several; none =
+// anywhere) and the kind of place. pol/pod mirror the first place, the list is polHaulageLocations/podHaulageLocations.
+const PlacesCell = ({ leg, side, onUpdate, testId }) => {
+  const k = side === "pol" ? { code: "pol", name: "polName", locs: "polHaulageLocations", loc: "polLocType" }
+                           : { code: "pod", name: "podName", locs: "podHaulageLocations", loc: "podLocType" };
+  const places = placesOf(leg);
+  const setPlaces = list => onUpdate({ [k.locs]: list.join(" "), [k.code]: list[0] || "", [k.name]: list[0] && list[0] === places[0] ? leg[k.name] || "" : "" });
+  return (
+    <div data-testid={testId} style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+        {places.length ? places.map(p => (
+          <span key={p} data-testid={`${testId}-place-${p}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontFamily: T.mono, fontSize: 11.5, fontWeight: 700,
+            color: T.accent, background: T.accentBg, borderRadius: 999, padding: "2px 8px" }}>
+            {p}
+            <button type="button" aria-label={`Remove ${p}`} onClick={() => setPlaces(places.filter(x => x !== p))}
+              style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 9, padding: 0 }}>✕</button>
+          </span>
+        )) : <span style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, fontStyle: "italic" }}>Anywhere</span>}
+      </div>
+      <PortCombobox placeholder={places.length ? "Add a place…" : side === "pol" ? "Pick-up place (blank = anywhere)…" : "Delivery place (blank = anywhere)…"}
+        onChange={r => { if (r?.unlocode && !places.includes(r.unlocode)) setPlaces([...places, r.unlocode]); }} />
+      <LocTypeGroup value={canonLocType(leg[k.loc])} onChange={lt => onUpdate({ [k.loc]: lt })} testId={`${testId}-loctype`} />
     </div>
   );
 };
@@ -116,14 +141,31 @@ const ChainChips = ({ chain }) => {
   );
 };
 
-const LEG_COLS = "28px 92px minmax(0,1fr) minmax(0,1fr) 96px 64px 30px";
+const Banner = ({ children, testId, onClose }) => (
+  <div data-testid={testId} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 12px", background: T.dangerBg, color: T.danger, fontFamily: T.body, fontSize: 12 }}>
+    <div style={{ flex: 1 }}>{children}</div>
+    {onClose && <button type="button" onClick={onClose} aria-label="Dismiss" style={{ background: "none", border: "none", color: T.danger, cursor: "pointer", fontSize: 12 }}>✕</button>}
+  </div>
+);
 
-const RoutingLinesEditor = ({ routings, legs, onAddRouting, onUpdateRouting, onRemoveRouting, onAddLeg, onUpdateLeg, onRemoveLeg }) => {
+const LEG_COLS = "26px 104px minmax(0,1.2fr) minmax(0,1fr) 80px 76px 54px 28px";
+const selectStyle = { ...inputBase, fontFamily: T.body, fontSize: 12, padding: "4px 6px", cursor: "pointer" };
+
+const RoutingLinesEditor = ({ routings, legs, onAddRouting, onUpdateRouting, onRemoveRouting, onAddLeg, onUpdateLeg, onRemoveLeg, onSetLineLegs }) => {
   const [linkedFor, setLinkedFor] = useState(null);
+  // A Leg-dropdown change the line refused: { ri, messages }, shown on that line until dismissed or another change.
+  const [refusal, setRefusal] = useState(null);
   const indexed = legs.map((l, i) => ({ ...l, _i: i }));
   const dup = findDuplicateLines(routings.length, legs);
   const hasDup = Object.keys(dup).length > 0;
   const loose = indexed.filter(l => !(l.routingIndex >= 0 && l.routingIndex < routings.length));
+
+  const setType = (ri, own, pos, type) => {
+    const r = applyLegType(own, pos, type);
+    if (r.refused) { setRefusal({ ri, messages: r.refused }); return; }
+    setRefusal(null);
+    onSetLineLegs?.(ri, r.legs);
+  };
 
   return (
     <div data-testid="routing-lines" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -131,11 +173,11 @@ const RoutingLinesEditor = ({ routings, legs, onAddRouting, onUpdateRouting, onR
         const own = indexed.filter(l => l.routingIndex === ri);
         const chain = lineChain(own);
         const gaps = findChainGaps(own);
-        const many = tooManyLocations(own);
+        const problems = lineProblems(own);
         const isDup = dup[ri] != null;
         return (
           <div key={ri} data-testid={`routing-line-${ri}`}
-            style={{ border: `1px solid ${isDup ? T.danger : T.border}`, borderRadius: 10, overflow: "hidden", background: T.surface }}>
+            style={{ border: `1px solid ${isDup || problems.length ? T.danger : T.border}`, borderRadius: 10, overflow: "hidden", background: T.surface }}>
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px", padding: "10px 12px", background: T.bg, borderBottom: `1px solid ${T.border}` }}>
               <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.text }}>Line {ri + 1}</span>
               <input value={routing.name || ""} onChange={e => onUpdateRouting(ri, { name: e.target.value })}
@@ -160,45 +202,64 @@ const RoutingLinesEditor = ({ routings, legs, onAddRouting, onUpdateRouting, onR
             </div>
 
             {isDup && (
-              <div data-testid={`routing-line-${ri}-duplicate`} style={{ padding: "8px 12px", background: T.dangerBg, color: T.danger, fontFamily: T.body, fontSize: 12, fontWeight: 600 }}>
-                Same routing as line {dup[ri] + 1}. A contract can't list the same routing twice; change a port, location or service code, or remove this line.
-              </div>
+              <Banner testId={`routing-line-${ri}-duplicate`}>
+                <strong>Same routing as line {dup[ri] + 1}.</strong> A contract can't list the same routing twice; change a port, place, location type, mode or service code, or remove this line.
+              </Banner>
             )}
-            {many && (
-              <div style={{ padding: "8px 12px", background: T.dangerBg, color: T.danger, fontFamily: T.body, fontSize: 12 }}>
-                One {many} location per line. Add another routing line for each additional {many} location.
-              </div>
+            {refusal?.ri === ri && (
+              <Banner testId={`routing-line-${ri}-refused`} onClose={() => setRefusal(null)}>
+                <strong>That change wasn't made.</strong> {refusal.messages.join(" ")}
+              </Banner>
             )}
-            {gaps.map(g => (
-              <div key={g.afterLegPos} style={{ padding: "6px 12px", background: T.dangerBg, color: T.danger, fontFamily: T.body, fontSize: 11.5 }}>
-                ⚠ Leg {g.afterLegPos} discharges at <strong style={{ fontFamily: T.mono }}>{g.prevPod}</strong>, but leg {g.afterLegPos + 1} loads from <strong style={{ fontFamily: T.mono }}>{g.nextPol}</strong>. A line is one connected route.
-              </div>
+            {problems.length > 0 && (
+              <Banner testId={`routing-line-${ri}-problems`}>
+                {problems.join(" ")} {LINE_ORDER_HELP}
+              </Banner>
+            )}
+            {gaps.filter(g => !problems.some(p => p.includes(g.nextPol))).map(g => (
+              <Banner key={g.afterLegPos}>
+                ⚠ Leg {g.afterLegPos} ends at <strong style={{ fontFamily: T.mono }}>{g.prevPod}</strong>, but leg {g.afterLegPos + 1} starts at <strong style={{ fontFamily: T.mono }}>{g.nextPol}</strong>. A line is one connected route.
+              </Banner>
             ))}
 
-            <div style={{ overflowX: "auto" }}>
-              <div style={{ minWidth: 720 }}>
+            {/* colorScheme: a dark scrollbar in dark mode (tokens.js T.scheme). */}
+            <div style={{ overflowX: "auto", colorScheme: T.scheme }}>
+              <div style={{ minWidth: 820 }}>
                 <div style={{ display: "grid", gridTemplateColumns: LEG_COLS, gap: 8, padding: "7px 12px", borderBottom: `1px solid ${T.border}`,
                   fontFamily: T.body, fontSize: 9.5, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em" }}>
-                  <span>#</span><span>Leg</span><span>From</span><span>To</span><span>Service code</span><span>Transit</span><span />
+                  <span>#</span><span>Leg</span><span>From</span><span>To</span><span>By</span><span>Service code</span><span>Transit</span><span />
                 </div>
                 {own.map((leg, pos) => {
-                  const kind = legKind(own, pos), c = kindColor(kind);
+                  const type = legTypeOf(leg), c = typeColor(type);
+                  const tid = `routing-line-${ri}-leg-${pos}`;
+                  const update = patch => onUpdateLeg(leg._i, patch);
                   return (
-                    <div key={leg._i} data-testid={`routing-line-${ri}-leg-${pos}`}
+                    <div key={leg._i} data-testid={tid} data-leg-type={type}
                       style={{ display: "grid", gridTemplateColumns: LEG_COLS, gap: 8, padding: "8px 12px", borderBottom: `1px solid ${T.border}55`, alignItems: "start" }}>
                       <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, paddingTop: 6 }}>{pos + 1}</span>
-                      <span style={{ paddingTop: 4 }}>
-                        <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 700, color: c.fg, background: c.bg, borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap" }}>{LEG_KIND_LABEL[kind]}</span>
-                      </span>
-                      <PortCell leg={leg} side="pol" endLabel={pos === 0 ? "Pick-up" : null}
-                        onUpdate={patch => onUpdateLeg(leg._i, patch)} onShowLinked={setLinkedFor} />
-                      <PortCell leg={leg} side="pod" endLabel={pos === own.length - 1 ? "Delivery" : null}
-                        onUpdate={patch => onUpdateLeg(leg._i, patch)} onShowLinked={setLinkedFor} />
-                      <input value={leg.vesselService || ""} onChange={e => onUpdateLeg(leg._i, { vesselService: e.target.value.toUpperCase() })}
-                        placeholder="e.g. AL5" aria-label={`Line ${ri + 1} leg ${pos + 1} service code`}
+                      <select value={type} onChange={e => setType(ri, own, pos, e.target.value)} aria-label={`Line ${ri + 1} leg ${pos + 1} type`}
+                        data-testid={`${tid}-type`} style={{ ...selectStyle, fontWeight: 700, color: c.fg, background: c.bg }}>
+                        {LEG_TYPES.map(t => <option key={t} value={t} style={{ background: T.surface, color: T.text }}>{t}</option>)}
+                      </select>
+                      {type === "Pick-up"
+                        ? <PlacesCell leg={leg} side="pol" onUpdate={update} testId={`${tid}-from`} />
+                        : <PortCell leg={leg} side="pol" linkable={type === "SEA"} onUpdate={update} onShowLinked={setLinkedFor} />}
+                      {type === "Delivery"
+                        ? <PlacesCell leg={leg} side="pod" onUpdate={update} testId={`${tid}-to`} />
+                        : <PortCell leg={leg} side="pod" linkable={type === "SEA"} onUpdate={update} onShowLinked={setLinkedFor} />}
+                      {type === "SEA"
+                        ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, paddingTop: 6 }}>—</span>
+                        : (
+                          <select value={leg.movementBy || ""} onChange={e => update({ movementBy: e.target.value })} aria-label={`Line ${ri + 1} leg ${pos + 1} mode`}
+                            data-testid={`${tid}-mode`} title="The mode the carrier uses (blank = any)" style={selectStyle}>
+                            {CONTRACT_MODES.map(m => <option key={m || "any"} value={m} style={{ background: T.surface, color: T.text }}>{m || "Any"}</option>)}
+                          </select>
+                        )}
+                      <input value={leg.vesselService || ""} onChange={e => update({ vesselService: e.target.value.toUpperCase() })}
+                        placeholder={type === "SEA" ? "e.g. AL5" : ""} aria-label={`Line ${ri + 1} leg ${pos + 1} service code`}
                         style={{ ...inputBase, fontFamily: T.mono, fontSize: 12, padding: "5px 7px" }} />
                       <input type="number" min={0} max={999} value={leg.transitDays || ""}
-                        onChange={e => onUpdateLeg(leg._i, { transitDays: parseInt(e.target.value, 10) || 0 })}
+                        onChange={e => update({ transitDays: parseInt(e.target.value, 10) || 0 })}
                         placeholder="d" aria-label={`Line ${ri + 1} leg ${pos + 1} transit days`}
                         style={{ ...inputBase, fontFamily: T.mono, fontSize: 12, padding: "5px 6px", textAlign: "center" }} />
                       <button type="button" onClick={() => onRemoveLeg(leg._i)} aria-label={`Remove line ${ri + 1} leg ${pos + 1}`}

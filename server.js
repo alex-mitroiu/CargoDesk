@@ -3591,17 +3591,25 @@ async function checkLineAgentCapabilityGaps(shipmentId) {
 // the run's own first port) and the last leg's POD haulage (on-carriage out of its own last port)
 // — never the legs in between. A single-leg run is the simple case.
 //
-// A carrier-haulage end is judged on its location AND its type (agreed 2026-11-05): the routing term
-// comes from the first and last location on both sides, so a shipment picked up by the carrier at a
-// Door needs a contract line whose origin haulage is a Door too (contract_legs.pol_loc_type; one left
-// at Terminal means a terminal pick-up). pkuLocType/delLocType are the shipment's own types
-// (deriveHaulageNeeds); blank = don't judge the type. allowLinked lets a Lane Steering line that
-// allows linked ports widen every leg's POL/POD to its linked ports, as the leg's own flag does.
+// Typed legs (the user's pick 2026-11-07, lib/routingLines.js): the run is walked over SEA legs only (POL/POD
+// are the sea ports), and carrier haulage is judged on the line's typed legs next to it: its Pick-up leg (the
+// leg right before the run's first SEA leg, ending where it loads) and its Delivery leg (right after the last,
+// starting where it discharges). A shipment that asks for the carrier's pick-up (its Carrier's Haulage Pick-up
+// leg, wherever it sits in its route: deriveHaulageNeeds) needs that Pick-up leg, and each end is judged on the
+// place, the kind of place and the mode (agreed 2026-11-05 for place and kind, 2026-11-07 for the mode): the
+// leg's places must include the shipment's (blank = anywhere), its location type must be the shipment's (the
+// shipment's location types; "CY" and GPS read as Container Yard and Door), and when the leg names a mode
+// (movement_by: Barge, Rail, Truck, Vessel) the shipment's leg must use it. A blank on the shipment's side means
+// don't judge that part. allowLinked lets a Lane Steering line that allows linked ports widen every SEA leg's
+// POL/POD to its linked ports, as the leg's own flag does. Kept identical to services/contract-management.
+const HAULAGE_LEG_TYPES = new Set(['Pick-up', 'Delivery']);
+const canonLocType = t => (t === 'CY' ? 'Container Yard' : t === 'GPS Coordinates' ? 'Door' : t || 'Terminal');
 const findMatchingContractLegs = async (legs, { pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation = '', delLocation = '',
-                                                pkuLocType = '', delLocType = '', allowLinked = false }) => {
+                                                pkuLocType = '', delLocType = '', pkuMode = '', delMode = '', allowLinked = false }) => {
   if (legs.length === 0) return [];
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
-  const pkuU = pkuLocation.toUpperCase(), delU = delLocation.toUpperCase();
+  const isSea = leg => !HAULAGE_LEG_TYPES.has(leg.leg_type);
+  const upper = s => String(s || '').trim().toUpperCase();
 
   // linkedPortCodes is async (a real query) — pre-resolve every distinct linked-allowed leg
   // port up front so the actual matching walk below can stay synchronous.
@@ -3609,7 +3617,7 @@ const findMatchingContractLegs = async (legs, { pol, pod, needsPolHaulage, needs
   const distinctPorts = new Set();
   const polLinked = leg => allowLinked || !!leg.pol_linked_allowed;
   const podLinked = leg => allowLinked || !!leg.pod_linked_allowed;
-  for (const leg of legs) {
+  for (const leg of legs.filter(isSea)) {
     if (polLinked(leg)) distinctPorts.add(leg.pol);
     if (podLinked(leg)) distinctPorts.add(leg.pod);
   }
@@ -3618,23 +3626,13 @@ const findMatchingContractLegs = async (legs, { pol, pod, needsPolHaulage, needs
   const polMatches = leg => (polLinked(leg) ? [leg.pol, ...(linkedCache.get(leg.pol) || [])] : [leg.pol]).includes(polU);
   const podMatches = leg => (podLinked(leg) ? [leg.pod, ...(linkedCache.get(leg.pod) || [])] : [leg.pod]).includes(podU);
 
-  const haulageOk = (first, last) => {
-    if (needsPolHaulage) {
-      if (!first.pol_carrier_haulage) return false;
-      if (pkuLocType && (first.pol_loc_type || 'Terminal') !== pkuLocType) return false;
-      if (first.pol_haulage_locations) {
-        const allowed = first.pol_haulage_locations.split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
-        if (allowed.length > 0 && pkuU && !allowed.includes(pkuU)) return false;
-      }
-    }
-    if (needsPodHaulage) {
-      if (!last.pod_carrier_haulage) return false;
-      if (delLocType && (last.pod_loc_type || 'Terminal') !== delLocType) return false;
-      if (last.pod_haulage_locations) {
-        const allowed = last.pod_haulage_locations.split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
-        if (allowed.length > 0 && delU && !allowed.includes(delU)) return false;
-      }
-    }
+  // One carrier-haulage end: the typed leg, its outer side ('pol' for a Pick-up, 'pod' for a Delivery), and the ask.
+  const endFits = (leg, side, location, type, mode) => {
+    if (!leg) return false;
+    if (type && canonLocType(leg[`${side}_loc_type`]) !== canonLocType(type)) return false;
+    const places = String(leg[`${side}_haulage_locations`] || '').split(/[\s,]+/).map(upper).filter(Boolean);
+    if (places.length && location && !places.includes(upper(location))) return false;
+    if (mode && leg.movement_by && upper(leg.movement_by) !== upper(mode)) return false;
     return true;
   };
 
@@ -3649,18 +3647,22 @@ const findMatchingContractLegs = async (legs, { pol, pod, needsPolHaulage, needs
   for (const [routingId, groupLegs] of groups) {
     const ordered = [...groupLegs].sort((a, b) => a.leg_order - b.leg_order);
     for (let i = 0; i < ordered.length; i++) {
-      if (!polMatches(ordered[i])) continue;
+      if (!isSea(ordered[i]) || !polMatches(ordered[i])) continue;
       let j = i;
       for (;;) {
         if (podMatches(ordered[j])) {
-          if (haulageOk(ordered[i], ordered[j])) {
-            matches.push({ routingId, legs: ordered.slice(i, j + 1), firstLeg: ordered[i], lastLeg: ordered[j],
+          const before = ordered[i - 1], after = ordered[j + 1];
+          const pickupLeg = before && before.leg_type === 'Pick-up' && upper(before.pod) === upper(ordered[i].pol) ? before : null;
+          const deliveryLeg = after && after.leg_type === 'Delivery' && upper(after.pol) === upper(ordered[j].pod) ? after : null;
+          if ((!needsPolHaulage || endFits(pickupLeg, 'pol', pkuLocation, pkuLocType, pkuMode))
+            && (!needsPodHaulage || endFits(deliveryLeg, 'pod', delLocation, delLocType, delMode))) {
+            matches.push({ routingId, legs: ordered.slice(i, j + 1), firstLeg: ordered[i], lastLeg: ordered[j], pickupLeg, deliveryLeg,
               matchKind: (ordered[i].pol === polU && ordered[j].pod === podU) ? "exact" : "linked" });
           }
           break; // reached the query pod (haulage ok or not) — this lane is done, try the next start
         }
         const next = ordered[j + 1];
-        if (!next || ordered[j].pod !== next.pol) break; // chain doesn't continue — dead end
+        if (!next || !isSea(next) || ordered[j].pod !== next.pol) break; // the sea legs don't continue — dead end
         j++;
       }
     }

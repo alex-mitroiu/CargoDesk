@@ -271,6 +271,12 @@ const UserManualPage = () => {
           <P>From <Tag>Shipments</Tag>, click <Tag>+ New Shipment</Tag>. At minimum you need a Port
             of Loading, Port of Discharge, carrier, and contract type — everything else (dates,
             booking reference, B/L number, vessel, voyage) can be filled in later.</P>
+          <P>The <strong>Export</strong> and <strong>Import Managing Office</strong> fill themselves once the
+            ports are in: the office at the port of loading (or discharge), otherwise the one in that
+            port's country. Each shows <Tag>AUTO</Tag> and the reason underneath. If two offices fit and
+            neither is yours, the field says so and you choose. Click an office to search for a different
+            one; the offices that fit the route come first, marked <Tag>FITS</Tag>. Your pick stays when
+            the ports change, and <Tag>Use automatic</Tag> goes back to the automatic one.</P>
         </StepBody>
         <Step n={3}>Know your shipment's home screen</Step>
         <StepBody>
@@ -360,8 +366,33 @@ const UserManualPage = () => {
           you're on — vessel, voyage, and dates.</Dek>
         <Step n={1}>Add a route leg</Step>
         <StepBody>
-          <P>Open <Tag>Booking & Routing → Contracts & Schedules</Tag> in the sidebar. If this is a
-            straightforward port-to-port move, add one SEA leg from your POL to your POD.</P>
+          <P>Open <Tag>Booking & Routing → Contracts & Schedules</Tag> in the sidebar. The page opens
+            on the route: a globe with the lane, the transit time, the sea legs and where the cargo
+            transships, and the main vessel. Its header is the new one, for now on this page only: the
+            port of loading with its ETD and the port of discharge with its ETA (ATD and ATA once the
+            carrier or AIS reports them), the transshipment ports and transit time under the route, the
+            DG class and what it means when a container carries dangerous goods, the days to arrival and
+            the containers (2×40HC), and under it the Principal, Shipper, Consignee, Incoterm, carrier,
+            main vessel, voyage and service. <Tag>Add Sailing</Tag> and <Tag>History</Tag> sit under the
+            route legs; a shipment with no route yet opens with one blank leg to fill in. Under it, the <strong>Route legs</strong> card shows the legs
+            one under the other: the main vessel and its feeders, planned or sailed, and whether each leg
+            starts where the previous one ended.</P>
+          <P>The routing is configured here, now and whenever it changes later. Click{" "}
+            <Tag>✎ Edit route</Tag> to open the route table: <Tag>+ Add leg</Tag>, change a port, a date,
+            the carrier, vessel or voyage, or select a leg and remove it. A shipment with no legs opens
+            straight in the table. Under it, the checks Save runs show as you type, each with ✓ or !: a
+            port of loading and discharge on every sea leg, legs that meet end to end, dates in order, and
+            a carrier wherever a leg has a vessel. A pick-up always comes before the sea legs and a delivery
+            after them, and no leg can leave before the one before it: a pick-up dated after the sailing's
+            ETD shows ! until you correct it, and Save refuses the route until then. <Tag>Save route</Tag> keeps the changes;{" "}
+            <Tag>Discard</Tag> drops them. For a straightforward port-to-port move, one SEA leg from your
+            POL to your POD is all you need.</P>
+          <P>A change the table can't take, such as a second Carrier's Haulage leg on the pick-up, opens a
+            dialog that says what's wrong and what the order should be; the leg keeps what it had. If the
+            route no longer fits the shipment's contract (other ports, another carrier, or haulage the
+            contract doesn't offer), <Tag>Save route</Tag> tells you before saving:{" "}
+            <Tag>Save and remove the contract</Tag> saves the route and takes the contract off, and{" "}
+            <Tag>Add Contract</Tag> then picks one that fits. <Tag>Back</Tag> leaves everything as it was.</P>
           <P>On a Central shipment, <Tag>Change Contract</Tag> picks the contract and its space. When
             the trade lane is steered (Master Data → Lane Steering), a <strong>Where to book</strong>{" "}
             panel comes first: each carrier option in order, marked <Tag>THE PICK</Tag>,{" "}
@@ -373,6 +404,15 @@ const UserManualPage = () => {
             shipment, its History says <em>Booked out of order</em>, and the Contract area shows the
             verdict (for example <Tag>#2 of 3 · out of order</Tag>). <Tag>Book on #1 instead</Tag>{" "}
             books the better option.</P>
+          <P>The Contract card names the contract, its validity and terms; the charges are on Cost
+            Entry, not here. When the shipment's lane has a <strong>Lane steering</strong> line, the card
+            lists its options in order, each with its space this week (or for the period): the{" "}
+            <strong>total</strong>, how much is <strong>used</strong> (confirmed by the carrier), how much
+            is <strong>pending</strong> (awaiting the carrier's answer, or not booked yet) and what{" "}
+            <strong>remains</strong>, with the option your shipment is booked on in green and your
+            shipment's share under it. A shipment booked off the steering says so, with the reason, and
+            offers <Tag>Book on #1 instead</Tag>. Without a steering line, the card shows the space the
+            shipment books against, with the same figures.</P>
         </StepBody>
         <Step n={2}>Search for a sailing and apply it</Step>
         <StepBody>
@@ -396,7 +436,7 @@ const UserManualPage = () => {
         <Callout type="warn"><strong>This is a hard gate, not a suggestion.</strong> If you jump
           straight to Carrier Booking without a contract and a schedule both in place, CargoDesk
           blocks you outright and sends you back here to finish first.</Callout>
-        <Screenshot src={imgSchedule} alt="The Contracts & Schedules page showing a Route Leg" caption="Contracts & Schedules — a Route Leg with a real sailing applied (port, date, vessel filled in), and the contract card underneath it." />
+        <Screenshot src={imgSchedule} alt="The Contracts & Schedules page: the route on a globe and its legs" caption="Contracts & Schedules: Rotterdam to New York via Antwerp, 19 days. The Route legs card shows the feeder and the main vessel; ✎ Edit route opens the table where the routing is changed." />
       </div>
     ),
     booking: (
@@ -1096,6 +1136,17 @@ const UserManualPage = () => {
         <P>ISO 3166-1 alpha-2 country registry pre-populated with 193 UN member states and key territories. Each country shows its assigned trade lanes and seaport count. Click <strong>View Locations</strong> to see all UN/LOCODE ports for that country.</P>
         <H3>UN Location Codes</H3>
         <P>A complete index of all 5-character codes in the system. The <strong>Has Seaport?</strong> column shows ✅ for any code that matches a port in the Port Locations database, and <Tag>—</Tag> for codes referenced in shipments but not yet in the master data.</P>
+        <H3>Contracts</H3>
+        <P>A contract's <strong>routing lines</strong> are the routes it prices. Each leg of a line has a type in its{" "}
+          <Tag>Leg</Tag> column, the same types as a shipment's route: <Tag>Pick-up</Tag> when the carrier collects the
+          container before the port of loading, <Tag>SEA</Tag> for the sea legs, and <Tag>Delivery</Tag> when the carrier
+          delivers it after the port of discharge. A Pick-up leg's From lists the places the carrier collects from (add
+          several, or leave it empty for anywhere), the kind of place (Door, CY, Terminal, CFS) and, under{" "}
+          <Tag>By</Tag>, how (Barge, Rail, Truck, or Any). A barge from a door in Ho Chi Minh City to the Vung Tau
+          terminal is a Pick-up leg VNSGN, Door, to VNVUT, by Barge, followed by the SEA leg VNVUT to USSAV. Choosing
+          Pick-up moves the leg to the top of the line and Delivery to the bottom; a line has at most one of each, and a
+          second one is refused with what's wrong and the order a line follows. Shipments are then offered only the lines
+          whose Pick-up and Delivery legs serve their own carrier's haulage.</P>
         <H3>Lane Steering</H3>
         <P>The order in which carriers should be tried on a trade lane (for everyone, or for one
           customer), each on one of its contracts, with a note on the line and an optional switch

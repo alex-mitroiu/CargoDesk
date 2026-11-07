@@ -20,7 +20,7 @@ End-User License Agreement for full terms.
 |---|---|
 | ![Contract Consumption](.github/screenshots/01-consumption-dashboard.png) **Contract Consumption** — allocated space per contract number, split into confirmed, pending and available, with a 6-week confirmed trend | ![Contract breakdown](.github/screenshots/02-consumption-breakdown.png) **Contract breakdown** — how one contract's space flows across its references to confirmed, pending and still free, plus how each booking was steered there |
 | ![Space Configurations](.github/screenshots/03-space-configurations.png) **Space Configurations** — TEU pools on contract routing lines, per loop and customer, with consumption, over-allocation and minimum-commitment (MQC) alerts | ![Shipments](.github/screenshots/04-shipments.png) **Shipments** — server-side filter, sort and pagination across the fleet, with real sea POL/POD and trade lanes |
-| ![Shipment Detail](.github/screenshots/05-shipment-detail.png) **Shipment Detail** — persistent header with routing term, trade lane, vessel, loop and transit, plus export and import services | ![Contracts & Schedules](.github/screenshots/06-contracts-schedules.png) **Contracts & Schedules** — door-to-door route legs, the Central contract and the live space configuration it books against |
+| ![Shipment Detail](.github/screenshots/05-shipment-detail.png) **Shipment Detail** — persistent header with routing term, trade lane, vessel, loop and transit, plus export and import services | ![Contracts & Schedules](.github/screenshots/06-contracts-schedules.png) **Contracts & Schedules** — the route on a globe, its legs as a rail (✎ Edit route opens the routing table with live checks), and the Central contract with the space it books against |
 | ![Carrier Booking](.github/screenshots/07-carrier-booking-review.png) **Carrier Booking** — EDI booking lifecycle with the carrier's reply compared field by field against what was sent | ![Loop Map Explorer](.github/screenshots/08-loop-map-explorer.png) **Loop Map Explorer** — carrier service loops and their port rotations on one world map |
 | ![Port time zones](.github/screenshots/09-port-time-zones.png) **Port Locations** — 14,269 UN/LOCODEs, each with its IANA time zone, current UTC offset and daylight-saving status | ![Financials](.github/screenshots/10-financials.png) **Financials** — quotes, opportunities, freight audit, credit overrides, statements, GL export and reports in one hub |
 
@@ -478,7 +478,8 @@ CargoDesk/
         ├── ShipmentConditionsPage.jsx   # Contract Type, Incoterm, Booking Ref, B/L, commodity, declared value
         ├── ShipmentContainersPage.jsx   # Cargo — container CRUD, VGM/CY-cutoff/Demurrage Compliance column
         ├── ShipmentPartiesPage.jsx      # Parties & Offices
-        ├── ShipmentSchedulesPage.jsx    # Contracts & Schedules — Route Legs, contract attach, Space Config, Schedule History modal
+        ├── ShipmentSchedulesPage.jsx    # Contracts & Schedules — route hero, Route legs (rail / route table), contract + space, Schedule History
+        ├── schedules/                   # That page's parts: SchedulesParts.jsx, RouteGlobe.jsx (canvas globe), usePorts.js
         ├── ShipmentMilestonesPage.jsx   # Milestone stepper
         ├── ShipmentAccounting{Costs,Invoices,Gp}Page.jsx  # Cost Entry / Invoice Entry / GP Overview
         ├── ShipmentTicketsPage.jsx      # Linked Integration Board tickets

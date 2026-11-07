@@ -129,8 +129,10 @@ describe("The main vessel, and what the carrier changed", () => {
 
   it("the shipment leads with its main vessel, via the feeder", () => {
     goto(`shipments/${tsShipment}/schedules`);
-    cy.get('[data-testid="shipment-detail-header-chip-carrier"]', { timeout: 15000 }).should("contain", "CY MAINLINER").find('[data-testid="leg-role-main"]').should("exist");
-    cy.get('[data-testid="shipment-detail-header-chip-via"]').should("contain", "BEANR, feeder CY FEEDER");
+    // Contracts & Schedules has the Trade Horizon next header (mockup 402fb5b5 v5–v7): the main vessel is the Vessel
+    // fact, and the transshipment port sits under the route (the feeders aren't in the header any more).
+    cy.get('[data-testid="shipment-detail-header-chip-vessel"]', { timeout: 15000 }).should("contain", "CY MAINLINER");
+    cy.get('[data-testid="shipment-detail-header-route-via"]').should("contain", "via BEANR");
     cy.get('[data-testid="sidebar-via"]').should("contain", "via BEANR, feeder CY FEEDER");
     cy.get('[data-testid="shipment-schedules-page"] [data-testid="leg-role-main"]').should("have.length", 1);
     cy.get('[data-testid="shipment-schedules-page"] [data-testid="leg-role-feeder"]').should("have.length", 1);

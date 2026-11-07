@@ -1,5 +1,7 @@
 "use strict";
 
+const { resolveManagingOffices } = require("../lib/office-resolution");
+
 module.exports = function officesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, mapOffice, isUniqueViolation } = ctx;
   const adminOnly = requireRole(["admin"]);
@@ -13,6 +15,28 @@ module.exports = function officesRoutes(app, ctx) {
     const [taken] = await query("SELECT code FROM offices WHERE UPPER(hbl_prefix)=$1 AND id<>$2", [prefix, officeId || ""]);
     return taken ? `The B/L number prefix ${prefix} is already used by office ${taken.code}` : null;
   };
+
+  // ── Managing-office auto-resolution (EMO/IMO, decided 2026-11-06) ────────────
+  // The rule itself lives in lib/office-resolution.js; this loads its inputs. Used by the New
+  // Shipment form (GET below), POST /api/shipments (a side sent empty) and quote conversion.
+  // `prefer` breaks a tie between several fitting offices; by default the caller's own active
+  // office (the X-Office-Id header, checked by resolveActiveOffice).
+  ctx.resolveShipmentOffices = async (req, { pol, pod, prefer } = {}) => {
+    const [offices, countries] = await Promise.all([
+      query("SELECT id, code, name, department, unlocode, country_code, is_active FROM offices WHERE is_active=TRUE"),
+      query("SELECT iso2, name FROM countries"),
+    ]);
+    const active = prefer === undefined ? await ctx.resolveActiveOffice(req).catch(() => null) : null;
+    const preferIds = prefer === undefined ? [active?.id] : [].concat(prefer);
+    const countryNames = Object.fromEntries(countries.map(c => [c.iso2, c.name]));
+    return resolveManagingOffices({ offices, pol, pod, prefer: preferIds.filter(Boolean), countryNames });
+  };
+
+  app.get("/api/offices/resolve", async (req, res) => {
+    const pol = String(req.query.pol || "").trim().toUpperCase();
+    const pod = String(req.query.pod || "").trim().toUpperCase();
+    ok(res, await ctx.resolveShipmentOffices(req, { pol, pod }));
+  });
 
   // ── Offices CRUD ────────────────────────────────────────────────────────────
 

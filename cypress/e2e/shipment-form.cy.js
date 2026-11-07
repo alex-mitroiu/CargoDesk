@@ -64,6 +64,8 @@ describe("Shipment Creation Form Suite", () => {
 
   beforeEach(() => {
     cy.loginSession(ADMIN_EMAIL, ADMIN_PASSWORD, { acceptLicense: true });
+    // EMO/IMO fill themselves from the ports (GET /api/offices/resolve, 2026-11-06); see pickOffice below.
+    cy.intercept({ method: "GET", pathname: "/api/offices/resolve" }).as("officeResolve");
     cy.visit("/#shipments/new");
     cy.dismissStartupGates();
   });
@@ -76,11 +78,30 @@ describe("Shipment Creation Form Suite", () => {
     cy.contains("button", query, { timeout: 8000 }).click();
   };
 
-  // EMO/IMO offices are hard-required on save (TKT-FH5Q94) — select real, backend-fetched
-  // SE/SI offices before any "Create Shipment" click that expects to succeed.
-  const selectOffices = () => {
-    cy.get('[data-testid="shipment-form-office-select-emoOfficeId"]').select(emoOffice.id);
-    cy.get('[data-testid="shipment-form-office-select-imoOfficeId"]').select(imoOffice.id);
+  // EMO/IMO offices are hard-required on save (TKT-FH5Q94). Since 2026-11-06 they are lookups that
+  // fill themselves from the ports, so first wait for the form's resolve call for THIS route (earlier
+  // calls, for no ports or POL only, come first and are skipped); otherwise the auto-filled chip could
+  // replace the search box mid-typing. Then pick the backend-fetched office, through its chip if the
+  // rule already filled one (a dev database has real offices; CI's fresh one only the fixture offices).
+  const waitForResolve = (pol, pod, tries = 8) => cy.wait("@officeResolve").then(({ request }) => {
+    const q = new URL(request.url).searchParams;
+    if (q.get("pol") === pol && q.get("pod") === pod) return;
+    if (tries > 1) waitForResolve(pol, pod, tries - 1);
+  });
+  const pickOffice = (key, office) => {
+    cy.get(`[data-testid="shipment-form-office-field-${key}"]`).then($f => {
+      const chip = $f.find(`[data-testid="shipment-form-office-${key}-chip"]`);
+      if (chip.length && chip.text().includes(office.code)) return;
+      if (chip.length) cy.wrap(chip.find("button").first()).click();
+      cy.get(`[data-testid="shipment-form-office-${key}-input"]`).clear().type(office.code);
+      cy.get(`[data-testid="shipment-form-office-${key}-option-${office.id}"]`).click();
+      cy.get(`[data-testid="shipment-form-office-${key}-chip"]`).should("contain", office.code);
+    });
+  };
+  const selectOffices = (pol = "CNSHA", pod = "USNYC") => {
+    waitForResolve(pol, pod);
+    pickOffice("emoOfficeId", emoOffice);
+    pickOffice("imoOfficeId", imoOffice);
   };
 
   it("creates a minimal valid SPOT shipment through the real form and lands on its detail page", () => {

@@ -99,7 +99,7 @@ this document covers *how it's built*.
 ---
 
 ## Table of Contents
-_(§8.45 added 2026-11-02 (the » Advance bar on shipment pages; no §6 or §14 change); §8.44 added 2026-10-29 (the House B/L audit's fixes, dangerous goods in the DCSA booking and the shipper's DG emergency contact, with §6 and §14); §8.43 added 2026-10-28 (the remaining DCSA phases: Master B/L amendments, equipment, Arrival Notice, Port Call, with §6 and §14); §8.42 added 2026-10-28 (DCSA phases 4–6, with §6 and §14); §8.41 added 2026-10-27 (the DCSA message review, with §6 and §14); §8.40 added 2026-10-21 (House B/L, Story 1) and completed 2026-10-24 (the remaining gaps, with §6 and §14); §8.33–8.39 added 2026-09-30 → 2026-10-21, with the §6 table count and groupings and the §14
+_(§8.47 added 2026-11-06 (Trade Horizon next: Contracts & Schedules, the shipment header, the » pill; the §8.6 bucket split; no §6 or §14 change); §8.46 added 2026-11-06 (EMO/IMO fill themselves from the ports, with §14); §8.45 added 2026-11-02 (the » Advance bar on shipment pages; no §6 or §14 change); §8.44 added 2026-10-29 (the House B/L audit's fixes, dangerous goods in the DCSA booking and the shipper's DG emergency contact, with §6 and §14); §8.43 added 2026-10-28 (the remaining DCSA phases: Master B/L amendments, equipment, Arrival Notice, Port Call, with §6 and §14); §8.42 added 2026-10-28 (DCSA phases 4–6, with §6 and §14); §8.41 added 2026-10-27 (the DCSA message review, with §6 and §14); §8.40 added 2026-10-21 (House B/L, Story 1) and completed 2026-10-24 (the remaining gaps, with §6 and §14); §8.33–8.39 added 2026-09-30 → 2026-10-21, with the §6 table count and groupings and the §14
 write-triggered side effects brought up to date on 2026-10-21 (§8.39, Where to book); §8.28–8.32, the full §5 `routes/` re-measure and the §4/§6/§8.5/§8.6/§11/§14 updates added
 2026-09-29 (v0.91.9 + unreleased); §8.26–8.27 and the §4/§6/§11 updates added 2026-09-25 (v0.91.8); §8.25 added 2026-09-20 (v0.91.6);
 §8.23–8.24 added 2026-09-19 (v0.91.5); §8.15 extended 2026-08-29 (v0.87.0); §8.21 added 2026-08-29
@@ -557,7 +557,8 @@ routes/testcases.js              209   Test plans/runs/cases, ticket↔test-case
 routes/sanctions.js              182   OFAC SDN + CSL sync/import/entries (§8.4) — admin-only writes
 routes/document-distribution.js  179   Proxy to the Document Distribution service
 routes/loop-codes.js             159   Loop Codes registry + /resolve (§8.24)
-routes/offices.js                148   Office CRUD + referencing-table delete guard
+routes/offices.js                148   Office CRUD + referencing-table delete guard;
+                                       EMO/IMO resolve (§8.46)
 routes/shipping-instructions.js  144   Shipping Instructions lifecycle (simulated SI/EDI)
 routes/charge-default-setups.js  142   Charge Defaults setups (§8.27)
 routes/hs-codes.js               116   HS Codes registry + typeahead + live EU lookup (§8.24)
@@ -1260,11 +1261,13 @@ zero regard for the state of its carrier booking — a `Created` (not-yet-sent) 
 loadTeuBuckets()  (routes/allocations.js, renamed from loadConsumedTeuMap)
   LEFT JOIN carrier_bookings cb ON cb.shipment_id = s.id
   GROUP BY s.allocation_id, cb.status
-  →  Map<allocationId, { confirmedTEU, pendingTEU, rejectedTEU }>
+  →  Map<allocationId, { confirmedTEU, pendingTEU, rejectedTEU, awaitingCarrierTEU, notBookedTEU }>
 
 Bucket rule:
   Confirmed                              → confirmedTEU   (deducts: remainingTEU = allocated − confirmed)
-  Created | Pending | no booking row yet → pendingTEU     (informational only)
+  Created | Pending | no booking row yet → pendingTEU     (informational only), split (2026-11-06, §8.47) into
+      Pending (sent, no carrier answer)  →   awaitingCarrierTEU
+      Created | no booking row yet       →   notBookedTEU    (the two always add up to pendingTEU)
   Rejected                               → rejectedTEU    (own visible segment, informational only)
   Cancelled                              → excluded entirely (no live demand left)
 ```
@@ -1281,9 +1284,8 @@ TEXT field with no CHECK constraint.
 
 New shared `src/components/shared/ConsumptionBar.jsx` (a 3-segment stacked div, not a chart
 library) renders this everywhere the split needs to appear —
-`SpaceConfigurationsPage.jsx`'s table row and its Linked Shipments modal,
-`ShipmentSchedulesPage.jsx`'s Space Configuration panel, `ShipmentFormPage.jsx`'s Contract Picker
-card, and (client-side bucketed the same way, since that page never reads the allocation's own
+`SpaceConfigurationsPage.jsx`'s table row and its Linked Shipments modal, `ShipmentFormPage.jsx`'s Contract Picker
+card (Contracts & Schedules' own space panel draws a four-segment bar of its own since 2026-11-06, §8.47), and (client-side bucketed the same way, since that page never reads the allocation's own
 fields) `DashboardPage.jsx`'s Overview KPIs/chart and Contract Consumption tab. When demand
 exceeds capacity the three segments compress proportionally rather than overflowing past 100%,
 with a small "+N over" caption naming the real gap instead of hiding it.
@@ -3040,8 +3042,8 @@ would have clashed with the transshipment meaning above.
 ### 8.33 Contract Routing Lines (added v0.91.10)
 
 Every leg of a contract now belongs to a routing (`contract_routings` row), and each routing is one
-**line**: one connected run of legs, with at most one pick-up location on its first leg and one
-delivery location on its last. No two routings on a contract may describe the same line. The
+**line**: one connected run of legs: an optional Pick-up leg, its SEA legs and an optional Delivery leg
+(typed legs since 2026-11-07, at the end of this section). No two routings on a contract may describe the same line. The
 approved mockup is https://claude.ai/artifact/YMjKwCQDPdSFYP5auHrki9, and the editor uses its
 Option 1 legs-table layout. Space configurations tick these lines (see the end of this section),
 which is why a line needs a stable identity.
@@ -3059,13 +3061,18 @@ It turns any contract payload into the line shape:
 - loose legs, those with no routing, become routings, one per connected run (a new run starts
   where a leg doesn't load where the previous one discharged);
 - a routing that isn't one chain is split, and its own rates are copied onto the split-off lines;
-- a leg listing several pick-up or delivery places becomes one line per combination;
+- an untyped leg's carrier-haulage flag becomes a typed Pick-up / Delivery leg carrying all its places (since
+  2026-11-07; before, a leg listing several places became one line per combination);
 - a routing left with no legs is dropped together with its own rates. Those rates used to become
   contract-wide without anyone noticing;
 - a loose run whose chain matches a stored routing gets that routing's id back, so a caller
   re-saving plain legs doesn't churn ids;
 - two lines with the same key are reported as a duplicate, and the save is refused (400). The key
-  is ports and location types in order, service codes, and the pick-up and delivery.
+  is each leg's type, ports and location types, service code, and the places and mode of its Pick-up /
+  Delivery leg;
+- a typed line out of order (a Pick-up leg not first, a Delivery leg not last, two of either, no SEA leg, a
+  Pick-up / Delivery leg that doesn't meet its SEA leg) is reported in `problems`, and the save is refused (400,
+  `lineProblemsError`: each line's problem, then the order).
 
 Contract-wide rates (no routing) are never touched and keep applying to every line, so splitting an
 old contract changes no price.
@@ -3183,6 +3190,51 @@ one TEU pool.
 - **Tests.** `tests/space-config-lines.test.js` (30, new), `allocations-crud` (51, fixtures now
   realistic contracts with legs), `src/utils/spaceConfigRules.test.js` (11), and
   `SpaceConfigurationsPage.test.jsx` (mocks mirror `api.contracts.search`/`api.allocations.list`).
+
+**Typed legs (2026-11-07; the user's pick, option D of mockup https://claude.ai/code/artifact/ff9c67cb-1556-48b4-a4f8-420c4084e91e).**
+The question that started it: "I cannot determine anymore the precarriage on the contracts". The contract search
+only counted a shipment's Carrier's Haulage pick-up when it was the route's FIRST leg (and the delivery when it was
+the LAST), but the shipment's order rule (§8.47) puts Merchant's Haulage before the CH leg on a pick-up and after it on
+a delivery; and a contract stated its carrier haulage as a flag on a line end, or as a leg from and to the same port,
+which can't say "a barge from a door in Ho Chi Minh City to the Vung Tau terminal". Now:
+- **Every contract leg has a type**, the shipment's route-table types: `contract_legs.leg_type` 'Pick-up' / 'SEA' /
+  'Delivery' (default '' = stored before this, read as SEA) and `movement_by` (Barge, Rail, Truck, Vessel; blank =
+  any), in the monolith (lib/schema.js) and the Contract Management Service. A Pick-up leg's From is where the
+  carrier collects: `pol_haulage_locations` (several UN/LOCODEs, blank = anywhere; `pol` mirrors the first), the
+  kind of place `pol_loc_type` (the shipment's location types: Door, Container Yard, Terminal, CFS; "CY" is stored
+  as Container Yard, GPS reads as Door), its mode; its To is the line's port of loading. A Delivery leg is the same at
+  the To end. `pol/pod_carrier_haulage` stay as derived flags on those ends for readers that only show them.
+  The barge example is Pick-up VNSGN Door → VNVUT Terminal by Barge, then SEA VNVUT → USSAV.
+- **A line's order**: at most one Pick-up leg, first; the SEA legs; at most one Delivery leg, last; no Merchant's
+  Haulage on a carrier contract. `lineProblems` (lib/routingLines.js, identical in src/utils/routingLines.js; a
+  Vitest test runs both) and `LINE_ORDER_HELP`. The editor puts a leg in its place when its type is chosen and
+  refuses a second Pick-up / Delivery on the line, the way the shipment's route table refuses a second CH leg.
+- **What a shipment asks** (`deriveHaulageNeeds`, ShipmentFormPage.jsx; server copy lib/where-to-book.js
+  `forShipment`): the side's Carrier's Haulage leg WHEREVER it sits (the user's "yes"), its outer end's place
+  (`pkuLocation`), kind (`pkuLocType`) and now its mode (`pkuMode`, `delMode`), sent by `haulageMatchParams` to
+  /contracts/match, /allocations/match and Where to book (both server copies read them).
+- **The match** (`findMatchingContractLegs`, server.js and the service, identical): POL/POD are matched on SEA legs
+  only (a run never walks through a typed haulage leg); carrier haulage is judged on the Pick-up leg right before the
+  run (ending where it loads) and the Delivery leg right after it: place in its list (blank = anywhere), kind equal
+  (canonical names), and the mode when the contract leg names one (blank on the shipment = not judged). The result
+  carries `pickupLeg` / `deliveryLeg`; `matchedLegs` stays the SEA run (the chained sailing search uses it).
+- **Everything else that reads lines**: GET /api/contracts' POL/POD filter looks at SEA legs (a pick-up place isn't
+  a port of loading), Schedule Search's DR / CY routing terms read the Pick-up / Delivery leg's kind (both copies),
+  the Contracts table's Route column lists SEA legs, space configurations take a line's POL/POD from its SEA legs
+  (routes/allocations.js `loadContract`, `legToRow` carries type and mode), Schedule Search picks the SEA leg for
+  sailings, the line chips read "PKU NLAMS DEBER · Door · Truck".
+- **Migration**: the startup normalization types every stored line (a flag on the first leg's From becomes a
+  Pick-up leg in front of it; a same-port first leg with the flag becomes the Pick-up leg itself; the same at the
+  delivery end) and rewrites only contracts that change. On the developer's data, 8 of 40 contracts converted (the
+  32 without carrier haulage untouched, rates and routing ids kept). CMDU-CH-EUN-NAM keeps its 4 lines (one per old
+  pick-up × delivery pair): merging them would orphan any shipment, space configuration or line rate that points at
+  one; merging is a manual edit.
+- **A bug it removed**: shipment legs say "Container Yard", contract legs said "CY", and the matcher compared the two
+  strings, so a container-yard carrier pick-up never matched any contract, and Schedule Search's CY terms found none.
+- **Tests**: tests/contract-typed-legs.test.js (29, new, in npm test), tests/routing-lines.test.js (43; the stored
+  shapes, the barge line, the refusals), tests/contract-routings.test.js (55), tests/contract-service-toggle.test.js
+  (20), src/utils/routingLines.test.js and RoutingLinesEditor.test.jsx (43), src/pages/shipments/haulageNeeds.test.js
+  (4), cypress/e2e/contract-typed-legs.cy.js (the editor in Edge).
 
 ### 8.34 DCSA Carrier Lifecycle: booking update/cancel, polling, Track & Trace, schedules (2026-10-09, v0.91.10)
 
@@ -4274,6 +4326,164 @@ the rail with the next page's name written down it). Frontend only: no route, ta
   sidebar row in order through both locks and ends with no bar, a half-filled container form stops it with the
   guard's error, Alt+→ advances except under a dialog. Real-browser pass on SHP-AQ1FIM (16 rows), dark and light.
 
+### 8.46 EMO and IMO fill themselves from the ports (2026-11-06)
+
+The user asked for the New Shipment form's Export and Import Managing Office "to be autoresolution fields", then
+corrected the first mockup: "the point is to have search with autoresolution active, lookups instead of dropdowns".
+Mockup https://claude.ai/code/artifact/f7b10beb-ff95-41a7-8316-1b91c809c932 (v2); the five decisions were taken with
+the defaults shown there.
+
+- **One rule (`lib/office-resolution.js`, pure).** For each side, an active office of the department (SE for the
+  EMO, SI for the IMO) whose `unlocode` is the port (POL, POD); otherwise one whose `country_code` is the port's
+  country. One candidate is the answer. Among several, a preferred office breaks the tie; otherwise nobody is
+  guessed. The result is `{ status: wait|none|auto|several, officeId, fitIds, how: port|country, reason }`; the
+  reason is the sentence the form shows ("At the port of loading, NLRTM", "2 export offices in Netherlands (NL) fit:
+  choose one"). Decision 1: ports first, your own office only breaks a tie (the old default put it first).
+- **Its inputs (`ctx.resolveShipmentOffices(req, { pol, pod, prefer })`, `routes/offices.js`).** Active offices,
+  country names, and by default the caller's own office from `resolveActiveOffice(req)` (the checked `X-Office-Id`).
+  `GET /api/offices/resolve?pol=&pod=` returns both sides.
+- **The form (`ShipmentFormPage.jsx`).** EMO, IMO and Controlling Office are `OfficeCombobox` lookups (the Reassign
+  Office dialog's), which gained `fitIds` (the route's offices first under "Fits this route", tagged FITS),
+  `chipTag`, `invalid` and `testId`. On every POL/POD change the form calls the endpoint; on a new shipment it puts
+  the answer in each side not picked by hand (AUTO tag, the reason underneath). Decision 2: a pick of your own sticks
+  (YOUR PICK, "Use automatic" goes back); picking the rule's own office isn't a pick; an office the form opened with
+  counts as picked. Decision 4: on an existing shipment nothing switches on its own; the field says what the rule
+  would pick now, with "Use it". Decision 5: the Controlling Office is a lookup with no auto-fill. A side left empty
+  shows its error on the field after Create. The old defaults (EMO = your office if SE; the IMO "✦ Use" chip) are gone.
+- **Every create path (decision 3).** `POST /api/shipments` fills a side sent empty from the same rule and never
+  replaces a sent office; with nothing fitting it refuses with 400 naming the side and the reason. Quote conversion
+  (`routes/quotes.js`) keeps the quote's office on its own side and fills the rest (the quote's office, then the
+  user's, break a tie); a side that stays empty is reported as `officeWarning`, which the Quotes page shows as a
+  warning toast pointing to Reassign Office.
+- **Tests.** `tests/office-resolution.test.js` (34: the rule, the endpoint, create, quote conversion);
+  `tests/shipment-integrity.test.js` TKT-FH5Q94 updated to the rule; Cypress `shipment-form` picks offices through
+  the lookups after waiting for the form's resolve call for the route. Edge pass on the CI test copy: auto-fill on
+  Rotterdam to New York, the FITS list, your pick and "Use automatic", two Dutch export offices with the error on
+  Create, dark and light.
+
+### 8.47 Trade Horizon next: Contracts & Schedules, the shipment header, the » pill (2026-11-06)
+
+The user asked for an improved Trade Horizon after a study of a trading-platform site; the mockup
+https://claude.ai/code/artifact/402fb5b5-d3f9-45e8-ae20-e554f2f9ce1e (v3) ranked seven ideas. "Let's build the Contracts &
+Schedule page first and see how it comes out", then "do the items that were not done yet ... see everything in one go",
+with two additions while it was built: the header's facts and their order, and the space position instead of the
+charges on a steered shipment. Built uncommitted for the user's verdict.
+
+- **The route table stays the routing editor.** The user's requirement: a change of routing must be possible after
+  the shipment was entered, so the table is not replaced. The Route legs card (`RouteCard`, `schedules/SchedulesParts.jsx`)
+  shows the legs as a rail to read (`RouteRail`: MAIN/FEEDER from `mainLegIndex`, planned/sailed/arrived, "legs meet"
+  between legs) and ✎ Edit route switches to `LegsTable` in its draft mode. With no legs, or with unsaved changes, it
+  opens on the table; the unsaved-changes bar is its footer, with Save route (testid `shipment-schedules-save-btn`).
+- **The table's pill look (`LegsTable variant="pill"`, Contracts & Schedules only).** Every field an outlined pill on
+  `HZ.tint` with the `cd-field` focus ring, hairline rows without column rules, wider date and lookup columns (own
+  saved-widths key `legs-pill-v1`), a dashed "+ Add leg". `PortCombobox`/`CarrierCombobox` take an optional
+  `fieldStyle` for the shape. Under the table, the Save checks run live (`LegChecks`): From and To on every sea leg;
+  legs meet end to end and dates in order (`legChainProblems`); a carrier wherever a leg has a vessel or voyage. Same
+  rules as `validateDraft`, so a green row means Save won't refuse the route for them; the detailed problems list
+  stays under it. The New/Edit Shipment form keeps the classic table (decided 2026-11-05).
+- **The rest of the page.** A pill nav (jump links to Route, Contract, Line agents, Sailing; History; Add/Change Sailing
+  as the one glowing action, unless the route is being edited). A hero: a canvas dotted globe (`RouteGlobe.jsx`,
+  coarse land polygons, great-circle lanes from the ports' coordinates via `usePorts`, the vessel on the leg under
+  way) beside transit, sea legs and transshipment ports, sailed or not, and the main vessel. With no legs it lists the
+  next steps, with the shipment's POL and POD as a dashed lane. The contract card (validity bar with today and the
+  ETD, Rate ID, rates, steering verdict), line agent tiles and a sailing card that says when a leg carries a vessel but
+  no sailing is saved.
+- **No charges; the space and the steering (mockup v8–v9).** The contract card shows no charges, no rates table and
+  no currency (the user: "showing the costs is not relevant for this tab, these values are already available in the
+  cost entry tab"); Rate ID and the named account stay. Its summary shows the linked contract's number when the
+  shipment's own reference is blank. Space figures, one component everywhere (`SpaceFigures`/`spaceBuckets`):
+  total (this week's for weekly space), used (confirmed by the carrier, the only bucket that deducts), pending
+  (awaiting the carrier: booking sent, no answer; plus not booked yet), rejected when there is any, remaining (total less
+  used), a bar, the old "x / y TEU confirmed (z remaining) · +n pending" line, and what stays free once every pending
+  booking is confirmed (Where to book's free: total − used − pending); the shipment's own bucket under it. With a Lane
+  Steering line over the shipment's lane and customer (`GET /api/where-to-book?shipmentId`, lib/where-to-book.js
+  `forShipment`), the card shows the `SteeringBlock` instead of the separate space panel: the line (lane, customer,
+  validity, auto-switch), each option in order with its tag (booked here / the pick / available / full / order only /
+  skipped) and its space configurations with the same figures, the verdict chip (`steeringChipOf`), and, when the
+  booking didn't follow the steering, the chip's sentence with "Book on #N instead" (opens Change Contract). Where to
+  book's option `space` entries now carry `awaitingCarrierTEU`, `notBookedTEU`, `rejectedTEU`, `remainingTEU` and
+  `contractNumber`. With no line, the shipment's own space configuration alone (`SpacePanel`: carrier · route, the
+  configuration's contract number, its validity or week). `loadTeuBuckets` (§8.6) splits `pendingTEU` into
+  `awaitingCarrierTEU` and `notBookedTEU`, added to every allocation response; `pendingTEU` is unchanged.
+- **The route card (mockup v5/v7).** Add/Change Sailing and History sit under the route legs (out of the pill nav).
+  A shipment with no legs stored (nothing entered for the route on the New Shipment form) opens with one blank SEA leg
+  in the table; it is where the draft starts, not a change (snapshot and draft both hold it), and a leg with nothing in
+  it doesn't count as a route: the page opens on the table and the "no legs yet" hero until a leg says something.
+- **Route problems in one dialog; a contract that no longer fits comes off on Save (the user, 2026-11-06).** A change
+  the route table refuses (a second Carrier's Haulage leg on one side, a leg arriving before it departs, a server
+  ROUTE_RULES refusal when the table saves live) used to be a toast; with `LegsTable onRefuse` it opens the page's
+  problems dialog (`ProblemsDialog`, "That change wasn't made": what's wrong, then the order), and the row goes back.
+  Pages without the prop (the New Shipment form) keep the toast. Save used to refuse a draft whose contract no longer
+  covered it ("… does not cover X → Y"), and Change Contract is off while the draft has changes, so a picked sailing the
+  contract didn't fit could only be discarded. Now `validateDraft` returns `{ errors, dropContract }`: the contract
+  check (GET /api/contracts/match with the sea legs' ports, the legs' carrier, the haulage and the cargo-ready date)
+  turns a miss into a warning in the same dialog ("Save the route?" / "Save and remove the contract" / Back), and
+  `commitDraft({ dropContract })` saves the route, then clears the contract fields a pick sets (contract, routing line,
+  space configuration and its reasons; the type stays Central, so the card asks for a contract), then saves the sailing,
+  so no carrier booking opens on it (`ensureBookingCreated` needs a contract). Leaving the page never takes a contract
+  off unasked: the navigation guard opens the dialog instead. The check now uses `stillOnContract`
+  (src/hooks/useContractMismatch.js), the header's rule: a shipment with no routing line recorded is judged on the
+  contract alone. Save's own copy compared the routing line strictly and so read such shipments as off their contract.
+- **A two-leg sailing onto an existing sea leg sets its port of loading.** The transshipment branch of applying a
+  sailing (this page, the New Shipment form, src/utils/applySailingToLegs.js) set leg 1's discharge port but kept the
+  leg's own loading port, so on a blank leg Save refused "Port of Loading (POL) is required (leg 1)". It now takes the
+  sailing's, as the direct branch did (src/utils/applySailingToLegs.test.js).
+- **The header (`ShipmentHeaderBar horizonNext`), on Contracts & Schedules only for now.** The user's decision the same
+  day: "until we get everything in the correct shape, we keep it in the contracts and schedules, then we can convert
+  the object into a global one". Every other page keeps the classic header (`ChipRowClassic`, the route block, the DG
+  badge with its meaning underneath). Row 1: ID, screening, then the route strip: POL in
+  display type with its name and ETD or ATD on a line of its own, a track that fills from ETD to ETA with the day
+  count, POD with ETA or ATA, days to ETA, and the container count with the DG flag beside it (class, title with the
+  IMDG name) and the type and TEU under it. ETD/ETA read ATD/ATA when the first/last sea leg's date source is an actual
+  (`ACTUAL_SOURCES` in `src/utils/legChain.js`: AIS or a DCSA event). Since mockup v5–v7: under the track the
+  transshipment ports and the transit ("via BEANR · 19 days transit", or "Direct"), the DG class beside the route with
+  its IMDG meaning underneath, and the containers as "2×40HC" ("6 containers" when the types differ) with the TEU under
+  them. The folded row: Principal, Shipper, Consignee, Incoterm, Carrier (the code: the user's call), Vessel (the main
+  sea leg's), Voyage, Service (the saved sailing's), each plain label and value, "—" when empty, then open tickets; no
+  carrier pill, no feeders, no contract. The expanded row: the same, then Routing, Trade Lane, Cargo Value. A glow line
+  marks the card's top edge.
+- **The » pill (`ShipmentAdvanceBar`, `data-variant="next"` on Contracts & Schedules only).** A glass rail with an
+  outlined pill and the next page's name in the accent; the pill glows only on hover or focus. Behaviour unchanged
+  (§8.45).
+- **The route's order (the user's golden rule, same day).** A Pick-up leg never comes after a SEA leg, a Delivery
+  never before one. Found on SHP-IOJNTD: `commitDraft` never wrote positions and the server gives a new leg
+  MAX(leg_order)+1, so a pick-up added in front of a saved SEA leg was stored after it; staging a sailing then put
+  the new sea legs next to the first SEA leg, after which the pick-up came last. Since: `journeyOrder`
+  (`src/utils/legChain.js`; Pick-up first, Delivery last, a stable sort) orders the draft on load and after a
+  sailing is staged, and is `LegsTable`'s `orderLegs`; Save writes each leg's position as its `leg_order`
+  (sequentially). `legChainProblems` adds kind `order` (a Pick-up after a SEA leg, a Delivery before one) and, when
+  the previous leg has no arrival date, compares with its departure, so a pick-up dated after the sailing's ETD is
+  refused. Within each side (the user, same day): a pick-up's Merchant's Haulage leg before its Carrier's Haulage leg
+  (MH NLAMS door → NLRTM CY, then CH NLRTM CY → NLRTM terminal), a delivery's Carrier's Haulage before its Merchant's
+  Haulage (CH USNYC terminal → USJEC CY, then MH USJEC CY → USCHI door); `journeyOrder` sorts by it and
+  `legChainProblems` flags it. Customer Arranged ranks with Merchant's Haulage (confirmed). Either side may be missing or
+  have one kind only (a single CH pick-up, an MH delivery); at most one Carrier's Haulage leg per side, any number of
+  Merchant's Haulage legs.
+- **The server enforces them (the user's answers to v5).** `lib/route-rules.js` (`routeProblems`, `refusal`) mirrors
+  legChain.js's "order" and "dates" kinds (`src/utils/legChain.parity.test.js` runs both on the same routes). Every
+  leg write through the API is checked against the route it would leave behind: `POST /api/shipments/:id/legs` (an
+  optional `legOrder` puts the leg at that position, otherwise last), `PUT …/legs/:legId` (a `legOrder` other than the
+  stored one moves it) and the new `PUT /api/shipments/:id/legs` (body `{ legs }`, the whole route in order: an id of
+  this shipment's updates, no id or a `draft_` one adds, a stored leg left out is removed; one transaction). A route
+  that breaks the rules is refused, nothing written: 400 `{ error, code: "ROUTE_RULES", problems, help }`, the error
+  naming each problem and, for an order problem, the order it should have. Refused rather than placed (the user: "refuse
+  the leg and show an error message on screen instructing the user what the correct order should be"). Routes stored
+  out of order before are left as they are; the next save of one has to put it right. The server's own writers (AIS,
+  DCSA events, booking escalations) don't pass through these routes. Every multi-leg flow moved onto the whole-route
+  call so no half-written route is checked: Contracts & Schedules' Save (a refusal opens the same problems dialog and
+  keeps the draft), the edit form's live route table (create at its position, then save the whole route on an edit),
+  `applySailingToLegs` and New Shipment's create. On screen the table puts legs in order itself and refuses only what
+  ordering can't fix, a second Carrier's Haulage leg on a side (toast with the order it should have, the row reverts);
+  a new pick-up or delivery on a side that has its CH leg starts as Merchant's Haulage.
+- **Dark-mode option lists.** The pill look's selects have a see-through tint, so the browser painted their open
+  list on its own white ground with the theme's white text; each `<option>` now carries `HZ.surfaceSolid` and the text
+  colour.
+- **Tests.** Vitest `SchedulesParts.test.jsx` (the space figures and buckets, no charges, the steering block with each
+  option's space, booked off the steering, the contract-number fallback, the live checks, the option colours), `legChain.test.js` (+7: the order rule, journeyOrder, the departure fallback), `ShipmentHeaderBar.test.jsx` (+6: the folded order, a dash for an empty party, the containers block and DG
+  flag, ETD/ETA and ATD/ATA); backend `allocations-crud` (+1: the split adds up). Cypress: the leg-cascade spec clicks
+  Edit route and selects a row on its left edge (a pill-look row can be wider than the visible table); Save by its
+  testid. Full Cypress suite in Edge on the CI test copy, real-browser pass in both themes.
+
 ## 9. Data Flow Diagrams
 
 The four diagrams in this section (shipment creation with auto-screening; contract recalculation;
@@ -5006,6 +5216,10 @@ here:
   SMTP when it has one. A newer draft makes the recorded approval `STALE` (computed on read, nothing written).
 - **The document void** (`routes/shipment-ops.js`). For an issued House B/L it asks `ctx.houseBl.voidBlock` first;
   `bl-surrender` asks `originalsOut` (origin) and refuses a live eBL.
+
+**Added 2026-11-06 (EMO/IMO from the ports, §8.46).** No new timer or sweep. Two writes fill a field the caller left
+empty, through `ctx.resolveShipmentOffices`: `POST /api/shipments` (an empty EMO or IMO) and `POST /api/quotes/:id/convert`
+(the side the quote's office doesn't cover). Neither ever replaces an office that was sent.
 
 ---
 

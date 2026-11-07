@@ -11,6 +11,15 @@ import { deriveHaulageNeeds, haulageMatchParams } from "../pages/shipments/Shipm
 // kept "matching" forever on both surfaces. One shared implementation now — matchPol/matchPod
 // should be the shipment's real SEA-leg pol/pod (not the door-to-door shipment.pol/pod), same as
 // ContractAssignModal uses to pick the contract in the first place.
+// Whether GET /api/contracts/match's answer still has the shipment's own contract (and routing line, when one is
+// recorded). Shared with Save's check on Contracts & Schedules, which compared the routing line strictly and so read
+// every shipment with no routing line recorded as off its contract (found 2026-11-06 once Save started taking such a
+// contract off instead of only refusing).
+export const stillOnContract = (matches, shipment) => {
+  const routingId = shipment.contractRoutingId || "";
+  return matches.some(m => m.id === shipment.contractId && (!routingId || (m.routingId || "") === routingId));
+};
+
 export default function useContractMismatch(shipment, matchPol, matchPod, legs) {
   const [contractMismatch, setContractMismatch] = useState(false);
   const haulage = deriveHaulageNeeds(legs);
@@ -33,13 +42,12 @@ export default function useContractMismatch(shipment, matchPol, matchPod, legs) 
         // A blank stored routing means "not recorded", so the contract alone decides. Since
         // 2026-09-30 every contract leg sits on a routing line and match results always carry
         // one, so comparing '' to it flagged every such shipment (SHP-WIRHFD's endless loop).
-        const routingId = shipment.contractRoutingId || "";
-        if (live) setContractMismatch(!matches.some(m => m.id === shipment.contractId && (!routingId || (m.routingId || "") === routingId)));
+        if (live) setContractMismatch(!stillOnContract(matches, shipment));
       })
       .catch(() => { if (live) setContractMismatch(false); });
     return () => { live = false; };
   }, [shipment.contractType, shipment.contractId, shipment.contractRoutingId, matchPol, matchPod, dateRef,
-      haulage.needsPolHaulage, haulage.needsPodHaulage, haulage.pkuLocation, haulage.delLocation, haulage.pkuLocType, haulage.delLocType]); // eslint-disable-line react-hooks/exhaustive-deps
+      haulage.needsPolHaulage, haulage.needsPodHaulage, haulage.pkuLocation, haulage.delLocation, haulage.pkuLocType, haulage.delLocType, haulage.pkuMode, haulage.delMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return contractMismatch;
 }

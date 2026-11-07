@@ -255,6 +255,9 @@ async function login() {
     assert("pendingTEU counts Pending + no-booking-row (2 TEU) — a Created/unsent booking still counts as demand; a cancelled never-booked shipment doesn't",
       bucketAlloc?.pendingTEU === 2, JSON.stringify(bucketAlloc));
     assert("rejectedTEU is its own segment (1 TEU), not folded into pending", bucketAlloc?.rejectedTEU === 1, JSON.stringify(bucketAlloc));
+    assert("pendingTEU splits into awaitingCarrierTEU (the sent Pending booking, 1 TEU) and notBookedTEU (no booking row, 1 TEU)",
+      bucketAlloc?.awaitingCarrierTEU === 1 && bucketAlloc?.notBookedTEU === 1
+        && bucketAlloc.awaitingCarrierTEU + bucketAlloc.notBookedTEU === bucketAlloc.pendingTEU, JSON.stringify(bucketAlloc));
     assert("Cancelled contributes nothing — excluded entirely, not even to pending",
       bucketAlloc?.confirmedTEU + bucketAlloc?.pendingTEU + bucketAlloc?.rejectedTEU === 4);
     assert("remainingTEU deducts only the Confirmed booking (75 - 1 = 74)", bucketAlloc?.remainingTEU === 74, JSON.stringify(bucketAlloc));

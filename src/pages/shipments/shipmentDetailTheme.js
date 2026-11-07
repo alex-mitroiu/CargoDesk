@@ -66,6 +66,16 @@ const HZ_DARK = {
   tint: "rgba(255,255,255,0.03)",
   hoverBg: "rgba(255,255,255,0.04)",
   neutralBg: "rgba(255,255,255,0.06)",
+  // Trade Horizon, next (Contracts & Schedules first, 2026-11-06, mockup 402fb5b5): one luminous edge and
+  // glow on the page's hero frame, a soft horizon wash at the top, and the dotted route globe's colours.
+  glow: "rgba(56,212,232,0.45)",
+  glowSoft: "rgba(56,212,232,0.10)",
+  edge: "linear-gradient(90deg, transparent, #38d4e8 30%, #3987e5 70%, transparent)",
+  ground: "radial-gradient(900px 340px at 50% -80px, rgba(56,212,232,0.14), transparent 70%)",
+  globeOff: "rgba(56,212,232,0.14)",
+  globeOn: "rgba(56,212,232,0.85)",
+  globeArc: "#fbc531",
+  globeRim: "rgba(56,212,232,0.35)",
 };
 
 // Light — TKT-198GZH, published as a design exploration and validated (WCAG contrast pass +
@@ -121,6 +131,15 @@ const HZ_LIGHT = {
   tint: "rgba(15,20,40,0.03)",
   hoverBg: "rgba(15,20,40,0.05)",
   neutralBg: "rgba(15,20,40,0.07)",
+  // Light can't glow: the same hues as a soft shadow and a hairline. The lane is violet so it reads on teal dots.
+  glow: "rgba(0,105,112,0.28)",
+  glowSoft: "rgba(0,105,112,0.10)",
+  edge: "linear-gradient(90deg, transparent, #006970 30%, #006795 70%, transparent)",
+  ground: "radial-gradient(900px 340px at 50% -80px, rgba(0,105,112,0.10), transparent 70%)",
+  globeOff: "rgba(0,105,112,0.24)",
+  globeOn: "rgba(0,105,112,0.95)",
+  globeArc: "#8d45b3",
+  globeRim: "rgba(0,105,112,0.35)",
 };
 
 // T is mutated in place when the theme switches (src/tokens.js) — HZ follows the identical
@@ -133,6 +152,7 @@ export const HZ = { ...HZ_DARK };
 
 export const applyHzTheme = (dark) => {
   Object.assign(HZ, dark ? HZ_DARK : HZ_LIGHT);
+  HZ.scheme = dark ? "dark" : "light"; // CSS color-scheme, so a scroll box's scrollbar follows the theme
 };
 
 // Shape-compatible adapter onto the app's normal T token keys (bg/surface/border/text/
@@ -149,6 +169,8 @@ export const HZ_LEGACY_THEME = {
   get mono() { return HZ_MONO; }, get body() { return HZ_BODY; },
   get accent() { return HZ.cyan; }, get accentBg() { return HZ.cyanBg; },
   get info() { return HZ.info; }, get warning() { return HZ.warn; }, get danger() { return HZ.crit; },
+  get good() { return HZ.good; }, get tint() { return HZ.tint; }, get surfaceSolid() { return HZ.surfaceSolid; },
+  get scheme() { return HZ.scheme || "dark"; },
 };
 
 // Idempotent; App.jsx calls it for every Trade Horizon page (the swapped T uses these faces too).

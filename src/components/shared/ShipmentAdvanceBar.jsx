@@ -48,6 +48,12 @@ if (!document.getElementById("cd-advbar-style")) {
 .cd-advbar[data-state="saving"] { cursor: progress; }
 .cd-advbar-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor;
   border-right-color: transparent; animation: cd-advbar-spin .7s linear infinite; }
+.cd-advbar[data-variant="next"] { background: var(--adv-glass); backdrop-filter: blur(14px); }
+.cd-advbar[data-variant="next"] .cd-advbar-pill { border-radius: 999px; height: 96px; background: var(--adv-surface2); color: var(--adv-accent);
+  box-shadow: inset 0 0 0 1px var(--adv-ring); }
+.cd-advbar[data-variant="next"]:hover .cd-advbar-pill, .cd-advbar[data-variant="next"]:focus-visible .cd-advbar-pill { background: var(--adv-accent-bg);
+  box-shadow: inset 0 0 0 1px var(--adv-accent), 0 0 16px -2px var(--adv-glow); }
+.cd-advbar[data-variant="next"] .cd-advbar-name { color: var(--adv-accent); }
 .cd-advbar[data-state="error"] .cd-advbar-pill { background: var(--adv-grad-crit); box-shadow: none;
   animation: cd-advbar-nudge .38s ease; }
 @keyframes cd-advbar-spin { to { transform: rotate(360deg); } }
@@ -146,11 +152,16 @@ const ShipmentAdvanceBar = ({ shipment, currentPage, appSettings, navigate }) =>
   return (
     <button ref={btnRef} type="button" className="cd-advbar" data-testid="shipment-advance-bar"
       data-state={barState} data-next={next.pageKeys[0]} onClick={advance}
+      // Trade Horizon next (2026-11-06): a glass rail with an outlined pill, glowing on hover — on Contracts & Schedules
+      // only until the user approves it for every page (their decision, 2026-11-06).
+      data-variant={currentPage === "shipment-schedules" ? "next" : undefined}
       aria-label={`Save and go to ${nextName}`} aria-keyshortcuts="Alt+ArrowRight" aria-busy={barState === "saving"}
       style={{
         "--adv-surface": HZ.surfaceSolid, "--adv-border": HZ.border, "--adv-border-strong": HZ.borderStrong,
         "--adv-accent": HZ.cyan, "--adv-accent-bg": HZ.cyanBg, "--adv-muted": HZ.textMuted,
         "--adv-grad": HZ.gradCyan, "--adv-on-grad": HZ.chipText,
+        "--adv-glass": HZ.surface, "--adv-surface2": HZ.surface2, "--adv-glow": HZ.glow,
+        "--adv-ring": `color-mix(in srgb, ${HZ.cyan} 45%, transparent)`,
         "--adv-grad-crit": `linear-gradient(135deg, ${HZ.crit}, ${HZ.violet2})`,
       }}>
       <span className="cd-advbar-ln" />

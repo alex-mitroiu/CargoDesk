@@ -2107,7 +2107,7 @@ function App() {
           marginRight: "var(--cd-advance-bar-w, 0px)" }}>
 
         {(page === "detail" || SHIPMENT_SUBPAGE_LABELS[page]) && selectedShipment && isEnabled(page) && (
-          <ShipmentHeaderBar shipment={selectedShipment} containers={containers}
+          <ShipmentHeaderBar shipment={selectedShipment} containers={containers} horizonNext={page === "shipment-schedules"}
             onNavigateToSchedules={() => navigate("shipment-schedules", selectedShipment.id)}
             onNavigateToParties={() => navigate("shipment-parties", selectedShipment.id)}
             onUpdate={handleUpdateShipment}
@@ -2194,9 +2194,9 @@ function App() {
                   const names = created.creditWarning.onHold.map(h => `${h.companyName} (${h.role})`).join(", ");
                   toast.warning(`On credit hold: ${names} — this will block sending a carrier booking request and generating invoices until it's cleared`);
                 }
-                for (const { id: _draftId, polName: _pn, podName: _ppn, ...leg } of draftLegs.filter(l => l.pol || l.pod)) {
-                  await api.legs.create(created.id, leg);
-                }
+                // The route in one call, checked once against the route rules (lib/route-rules.js, 2026-11-06).
+                const routeLegs = draftLegs.filter(l => l.pol || l.pod).map(({ id: _draftId, polName: _pn, podName: _ppn, ...leg }) => leg);
+                if (routeLegs.length) await api.legs.saveRoute(created.id, routeLegs);
                 for (const ctr of draftContainers) {
                   const newCtr = await api.containers.create({ shipmentId: created.id, ...ctr });
                   setContainers(p => [...p, newCtr]);

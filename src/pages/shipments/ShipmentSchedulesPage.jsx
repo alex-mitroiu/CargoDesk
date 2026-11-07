@@ -9,15 +9,13 @@ import Spinner from "../../components/primitives/Spinner";
 import { Modal } from "../../components/primitives/Modal";
 import SailingPickerModal from "../../components/shared/SailingPickerModal";
 import ContractAssignModal from "../../components/shared/ContractAssignModal";
-import CustomerCombobox from "../../components/shared/CustomerCombobox";
 import { ScheduleHistoryPanel, PendingRevalidationModal } from "./ShipmentDetailPage";
 import { LegsTable, deriveHaulageNeeds, haulageMatchParams } from "./ShipmentFormPage";
-import { IconWarning, IconPackage, IconAnchor } from "../../components/primitives/Icon";
-import useContractMismatch from "../../hooks/useContractMismatch";
-import ConsumptionBar from "../../components/shared/ConsumptionBar";
+import { IconAnchor } from "../../components/primitives/Icon";
+import useContractMismatch, { stillOnContract } from "../../hooks/useContractMismatch";
 import { steeringChipOf } from "../../components/shared/WhereToBook";
 import { deriveLoopCode } from "../../utils/scheduleLoop";
-import { legChainProblems } from "../../utils/legChain";
+import { legChainProblems, journeyOrder, ORDER_HELP } from "../../utils/legChain";
 import useContractLineHubs from "../../hooks/useContractLineHubs";
 import { canEditShipmentSide } from "../../utils/officeSide";
 import { emitLegsScheduleChanged } from "../../legsScheduleBus";
@@ -25,6 +23,9 @@ import useSaving from "../../hooks/useSaving";
 import { setNavigationGuard, clearNavigationGuard } from "../../navigationGuard";
 import { HZ, HZ_MONO, HZ_BODY, HZ_LEGACY_THEME, useHorizonFonts } from "./shipmentDetailTheme";
 import { SpotOfferCard, AddSpotOfferModal, useShipmentSpotOffer, equipmentOfContainers, removeSpotOffer } from "../../components/shared/SpotOffers";
+import usePorts from "./schedules/usePorts";
+import { PillNav, RouteHero, EmptyRouteHero, RouteRail, RouteCard, ContractCard, SailingCard, LineAgentTile,
+  sectionLabelStyle, pillBtnStyle, ctaStyle } from "./schedules/SchedulesParts";
 
 // ─── Shipment Schedules Page ──────────────────────────────────────────────
 // Dedicated sub-page for carrier schedule/booking management, promoted out
@@ -52,76 +53,30 @@ import { SpotOfferCard, AddSpotOfferModal, useShipmentSpotOffer, equipmentOfCont
 // is dropped entirely — every leg is always directly editable once a draft is in progress,
 // exactly like the New Shipment form already behaves; Save's validation is the real safety net
 // now, not a separate lock/unlock mechanic.
+//
+// Trade Horizon, next (2026-11-06, mockup https://claude.ai/code/artifact/402fb5b5-d3f9-45e8-ae20-e554f2f9ce1e,
+// "build the Contracts & Schedule page first and see how it comes out"). Layout, top to bottom: a pill nav
+// (jump links + History + Add/Change Sailing, the page's one glowing action); the hero (dotted route globe, the
+// route and its figures; with no legs, the steps to a saved route); the Route legs card, where the RAIL is the
+// read view and "Edit route" switches to LegsTable, the table where the routing is configured (the user's
+// requirement: routing must stay changeable after shipment entry). The card opens straight in the table when
+// there are no legs or the draft has unsaved changes, and its footer is the unsaved-changes bar; then the
+// featured contract card (with the space configuration under it) beside the line agents and the sailing; then
+// the spot offer. The pieces live in ./schedules/ (SchedulesParts.jsx, RouteGlobe.jsx, usePorts.js).
 
-const sectionLabel = () => ({ fontFamily: HZ_MONO, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
-  letterSpacing: "0.08em", color: HZ.textMuted, marginBottom: 10 });
-
-const todayStr = new Date().toISOString().slice(0, 10);
-
-// Export/Import Line Agent — a compact assign/reassign/remove field, deliberately narrower than
-// AdditionalPartiesPanel's generic party editor (which handles all 9 ADDITIONAL_PARTY_ROLES with
-// one blanket canEditShipments gate): these two roles are each restricted to their own office
-// side, so this needs its own per-instance `canEdit` rather than one shared flag.
-const LineAgentField = ({ label, role, party, canEdit, onAssign, onRemove }) => {
-  const [editing, setEditing] = useState(false);
-  const [value,   setValue]   = useState({ id: "", name: "" });
-  const [saving,  setSaving]  = useState(false);
-
-  const startEdit = () => {
-    setValue(party ? { id: party.customerId, name: party.customerName } : { id: "", name: "" });
-    setEditing(true);
-  };
-  const save = async () => {
-    if (!value.id) return;
-    setSaving(true);
-    await onAssign(party?.id, value.id, value.name);
-    setSaving(false);
-    setEditing(false);
-  };
-
-  return (
-    <div data-testid={`shipment-schedules-line-agent-${role.toLowerCase().replace(/\s+/g, "-")}`} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, padding: "12px 16px" }}>
-      <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 700,
-        textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>{label}</div>
-      {editing ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <CustomerCombobox label="Customer" value={value} onChange={setValue} roleFilter={role} />
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Btn size="sm" variant="secondary" onClick={() => setEditing(false)} data-testid={`shipment-schedules-line-agent-${role.toLowerCase().replace(/\s+/g, "-")}-cancel-btn`}>Cancel</Btn>
-            <Btn size="sm" disabled={saving || !value.id} onClick={save} data-testid={`shipment-schedules-line-agent-${role.toLowerCase().replace(/\s+/g, "-")}-save-btn`}>{saving ? "Saving…" : "Save"}</Btn>
-          </div>
-        </div>
-      ) : (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontFamily: HZ_BODY, fontSize: 14, fontWeight: 700,
-            color: party ? HZ.text : HZ.textMuted, fontStyle: party ? "normal" : "italic" }}>
-            {party ? party.customerName : "Not assigned"}
-          </div>
-          {canEdit && (
-            <div style={{ display: "flex", gap: 10 }}>
-              <button type="button" title={party ? "Reassign" : "Assign"} onClick={startEdit}
-                data-testid={`shipment-schedules-line-agent-${role.toLowerCase().replace(/\s+/g, "-")}-edit-btn`}
-                style={{ background: "none", border: "none", cursor: "pointer", color: HZ.textMuted, fontSize: 13 }}
-                onMouseEnter={e => e.currentTarget.style.color = HZ.text}
-                onMouseLeave={e => e.currentTarget.style.color = HZ.textMuted}>
-                {party ? "✎" : "＋"}
-              </button>
-              {party && (
-                <button type="button" title="Remove" onClick={() => onRemove(party.id)}
-                  data-testid={`shipment-schedules-line-agent-${role.toLowerCase().replace(/\s+/g, "-")}-remove-btn`}
-                  style={{ background: "none", border: "none", cursor: "pointer", color: HZ.textMuted, fontSize: 15, lineHeight: 1 }}
-                  onMouseEnter={e => e.currentTarget.style.color = HZ.crit}
-                  onMouseLeave={e => e.currentTarget.style.color = HZ.textMuted}>
-                  ×
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
+// The route's problems as a list in a dialog: Save's validation, a server refusal, and a change the route table refused
+// all read the same way (one bulleted list; the order help last when the order is what's wrong).
+const ProblemsDialog = ({ title, lead, items, onClose, testId, children }) => (
+  <Modal title={title} onClose={onClose} width={460} hideClose data-testid={testId}>
+    <p style={{ fontFamily: HZ_BODY, fontSize: 14, color: HZ.text, margin: "0 0 10px", lineHeight: 1.5 }}>{lead}</p>
+    <ul style={{ margin: "0 0 20px", paddingLeft: 20, display: "flex", flexDirection: "column", gap: 6 }}>
+      {items.map((e, i) => (
+        <li key={i} style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text, lineHeight: 1.5 }}>{e}</li>
+      ))}
+    </ul>
+    <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>{children}</div>
+  </Modal>
+);
 
 const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onBack, onUpdate, onRefresh }) => {
   const auth = useAuth();
@@ -176,13 +131,24 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
   // has with shipment_legs elsewhere in this app.
   const [draftSailing, setDraftSailing] = useState(null);
   const [validationErrors, setValidationErrors] = useState(null); // null = modal closed
+  const [refusedChange, setRefusedChange] = useState(null); // a change the route table refused (LegsTable onRefuse)
+  const [dropContractWarning, setDropContractWarning] = useState(null); // Save takes off a contract that no longer fits
 
   useEffect(() => {
     let live = true;
     api.legs.list(shipment.id).then(rows => {
       if (!live) return;
-      setDraftLegs(rows);
-      setOriginalLegsSnapshot(rows);
+      // Journey order (legChain.js journeyOrder, the user's golden rule 2026-11-06): Pick-up legs first, Delivery
+      // legs last. A route stored out of order (Save didn't write positions before that day) shows in the right
+      // order here, and its next Save stores that order (commitDraft).
+      // No legs stored (nothing was entered for the route on the New Shipment form): one blank SEA leg to fill in,
+      // From and To first (the user, mockup v7). It's where the draft starts, not a change, so both hold it.
+      const ordered = rows.length ? journeyOrder(rows) : [{ id: `draft_blank_${Date.now()}`, legType: "SEA", mot: "SEA", movementType: "SEA",
+        movementBy: "", pol: "", pod: "", polName: "", podName: "", polLocType: "Terminal", podLocType: "Terminal", etd: null, eta: null,
+        carrierCode: shipment.carrierCode || "", vessel: "", vesselImo: "", voyage: "",
+        contractType: shipment.contractType || "SPOT", contractRef: shipment.contractRef || "" }];
+      setDraftLegs(ordered);
+      setOriginalLegsSnapshot(ordered);
       setDraftSailing(null);
     }).catch(() => {});
     return () => { live = false; };
@@ -190,6 +156,10 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
 
   const isDirty = draftLegs !== null && originalLegsSnapshot !== null &&
     (draftSailing !== null || JSON.stringify(draftLegs) !== JSON.stringify(originalLegsSnapshot));
+  // The Route legs card: the rail to read, "Edit route" for the table. Forced to the table when there are no
+  // legs yet or the draft has unsaved changes (so what Save would write is always what's on screen).
+  const [routeEdit, setRouteEdit] = useState(false);
+  const ports = usePorts([...(draftLegs || []).flatMap(l => [l.pol, l.pod]), shipment.pol, shipment.pod]);
 
   // Contract rate lines — direct request for a facelift on the plain one-line contract summary
   // below: once a Central contract is actually attached, fetch its full detail (rates included)
@@ -298,7 +268,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
         contractType: shipment.contractType || "SPOT",
         contractRef:  shipment.contractRef  || "",
       }));
-      setDraftLegs([...list, ...newLegs]);
+      setDraftLegs(journeyOrder([...list, ...newLegs]));
       toast.success(isTSPForCreate
         ? `TSP sailing staged — ${newLegs.length} sea legs created`
         : "Sailing staged — SEA leg created");
@@ -317,6 +287,8 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
         voyage:      sailing.legs[0].voyageNumber || firstSeaLeg.voyage,
         etd:         sailing.legs[0].etd          || firstSeaLeg.etd,
         eta:         sailing.legs[0].eta          || firstSeaLeg.eta,
+        pol:         sailing.legs[0].pol          || firstSeaLeg.pol,
+        polName:     sailing.legs[0].pol !== firstSeaLeg.pol ? "" : firstSeaLeg.polName,
         pod:         sailing.legs[0].pod          || firstSeaLeg.pod,
         podName:     sailing.legs[0].pod !== firstSeaLeg.pod ? "" : firstSeaLeg.podName,
         carrierCode: sailing.carrier              || firstSeaLeg.carrierCode,
@@ -342,7 +314,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
       const newLegs = [...base];
       newLegs[baseFirstIdx] = updatedFirst;
       newLegs.splice(baseFirstIdx + 1, 0, ...extraLegs);
-      setDraftLegs(newLegs);
+      setDraftLegs(journeyOrder(newLegs));
       toast.success(`TSP sailing staged — ${sailing.legs.length} sea legs updated`);
     } else {
       const updatedFirst = {
@@ -358,7 +330,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
         podName:     sailing.pod !== firstSeaLeg.pod ? "" : firstSeaLeg.podName,
       };
       const updated = base.map((l, i) => i === baseFirstIdx ? updatedFirst : l);
-      setDraftLegs(updated);
+      setDraftLegs(journeyOrder(updated));
       toast.success("Sailing staged — click Save to apply");
     }
   };
@@ -441,6 +413,18 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
   // for its consumption bars), so this just picks the one entry matching shipment.allocationId
   // out of that
   // route/date-scoped result set rather than re-deriving consumption client-side.
+  // The Lane Steering line that covers this shipment's lane and customer, its options in order with each one's space in
+  // the shipment's week (lib/where-to-book.js forShipment), for the contract card's steering block (mockup v8–v9).
+  // Null when no line covers it; then the card shows the shipment's own space configuration alone.
+  const [steering, setSteering] = useState(null);
+  useEffect(() => {
+    let live = true;
+    api.whereToBook({ shipmentId: shipment.id })
+      .then(a => { if (live) setSteering(a?.line ? a : null); })
+      .catch(() => { if (live) setSteering(null); });
+    return () => { live = false; };
+  }, [shipment.id, shipment.contractId, shipment.allocationId, shipment.carrierCode, shipment.etd, shipment.principalId, legsVersion]);
+
   const [linkedAlloc, setLinkedAlloc] = useState(null);
   useEffect(() => {
     let live = true;
@@ -495,8 +479,15 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
   };
 
   // ── Validation — runs identically for the Save button and the nav-guard's auto-save ───────
+  // { errors, dropContract }: errors block the save; dropContract (a sentence, or null) says the shipment's contract
+  // no longer fits the route as it now stands and comes off when it's saved (the user, 2026-11-06: "If there's a
+  // contract active but is no longer matching the schedule, we can simply drop it on the save action, and put the
+  // warning in the pop-up that we're also using for the validation errors"). Before, that blocked Save, and Change
+  // Contract is off while the route has unsaved changes, so a picked sailing the contract didn't cover could only be
+  // discarded.
   const validateDraft = async () => {
     const errors = [];
+    let dropContract = null;
     // Check every sea leg's OWN pol/pod/carrierCode directly here — NOT the page-level `pol`/
     // `pod` variables above, which deliberately fall back to shipment.pol/pod (needed so the
     // Add Sailing search box still has something sensible to search on before any leg data
@@ -518,38 +509,58 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
     if (errors.length === 0 && shipment.contractType === "Central" && shipment.contractId && pol && pod) {
       const haulage = deriveHaulageNeeds(draftLegs || []);
       const dateRef = shipment.cargoReadyDate || shipment.etd || "";
+      // A contract is one carrier's: a sailing (or a leg) with another carrier doesn't fit it either.
+      const legCarrier = seaLegsForSearch.find(l => l.carrierCode)?.carrierCode || "";
       try {
-        const matches = await api.contracts.match({ pol, pod, ...(dateRef && { crd: dateRef }), ...haulageMatchParams(haulage) });
-        const stillMatches = matches.some(m => m.id === shipment.contractId && (m.routingId || "") === (shipment.contractRoutingId || ""));
-        if (!stillMatches) errors.push(`${shipment.contractRef || "This contract"} does not cover ${pol} → ${pod}.`);
+        const matches = await api.contracts.match({ pol, pod, ...(dateRef && { crd: dateRef }), ...(legCarrier && { carrier: legCarrier }),
+          ...haulageMatchParams(haulage) });
+        if (!stillOnContract(matches, shipment)) {
+          const ref = shipment.contractRef || "The contract";
+          const contractCarrier = contractDetail?.carrierCode || "";
+          const why = legCarrier && contractCarrier && legCarrier !== contractCarrier
+            ? `it's a ${contractCarrier} contract and the route now sails with ${legCarrier}`
+            : `it doesn't cover ${pol} → ${pod} as the route now stands`;
+          dropContract = `${ref} comes off this shipment when you save: ${why}.`
+            + (shipment.allocationId ? ` Its space configuration ${shipment.allocationId} goes with it.` : "")
+            + " Add a contract that fits once the route is saved.";
+        }
       } catch { /* a validation-check network hiccup shouldn't itself block Save */ }
     }
-    // Legs that don't meet (place + location type) or whose dates run backwards (legChain.js).
-    for (const p of legChainProblems(draftLegs || [])) errors.push(p.message);
-    return errors;
+    // Legs out of the journey's order, legs that don't meet (place + location type), dates that run backwards
+    // (legChain.js); an order problem ends with what the order should be (the user, 2026-11-06).
+    const chain = legChainProblems(draftLegs || []);
+    for (const p of chain) errors.push(p.message);
+    if (chain.some(p => p.kind === "order")) errors.push(ORDER_HELP);
+    return { errors, dropContract: errors.length ? null : dropContract };
   };
 
   // ── Commit — id-based diff of draftLegs against originalLegsSnapshot, same reconciliation
   // shape src/utils/applySailingToLegs.js already uses for the live sailing-pick case (match
   // by real id: update in place / remove missing / create new) rather than a full delete-then-
   // reinsert — shipment_legs ids are referenced elsewhere (AIS, Command Center). ─────────────
-  const commitDraft = async () => {
+  const commitDraft = async ({ dropContract = false } = {}) => {
     const originalById = new Map((originalLegsSnapshot || []).map(l => [l.id, l]));
-    const draftIds = new Set((draftLegs || []).map(l => l.id));
-
-    const removed = (originalLegsSnapshot || []).filter(l => !draftIds.has(l.id));
-    await Promise.all(removed.map(l => api.legs.remove(shipment.id, l.id)));
-
-    const created = (draftLegs || []).filter(l => !originalById.has(l.id));
-    for (const { id: _draftId, polName: _pn, podName: _ppn, ...payload } of created) {
-      await api.legs.create(shipment.id, payload);
-    }
-
+    // The whole route in one call (2026-11-06): the order on screen is the order stored, legs left out are removed,
+    // new ones (draft_… ids) added, and the server checks the route once against the user's rules (PKU, SEA, DEL;
+    // one Carrier's Haulage per side; dates forward), all or nothing. Before, legs were written one by one and the
+    // server put a new leg last: a Pick-up added in front of a saved SEA leg was stored after it (SHP-IOJNTD).
+    // A refusal throws with the server's sentence, which handleSave shows.
     const updated = (draftLegs || []).filter(l => {
       const orig = originalById.get(l.id);
       return orig && JSON.stringify(l) !== JSON.stringify(orig);
     });
-    await Promise.all(updated.map(l => api.legs.update(shipment.id, l.id, l)));
+    await api.legs.saveRoute(shipment.id, (draftLegs || []).map(({ polName, podName, ...l }) =>
+      ({ ...l, polName: polName || "", podName: podName || "" })));
+
+    // The contract that no longer fits comes off (confirmed in the dialog): after the route (a refused route keeps it)
+    // and before the sailing, so saving the sailing doesn't open a carrier booking on it (ensureBookingCreated needs
+    // a contract). The same fields a contract pick sets (ContractAssignModal), cleared; the type stays Central, so the
+    // card asks for a contract. The shipment is read fresh: saving the route just changed its ports and dates.
+    if (dropContract) {
+      const fresh = await api.shipments.get(shipment.id);
+      await api.shipments.update(shipment.id, { ...fresh, contractType: "Central", contractId: "", contractRef: "", contractRoutingId: "",
+        allocationId: "", spaceSkipReason: "", spaceOverageReason: "", spaceSelection: "", steeringReason: "" });
+    }
 
     // Schedule reconciliation: a freshly staged pick replaces whatever schedule row(s) exist;
     // if the sea leg no longer carries vessel/voyage (removed without a new pick), any existing
@@ -586,7 +597,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
     setHistoryVersion(v => v + 1); // re-fetches schedules via the effect above
     await onRefresh?.();
     emitLegsScheduleChanged(shipment.id);
-    toast.success("Saved");
+    toast.success(dropContract ? `Saved. ${shipment.contractRef || "The contract"} came off: add a contract that fits.` : "Saved");
     if (pendingSpotOffer) {
       const p = pendingSpotOffer;
       setPendingSpotOffer(null);
@@ -604,12 +615,19 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
   };
 
   const handleSave = async () => {
-    const errors = await validateDraft();
+    const { errors, dropContract } = await validateDraft();
     if (errors.length) { setValidationErrors(errors); return; }
+    if (dropContract) { setDropContractWarning(dropContract); return; } // the dialog's Save comes back through saveDraft
+    await saveDraft();
+  };
+  const saveDraft = async ({ dropContract = false } = {}) => {
     await withSaving(async () => {
       try {
-        await commitDraft();
+        await commitDraft({ dropContract });
       } catch (e) {
+        // The server refused the route (lib/route-rules.js): nothing was written (the route is saved all or nothing),
+        // so the draft stays as it is and the dialog says what to correct and what the order should be.
+        if (e.body?.code === "ROUTE_RULES") { setValidationErrors([...(e.body.problems || [e.message]), ...(e.body.help ? [e.body.help] : [])]); return; }
         // commitDraft is a sequence of independent API calls, not one server-side transaction —
         // a failure partway through (e.g. the leg diff succeeds but the schedule save doesn't)
         // must never fail silently: without this, the exception would be an unhandled rejection
@@ -640,12 +658,18 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
     if (!isDirty) { clearNavigationGuard(); return; }
     setNavigationGuard({
       trySave: async () => {
-        const errors = await validateDraft();
+        const { errors, dropContract } = await validateDraft();
         if (errors.length) { setValidationErrors(errors); return { ok: false, error: "Fix the issues before leaving this page" }; }
+        // Leaving never takes a contract off unasked: the same dialog, and the user saves from it.
+        if (dropContract) { setDropContractWarning(dropContract); return { ok: false, error: "Saving takes the contract off: confirm it before leaving this page" }; }
         try {
           await commitDraft();
           return { ok: true };
         } catch (e) {
+          if (e.body?.code === "ROUTE_RULES") {
+            setValidationErrors([...(e.body.problems || [e.message]), ...(e.body.help ? [e.body.help] : [])]);
+            return { ok: false, error: "The route breaks the route rules: correct it before leaving this page" };
+          }
           // Same partial-failure concern as handleSave above — re-sync from the server so the
           // draft never keeps disagreeing with whatever actually landed, even on failure.
           setLegsVersion(v => v + 1);
@@ -671,16 +695,19 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
     );
   }
 
+  const legsNow = draftLegs || [];
+  // The legs that say something (the blank leg of an empty route doesn't): no such leg = no route yet, so the page opens
+  // on the table and the "no legs yet" hero.
+  const routeLegs = legsNow.filter(l => l.pol || l.pod || l.vessel || l.voyage || l.etd || l.eta);
+  const editingRoute = routeLegs.length === 0 || isDirty || routeEdit;
+  const schedForCard = draftSailing || scheduleList[0] || null;
+
+  // Add/Change Sailing: the page's one glowing action, except while the route is being edited (then Save is).
   const addSailingBtn = canEditExportSide && (
-    <button type="button"
+    <button type="button" data-testid="shipment-schedules-add-sailing-btn"
       disabled={!canSearch}
       onClick={() => { if (canSearch) { setChainedFromContract(false); setPickerOpen(true); } }}
-      style={{ background: "none", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
-        borderRadius: 6, padding: "4px 12px", cursor: canSearch ? "pointer" : "not-allowed",
-        fontFamily: HZ_BODY, fontSize: 12, color: canSearch ? HZ.text : HZ.textMuted,
-        opacity: canSearch ? 1 : 0.5, display: "inline-flex", alignItems: "center", gap: 5 }}
-      onMouseEnter={e => { if (canSearch) { e.currentTarget.style.borderColor = HZ.cyan; e.currentTarget.style.color = HZ.cyan; }}}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = HZ.border; e.currentTarget.style.color = canSearch ? HZ.text : HZ.textMuted; }}
+      style={editingRoute ? pillBtnStyle({ disabled: !canSearch, accent: canSearch }) : ctaStyle({ disabled: !canSearch })}
       title={canSearch ? "Search and stage a sailing" : "POL, POD and carrier must be set"}>
       <IconAnchor size={12} />{hasSchedule ? "Change Sailing" : "Add Sailing"}
     </button>
@@ -688,222 +715,105 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
 
   const hasSpaceConfig = shipment.contractType === "Central" && shipment.allocationId;
 
+  // Whether the contract followed the Lane Steering, as saved when the contract was (Epic TKT-KFGL81, Story 3).
+  const steeringRow = (() => {
+    const chip = steeringChipOf(shipment);
+    if (!chip) return null;
+    const c = chip.tone === "good" ? HZ.good : chip.tone === "warn" ? HZ.warn : HZ.textMuted;
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, paddingTop: 10, borderTop: `1px solid ${HZ.border}`, flexWrap: "wrap" }}>
+        <span style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>Steering</span>
+        <span data-testid="shipment-schedules-steering-chip" title={chip.title}
+          style={{ fontFamily: HZ_MONO, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, color: c, background: c + "1f" }}>{chip.label}</span>
+        {chip.tone === "warn" && <span style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted }}>{chip.title}</span>}
+      </div>
+    );
+  })();
+
+  // The unsaved-changes bar is the Route card's footer: the draft is the route.
+  const dirtyFooter = isDirty ? (
+    <div id="shpsched-dirty-bar" data-testid="shipment-schedules-dirty-bar" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+      padding: "10px 16px", borderTop: `1px solid ${HZ.border}`, borderRadius: "0 0 16px 16px", background: `linear-gradient(90deg, ${HZ.cyanBg}, transparent 70%)` }}>
+      <span style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, flex: 1, minWidth: 220 }}>
+        You have unsaved route/schedule changes on this page. Save checks that the legs meet, the dates run in order and a leg with a vessel has a carrier.
+      </span>
+      <button id="shpsched-discard-btn" data-testid="shipment-schedules-discard-btn" type="button" disabled={isSaving} onClick={handleDiscard} style={pillBtnStyle({ disabled: isSaving })}>Discard</button>
+      <button id="shpsched-save-btn" data-testid="shipment-schedules-save-btn" type="button" disabled={isSaving} onClick={handleSave} style={ctaStyle({ disabled: isSaving })}>Save route</button>
+    </div>
+  ) : null;
+
   return (
-    <div id="shpsched-page" data-testid="shipment-schedules-page">
-      {isDirty && (
-        <div id="shpsched-dirty-bar" data-testid="shipment-schedules-dirty-bar" style={{ display: "flex", alignItems: "center", gap: 12,
-          background: HZ.cyanBg, border: `1px solid ${HZ.cyan}44`, borderRadius: 8,
-          padding: "10px 16px", marginBottom: 18 }}>
-          <span style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, flex: 1 }}>
-            You have unsaved route/schedule changes on this page.
-          </span>
-          <Btn id="shpsched-discard-btn" data-testid="shipment-schedules-discard-btn" size="sm" variant="secondary" disabled={isSaving} onClick={handleDiscard}>Discard</Btn>
-          <Btn id="shpsched-save-btn" data-testid="shipment-schedules-save-btn" size="sm" disabled={isSaving} onClick={handleSave}>💾 Save</Btn>
-        </div>
-      )}
+    <div id="shpsched-page" data-testid="shipment-schedules-page" style={{ position: "relative" }}>
+      {/* The horizon wash: a light source at the top of the page for the hero frame to glow against. */}
+      <div aria-hidden style={{ position: "absolute", left: -36, right: -36, top: -22, height: 380, background: HZ.ground, pointerEvents: "none", zIndex: 0 }} />
+      <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", gap: 20 }}>
+        <PillNav />
 
-      <div id="shpsched-line-agents-section" data-testid="shipment-schedules-line-agents-section" style={{ marginBottom: 22 }}>
-        <div style={sectionLabel()}>Line Agents</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-          <LineAgentField label="Export Line Agent" role="Line Agent (Export)" party={exportLineAgent}
-            canEdit={canEditExportLineAgent} onAssign={(id, cid, cname) => handleAssignLineAgent("Line Agent (Export)", id, cid, cname)}
-            onRemove={handleRemoveLineAgent} />
-          <LineAgentField label="Import Line Agent" role="Line Agent (Import)" party={importLineAgent}
-            canEdit={canEditImportLineAgent} onAssign={(id, cid, cname) => handleAssignLineAgent("Line Agent (Import)", id, cid, cname)}
-            onRemove={handleRemoveLineAgent} />
-        </div>
-      </div>
+        {routeLegs.length ? <RouteHero legs={legsNow} ports={ports} schedule={schedForCard} /> : <EmptyRouteHero shipment={shipment} ports={ports} />}
 
-      <div id="shpsched-legs-section" data-testid="shipment-schedules-legs-section">
-        <div style={sectionLabel()}>Route Legs</div>
-        <LegsTable key={`legs-${legsVersion}`} shipmentId={null} draftLegs={draftLegs} onDraftLegsChange={handleDraftLegsChange}
-          canEdit={canEditExportSide} showContractCols={false}
-          extraAction={addSailingBtn}
-          loopCode={deriveLoopCode(draftSailing || scheduleList[0])}
-          hideDraftBanner theme={HZ_LEGACY_THEME} />
-      </div>
-
-      <div style={{ marginTop: 22, marginBottom: 22,
-        ...(hasSpaceConfig ? { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 } : {}) }}>
-        <div id="shpsched-contract-section" data-testid="shipment-schedules-contract-section">
-          <div style={sectionLabel()}>Contract</div>
-          {contractMismatch && (
-            <div id="shpsched-contract-mismatch" data-testid="shipment-schedules-contract-mismatch" style={{ background: HZ.critBg, border: `1px solid ${HZ.crit}55`, borderLeft: `3px solid ${HZ.crit}`,
-              borderRadius: 8, padding: "12px 16px", marginBottom: 12,
-              display: "flex", alignItems: "flex-start", gap: 10 }}>
-              <span style={{ color: HZ.crit, fontSize: 15, lineHeight: 1.4, display: "inline-flex" }}><IconWarning size={15} /></span>
-              <div>
-                <div style={{ fontFamily: HZ_BODY, fontSize: 13, fontWeight: 700, color: HZ.crit, marginBottom: 3 }}>
-                  Contract doesn't cover this route
-                </div>
-                <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, lineHeight: 1.55 }}>
-                  <strong style={{ fontFamily: HZ_MONO, color: HZ.text }}>{shipment.contractRef || "This contract"}</strong> no
-                  longer matches <strong style={{ fontFamily: HZ_MONO, color: HZ.text }}>{pol} → {pod}</strong>.
-                  Pick a new one below — via a linked space configuration, the Central contract list, or switch to SPOT/Pending/Customer Own.
-                </div>
-              </div>
-            </div>
+        <RouteCard canView={routeLegs.length > 0 && !isDirty} editing={editingRoute} canEdit={canEditExportSide} onEditChange={setRouteEdit}
+          note={routeLegs.length === 0 ? "No legs yet: the routing is configured here" : isDirty ? "Unsaved changes: Save route or Discard below" : ""}
+          footer={dirtyFooter}>
+          {editingRoute ? (
+            <LegsTable key={`legs-${legsVersion}`} shipmentId={null} draftLegs={draftLegs} onDraftLegsChange={handleDraftLegsChange}
+              canEdit={canEditExportSide} showContractCols={false}
+              loopCode={deriveLoopCode(draftSailing || scheduleList[0])}
+              hideDraftBanner theme={HZ_LEGACY_THEME} variant="pill" onRefuse={setRefusedChange} />
+          ) : (
+            <RouteRail legs={legsNow} ports={ports} />
           )}
-          <div style={{ display: "flex", alignItems: "center", gap: 14, maxWidth: hasSpaceConfig ? "none" : 480 }}>
-            <div id="shpsched-contract-summary" data-testid="shipment-schedules-contract-summary" style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", flex: 1,
-              background: HZ.bg, border: `1px solid ${contractMismatch ? HZ.crit + "66" : HZ.border}`, borderRadius: 8 }}>
-              <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
-                padding: "2px 8px", borderRadius: 4, flexShrink: 0,
-                // Central specifically reads violet — matches the approved Trade Horizon mockup
-                // (https://claude.ai/artifact/SUaCjaQYTdaPHbXmm2FfYj)'s own pill-violet contract
-                // badge exactly; SPOT/Pending/Customer Own keep the existing cyan, which the
-                // mockup never depicted an example of (its own sample shipment was Central).
-                ...(shipment.contractType === "Central"
-                  ? { background: HZ.violetBg, color: HZ.violetPillText, border: `1px solid ${HZ.violet}66` }
-                  : { background: HZ.cyanBg, color: HZ.cyan }) }}>
-                {shipment.contractType || "—"}
-              </span>
-              <span style={{ fontFamily: HZ_MONO, fontSize: 13, color: shipment.contractRef ? HZ.text : HZ.textMuted,
-                fontWeight: shipment.contractRef ? 700 : 400, fontStyle: shipment.contractRef ? "normal" : "italic",
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {shipment.contractRef || "No contract assigned"}
-              </span>
-              {shipment.spotOfferId && shipment.contractType === "SPOT" && (
-                <span data-testid="shipment-schedules-contract-spot-chip" style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, background: HZ.surface2, color: HZ.text,
-                  borderRadius: 4, padding: "2px 8px", flexShrink: 0 }}>Spot offer</span>
-              )}
-              {shipment.allocationId && (
-                <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, background: HZ.goodBg, color: HZ.good,
-                  border: `1px solid ${HZ.good}44`, borderRadius: 4, padding: "2px 8px", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}><IconPackage size={10} /> Space config</span>
-              )}
-              {shipment.contractType !== "Central" && shipment.contractValidTo && shipment.contractValidTo < todayStr && (
-                <span title={`Expired ${shipment.contractValidTo}`}
-                  style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, background: HZ.warnBg, color: HZ.warn,
-                  border: `1px solid ${HZ.warn}44`, borderRadius: 4, padding: "2px 8px", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}><IconWarning size={10} /> Expired</span>
-              )}
-            </div>
-            {canEditExportSide && (
-              <Btn id="shpsched-contract-btn" data-testid="shipment-schedules-contract-btn" size="sm" variant="secondary" disabled={isDirty}
-                title={isDirty ? "Save or discard your route changes first" : undefined}
-                onClick={() => setContractModalOpen(true)}>
-                {shipment.contractRef ? "Change Contract" : "+ Add Contract"}
-              </Btn>
-            )}
+        </RouteCard>
+        {/* Under the route legs (the user, mockup v5): Add/Change Sailing and History. */}
+        <div data-testid="shipment-schedules-route-actions" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: -8 }}>
+          {addSailingBtn}
+          <button id="shpsched-history-btn" data-testid="shipment-schedules-history-btn" type="button" onClick={() => setHistOpen(true)} style={pillBtnStyle()}>⏱ History</button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.25fr) minmax(0, 1fr)", gap: 20, alignItems: "start" }}>
+          <div id="shpsched-contract-section" data-testid="shipment-schedules-contract-section" style={{ display: "flex", flexDirection: "column", gap: 14, scrollMarginTop: 90 }}>
+            <ContractCard shipment={shipment} contractDetail={contractDetail} commodityLabel={contractCommodityLabel} rateSnapshotId={latestRateSnapshotId}
+              mismatch={!!contractMismatch} pol={pol} pod={pod} canEdit={canEditExportSide} isDirty={isDirty}
+              onChange={() => setContractModalOpen(true)} steeringChip={steeringRow}
+              space={hasSpaceConfig ? linkedAlloc : null} spaceMissing={!!hasSpaceConfig && !linkedAlloc} steering={steering} shipmentTeu={shipmentTEU} />
           </div>
 
-          {/* Contract details facelift, direct request — same column structure regardless of
-              contract type. Contract Number/Named Account/Commodity/Rate ID only exist on a real
-              Central contract record; SPOT/Pending/Customer Own (and a Central contract still
-              loading) show a dash for those, falling back to the shipment's own contractRef/
-              contractValidFrom/contractValidTo for the fields that DO apply to a manual contract
-              type. Rate ID is the shipment's own latest rate snapshot (2026-09-06 fix) — it used
-              to join every rate line's own id on the assigned CONTRACT instead, which legitimately
-              carries several (one per charge type) and read as duplication; see
-              latestRateSnapshotId above for the full story. */}
-          {(() => {
-            const isCentral = shipment.contractType === "Central";
-            const cols = [
-              ["Contract Number", isCentral ? (contractDetail?.contractNumber || "") : ""],
-              ["Contract Reference", shipment.contractRef || ""],
-              ["Named Account", isCentral ? (contractDetail?.namedAccount || "") : ""],
-              ["Commodity", isCentral ? contractCommodityLabel : ""],
-              ["Rate ID", isCentral ? (latestRateSnapshotId || "") : ""],
-              ["Valid From", isCentral ? (contractDetail?.validFrom || "") : (shipment.contractValidFrom || "")],
-              ["Valid To", isCentral ? (contractDetail?.validTo || "") : (shipment.contractValidTo || "")],
-            ];
-            return (
-              <div id="shpsched-contract-details" data-testid="shipment-schedules-contract-details" style={{ marginTop: 12,
-                border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8, overflow: "hidden" }}>
-                <div style={{ display: "flex", padding: "8px 0", borderBottom: `1px solid ${HZ.border}`, background: HZ.surface }}>
-                  {cols.map(([label], i) => (
-                    <div key={label} style={{ flex: 1, minWidth: 0, paddingLeft: 14, paddingRight: 10,
-                      fontFamily: HZ_BODY, fontSize: 10.5, fontWeight: 600, color: HZ.textMuted,
-                      textTransform: "uppercase", letterSpacing: ".08em",
-                      borderRight: i < cols.length - 1 ? `1px solid ${HZ.border}` : "none" }}>
-                      {label}
-                    </div>
-                  ))}
-                </div>
-                <div style={{ display: "flex", padding: "8px 0" }}>
-                  {cols.map(([label, value], i) => (
-                    <div key={label} style={{ flex: 1, minWidth: 0, paddingLeft: 14, paddingRight: 10, fontFamily: HZ_MONO, fontSize: 12,
-                      color: value ? HZ.text : HZ.textMuted, fontWeight: value ? 700 : 400, fontStyle: value ? "normal" : "italic",
-                      wordBreak: "break-word" }}>
-                      {value || "—"}
-                    </div>
-                  ))}
-                </div>
-                {/* Whether it followed the Lane Steering, as saved when the contract was (Epic TKT-KFGL81, Story 3). */}
-                {(() => {
-                  const chip = steeringChipOf(shipment);
-                  if (!chip) return null;
-                  const c = chip.tone === "good" ? HZ.good : chip.tone === "warn" ? HZ.warn : HZ.textMuted;
-                  return (
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderTop: `1px solid ${HZ.border}` }}>
-                      <span style={{ fontFamily: HZ_BODY, fontSize: 10.5, fontWeight: 600, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>Steering</span>
-                      <span data-testid="shipment-schedules-steering-chip" title={chip.title}
-                        style={{ fontFamily: HZ_MONO, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, color: c, background: c + "1f" }}>{chip.label}</span>
-                      {chip.tone === "warn" && <span style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{chip.title}</span>}
-                    </div>
-                  );
-                })()}
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+            <div id="shpsched-line-agents-section" data-testid="shipment-schedules-line-agents-section" style={{ scrollMarginTop: 90 }}>
+              <div style={{ ...sectionLabelStyle(), marginBottom: 8 }}>Line agents</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <LineAgentTile label="Export Line Agent" role="Line Agent (Export)" party={exportLineAgent}
+                  canEdit={canEditExportLineAgent} onAssign={(id, cid, cname) => handleAssignLineAgent("Line Agent (Export)", id, cid, cname)}
+                  onRemove={handleRemoveLineAgent} />
+                <LineAgentTile label="Import Line Agent" role="Line Agent (Import)" party={importLineAgent}
+                  canEdit={canEditImportLineAgent} onAssign={(id, cid, cname) => handleAssignLineAgent("Line Agent (Import)", id, cid, cname)}
+                  onRemove={handleRemoveLineAgent} />
               </div>
-            );
-          })()}
+            </div>
+            <SailingCard schedule={schedForCard} staged={!!draftSailing} hasPorts={!!(pol && pod)}
+              legVessel={legsNow.find(l => l.legType === "SEA" && (l.vessel || l.voyage)) || null} />
+          </div>
         </div>
 
-        {hasSpaceConfig && (
-          <div id="shpsched-space-config-section" data-testid="shipment-schedules-space-config-section"
-            style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-            <div style={sectionLabel()}>Space Configuration</div>
-            {linkedAlloc ? (
-              <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8, padding: "12px 14px",
-                flex: 1, display: "flex", flexDirection: "column" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <span style={{ fontFamily: HZ_MONO, fontSize: 12, fontWeight: 700, color: HZ.text }}>
-                    {linkedAlloc.carrierCode} · {linkedAlloc.pol} → {linkedAlloc.pod}
-                  </span>
-                  <span style={{ fontFamily: HZ_MONO, fontSize: 10, color: HZ.textMuted }}>
-                    {linkedAlloc.contractNumber || "—"}
-                  </span>
-                </div>
-                <div style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted, marginBottom: 8 }}>
-                  Valid {linkedAlloc.effectiveDate} → {linkedAlloc.endDate}
-                  {linkedAlloc.spaceBasis === "week" && <> · <span data-testid="schedules-space-week" style={{ color: HZ.text }}>Week {linkedAlloc.weekNumber}, {linkedAlloc.allocatedTEU} TEU a week</span></>}
-                </div>
-                <ConsumptionBar allocated={linkedAlloc.allocatedTEU} confirmed={linkedAlloc.confirmedTEU}
-                  pending={linkedAlloc.pendingTEU} rejected={linkedAlloc.rejectedTEU} height={6} width="100%" />
-                <div style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted, marginTop: 4 }}>
-                  {linkedAlloc.confirmedTEU} / {linkedAlloc.allocatedTEU} TEU confirmed ({linkedAlloc.remainingTEU} remaining)
-                  {linkedAlloc.pendingTEU > 0 && <span style={{ color: HZ.warn }}> · +{linkedAlloc.pendingTEU} pending</span>}
-                  {linkedAlloc.rejectedTEU > 0 && <span style={{ color: HZ.crit }}> · +{linkedAlloc.rejectedTEU} rejected</span>}
-                </div>
-              </div>
-            ) : (
-              <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, fontStyle: "italic",
-                background: HZ.bg, border: `1px dashed ${HZ.border}`, borderRadius: 8, padding: "12px 14px",
-                flex: 1 }}>
-                No active space configuration matches this shipment.
+        {shipment.contractType !== "Central" && spot.offer !== undefined && (
+          <div id="shpsched-spot-offer-section" data-testid="shipment-schedules-spot-offer-section">
+            <div style={{ ...sectionLabelStyle(), marginBottom: 10 }}>Spot offer</div>
+            {pendingSpotOffer && (
+              <div data-testid="spot-offer-pending" style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, background: HZ.cyanBg, border: `1px solid ${HZ.cyan}55`, borderRadius: 10, padding: "9px 12px", marginBottom: 10 }}>
+                On Save: {shipment.carrierCode}'s offer <b style={{ fontFamily: HZ_MONO }}>{pendingSpotOffer.offerRef}</b> (USD {Math.round(pendingSpotOffer.totalUsd).toLocaleString("en-US")}) for the new sailing{spot.offer ? " replaces the current one" : ""}.
               </div>
             )}
+            <SpotOfferCard offer={spot.offer} carrierCode={shipment.carrierCode} canEdit={canEditExportSide && !isDirty}
+              locked={spotLocked}
+              lockedText={spotLocked ? `The booking is with ${shipment.carrierCode} (${spot.booking.status}): cancel or amend it before changing its spot offer.` : ""}
+              onAdd={tab => setSpotModal(tab)}
+              onRemove={async () => {
+                if (!window.confirm(`Remove spot offer ${spot.offer.offerRef}? Its BUY lines go with it.`)) return;
+                try { await removeSpotOffer(shipment.id); await onRefresh?.(); spot.reload(); }
+                catch (e) { toast.error(e.message || "The offer wasn't removed"); }
+              }} />
           </div>
         )}
       </div>
-
-      {shipment.contractType !== "Central" && spot.offer !== undefined && (
-        <div id="shpsched-spot-offer-section" data-testid="shipment-schedules-spot-offer-section" style={{ marginBottom: 22 }}>
-          <div style={sectionLabel()}>Spot offer</div>
-          {pendingSpotOffer && (
-            <div data-testid="spot-offer-pending" style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, background: HZ.cyanBg, border: `1px solid ${HZ.cyan}55`, borderRadius: 8, padding: "9px 12px", marginBottom: 10 }}>
-              On Save: {shipment.carrierCode}'s offer <b style={{ fontFamily: HZ_MONO }}>{pendingSpotOffer.offerRef}</b> (USD {Math.round(pendingSpotOffer.totalUsd).toLocaleString("en-US")}) for the new sailing{spot.offer ? " replaces the current one" : ""}.
-            </div>
-          )}
-          <SpotOfferCard offer={spot.offer} carrierCode={shipment.carrierCode} canEdit={canEditExportSide && !isDirty}
-            locked={spotLocked}
-            lockedText={spotLocked ? `The booking is with ${shipment.carrierCode} (${spot.booking.status}): cancel or amend it before changing its spot offer.` : ""}
-            onAdd={tab => setSpotModal(tab)}
-            onRemove={async () => {
-              if (!window.confirm(`Remove spot offer ${spot.offer.offerRef}? Its BUY lines go with it.`)) return;
-              try { await removeSpotOffer(shipment.id); await onRefresh?.(); spot.reload(); }
-              catch (e) { toast.error(e.message || "The offer wasn't removed"); }
-            }} />
-        </div>
-      )}
       {spotModal && (
         <AddSpotOfferModal targetLabel={shipment.id} initialTab={spotModal}
           ctx={{ carrierCode: shipment.carrierCode, pol: shipment.pol, pod: shipment.pod, equipment: equipmentOfContainers(containers), from: String(shipment.cargoReadyDate || "").slice(0, 10) }}
@@ -917,9 +827,6 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
           }} />
       )}
 
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <Btn id="shpsched-history-btn" data-testid="shipment-schedules-history-btn" size="sm" variant="secondary" onClick={() => setHistOpen(true)}>⏱ History</Btn>
-      </div>
       {histOpen && (
         <Modal title="Schedule History" onClose={() => setHistOpen(false)} width={640} data-testid="shipment-schedules-history-modal">
           <ScheduleHistoryPanel key={`history-${historyVersion}`} shipment={shipment} forceOpen />
@@ -927,20 +834,30 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
       )}
 
       {validationErrors && (
-        <Modal title="Can't save yet" onClose={() => setValidationErrors(null)} width={460} hideClose data-testid="shipment-schedules-validation-errors-modal">
-          <p style={{ fontFamily: HZ_BODY, fontSize: 14, color: HZ.text, margin: "0 0 10px", lineHeight: 1.5 }}>
-            Fix the following before saving:
-          </p>
-          <ul style={{ margin: "0 0 20px", paddingLeft: 20, display: "flex", flexDirection: "column", gap: 6 }}>
-            {validationErrors.map((e, i) => (
-              <li key={i} style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text, lineHeight: 1.5 }}>{e}</li>
-            ))}
-          </ul>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Btn variant="danger" onClick={handleDiscard} data-testid="shipment-schedules-validation-discard-btn">Discard changes</Btn>
-            <Btn onClick={() => setValidationErrors(null)} data-testid="shipment-schedules-validation-fix-btn">Fix issues</Btn>
-          </div>
-        </Modal>
+        <ProblemsDialog title="Can't save yet" lead="Fix the following before saving:" items={validationErrors}
+          onClose={() => setValidationErrors(null)} testId="shipment-schedules-validation-errors-modal">
+          <Btn variant="danger" onClick={handleDiscard} data-testid="shipment-schedules-validation-discard-btn">Discard changes</Btn>
+          <Btn onClick={() => setValidationErrors(null)} data-testid="shipment-schedules-validation-fix-btn">Fix issues</Btn>
+        </ProblemsDialog>
+      )}
+
+      {/* A change the route table refused (a second Carrier's Haulage leg on one side, a leg arriving before it departs):
+          the same dialog, not a toast (the user, 2026-11-06). The row is already back to what it was. */}
+      {refusedChange && (
+        <ProblemsDialog title="That change wasn't made" lead="The route keeps what it had. What's wrong:" items={refusedChange}
+          onClose={() => setRefusedChange(null)} testId="shipment-schedules-change-refused-modal">
+          <Btn onClick={() => setRefusedChange(null)} data-testid="shipment-schedules-change-refused-ok-btn">Fix issues</Btn>
+        </ProblemsDialog>
+      )}
+
+      {/* Save with a contract that no longer fits the route: the warning in the same dialog, and Save takes it off. */}
+      {dropContractWarning && (
+        <ProblemsDialog title="Save the route?" lead="Saving this route also changes the contract:" items={[dropContractWarning]}
+          onClose={() => setDropContractWarning(null)} testId="shipment-schedules-drop-contract-modal">
+          <Btn variant="secondary" onClick={() => setDropContractWarning(null)} data-testid="shipment-schedules-drop-contract-back-btn">Back</Btn>
+          <Btn onClick={() => { setDropContractWarning(null); saveDraft({ dropContract: true }); }}
+            data-testid="shipment-schedules-drop-contract-save-btn">Save and remove the contract</Btn>
+        </ProblemsDialog>
       )}
 
       {confirmSailing && (

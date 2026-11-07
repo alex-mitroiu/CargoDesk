@@ -120,7 +120,8 @@ async function setSource(token, value) {
     const remoteId = createRemote.body.id;
     contractIds.push({ id: remoteId, source: "remote" });
     const getRemote = await request("GET", `/api/contracts/${remoteId}`, null, token);
-    assert("remote get 200 with legs", getRemote.status === 200 && getRemote.body.legs.length === 1, JSON.stringify(getRemote.body));
+    // The leg's carrier-haulage flag comes back as a typed Pick-up leg (from anywhere) in front of the SEA leg (2026-11-07).
+    assert("remote get 200 with legs, typed", getRemote.status === 200 && JSON.stringify(getRemote.body.legs.map(l => [l.legType, l.pol, l.pod])) === JSON.stringify([["Pick-up", "", "CNSHA"], ["SEA", "CNSHA", "USLAX"]]), JSON.stringify(getRemote.body.legs));
     const publishRemote = await request("POST", `/api/contracts/${remoteId}/publish`, {}, token);
     assert("remote publish succeeds", publishRemote.status === 200 && publishRemote.body.status === "Active", JSON.stringify(publishRemote.body));
     // match only ever considers Active contracts (both locally and on the service) — must run

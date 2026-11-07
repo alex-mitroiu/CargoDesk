@@ -23,15 +23,18 @@ import RoutingLinesEditor from "./RoutingLinesEditor";
 import { api } from "../../api";
 
 const leg = (pol, pod, routingIndex, extra = {}) => ({
-  pol, pod, routingIndex, polLocType: "Terminal", podLocType: "Terminal", vesselService: "",
+  legType: "SEA", movementBy: "", pol, pod, routingIndex, polLocType: "Terminal", podLocType: "Terminal", vesselService: "",
   polCarrierHaulage: false, podCarrierHaulage: false, polHaulageLocations: "", podHaulageLocations: "",
   polLinkedAllowed: false, podLinkedAllowed: false, transitDays: 0, ...extra,
 });
 
 const handlers = () => ({
   onAddRouting: vi.fn(), onUpdateRouting: vi.fn(), onRemoveRouting: vi.fn(),
-  onAddLeg: vi.fn(), onUpdateLeg: vi.fn(), onRemoveLeg: vi.fn(),
+  onAddLeg: vi.fn(), onUpdateLeg: vi.fn(), onRemoveLeg: vi.fn(), onSetLineLegs: vi.fn(),
 });
+// Typed legs (2026-11-07): a Pick-up leg collects from its places.
+const pickup = (places, pod, routingIndex, extra = {}) => leg(places.split(" ")[0] || "", pod, routingIndex,
+  { legType: "Pick-up", polHaulageLocations: places, polLocType: "Door", polCarrierHaulage: true, ...extra });
 const renderEditor = (routings, legs, h = handlers()) => {
   render(<RoutingLinesEditor routings={routings} legs={legs} {...h} />);
   return h;
@@ -52,7 +55,8 @@ describe("RoutingLinesEditor — one block per routing line", () => {
     expect(within(block).getAllByText("AL5").length).toBeGreaterThan(0);
     expect(within(block).getByTestId("routing-line-0-leg-0")).toBeInTheDocument();
     expect(within(block).getByTestId("routing-line-0-leg-1")).toBeInTheDocument();
-    expect(within(block).getAllByText("Sea").length).toBe(2);
+    expect(within(block).getByTestId("routing-line-0-leg-0-type")).toHaveValue("SEA");
+    expect(within(block).getByTestId("routing-line-0-leg-1-type")).toHaveValue("SEA");
   });
 
   it("asks for a leg when a line has none", () => {
@@ -80,12 +84,19 @@ describe("RoutingLinesEditor — what it warns about and blocks", () => {
 
   it("warns when a line's legs don't connect", () => {
     renderEditor([{}], [leg("NLRTM", "BEANR", 0), leg("DEHAM", "USNYC", 0)]);
-    expect(screen.getByText(/Leg 1 discharges at/)).toHaveTextContent("Leg 1 discharges at BEANR, but leg 2 loads from DEHAM");
+    expect(screen.getByText(/Leg 1 ends at/)).toHaveTextContent("Leg 1 ends at BEANR, but leg 2 starts at DEHAM");
   });
 
-  it("allows one pick-up location per line", () => {
-    renderEditor([{}], [leg("NLRTM", "USNYC", 0, { polLocType: "Door", polCarrierHaulage: true, polHaulageLocations: "DEBER NLAMS" })]);
-    expect(screen.getByText(/One pick-up location per line/)).toBeInTheDocument();
+  it("a Pick-up leg takes several places (one line instead of one per place)", () => {
+    renderEditor([{}], [pickup("DEBER NLAMS", "NLRTM", 0), leg("NLRTM", "USNYC", 0)]);
+    expect(screen.getByTestId("routing-line-0-leg-0-from-place-DEBER")).toBeInTheDocument();
+    expect(screen.getByTestId("routing-line-0-leg-0-from-place-NLAMS")).toBeInTheDocument();
+    expect(screen.queryByTestId("routing-line-0-problems")).toBeNull();
+  });
+
+  it("says what's wrong with a line out of order, and the order", () => {
+    renderEditor([{}], [leg("NLRTM", "USNYC", 0), pickup("NLAMS", "NLRTM", 0)]);
+    expect(screen.getByTestId("routing-line-0-problems")).toHaveTextContent("The Pick-up leg comes first, before the SEA legs. The order on a contract line:");
   });
 
   it("says which legs have no line yet and that each becomes its own line on save", () => {
@@ -114,20 +125,34 @@ describe("RoutingLinesEditor — edits reach the contract form", () => {
     expect(h.onRemoveLeg).toHaveBeenCalledWith(1);
   });
 
-  it("switching an end to Door turns carrier haulage on; back to Terminal clears its location", () => {
-    const h = renderEditor([{}], [leg("NLRTM", "USNYC", 0)]);
-    const fromCell = screen.getByTestId("routing-line-0-leg-0");
-    fireEvent.click(within(fromCell).getAllByText("Door")[0]);
-    expect(h.onUpdateLeg).toHaveBeenCalledWith(0, { polLocType: "Door", polCarrierHaulage: true });
-    fireEvent.click(within(fromCell).getAllByText("Terminal")[0]);
-    expect(h.onUpdateLeg).toHaveBeenCalledWith(0, { polLocType: "Terminal", polCarrierHaulage: false, polHaulageLocations: "" });
+  it("the Leg dropdown hands the line back re-typed and in order: a leg made Pick-up goes first", () => {
+    const h = renderEditor([{}], [leg("NLRTM", "USNYC", 0), leg("NLAMS", "NLRTM", 0)]);
+    fireEvent.change(screen.getByTestId("routing-line-0-leg-1-type"), { target: { value: "Pick-up" } });
+    expect(h.onSetLineLegs).toHaveBeenCalledTimes(1);
+    const [ri, legs] = h.onSetLineLegs.mock.calls[0];
+    expect(ri).toBe(0);
+    expect(legs.map(l => [l.legType, l.pol, l.pod])).toEqual([["Pick-up", "NLAMS", "NLRTM"], ["SEA", "NLRTM", "USNYC"]]);
+    expect(legs[0].polHaulageLocations).toBe("NLAMS");
   });
 
-  it("offers the pick-up location field only on a Door/CY start of the line, upper-cased", () => {
-    const h = renderEditor([{}], [leg("DEHAM", "USNYC", 0, { polLocType: "Door", polCarrierHaulage: true })]);
-    fireEvent.change(screen.getByLabelText("Pick-up location"), { target: { value: "deber" } });
-    expect(h.onUpdateLeg).toHaveBeenCalledWith(0, { polHaulageLocations: "DEBER" });
-    expect(screen.queryByLabelText("Delivery location")).toBeNull(); // the To end is a Terminal
+  it("refuses a second Pick-up leg on the line, saying what's wrong and the order, and changes nothing", () => {
+    const h = renderEditor([{}], [pickup("NLAMS", "NLRTM", 0), leg("DEBER", "NLRTM", 0), leg("NLRTM", "USNYC", 0)]);
+    fireEvent.change(screen.getByTestId("routing-line-0-leg-1-type"), { target: { value: "Pick-up" } });
+    expect(h.onSetLineLegs).not.toHaveBeenCalled();
+    expect(screen.getByTestId("routing-line-0-refused")).toHaveTextContent("That change wasn't made. A line has at most one Pick-up leg");
+    fireEvent.click(within(screen.getByTestId("routing-line-0-refused")).getByLabelText("Dismiss"));
+    expect(screen.queryByTestId("routing-line-0-refused")).toBeNull();
+  });
+
+  it("a Pick-up leg's place, kind of place and mode reach the form", () => {
+    const h = renderEditor([{}], [pickup("NLAMS DEBER", "NLRTM", 0), leg("NLRTM", "USNYC", 0)]);
+    fireEvent.click(screen.getByLabelText("Remove NLAMS"));
+    expect(h.onUpdateLeg).toHaveBeenCalledWith(0, { polHaulageLocations: "DEBER", pol: "DEBER", polName: "" });
+    fireEvent.click(within(screen.getByTestId("routing-line-0-leg-0-from-loctype")).getByText("CY"));
+    expect(h.onUpdateLeg).toHaveBeenCalledWith(0, { polLocType: "Container Yard" });
+    fireEvent.change(screen.getByTestId("routing-line-0-leg-0-mode"), { target: { value: "Barge" } });
+    expect(h.onUpdateLeg).toHaveBeenCalledWith(0, { movementBy: "Barge" });
+    expect(screen.queryByTestId("routing-line-0-leg-1-mode")).toBeNull(); // a SEA leg has no mode
   });
 });
 

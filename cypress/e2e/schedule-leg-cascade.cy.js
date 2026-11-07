@@ -7,7 +7,7 @@
  * schedule by mistake, and — once genuinely unlinked — a stale header and an ungated Carrier
  * Booking page.
  *
- * The page has since moved to a staged-draft model (a "💾 Save" button that validates before
+ * The page has since moved to a staged-draft model (a "Save route" button that validates before
  * committing; navigating away with an invalid draft is blocked, a valid one auto-saves) —
  * the original bug 1's own premise (a "locked" leg concept) is gone entirely, every leg is
  * always directly editable now, so that regression can't recur and isn't retested here. This
@@ -111,6 +111,9 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
     // The shipment header/breadcrumb (matched above) can resolve before the Route Legs
     // table's own separate fetch finishes — wait for the existing real leg to actually
     // render before interacting, or "+ Add leg" can race an empty table.
+    // Since 2026-11-06 the Route legs card opens on the rail (the read view); the table where the
+    // routing is configured is one click away, "Edit route".
+    cy.get('[data-testid="shipment-schedules-route-edit-btn"]', { timeout: 15000 }).click();
     cy.get('[id^="leg-row-"]', { timeout: 10000 }).should("have.length", 1);
     cy.contains("button", "+ Add leg").click();
     // "+ Add leg" opens a Pick-up / SEA / Delivery menu (2026-09-18) instead of immediately
@@ -143,7 +146,9 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
     findNewLeg().find("select").first().should("have.value", "Pick-up");
 
     // Remove that same blank leg again — same content-based re-lookup as above, not position.
-    findNewLeg().click();
+    // "left": the row's blank leading column. A row is wider than the table's visible area at Cypress's
+    // 1280px window (the route table's pill look, 2026-11-06), so its middle can sit past the scroll edge.
+    findNewLeg().click("left");
     // {force: true}: this specific click has been consistently failing in CI (and only CI —
     // never reproduced locally, including via a real, coordinate-based mouse click through
     // CDP across many runs) with "covered by another element" against a bare z-index:1000
@@ -180,12 +185,15 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
   it("removing the REAL schedule leg stages its removal — Save then clears the header, schedule, and gates Carrier Booking", () => {
     cy.window().then(win => { win.location.hash = `shipments/${shipmentId}/schedules`; });
     cy.contains(shipmentId, { timeout: 15000 }).should("be.visible");
+    // Since 2026-11-06 the Route legs card opens on the rail (the read view); the table where the
+    // routing is configured is one click away, "Edit route".
+    cy.get('[data-testid="shipment-schedules-route-edit-btn"]', { timeout: 15000 }).click();
     // Not `cy.contains('[id^="leg-row-"]', "DEMO CADENZA")` — the vessel name lives only in the
     // row's `<input placeholder="Name…">` value, never as a text node, so that never actually
     // matched anything (see the real bug this uncovered in the previous test's own comment).
     // Wait on the input's value directly, then click its containing row.
     cy.get('input[placeholder="Name…"]', { timeout: 10000 }).should("have.value", "DEMO CADENZA")
-      .closest('[id^="leg-row-"]').click();
+      .closest('[id^="leg-row-"]').click("left"); // the row's leading column, always in view (see the previous test)
     // {force: true} — see the identical comment on the previous test's own "Remove leg" click.
     cy.contains("button", "Remove leg").click({ force: true });
     cy.contains("h2", "Remove leg?", { timeout: 8000 }).parent().parent().within(() => {
@@ -201,7 +209,7 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
       expect(res.body).to.have.length(1);
     });
 
-    cy.contains("button", "💾 Save").click();
+    cy.get('[data-testid="shipment-schedules-save-btn"]').click();
     cy.contains("Saved", { timeout: 8000 }).should("be.visible");
     // Header no longer shows the stale vessel/voyage.
     cy.contains("DEMO CADENZA").should("not.exist");

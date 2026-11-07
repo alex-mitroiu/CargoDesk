@@ -5,15 +5,16 @@
  *   node tests/routing-lines.test.js
  *
  * normalizeRoutingLines turns any contract payload into "one routing per line": loose legs become
- * routings, a routing that isn't one connected chain is split, a leg listing several pick-up or
- * delivery places becomes one line per combination, and two lines describing the same routing are
- * reported. The shapes below are the real ones found in the data on 2026-09-30 (53-2240's three
- * side-by-side lanes, CMDU-CH-EUN-NAM's "DEBER NLAMS" / "USLAX USCHI" door-to-door leg).
+ * routings, a routing that isn't one connected chain is split, and two lines describing the same routing are
+ * reported. Since 2026-11-07 every leg is typed (Pick-up / SEA / Delivery, the user's option D): an old carrier-
+ * haulage flag becomes a Pick-up or Delivery leg with its places (several allowed), and a typed line out of order
+ * is reported. The shapes below are the real ones found in the data (53-2240's three side-by-side lanes on
+ * 2026-09-30; CMDU-CH-EUN-NAM, suck_it_up, HLCU-EUN_USWC_0001 and AUDIT-HAULAGE-TEST on 2026-11-06).
  */
 
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { normalizeRoutingLines, droppedRoutingIds } = require("../lib/routingLines.js");
+const { normalizeRoutingLines, droppedRoutingIds, lineProblemsError } = require("../lib/routingLines.js");
 
 let passed = 0, failed = 0;
 function assert(label, condition, detail = "") {
@@ -43,13 +44,61 @@ console.log("\nSide-by-side lanes in one group (53-2240 / EUS-US) split into one
   assert("the contract-wide rate still applies to all of them", out.rates.length === 1 && out.rates[0].routingIndex === -1);
 }
 
-console.log("\nSeveral pick-ups / deliveries on one leg (CMDU-CH-EUN-NAM) become one line per combination");
+const typed = out => out.legs.map(l => `${l.legType}:${l.pol || "*"}(${l.polLocType})>${l.pod || "*"}(${l.podLocType})${l.legType === "Pick-up" ? "[" + l.polHaulageLocations + "]" : l.legType === "Delivery" ? "[" + l.podHaulageLocations + "]" : ""}${l.movementBy ? "/" + l.movementBy : ""}`).join(" | ");
+
+console.log("\nSeveral pick-ups / deliveries on one leg (CMDU-CH-EUN-NAM's first shape) become ONE typed line, both places on each end");
 {
   const out = normalizeRoutingLines({ legs: [leg("NLRTM", "USNYC", { polLocType: "Door", podLocType: "Door", polCarrierHaulage: true, podCarrierHaulage: true, polHaulageLocations: "DEBER NLAMS", podHaulageLocations: "USLAX USCHI" })] });
-  assert("four lines", out.routings.length === 4, JSON.stringify(out.routings.map(r => r.name)));
-  const combos = out.legs.map(l => `${l.polHaulageLocations}/${l.podHaulageLocations}`).sort().join(",");
-  assert("every combination exactly once, one location each", combos === "DEBER/USCHI,DEBER/USLAX,NLAMS/USCHI,NLAMS/USLAX", combos);
-  assert("names say which pick-up and delivery", out.routings.some(r => r.name === "NLRTM → USNYC (pick-up DEBER, delivery USLAX)"), JSON.stringify(out.routings.map(r => r.name)));
+  assert("one line", out.routings.length === 1, JSON.stringify(out.routings.map(r => r.name)));
+  assert("Pick-up from DEBER or NLAMS, the SEA leg, Delivery to USLAX or USCHI", typed(out) === "Pick-up:DEBER(Door)>NLRTM(Terminal)[DEBER NLAMS] | SEA:NLRTM(Terminal)>USNYC(Terminal) | Delivery:USNYC(Terminal)>USLAX(Door)[USLAX USCHI]", typed(out));
+  assert("the name says which pick-ups and deliveries", out.routings[0].name === "NLRTM → USNYC (pick-up DEBER NLAMS, delivery USLAX USCHI)", out.routings[0].name);
+  assert("the derived flags sit on the typed legs' outer ends", out.legs[0].polCarrierHaulage && !out.legs[1].polCarrierHaulage && !out.legs[1].podCarrierHaulage && out.legs[2].podCarrierHaulage);
+}
+
+console.log("\nThe stored shapes of 2026-11-06 turn into typed legs (the startup migration), and stay put after that");
+{
+  const R = legs => ({ routings: [{ id: "R1", name: "x" }], legs: legs.map(l => ({ ...l, routingId: "R1" })), rates: [rate("OF", 500, { routingId: "R1" })] });
+  const run = input => {
+    const out = normalizeRoutingLines({ ...input, storedLegs: input.legs });
+    const again = normalizeRoutingLines({ routings: out.routings, legs: out.legs, rates: out.rates, storedLegs: out.legs });
+    return { out, again };
+  };
+  {
+    const { out, again } = run(R([leg("NLRTM", "BEANR", { polCarrierHaulage: true, polLocType: "Door", polHaulageLocations: "NLAMS" }), leg("BEANR", "USNYC", { podCarrierHaulage: true, podLocType: "CY", podHaulageLocations: "USNYC" })]));
+    assert("suck_it_up: Pick-up NLAMS Door, two SEA legs, Delivery to a Container Yard at USNYC (CY renamed)", typed(out) === "Pick-up:NLAMS(Door)>NLRTM(Terminal)[NLAMS] | SEA:NLRTM(Terminal)>BEANR(Terminal) | SEA:BEANR(Terminal)>USNYC(Terminal) | Delivery:USNYC(Terminal)>USNYC(Container Yard)[USNYC]", typed(out));
+    assert("written once (changed), then left alone; its routing and rate kept", out.changed && !again.changed && out.rates.length === 1 && out.routings[0].id === "R1");
+  }
+  {
+    const { out, again } = run(R([leg("NLRTM", "NLRTM", { polCarrierHaulage: true, polLocType: "Door" }), leg("NLRTM", "BEANR"), leg("BEANR", "USLAX")]));
+    assert("HLCU-EUN_USWC_0001: its same-port haulage leg is the Pick-up leg, from any Door (as it matched)", typed(out) === "Pick-up:*(Door)>NLRTM(Terminal)[] | SEA:NLRTM(Terminal)>BEANR(Terminal) | SEA:BEANR(Terminal)>USLAX(Terminal)", typed(out));
+    assert("then left alone", !again.changed);
+  }
+  {
+    const { out } = run(R([leg("ZZAUD1", "ZZAUD2", { polCarrierHaulage: true, polLocType: "Terminal" })]));
+    assert("AUDIT-HAULAGE-TEST: a Pick-up leg from any terminal", typed(out) === "Pick-up:*(Terminal)>ZZAUD1(Terminal)[] | SEA:ZZAUD1(Terminal)>ZZAUD2(Terminal)", typed(out));
+  }
+  {
+    const { out } = run(R([leg("NLRTM", "USNYC")]));
+    assert("a contract with no carrier haulage isn't rewritten", out.changed === false);
+  }
+}
+
+console.log("\nTyped lines: the barge example saves; a line out of order is refused with what's wrong and the order");
+{
+  const barge = normalizeRoutingLines({ routings: [{ name: "" }], legs: [
+    { ...leg("VNSGN", "VNVUT", { legType: "Pick-up", polLocType: "Door", movementBy: "Barge" }), routingIndex: 0 },
+    { ...leg("VNVUT", "USSAV", { legType: "SEA" }), routingIndex: 0 }] });
+  assert("Pick-up VNSGN Door by Barge → VNVUT, SEA VNVUT → USSAV, no problems", typed(barge) === "Pick-up:VNSGN(Door)>VNVUT(Terminal)[VNSGN]/Barge | SEA:VNVUT(Terminal)>USSAV(Terminal)" && barge.problems.length === 0, typed(barge));
+  const bad = normalizeRoutingLines({ routings: [{ name: "" }], legs: [
+    { ...leg("NLRTM", "USNYC", { legType: "SEA" }), routingIndex: 0 },
+    { ...leg("NLAMS", "NLRTM", { legType: "Pick-up", polLocType: "Door" }), routingIndex: 0 }] });
+  assert("refused: the Pick-up leg comes first", bad.problems.length === 1 && bad.problems[0].line === 1 && bad.problems[0].messages[0] === "The Pick-up leg comes first, before the SEA legs.", JSON.stringify(bad.problems));
+  assert("not cut into two lines", bad.routings.length === 1);
+  assert("the refusal names the line, the problem and the order", /^Line 1: The Pick-up leg comes first, before the SEA legs\. The order on a contract line:/.test(lineProblemsError(bad.problems)), lineProblemsError(bad.problems));
+  const two = normalizeRoutingLines({ routings: [{ name: "" }], legs: [
+    { ...leg("NLAMS", "NLRTM", { legType: "Pick-up" }), routingIndex: 0 }, { ...leg("DEBER", "NLRTM", { legType: "Pick-up" }), routingIndex: 0 },
+    { ...leg("NLRTM", "USNYC", { legType: "SEA" }), routingIndex: 0 }] });
+  assert("refused: at most one Pick-up leg", JSON.stringify(two.problems[0] && two.problems[0].messages) === JSON.stringify(["A line has at most one Pick-up leg."]), JSON.stringify(two.problems));
 }
 
 console.log("\nA named routing that is already one line is left alone");

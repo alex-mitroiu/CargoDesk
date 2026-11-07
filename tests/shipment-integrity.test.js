@@ -3,6 +3,7 @@
  * v0.91.3 "Horizon" and pinned here so they can't quietly come back:
  *   - TKT-HZOAE0  duplicate container numbers on one shipment are refused (POST and PUT, 409)
  *   - TKT-FH5Q94  the Export / Import Managing Offices are required on create and can't be cleared
+ *                 (since 2026-11-06 a side sent empty on create is filled by the office rule when one fits)
  *   - TKT-LXQNQG  Declared Value can't be negative — on create AND on update (the update path was
  *                 still open until 2026-10-09)
  *
@@ -85,11 +86,18 @@ async function login(email, password) {
       return res;
     };
 
-    console.log("\nTKT-FH5Q94 — Export / Import Managing Office are required");
+    // Since 2026-11-06 a side sent empty is filled by the managing-office rule (lib/office-resolution.js,
+    // tests/office-resolution.test.js); a shipment still never exists without both offices.
+    console.log("\nTKT-FH5Q94 — Export / Import Managing Office are required (an empty side is filled by the office rule)");
+    const rule = (await request("GET", "/api/offices/resolve?pol=NLRTM&pod=USNYC", null, token)).body;
     const noEmo = await create({ emoOfficeId: null });
-    assert("create without an Export Managing Office is refused (400)", noEmo.status === 400, JSON.stringify(noEmo.body));
+    if (rule.emo.officeId) assert("create without an Export Managing Office gets the rule's office (201)", noEmo.status === 201 && noEmo.body.emoOfficeId === rule.emo.officeId, JSON.stringify(noEmo.body));
+    else assert("create without an Export Managing Office, none fitting, is refused (400)", noEmo.status === 400, JSON.stringify(noEmo.body));
     const noImo = await create({ imoOfficeId: "" });
-    assert("create without an Import Managing Office is refused (400)", noImo.status === 400, JSON.stringify(noImo.body));
+    if (rule.imo.officeId) assert("create without an Import Managing Office gets the rule's office (201)", noImo.status === 201 && noImo.body.imoOfficeId === rule.imo.officeId, JSON.stringify(noImo.body));
+    else assert("create without an Import Managing Office, none fitting, is refused (400)", noImo.status === 400, JSON.stringify(noImo.body));
+    const nowhere = await create({ pol: "AQXXX", emoOfficeId: null });
+    assert("create without an Export Managing Office where no office fits is refused (400)", nowhere.status === 400, JSON.stringify(nowhere.body));
     const good = await create({});
     assert("create with both offices succeeds (201)", good.status === 201, JSON.stringify(good.body));
     const shipmentId = good.body.id;

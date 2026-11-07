@@ -17,7 +17,7 @@ module.exports = function allocationsRoutes(app, ctx) {
     pol_carrier_haulage: !!l.polCarrierHaulage, pod_carrier_haulage: !!l.podCarrierHaulage,
     pol_haulage_locations: l.polHaulageLocations || "", pod_haulage_locations: l.podHaulageLocations || "",
     pol_loc_type: l.polLocType || "Terminal", pod_loc_type: l.podLocType || "Terminal",
-    vessel_service: l.vesselService || "",
+    vessel_service: l.vesselService || "", leg_type: l.legType || "", movement_by: l.movementBy || "",
   });
 
   // The contract fields /match hands the picker. A flat ocean-freight rate (no container type) is
@@ -63,7 +63,9 @@ module.exports = function allocationsRoutes(app, ctx) {
     }
     const lines = routings.map(r => {
       const own = legs.filter(l => (l.routing_id || "") === r.id).sort((a, b) => (a.leg_order ?? 0) - (b.leg_order ?? 0));
-      const ports = own.length ? [own[0].pol, ...own.map(l => l.pod)].map(p => String(p || "").toUpperCase()) : [];
+      // The line's sea ports: its Pick-up / Delivery legs start or end at a place, not a port (typed legs, 2026-11-07).
+      const sea = own.filter(l => l.leg_type !== "Pick-up" && l.leg_type !== "Delivery");
+      const ports = sea.length ? [sea[0].pol, ...sea.map(l => l.pod)].map(p => String(p || "").toUpperCase()) : [];
       return {
         id: r.id, name: r.name || "", legs: own,
         loops: new Set(own.map(l => String(l.vessel_service || "").trim().toUpperCase()).filter(Boolean)),
@@ -123,7 +125,12 @@ module.exports = function allocationsRoutes(app, ctx) {
       if (status === "Confirmed") bucket.confirmedTEU += teu;
       else if (status === "Rejected") bucket.rejectedTEU += teu;
       else if (status === "Cancelled") { /* excluded — no live demand left */ }
-      else bucket.pendingTEU += teu; // Created, Pending, or no carrier_bookings row yet
+      else {
+        bucket.pendingTEU += teu; // Created, Pending, or no carrier_bookings row yet
+        // Pending split in two (2026-11-06, Contracts & Schedules' space panel): sent and waiting on the
+        // carrier's answer (Pending), or not sent yet (Created, or no booking row). The two add up to pendingTEU.
+        if (status === "Pending") bucket.awaitingCarrierTEU += teu; else bucket.notBookedTEU += teu;
+      }
     };
     for (const r of rows) {
       const teu = Number(r.teu);
@@ -138,7 +145,7 @@ module.exports = function allocationsRoutes(app, ctx) {
     }
     return map;
   }
-  const emptyBuckets = { confirmedTEU: 0, pendingTEU: 0, rejectedTEU: 0 };
+  const emptyBuckets = { confirmedTEU: 0, pendingTEU: 0, rejectedTEU: 0, awaitingCarrierTEU: 0, notBookedTEU: 0 };
   const todayIso = () => new Date().toISOString().slice(0, 10);
   // The week whose space a weekly configuration shows for a date: the date's own week, kept inside
   // the configuration's period (today on the list, before or after it, shows its first or last week).
@@ -153,6 +160,7 @@ module.exports = function allocationsRoutes(app, ctx) {
     const week = base.spaceBasis === "week" ? weekFor(base, onDate) : "";
     const b = (week ? entry?.weeks.get(week) : entry?.total) || emptyBuckets;
     return { ...base, confirmedTEU: b.confirmedTEU, pendingTEU: b.pendingTEU, rejectedTEU: b.rejectedTEU,
+      awaitingCarrierTEU: b.awaitingCarrierTEU, notBookedTEU: b.notBookedTEU,
       remainingTEU: Math.max(0, base.allocatedTEU - b.confirmedTEU),
       ...(week && { week, weekNumber: isoWeekNumber(week) }) };
   };
@@ -372,7 +380,7 @@ module.exports = function allocationsRoutes(app, ctx) {
   // contract line's POL/POD to its linked ports; never taken from the request.
   async function matchAllocations(params = {}, opts = {}) {
     const { pol = "", pod = "", etd = "", needsPolHaulage = "", needsPodHaulage = "",
-            pkuLocation = "", delLocation = "", pkuLocType = "", delLocType = "",
+            pkuLocation = "", delLocation = "", pkuLocType = "", delLocType = "", pkuMode = "", delMode = "",
             principalId = "", commodityCode = "", loopCode = "" } = params;
     // No etd means "don't filter by validity window", not "return nothing" — during shipment
     // creation the sea leg's ETD is often still blank when Central is picked (real bug, fixed).
@@ -402,7 +410,7 @@ module.exports = function allocationsRoutes(app, ctx) {
         routings = lines.map(l => ({ id: l.id, label: l.label, pol: l.pol, pod: l.pod, loops: [...l.loops] }));
         for (const l of lines) {
           const m = await findMatchingContractLegs(l.legs, { pol: polU, pod: podU, needsPolHaulage: needsPol, needsPodHaulage: needsPod,
-            pkuLocation, delLocation, pkuLocType, delLocType, allowLinked: !!opts.allowLinked });
+            pkuLocation, delLocation, pkuLocType, delLocType, pkuMode, delMode, allowLinked: !!opts.allowLinked });
           if (m.length) { matched = { routingId: l.id, kind: m[0].matchKind, pol: m[0].firstLeg.pol, pod: m[0].lastLeg.pod }; break; }
         }
         if (!matched) continue;

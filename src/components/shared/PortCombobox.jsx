@@ -132,7 +132,8 @@ export const PortPickerModal = ({ onSelect, onClose }) => {
 //   onChange   — called with port object on select, null on clear
 //   placeholder — input hint text
 
-const PortCombobox = ({ value = null, onChange, placeholder = "Search port or LOCODE…" }) => {
+const PortCombobox = ({ value = null, onChange, placeholder = "Search port or LOCODE…", fieldStyle = null }) => {
+  // fieldStyle: shape overrides from a caller with its own look (the route table's pill fields); null keeps the default.
   // displayValue enriches value.name via a background fetch when name is blank
   const [displayValue, setDisplayValue] = useState(value);
   const [query,        setQuery]        = useState("");
@@ -234,7 +235,7 @@ const PortCombobox = ({ value = null, onChange, placeholder = "Search port or LO
       {displayValue?.unlocode ? (
         // ── Selected chip ──────────────────────────────────────────────────────
         <div style={{ ...inputBase, display: "flex", alignItems: "center", gap: 8,
-          border: `1px solid ${T.accent}55`, padding: "7px 10px" }}>
+          border: `1px solid ${T.accent}55`, padding: "7px 10px", ...fieldStyle }}>
           <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent,
             fontWeight: 700, flexShrink: 0 }}>
             {displayValue.unlocode}
@@ -277,8 +278,8 @@ const PortCombobox = ({ value = null, onChange, placeholder = "Search port or LO
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
               autoComplete="off"
-              style={{ ...inputBase, fontFamily: T.body, fontSize: 13,
-                paddingRight: 36, width: "100%", boxSizing: "border-box" }}
+              style={{ ...inputBase, fontFamily: T.body, fontSize: 13, width: "100%", boxSizing: "border-box",
+                ...fieldStyle, paddingRight: 36 }}
             />
             {loading && (
               <span style={{ position: "absolute", right: 34, top: "50%",

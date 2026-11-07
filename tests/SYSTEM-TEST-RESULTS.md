@@ -1021,3 +1021,84 @@ Found and fixed on the way:
 Seen, not caused by this change: one `GET /api/shipments/:id/schedules` answered 502 "API proxy error: socket hang up"
 through the Vite dev proxy during the browser pass (a dropped keep-alive connection); the request isn't one the bar
 makes, and it didn't recur.
+
+### 2026-11-06: Trade Horizon next: Contracts & Schedules, the shipment header, the » pill (ARCHITECTURE.md §8.47)
+
+Run on the CI test copy (an empty database seeded the CI way, the monolith on :3001 with CI's settings, the services on
+4002–4008, Vite on :5273); the developer's own stack was not running. Includes the EMO/IMO work of the same day (§8.46).
+
+| Check | Result |
+|---|---|
+| New `src/pages/shipments/schedules/SchedulesParts.test.jsx` (the space panel's figures and this shipment's bucket, an older response with only `pendingTEU`, the charges fold, the live Save checks, no checks row on the classic table) | **14/14** |
+| `ShipmentHeaderBar` (+6: the folded order, a dash for an empty party, the containers block and DG flag, ETD/ETA, ATD/ATA) | **15/15** |
+| `tests/allocations-crud.test.js` (+1: `awaitingCarrierTEU` + `notBookedTEU` = `pendingTEU`) | **53/53** |
+| Vitest | **449/449** in 40 files |
+| Full Cypress suite in Edge | **298/298** in 39 specs, after the reruns below (first run 285 passed, 10 failed, 3 skipped) |
+| Real-browser pass in Edge (Contracts & Schedules on a transshipment on weekly space, a sailed direct shipment, a shipment with no legs and a DG container; Overview, Cargo, Milestones & Events; the header expanded; dark and light) | as expected, no console errors (the only 404 is the favicon the test server doesn't serve) |
+| Build | OK |
+
+Found and fixed on the way:
+- **The header cut its own dates.** The port name and its ETD/ETA shared one ellipsised line, so "Rotterdam · ETD 04…"
+  lost the date. The date now has a line of its own.
+- **"No legs yet" three times** on a shipment with no legs (the card note, the table's empty row and the checks row).
+  In the pill look the empty row says what to do and the checks row waits for a leg.
+- **`schedule-leg-cascade.cy.js` 0/2**: it selected a leg by clicking the middle of its row, which the pill look's wider
+  columns put past the table's visible edge at Cypress's 1280px window. It now clicks the row's left edge.
+- **The assistant's knowledge file**: the DFS §5.3 passage grew past the 420-word limit; the new space paragraph got its
+  own bold label, so the builder splits there.
+
+Not caused by the change: `booking-escalation`, `lane-steering` and `where-to-book` failed on the first run because the
+demo data made for the screenshots (an "EU-N → NAM for everyone" Lane Steering line and a weekly MAEU space
+configuration on NLRTM → USNYC) overlapped the lanes their own fixtures create. With those two rows removed from the test
+copy, all three pass.
+
+### 2026-11-06, evening: mockup v5–v9 built; route problems in one dialog; a contract that no longer fits comes off on Save
+
+Run on the developer's own stack (`npm run dev`, CI's rate limits), restarted for the run and stopped after.
+
+| Check | Result |
+|---|---|
+| 20 backend files against the restarted server (route-rules, where-to-book, steering-verdict, lane-steering, weekly-space, allocations-crud, schedules, shipment-crud, main-vessel-carrier-changes, …) | all pass |
+| Vitest (+ `src/utils/applySailingToLegs.test.js`, 3) | **491/491** in 42 files |
+| New `cypress/e2e/schedules-route-dialogs.cy.js` (TC-091, TC-092) | **3/3** |
+| The 14 Contracts & Schedules-related Cypress specs in Edge | **73/73** |
+| Real-browser pass in Edge, read-only (SHP-IOJNTD with a route; SHP-98N3LZ with no legs) | as expected, no console errors |
+| Build | OK |
+
+Found and fixed on the way:
+- **A two-leg sailing on the blank leg** (`schedule-catalog-search.cy.js` 4/5): the transshipment branch of applying a
+  sailing kept the existing sea leg's own port of loading, empty on the new blank leg, so Save refused "Port of Loading
+  (POL) is required (leg 1)". Fixed in all three copies (this page, the New Shipment form, applySailingToLegs.js).
+- **Save's contract check compared the routing line strictly**, so a shipment with no routing line recorded read as off
+  its contract (before: Save refused; with the drop, it would have taken a fitting contract off). It now shares the
+  header's rule (`stillOnContract`).
+- **"1 days"** on the cargo-ready line and the days-to-ETA figure.
+- **The route table's horizontal scrollbar was white in dark mode**: the box now takes the theme's color-scheme
+  (`T.scheme`, and `HZ_LEGACY_THEME.scheme` for this page's table).
+
+### 2026-11-07: Typed contract legs (option D: Pick-up / SEA / Delivery on contract lines; ARCHITECTURE.md §8.33)
+
+Run on the developer's own data (pgdata and the contract service's database backed up first), the monolith alone
+(contract, MDM and customer sources all local), the Contract Management Service from a scratchpad copy of its database,
+Vite started and stopped by the test runner.
+
+| Check | Result |
+|---|---|
+| Startup migration on the developer's data | 8 of 40 contracts typed, 0 skipped, the other 32 untouched; rates and routing ids kept (read back through the API) |
+| New `tests/contract-typed-legs.test.js` (TC-094) | **29/29** |
+| `tests/routing-lines.test.js` (the stored shapes, the barge line, the refusals) | **43/43** |
+| `contract-haulage-types` 20, `contract-routings` 55, `where-to-book` 23, `allocations-crud` 53, `lane-steering` 27, `steering-verdict` 21, `weekly-space` 30, `route-rules` 22, `contract-improvements` 39 | all pass |
+| 17 more files that create or match contracts (quotes, cost lines, rate reconciliation, space, freight audit, booking answers/escalation, pending revalidation, …) | all pass |
+| Contract service: `contracts-crud` 24, `contracts-match` 10; monolith remote mode: `contract-service-toggle` 20, `contracts-remote-put-delete` 4 | all pass |
+| Vitest (+ `haulageNeeds.test.js` 4; `routingLines.test.js` and `RoutingLinesEditor.test.jsx` rewritten, 43) | **511/511** in 43 files |
+| New `cypress/e2e/contract-typed-legs.cy.js` (TC-093) + 15 specs on contracts, steering, the route table and shipments, in Edge | **128/128** |
+| Build | OK |
+
+Found on the way:
+- **A container-yard carrier pick-up never matched a contract.** Shipment legs say "Container Yard", contract legs said
+  "CY", and the matcher compared the strings; Schedule Search's CY routing terms found nothing either. Contract legs
+  now use the shipment's names (the migration renames CY) and the matcher compares canonical names.
+- **Old tests pinned "several places = one line each"** (routing-lines, contract-routings) and a remote-mode test
+  counted legs in the old shape; updated to the typed shape (decision 1: several places on one leg).
+- The editor's new By column made the line wider than the contract modal; columns tightened, the modal widened
+  (820 → 900 px), and the table's horizontal scrollbar follows dark mode.

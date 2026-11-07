@@ -76,7 +76,7 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, shipmentTEU = 0, contai
       setAllocs(a);
     }).catch(() => { if (live) { setMatches([]); setAllocs([]); } });
     return () => { live = false; };
-  }, [step, pol, pod, haulage.needsPolHaulage, haulage.needsPodHaulage, haulage.pkuLocation, haulage.delLocation, haulage.pkuLocType, haulage.delLocType]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [step, pol, pod, haulage.needsPolHaulage, haulage.needsPodHaulage, haulage.pkuLocation, haulage.delLocation, haulage.pkuLocType, haulage.delLocType, haulage.pkuMode, haulage.delMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const finish = (fields, matchedRoute = null) => {
     onUpdate(shipment.id, { ...shipment, contractType: type, ...fields });

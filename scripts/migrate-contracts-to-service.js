@@ -66,6 +66,7 @@ async function loadContracts() {
         polCarrierHaulage: !!l.pol_carrier_haulage, podCarrierHaulage: !!l.pod_carrier_haulage,
         polHaulageLocations: l.pol_haulage_locations || "", podHaulageLocations: l.pod_haulage_locations || "",
         polLocType: l.pol_loc_type || "Terminal", podLocType: l.pod_loc_type || "Terminal",
+        legType: l.leg_type || "", movementBy: l.movement_by || "",
         routingIndex: routingIndexOf(l.routing_id),
       })),
       rates: rateRows.map(r => ({

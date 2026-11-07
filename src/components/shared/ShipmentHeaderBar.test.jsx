@@ -131,6 +131,96 @@ describe("ShipmentHeaderBar — overlays live outside the filtered header card",
   });
 });
 
+// What the header always shows (the user, 2026-11-06): Principal, Shipper, Consignee, Incoterm, the container
+// count with the DG flag, POL with ETD/ATD and POD with ETA/ATA. ATD/ATA come from the sea legs' date sources.
+describe("ShipmentHeaderBar — the always-visible facts (horizonNext: Contracts & Schedules only for now)", () => {
+  const PARTIES = { ...SHIPMENT, principalName: "Van Leeuwen Meubelen BV", shipperName: "Van Leeuwen Meubelen BV",
+    consigneeName: "Hudson Home Imports Inc", incoterm: "FOB" };
+  const CTRS = [
+    { id: "C1", shipmentId: "SHP-TEST01", size: "40", type: "HC", isDg: true, dgClass: "3" },
+    { id: "C2", shipmentId: "SHP-TEST01", size: "40", type: "HC", isDg: false },
+  ];
+  const sea = (pol, pod, etdSource = "", etaSource = "") => ({ id: pol + pod, legType: "SEA", pol, pod, etdSource, etaSource });
+
+  it("leads the folded row with Principal, Shipper, Consignee and Incoterm, in that order", async () => {
+    render(<ShipmentHeaderBar horizonNext shipment={PARTIES} containers={[]} />);
+    const row = await screen.findByTestId("shipment-detail-header-chip-row");
+    const labels = [...row.children].map(el => el.dataset.testid.replace("shipment-detail-header-chip-", ""));
+    expect(labels.slice(0, 4)).toEqual(["principal", "shipper", "consignee", "incoterm"]); // then the sailing facts (below)
+    expect(screen.getByTestId("shipment-detail-header-chip-consignee")).toHaveTextContent("Hudson Home Imports Inc");
+  });
+
+  it("shows a dash, not a gap, for a party that isn't set", async () => {
+    render(<ShipmentHeaderBar horizonNext shipment={{ ...PARTIES, principalName: "" }} containers={[]} />);
+    expect(await screen.findByTestId("shipment-detail-header-chip-principal")).toHaveTextContent("Principal —");
+  });
+
+  it("shows the containers as 2×40HC with the TEU under them, and the DG class beside the route with its meaning", async () => {
+    render(<ShipmentHeaderBar horizonNext shipment={PARTIES} containers={CTRS} />);
+    const block = await screen.findByTestId("shipment-detail-header-containers");
+    expect(block).toHaveTextContent("2×40HC4 TEU");
+    const dg = screen.getByTestId("shipment-detail-header-dg-badge");
+    expect(dg).toHaveTextContent("DG · CLASS 3");
+    expect(dg).toHaveTextContent("Flammable Liquids");
+    expect(block.contains(dg)).toBe(false);
+  });
+
+  it("says 6 containers when the types differ", async () => {
+    render(<ShipmentHeaderBar horizonNext shipment={PARTIES} containers={[CTRS[0], { ...CTRS[1], size: "20", type: "GP" }]} />);
+    expect(await screen.findByTestId("shipment-detail-header-containers")).toHaveTextContent("2 containers3 TEU");
+  });
+
+  it("gives the carrier's code, the main vessel, its voyage and the service, and no contract", async () => {
+    render(<ShipmentHeaderBar horizonNext shipment={{ ...PARTIES, carrierCode: "HLCU", vessel: "DEMO FANFARE", voyage: "DM006W" }} containers={[]} />);
+    const row = await screen.findByTestId("shipment-detail-header-chip-row");
+    const labels = [...row.children].map(el => el.dataset.testid.replace("shipment-detail-header-chip-", ""));
+    expect(labels).toEqual(["principal", "shipper", "consignee", "incoterm", "carrier", "vessel", "voyage", "service"]);
+    expect(screen.getByTestId("shipment-detail-header-chip-carrier")).toHaveTextContent("Carrier HLCU");
+    expect(screen.getByTestId("shipment-detail-header-chip-vessel")).toHaveTextContent("Vessel DEMO FANFARE");
+    await waitFor(() => expect(screen.getByTestId("shipment-detail-header-chip-service")).toHaveTextContent("Service AL1"));
+    expect(row).not.toHaveTextContent("Contract");
+  });
+
+  it("puts the transshipment ports and the transit time under the route", async () => {
+    api.legs.list.mockResolvedValue([sea("NLRTM", "BEANR"), sea("BEANR", "USNYC")]);
+    render(<ShipmentHeaderBar horizonNext shipment={PARTIES} containers={[]} />);
+    await waitFor(() => expect(screen.getByTestId("shipment-detail-header-route-via")).toHaveTextContent("via BEANR · 9 days transit"));
+  });
+
+  it("has no DG flag when no container is dangerous goods", async () => {
+    render(<ShipmentHeaderBar horizonNext shipment={PARTIES} containers={[CTRS[1]]} />);
+    await screen.findByTestId("shipment-detail-header-containers");
+    expect(screen.queryByTestId("shipment-detail-header-dg-badge")).toBeNull();
+  });
+
+  it("reads ETD and ETA while the sea legs' dates are estimates", async () => {
+    api.legs.list.mockResolvedValue([sea("NLRTM", "BEANR"), sea("BEANR", "USNYC")]);
+    render(<ShipmentHeaderBar horizonNext shipment={PARTIES} containers={[]} />);
+    const route = await screen.findByTestId("shipment-detail-header-route");
+    await waitFor(() => expect(api.legs.list).toHaveBeenCalled());
+    expect(route).toHaveTextContent("ETD 21 Sep");
+    expect(route).toHaveTextContent("ETA 30 Sep");
+  });
+
+  it("reads ATD once the first sea leg departed for real, and ATA once the last one arrived", async () => {
+    api.legs.list.mockResolvedValue([sea("NLRTM", "BEANR", "ais", "ais"), sea("BEANR", "USNYC", "", "dcsa_actual")]);
+    render(<ShipmentHeaderBar horizonNext shipment={PARTIES} containers={[]} />);
+    const route = await screen.findByTestId("shipment-detail-header-route");
+    await waitFor(() => expect(route).toHaveTextContent("ATD 21 Sep"));
+    expect(route).toHaveTextContent("ATA 30 Sep");
+  });
+
+  it("keeps the classic header on every other page: route block, DG badge with its meaning, the classic folded row", async () => {
+    render(<ShipmentHeaderBar shipment={PARTIES} containers={CTRS} />);
+    const badge = await screen.findByTestId("shipment-detail-header-dg-badge");
+    expect(badge).toHaveTextContent("DG · CLASS 3");
+    expect(badge).toHaveTextContent("Flammable Liquids");
+    expect(screen.queryByTestId("shipment-detail-header-containers")).toBeNull();
+    expect(screen.queryByTestId("shipment-detail-header-chip-principal")).toBeNull();
+    expect(screen.getByTestId("shipment-detail-header-chip-shipper")).toHaveTextContent("Van Leeuwen Meubelen BV");
+  });
+});
+
 // Completed and Cancelled shipments are locked (TKT-SPXTGR): the header drops its Edit action and says why.
 describe("ShipmentHeaderBar — Completed / Cancelled lock", () => {
   const renderAs = async status => {

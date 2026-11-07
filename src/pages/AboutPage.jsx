@@ -370,8 +370,8 @@ const ARCHITECTURE_ARTIFACT_URL = "https://claude.ai/code/artifact/9515fbd6-accd
 
 const FRONTEND_DOMAINS = [
   { name: "Shipment Core", color: "#e8a217", items: ["ShipmentsPage", "ShipmentFormPage + LegsTable", "ShipmentDetailPage (Overview)"] },
-  { name: "Embedded on Overview", color: "#4db3e8", items: ["ServicesPanel", "ShipmentHeaderBar", "MilestonePanel", "MessagesDrawer / EdiMessagesDrawer"] },
-  { name: "Promoted Sub-pages (8)", color: "#2dcc8f", items: ["Cargo / Containers", "Parties & Offices", "Schedules + ScheduleHistoryPanel", "Milestones", "Tickets", "Invoice Entry", "Cost Entry", "GP Overview"] },
+  { name: "Embedded on Overview", color: "#4db3e8", items: ["ServicesPanel", "ShipmentHeaderBar (on every shipment page)", "ShipmentAdvanceBar (»)", "MilestonePanel", "MessagesDrawer / EdiMessagesDrawer"] },
+  { name: "Promoted Sub-pages (8)", color: "#2dcc8f", items: ["Cargo / Containers", "Parties & Offices", "Contracts & Schedules (schedules/: RouteGlobe, RouteRail, SpacePanel) + ScheduleHistoryPanel", "Milestones", "Tickets", "Invoice Entry", "Cost Entry", "GP Overview"] },
   { name: "Dashboards, MDM & Admin", color: "#a855f7", items: ["DashboardPage + Command Center", "12 × MdmXPage reference data", "Kanban / Test Cases · Plans · Runs", "AppSettingsPage"] },
 ];
 

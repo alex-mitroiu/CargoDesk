@@ -271,7 +271,8 @@ Object.assign(HZ_LIGHT_T, { hz: true, textFaint: "#7c8299", neutralBg: "rgba(15,
 
 // T is mutated in place when the theme switches — all components re-render
 // automatically since they're children of App which holds the theme state.
-export const T = { ...DARK_THEME };
+// scheme: the CSS color-scheme for the current mode, so a scroll box can ask for dark scrollbars (applyTheme).
+export const T = { ...DARK_THEME, scheme: "dark" };
 
 // The shared fields' focus ring and placeholder on a Trade Horizon page (Form.jsx FIELD_CLASS). Inline
 // styles can't express :focus, so this one rule lives in CSS, keyed to body.cd-hz and the CSS variables
@@ -288,6 +289,7 @@ body.cd-hz .cd-field::placeholder { color: var(--cd-faint); }`;
 // horizon defaults to whatever T is now, so the dark/light toggle keeps the page's flavour.
 export const applyTheme = (dark, horizon = T.hz) => {
   Object.assign(T, horizon ? (dark ? HZ_DARK_T : HZ_LIGHT_T) : (dark ? DARK_THEME : LIGHT_THEME));
+  T.scheme = dark ? "dark" : "light";
   const root = document.documentElement;
   root.style.background = T.bg;
   root.style.setProperty("--cd-accent", T.accent);

@@ -93,7 +93,7 @@ describe("Schedules Happy Path Suite", () => {
     cy.get('[id^="leg-row-"]').first().should("contain.text", "CNSHA");
     cy.get("#shpsched-dirty-bar", { timeout: 8000 }).should("be.visible");
 
-    cy.contains("button", "💾 Save").click();
+    cy.get('[data-testid="shipment-schedules-save-btn"]').click();
     cy.contains("Saved", { timeout: 8000 }).should("be.visible");
     cy.get("#shpsched-dirty-bar").should("not.exist");
     cy.then(() => api("GET", `/shipments/${shipmentId}/legs`)).then(res => {

@@ -22,8 +22,15 @@ import { IconSearch } from "../primitives/Icon";
 //                 where clearing to nothing is never valid). The chip's own text is always
 //                 clickable to swap to a different office regardless of allowClear — that's a
 //                 replace, not a clear, and a required field still needs to be replaceable.
+//   Optional, used by the New Shipment form's EMO/IMO auto-resolution (2026-11-06):
+//   fitIds      — offices that fit the shipment's route: listed first under "Fits this route",
+//                 each with a FITS tag (fitWhy is its tooltip); the rest follow under "All others"
+//   chipTag     — a node shown on the selected chip (the form's AUTO / YOUR PICK tag)
+//   invalid     — red border, for a required field left empty after Create
+//   testId      — data-testid base: -input, -chip, -option-<officeId>
 
-const OfficeCombobox = ({ offices, value, onChange, placeholder = "Search office by name, code, or country…", allowClear = true }) => {
+const OfficeCombobox = ({ offices, value, onChange, placeholder = "Search office by name, code, or country…", allowClear = true,
+  fitIds = null, fitWhy = "", chipTag = null, invalid = false, testId = null }) => {
   const selected = offices.find(o => o.id === value) || null;
   // Once something's selected the combobox collapses to a chip (see PortCombobox's own
   // selected-chip pattern) — `editing` is what lets the chip's own text reopen the search input
@@ -78,13 +85,21 @@ const OfficeCombobox = ({ offices, value, onChange, placeholder = "Search office
   }, [open, positionDrop]);
 
   const q = query.trim().toLowerCase();
-  const results = (q
+  const matching = (q
     ? offices.filter(o =>
         o.code.toLowerCase().includes(q) ||
         o.name.toLowerCase().includes(q) ||
         o.countryCode.toLowerCase().includes(q))
-    : offices
-  ).slice(0, 30);
+    : offices);
+  // With fitIds, the offices that fit the route come first (the keyboard order follows the list).
+  const fitSet = new Set(fitIds || []);
+  const results = (fitSet.size ? [...matching.filter(o => fitSet.has(o.id)), ...matching.filter(o => !fitSet.has(o.id))] : matching).slice(0, 30);
+  const fitCount = results.filter(o => fitSet.has(o.id)).length;
+  const tid = suffix => (testId ? `${testId}-${suffix}` : undefined);
+  const groupHeader = label => (
+    <div style={{ padding: "7px 14px 4px", fontFamily: T.body, fontSize: 10, fontWeight: 700, letterSpacing: ".1em",
+      textTransform: "uppercase", color: T.textMuted }}>{label}</div>
+  );
 
   const openDrop = () => { positionDrop(); setOpen(true); setHighlighted(-1); };
 
@@ -120,8 +135,8 @@ const OfficeCombobox = ({ offices, value, onChange, placeholder = "Search office
     <div style={{ position: "relative" }}>
       {selected && !editing ? (
         // ── Selected chip — click the office name/code to swap it for a different one ──────
-        <div style={{ ...inputBase, display: "flex", alignItems: "center", gap: 8,
-          border: `1px solid ${T.accent}55`, padding: "7px 10px" }}>
+        <div data-testid={tid("chip")} style={{ ...inputBase, display: "flex", alignItems: "center", gap: 8,
+          border: `1px solid ${invalid ? T.danger : T.accent + "55"}`, padding: "7px 10px" }}>
           <button type="button" onClick={startEditing} title="Change office"
             style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0,
               background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
@@ -133,6 +148,7 @@ const OfficeCombobox = ({ offices, value, onChange, placeholder = "Search office
               {selected.name}
             </span>
           </button>
+          {chipTag}
           {allowClear && (
             <button type="button" onClick={clear} title="Clear"
               style={{ background: "none", border: "none", cursor: "pointer",
@@ -153,7 +169,10 @@ const OfficeCombobox = ({ offices, value, onChange, placeholder = "Search office
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
               autoComplete="off"
-              style={{ ...inputBase, fontFamily: T.body, fontSize: 13, paddingRight: 32 }}
+              data-testid={tid("input")}
+              aria-invalid={invalid || undefined}
+              style={{ ...inputBase, fontFamily: T.body, fontSize: 13, paddingRight: 32,
+                ...(invalid ? { border: `1px solid ${T.danger}`, boxShadow: `0 0 0 2px ${T.danger}22` } : {}) }}
             />
             <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
               color: T.textMuted, pointerEvents: "none", display: "flex", alignItems: "center" }}>
@@ -174,7 +193,10 @@ const OfficeCombobox = ({ offices, value, onChange, placeholder = "Search office
                   No offices match "{query}".
                 </div>
               ) : results.map((o, idx) => (
-                <button key={o.id} type="button"
+                <div key={o.id}>
+                {fitCount > 0 && idx === 0 && groupHeader("Fits this route")}
+                {fitCount > 0 && idx === fitCount && groupHeader("All others")}
+                <button type="button" data-testid={tid(`option-${o.id}`)}
                   onMouseDown={e => { e.preventDefault(); select(o); }}
                   onMouseEnter={() => setHighlighted(idx)}
                   style={{ display: "flex", alignItems: "center", gap: 10, width: "100%",
@@ -190,7 +212,12 @@ const OfficeCombobox = ({ offices, value, onChange, placeholder = "Search office
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {o.name}
                   </span>
+                  {fitSet.has(o.id) && (
+                    <span title={fitWhy || undefined} style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, letterSpacing: ".08em",
+                      padding: "2px 6px", borderRadius: 4, flexShrink: 0, background: T.success + "1a", color: T.success }}>FITS</span>
+                  )}
                 </button>
+                </div>
               ))}
             </div>
           )}

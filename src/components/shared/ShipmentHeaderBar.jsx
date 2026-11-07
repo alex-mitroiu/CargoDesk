@@ -18,6 +18,7 @@ import { deriveLoopCode } from "../../utils/scheduleLoop";
 import { isShipmentLocked } from "../../utils/shipmentLock";
 import LoopRouteModal from "./LoopRouteModal";
 import { LegRoleChip, viaText } from "./LegRoles";
+import { ACTUAL_SOURCES } from "../../utils/legChain";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
 
 // ─── Persistent Shipment Header ────────────────────────────────────────────
@@ -122,7 +123,8 @@ const IconTile = ({ items }) => {
 // this component's existing data (it would mean a new fetch just for the minimized state), so
 // Shipper stands in its place here — same "don't add fetches for a visual pass" rule this
 // codebase's other Trade Horizon ports (Dashboard, Command Center) already followed.
-const ChipRow = ({ shipment, ctrs, cargoValueUsd, openTicketCount }) => {
+// The folded row as it is on every page but Contracts & Schedules (HEAD's, unchanged).
+const ChipRowClassic = ({ shipment, ctrs, cargoValueUsd, openTicketCount }) => {
   const ctrTypeKeys = [...new Set(ctrs.map(c => `${c.size}${c.type}`))];
   const containerSummary = ctrs.length === 0 ? null
     : ctrTypeKeys.length === 1 ? `${ctrs.length}×${ctrTypeKeys[0]}`
@@ -162,7 +164,121 @@ const ChipRow = ({ shipment, ctrs, cargoValueUsd, openTicketCount }) => {
   );
 };
 
-const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, onNavigateToParties, onUpdate, onRefresh, onEdit }) => {
+// Trade Horizon next (Contracts & Schedules only until the user approves it for every page, 2026-11-06), mockup
+// 402fb5b5 v5–v7: Principal, Shipper, Consignee and Incoterm lead the row ("—" when empty), then the carrier's code (the
+// user: "just use the carrier code, it's shorter, cleaner and better"), the main vessel (syncShipmentFromLegs puts the
+// MAIN sea leg's on the shipment), its voyage and the service of the saved sailing, all as plain label and value. No
+// carrier pill, no feeders (the transshipment ports sit under the route), no contract (it has its card). The
+// container count, DG flag and dates are on row 1.
+const ChipRow = ({ shipment, loopCode, openTicketCount }) => {
+  const chips = [
+    { label: "Principal", value: shipment.principalName, title: shipment.principalName },
+    { label: "Shipper", value: shipment.shipperName, title: shipment.shipperName },
+    { label: "Consignee", value: shipment.consigneeName, title: shipment.consigneeName },
+    { label: "Incoterm", value: shipment.incoterm },
+    { label: "Carrier", value: shipment.carrierCode },
+    { label: "Vessel", value: shipment.vessel, title: shipment.vessel },
+    { label: "Voyage", value: shipment.voyage },
+    { label: "Service", value: loopCode },
+    openTicketCount > 0 && { label: "Open Tickets", value: String(openTicketCount) },
+  ].filter(Boolean);
+  return (
+    <div id="shphdr-chiprow" data-testid="shipment-detail-header-chip-row" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", rowGap: 6,
+      marginTop: 11, paddingTop: 11, borderTop: `1px solid ${HZ.border}` }}>
+      {chips.map((c, i) => (
+        <span key={c.label} id={`shphdr-chip-${c.label.toLowerCase().replace(/\s+/g, "-")}`} data-testid={`shipment-detail-header-chip-${c.label.toLowerCase().replace(/\s+/g, "-")}`}
+          title={c.title || undefined} style={{
+          fontFamily: HZ_MONO, fontSize: 11.3, whiteSpace: "nowrap", color: HZ.textMuted,
+          padding: i === 0 ? "0 13px 0 0" : "0 13px", borderLeft: i === 0 ? "none" : `1px solid ${HZ.border}`,
+          maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis" }}>
+          {c.label} <strong style={{ color: HZ.text, fontWeight: 700 }}>{c.value || "—"}</strong>
+        </span>
+      ))}
+    </div>
+  );
+};
+
+// ─── Route strip (Trade Horizon, next, 2026-11-06) ────────────────────────────────────────────────────────────────
+// Port codes in display type either side of a track that fills from ETD to ETA, with the ETA countdown and TEU as
+// numerals. A missing port shows a dashed slot; no ETD shows a dashed track.
+const stripDay = v => { const s = String(v || "").slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? Date.parse(`${s}T00:00:00Z`) : NaN; };
+const stripDays = (a, b) => { const x = stripDay(a), y = stripDay(b); return Number.isFinite(x) && Number.isFinite(y) ? Math.round((y - x) / 864e5) : null; };
+const STRIP_MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const stripFmt = v => { const s = String(v || "").slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s.slice(8, 10)} ${STRIP_MON[+s.slice(5, 7) - 1]}` : "not set"; };
+const StripPort = ({ code, name, line, right, missing }) => (
+  <div style={{ textAlign: right ? "right" : "left", minWidth: 0 }}>
+    {code ? <div style={{ fontFamily: HZ_DISPLAY, fontWeight: 800, fontSize: 22, lineHeight: 1, letterSpacing: ".01em", color: HZ.text }}>{code}</div>
+      : <span style={{ display: "inline-block", fontFamily: HZ_DISPLAY, fontWeight: 800, fontSize: 18, lineHeight: 1, color: HZ.textFaint, border: `1.5px dashed ${HZ.borderStrong}`, borderRadius: 8, padding: "3px 10px" }}>{missing}</span>}
+    {name && <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</div>}
+    {/* The date on a line of its own: a long port name may be cut short, the ETD/ATD or ETA/ATA never. */}
+    <div style={{ fontFamily: HZ_MONO, fontSize: 10.5, fontWeight: 600, color: HZ.text, marginTop: name ? 2 : 4, whiteSpace: "nowrap" }}>{line}</div>
+  </div>
+);
+// The shipment's ETD is its first sea leg's and its ETA its last sea leg's (server.js syncShipmentFromLegs);
+// either reads ATD/ATA once that leg's date is an actual (AIS or a DCSA event, legChain.js ACTUAL_SOURCES).
+// The DG class sits beside the route with its meaning underneath; the containers ("2×40HC") end the row, the TEU under them.
+const RouteStrip = ({ shipment, legs, ctrs, teu, dgClasses, dgMeaning, isDg }) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const sea = legs.filter(l => (l.legType || "SEA") === "SEA");
+  const atd = ACTUAL_SOURCES.has(sea[0]?.etdSource), ata = ACTUAL_SOURCES.has(sea[sea.length - 1]?.etaSource);
+  const typeKeys = [...new Set(ctrs.map(c => `${c.size}${c.type}`))];
+  // The user's format (3 Sep): "6x40HC" when every container is one type, "6 containers" when they differ.
+  const ctrValue = !ctrs.length ? "—" : typeKeys.length === 1 ? `${ctrs.length}×${typeKeys[0]}` : `${ctrs.length} containers`;
+  // Under the track (the user, 15 Sep): the transshipment ports and the transit time.
+  const hubs = sea.slice(0, -1).map(l => l.pod).filter(Boolean);
+  const dep = shipment.etd ? stripDays(shipment.etd, today) : null;
+  const tot = shipment.etd && shipment.eta ? stripDays(shipment.etd, shipment.eta) : null;
+  const moving = dep != null && dep >= 0 && tot;
+  const pr = moving ? Math.max(0, Math.min(100, Math.round((dep / tot) * 100))) : 0;
+  const label = !shipment.pol && !shipment.pod ? "No route yet" : !shipment.etd ? "No sailing yet"
+    : dep < 0 ? `ETD in ${-dep} day${dep === -1 ? "" : "s"}` : tot && dep >= tot ? "Arrived" : `Day ${dep} of ${tot ?? "?"}`;
+  const etaIn = shipment.eta ? stripDays(today, shipment.eta) : null;
+  const numStyle = { fontFamily: HZ_DISPLAY, fontWeight: 700, fontSize: 22, lineHeight: 1.1, letterSpacing: "-.02em", color: HZ.text, textAlign: "right" };
+  const capStyle = { fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: HZ.textMuted, textAlign: "right" };
+  return (
+    <div id="shphdr-route" data-testid="shipment-detail-header-route" style={{ flex: "1 1 420px", minWidth: 320, display: "flex", alignItems: "center", gap: 20, paddingBottom: tot != null ? 12 : 0 }}>
+      <div style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: "minmax(0, auto) minmax(90px, 1fr) minmax(0, auto)", gap: 14, alignItems: "center" }}>
+        <StripPort code={shipment.pol} name={shipment.polName} line={`${atd ? "ATD" : "ETD"} ${stripFmt(shipment.etd)}`} missing="POL" />
+        <div data-testid="shipment-detail-header-route-track" style={{ position: "relative", height: 3, borderRadius: 3,
+          background: shipment.etd ? HZ.neutralBg : `repeating-linear-gradient(90deg, ${HZ.borderStrong} 0 6px, transparent 6px 11px)` }}>
+          {moving && <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${pr}%`, borderRadius: 3, background: `linear-gradient(90deg, ${HZ.cyan}, ${HZ.cyan2})`, boxShadow: `0 0 12px ${HZ.glow}` }} />}
+          {moving && <div style={{ position: "absolute", top: "50%", left: `${pr}%`, width: 11, height: 11, borderRadius: "50%", background: HZ.chipText, border: `2px solid ${HZ.cyan}`, transform: "translate(-50%, -50%)", boxShadow: `0 0 12px ${HZ.glow}` }} />}
+          <span style={{ position: "absolute", top: 9, left: moving ? `${Math.max(22, Math.min(78, pr))}%` : "50%", transform: "translateX(-50%)", fontFamily: HZ_MONO, fontSize: 10, fontWeight: 600, color: HZ.textMuted, whiteSpace: "nowrap" }}>{label}</span>
+          {tot != null && (
+            <span data-testid="shipment-detail-header-route-via" style={{ position: "absolute", top: 23, left: "50%", transform: "translateX(-50%)", fontFamily: HZ_MONO, fontSize: 10, fontWeight: 600, color: HZ.text, whiteSpace: "nowrap" }}>
+              {hubs.length ? `via ${hubs.join(", ")}` : "Direct"} · {tot} day{tot === 1 ? "" : "s"} transit
+            </span>
+          )}
+        </div>
+        <StripPort right code={shipment.pod} name={shipment.podName} line={`${ata ? "ATA" : "ETA"} ${stripFmt(shipment.eta)}`} missing="POD" />
+      </div>
+      {isDg && (
+        // The DG class beside the route, with what it means underneath (the user, 15 Sep).
+        <div id="shphdr-dg-badge" data-testid="shipment-detail-header-dg-badge" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}
+          title={`Dangerous goods${dgClasses.length ? `, class ${dgClasses.join(", ")}` : ""}${dgMeaning ? `: ${dgMeaning}` : ""}`}>
+          <span style={{ fontFamily: HZ_MONO, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.03em", lineHeight: 1.2,
+            padding: "3px 9px", borderRadius: 999, background: HZ.critBg, color: HZ.crit, border: `1px solid ${HZ.crit}44`,
+            whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <IconWarning size={11} />DG{dgClasses.length ? ` · CLASS ${dgClasses.join("/")}` : ""}
+          </span>
+          {dgMeaning && <span style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, paddingLeft: 2 }}>{dgMeaning}</span>}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 18 }}>
+        <div><div style={numStyle}>{etaIn != null && etaIn >= 0 ? etaIn : "—"}{etaIn != null && etaIn >= 0 && <small style={{ fontFamily: HZ_BODY, fontSize: 12, fontWeight: 600, color: HZ.textMuted, marginLeft: 4, letterSpacing: 0 }}>{etaIn === 1 ? "day" : "days"}</small>}</div><div style={capStyle}>to {ata ? "ATA" : "ETA"}</div></div>
+        <div data-testid="shipment-detail-header-containers">
+          <div style={numStyle}>{ctrValue}</div>
+          <div style={capStyle}>{ctrs.length ? `${teu} TEU` : "containers"}</div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// horizonNext: the Trade Horizon next header (route strip, the user's facts and order) — App.jsx passes it on Contracts &
+// Schedules only; the user's decision 2026-11-06: "until we get everything in the correct shape, we keep it in the
+// contracts and schedules, then we can convert the object into a global one".
+const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, onNavigateToParties, onUpdate, onRefresh, onEdit, horizonNext = false }) => {
   // Minimized by default (direct request) — resets to minimized on every new shipment rather
   // than persisting a preference, so "minimized by default" holds for every shipment visited,
   // not just the first one. Stays whatever the operator leaves it at while navigating between
@@ -379,6 +495,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
       background: HZ.surface, backdropFilter: "blur(22px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 16,
       padding: "14px 22px", marginBottom: 22, position: "sticky", top: 0, zIndex: 5,
     }}>
+      {horizonNext && <div aria-hidden style={{ position: "absolute", left: 18, right: 18, top: 0, height: 2, background: HZ.edge, boxShadow: `0 0 22px 2px ${HZ.glow}`, pointerEvents: "none" }} />}
       {/* Row 1 — identity, route, dates, DG */}
       <div id="shphdr-row1" data-testid="shipment-detail-header-row1" style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
         <span id="shphdr-id" data-testid="shipment-detail-header-id" style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -428,6 +545,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
 
         <div style={{ width: 1, alignSelf: "stretch", background: HZ.border }} />
 
+        {horizonNext ? <RouteStrip shipment={shipment} legs={legs} ctrs={ctrs} teu={teu} dgClasses={dgClasses} dgMeaning={dgMeaning} isDg={isDg} /> : (<>
         <div id="shphdr-route" data-testid="shipment-detail-header-route" style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ display: "flex", flexDirection: "column" }}>
             <span style={{ fontFamily: HZ_MONO, fontWeight: 700, fontSize: 15, color: HZ.text }}>{shipment.pol || "—"}</span>
@@ -456,6 +574,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
             </div>
           </>
         )}
+        </>)}
 
         <div style={{ flex: 1 }} />
 
@@ -567,12 +686,28 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
       {folded ? (
         // Minimized (default) state — Row 1 above stays exactly as-is; everything below
         // collapses to the one chip row instead of the full Row 2 + route pill.
-        <ChipRow shipment={shipment} ctrs={ctrs} cargoValueUsd={cargoValueUsd} openTicketCount={openTicketCount} />
+        horizonNext ? <ChipRow shipment={shipment} loopCode={loopCode} openTicketCount={openTicketCount} />
+          : <ChipRowClassic shipment={shipment} ctrs={ctrs} cargoValueUsd={cargoValueUsd} openTicketCount={openTicketCount} />
       ) : (
         <>
           {/* Row 2 — secondary facts */}
           <div id="shphdr-row2" data-testid="shipment-detail-header-row2" style={{ display: "flex", flexWrap: "wrap", rowGap: 8,
             marginTop: 11, paddingTop: 11, borderTop: `1px solid ${HZ.border}` }}>
+            {horizonNext ? (<>
+            {/* Same order as the folded row: the parties, the Incoterm, then the sailing (carrier code, main vessel, voyage,
+                service); no contract in the header (it has its card). The containers, TEU and DG are on row 1. */}
+            <Field first label="Principal" value={shipment.principalName} />
+            <Field label="Shipper" value={shipment.shipperName} />
+            <Field label="Consignee" value={shipment.consigneeName} />
+            <Field label="Incoterm" value={shipment.incoterm} />
+            <Field label="Carrier" value={shipment.carrierCode} />
+            <Field label="Vessel" value={shipment.vessel} />
+            <Field label="Voyage" value={shipment.voyage} />
+            <Field label="Service" value={loopCode} onClick={loopCode ? () => setLoopModalOpen(true) : undefined} />
+            <Field label="Routing" value={shipment.routingTerm} />
+            <Field label="Trade Lane" value={shipment.tradeLane} />
+            <Field label="Cargo Value" value={cargoValueUsd != null ? fmtCurr(cargoValueUsd, "USD") : null} />
+            </>) : (<>
             <Field first label="Incoterm" value={shipment.incoterm} />
             <Field label="Routing" value={shipment.routingTerm} />
             <Field label="Trade Lane" value={shipment.tradeLane} />
@@ -584,6 +719,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
             <Field label="TEU" value={ctrs.length ? String(teu) : null} />
             <Field label="Cargo Value" value={cargoValueUsd != null ? fmtCurr(cargoValueUsd, "USD") : null} />
             <Field label="Loop" value={loopCode} onClick={loopCode ? () => setLoopModalOpen(true) : undefined} />
+            </>)}
           </div>
 
           {/* Row 3 — the same route summary panel shown on the Schedules page (Pick-up/POL,

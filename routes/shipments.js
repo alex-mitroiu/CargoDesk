@@ -1,6 +1,7 @@
 "use strict";
 const ExcelJS = require("exceljs");
 const { mainLegIndex } = require("../lib/mainLeg");
+const { routeProblems, refusal: routeRefusal } = require("../lib/route-rules");
 const { PACKAGE_CODES, TO_ORDER_MODES } = require("../lib/house-bl");
 const { buildVgmDeclaration, retraction: vgmRetraction, vgmProblems } = require("../lib/carrier-integrations/dcsa-vgm-v1");
 const { CONTAINER_EVENT_DCSA, ISO_CODE_PATTERN, isoLengthFt, isoEquipmentCode, sizeTypeOfIso, SEAL_SOURCE, containerSeals } = require("../lib/dcsa/codes");
@@ -612,10 +613,19 @@ module.exports = function shipmentsRoutes(app, ctx) {
             placeOfReceipt = "", placeOfDelivery = "", cargoReadyDate = null,
             notifyId = "", notifyName = "",
             declaredValue = null, declaredValueCurrency = "USD",
-            emoOfficeId = null, imoOfficeId = null, controllingOfficeId = null,
+            controllingOfficeId = null,
             contractRoutingId = "" } = req.body;
+    let { emoOfficeId = null, imoOfficeId = null } = req.body;
     if (!pol || !pod || !carrierCode || !contractType) return err(res, "pol, pod, carrierCode, contractType required");
-    if (!emoOfficeId || !imoOfficeId) return err(res, "emoOfficeId, imoOfficeId required");
+    // A side sent empty is filled by the managing-office rule (lib/office-resolution.js, the one the New
+    // Shipment form shows); an office the caller chose is never replaced (decided 2026-11-06).
+    if (!emoOfficeId || !imoOfficeId) {
+      const r = await ctx.resolveShipmentOffices(req, { pol, pod });
+      if (!emoOfficeId) emoOfficeId = r.emo.officeId;
+      if (!imoOfficeId) imoOfficeId = r.imo.officeId;
+      const missing = [!emoOfficeId && `emoOfficeId required (${r.emo.reason})`, !imoOfficeId && `imoOfficeId required (${r.imo.reason})`].filter(Boolean);
+      if (missing.length) return err(res, missing.join("; "));
+    }
     if (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '' && Number(declaredValue) < 0)
       return err(res, "declaredValue cannot be negative");
     if (!CONTRACT_TYPES.includes(contractType)) return err(res, `contractType must be one of: ${CONTRACT_TYPES.join(", ")}`);
@@ -2251,39 +2261,78 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, rows.map(ctx.mapShipmentLeg));
   });
 
-  app.post("/api/shipments/:id/legs", shipmentWrite, async (req, res) => {
-    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
-    if (!shipmentRow) return err(res, "Shipment not found", 404);
-    if (await blockIfWrongSide(req, res, shipmentRow, 'export')) return;
+  // ── The route's rules (the user's, 2026-11-06, "non-negotiable"; lib/route-rules.js) ──────────────────────────────
+  // Every write through these routes is checked against the route it would leave behind: PKU (Merchant's Haulage, then
+  // at most one Carrier's Haulage), SEA, DEL (at most one Carrier's Haulage, then Merchant's Haulage), and dates that
+  // run forward. A route that breaks them is refused with 400 { error, problems }: what is wrong, and the order it
+  // should have. Routes already stored out of order are left as they are (the user's call) until one of them is saved.
+  // The server's own writers (AIS, DCSA events, booking escalations) don't pass through here.
+
+  // One leg as a request describes it → the values to store, or { error }. `existing` (a shipment_legs row) keeps its
+  // date sources when a date is unchanged: a changed date reaching an API route is a manual correction, so it clears an
+  // AIS/carrier confirmation; saving other fields doesn't (the AIS listener writes its dates directly, never here).
+  const legValues = (body, existing = null) => {
     const { legType='SEA', movementType='SEA', movementBy='',
             mot: rawMot, pol='', pod='', polName='', podName='', etd=null, eta=null, carrierCode='',
             polLocType: sentPolLocType='Terminal', podLocType: sentPodLocType='Terminal',
             polLatitude=null, polLongitude=null, podLatitude=null, podLongitude=null,
-            vessel='', vesselImo='', voyage='', contractType='', contractRef='' } = req.body;
+            vessel='', vesselImo='', voyage='', contractType='', contractRef='' } = body || {};
     const mot = rawMot || LEG_TO_MOT[legType] || 'SEA';
     const polLocType = seaLegLocType(legType, sentPolLocType), podLocType = seaLegLocType(legType, sentPodLocType);
     const polPoint = resolveLegPoint(legType, polLocType, pol, polLatitude, polLongitude);
-    if (polPoint.error) return err(res, polPoint.error);
+    if (polPoint.error) return { error: polPoint.error };
     const podPoint = resolveLegPoint(legType, podLocType, pod, podLatitude, podLongitude);
-    if (podPoint.error) return err(res, podPoint.error);
-    if (!validCoord(polPoint.lat, -90, 90)) return err(res, "POL latitude must be between -90 and 90");
-    if (!validCoord(polPoint.lng, -180, 180)) return err(res, "POL longitude must be between -180 and 180");
-    if (!validCoord(podPoint.lat, -90, 90)) return err(res, "POD latitude must be between -90 and 90");
-    if (!validCoord(podPoint.lng, -180, 180)) return err(res, "POD longitude must be between -180 and 180");
-    const id = `LEG-${uid()}`;
-    const [maxOrder] = await query("SELECT MAX(leg_order) as m FROM shipment_legs WHERE shipment_id=$1", [req.params.id]);
-    const legOrder = (maxOrder?.m ?? -1) + 1;
-    const createdAt = new Date().toISOString();
-    // etd_source/eta_source start blank (an estimate, not yet AIS-confirmed) — a leg created
-    // through this route always carries a fresh, unconfirmed date, even if etd/eta happen to be
-    // pre-filled from a picked sailing.
-    await query(`INSERT INTO shipment_legs (id,shipment_id,leg_order,mot,leg_type,movement_type,pol,pod,pol_name,pod_name,pol_loc_type,pod_loc_type,pol_latitude,pol_longitude,pod_latitude,pod_longitude,etd,eta,carrier_code,vessel,vessel_imo,voyage,movement_by,contract_type,contract_ref,created_at)
+    if (podPoint.error) return { error: podPoint.error };
+    if (!validCoord(polPoint.lat, -90, 90)) return { error: "POL latitude must be between -90 and 90" };
+    if (!validCoord(polPoint.lng, -180, 180)) return { error: "POL longitude must be between -180 and 180" };
+    if (!validCoord(podPoint.lat, -90, 90)) return { error: "POD latitude must be between -90 and 90" };
+    if (!validCoord(podPoint.lng, -180, 180)) return { error: "POD longitude must be between -180 and 180" };
+    const etdSource = existing ? (etd !== (existing.etd || null) ? '' : existing.etd_source) : '';
+    const etaSource = existing ? (eta !== (existing.eta || null) ? '' : existing.eta_source) : '';
+    return { v: { mot, legType, movementType, movementBy, pol: polPoint.code, pod: podPoint.code,
+      polName: polPoint.code ? polName : '', podName: podPoint.code ? podName : '', polLocType, podLocType,
+      polLatitude: polPoint.lat, polLongitude: polPoint.lng, podLatitude: podPoint.lat, podLongitude: podPoint.lng,
+      etd: etd || null, eta: eta || null, carrierCode, vessel, vesselImo, voyage, contractType, contractRef, etdSource, etaSource } };
+  };
+  const insertLeg = (q, shipmentId, id, order, v) => q(`INSERT INTO shipment_legs (id,shipment_id,leg_order,mot,leg_type,movement_type,pol,pod,pol_name,pod_name,pol_loc_type,pod_loc_type,pol_latitude,pol_longitude,pod_latitude,pod_longitude,etd,eta,carrier_code,vessel,vessel_imo,voyage,movement_by,contract_type,contract_ref,created_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
-      [id, req.params.id, legOrder, mot, legType, movementType,
-           polPoint.code, podPoint.code, polPoint.code ? polName : '', podPoint.code ? podName : '', polLocType, podLocType,
-           polPoint.lat, polPoint.lng, podPoint.lat, podPoint.lng,
-           etd||null, eta||null, carrierCode, vessel, vesselImo, voyage, movementBy,
-           contractType, contractRef, createdAt]);
+    [id, shipmentId, order, v.mot, v.legType, v.movementType, v.pol, v.pod, v.polName, v.podName, v.polLocType, v.podLocType,
+     v.polLatitude, v.polLongitude, v.podLatitude, v.podLongitude, v.etd, v.eta, v.carrierCode, v.vessel, v.vesselImo, v.voyage,
+     v.movementBy, v.contractType, v.contractRef, new Date().toISOString()]);
+  const updateLeg = (q, id, order, v) => q(`UPDATE shipment_legs SET mot=$1,leg_type=$2,movement_type=$3,pol=$4,pod=$5,pol_name=$6,pod_name=$7,pol_loc_type=$8,pod_loc_type=$9,pol_latitude=$10,pol_longitude=$11,pod_latitude=$12,pod_longitude=$13,etd=$14,eta=$15,carrier_code=$16,vessel=$17,vessel_imo=$18,voyage=$19,movement_by=$20,contract_type=$21,contract_ref=$22,leg_order=$23,etd_source=$24,eta_source=$25 WHERE id=$26`,
+    [v.mot, v.legType, v.movementType, v.pol, v.pod, v.polName, v.podName, v.polLocType, v.podLocType,
+     v.polLatitude, v.polLongitude, v.podLatitude, v.podLongitude, v.etd, v.eta, v.carrierCode, v.vessel, v.vesselImo, v.voyage,
+     v.movementBy, v.contractType, v.contractRef, order, v.etdSource, v.etaSource, id]);
+  const storedRoute = async shipmentId =>
+    query("SELECT * FROM shipment_legs WHERE shipment_id=$1 ORDER BY leg_order ASC, created_at ASC", [shipmentId]);
+  // [{ id, v | row }] in route order → refused (and answered) or not.
+  const refuseRoute = (res, route) => {
+    const problems = routeProblems(route.map(r => r.v || ctx.mapShipmentLeg(r.row)));
+    if (!problems.length) return false;
+    res.status(400).json(routeRefusal(problems));
+    return true;
+  };
+  // Positions 0..n-1 for every leg whose stored leg_order differs (one statement per leg that moved).
+  const restamp = async (q, route) => {
+    for (const [i, r] of route.entries()) if (r.row && r.row.leg_order !== i) await q("UPDATE shipment_legs SET leg_order=$1 WHERE id=$2", [i, r.id]);
+  };
+
+  // Adds a leg. `legOrder` (optional) is the position in the route to put it at; without it the leg goes last.
+  app.post("/api/shipments/:id/legs", shipmentWrite, async (req, res) => {
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (!shipmentRow) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipmentRow, 'export')) return;
+    const r = legValues(req.body);
+    if (r.error) return err(res, r.error);
+    const id = `LEG-${uid()}`;
+    const route = (await storedRoute(req.params.id)).map(row => ({ id: row.id, row }));
+    const want = Number.isInteger(req.body?.legOrder) ? Math.max(0, Math.min(route.length, req.body.legOrder)) : route.length;
+    route.splice(want, 0, { id, v: r.v });
+    if (refuseRoute(res, route)) return;
+    await transaction(async tx => {
+      await insertLeg(tx.query, req.params.id, id, want, r.v);
+      await restamp(tx.query, route);
+    });
     await syncShipmentFromLegs(req.params.id, req.user?.name || req.user?.email || "");
     // A hand-entered SEA leg with a real ETD counts as "has a schedule" for booking
     // auto-creation purposes too — see ensureBookingCreated's comment in server.js.
@@ -2292,43 +2341,62 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, ctx.mapShipmentLeg(row), 201);
   });
 
+  // Saves a whole route at once (2026-11-06): body { legs: [...] } in route order. A leg with the id of one of this
+  // shipment's legs updates it, one without an id (or a draft_… id) is added, and a stored leg the list leaves out is
+  // removed. Checked once, written in one transaction: all or nothing. Contracts & Schedules' Save, the edit form's
+  // route table and the sailing pick go through here, so no half-written route is ever checked on its own.
+  app.put("/api/shipments/:id/legs", shipmentWrite, async (req, res) => {
+    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (!shipmentRow) return err(res, "Shipment not found", 404);
+    if (await blockIfWrongSide(req, res, shipmentRow, 'export')) return;
+    if (!Array.isArray(req.body?.legs)) return err(res, "legs must be the route's legs, in order");
+    const stored = await storedRoute(req.params.id);
+    const byId = new Map(stored.map(row => [row.id, row]));
+    const route = [];
+    for (const [i, leg] of req.body.legs.entries()) {
+      const sentId = leg?.id ? String(leg.id) : "";
+      const row = sentId && !sentId.startsWith("draft_") ? byId.get(sentId) : null;
+      if (sentId && !sentId.startsWith("draft_") && !row) return err(res, `Leg ${i + 1} (${sentId}) is not one of this shipment's legs`);
+      if (row && route.some(x => x.id === row.id)) return err(res, `Leg ${i + 1} (${sentId}) is in the list twice`);
+      const r = legValues(leg, row);
+      if (r.error) return err(res, `Leg ${i + 1}: ${r.error}`);
+      route.push({ id: row ? row.id : `LEG-${uid()}`, row, v: r.v });
+    }
+    if (refuseRoute(res, route)) return;
+    const keep = new Set(route.filter(r => r.row).map(r => r.id));
+    await transaction(async tx => {
+      for (const row of stored) if (!keep.has(row.id)) await tx.query("DELETE FROM shipment_legs WHERE id=$1", [row.id]);
+      for (const [i, r] of route.entries()) {
+        if (r.row) await updateLeg(tx.query, r.id, i, r.v);
+        else await insertLeg(tx.query, req.params.id, r.id, i, r.v);
+      }
+    });
+    await syncShipmentFromLegs(req.params.id, req.user?.name || req.user?.email || "");
+    await ensureBookingCreated(req.params.id);
+    ok(res, (await storedRoute(req.params.id)).map(ctx.mapShipmentLeg));
+  });
+
+  // Updates one leg. A `legOrder` other than the leg's stored one moves it to that position in the route.
   app.put("/api/shipments/:id/legs/:legId", shipmentWrite, async (req, res) => {
     const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipmentRow) return err(res, "Shipment not found", 404);
     if (await blockIfWrongSide(req, res, shipmentRow, 'export')) return;
-    const { legType='SEA', movementType='SEA', movementBy='',
-            mot: rawMot, pol='', pod='', polName='', podName='', etd=null, eta=null, carrierCode='',
-            polLocType: sentPolLocType='Terminal', podLocType: sentPodLocType='Terminal',
-            polLatitude=null, polLongitude=null, podLatitude=null, podLongitude=null,
-            vessel='', vesselImo='', voyage='', contractType='', contractRef='', legOrder } = req.body;
-    const mot = rawMot || LEG_TO_MOT[legType] || 'SEA';
-    const [existing] = await query("SELECT * FROM shipment_legs WHERE id=$1 AND shipment_id=$2", [req.params.legId, req.params.id]);
+    const stored = await storedRoute(req.params.id);
+    const existing = stored.find(row => row.id === req.params.legId);
     if (!existing) return err(res, "Not found", 404);
-    const polLocType = seaLegLocType(legType, sentPolLocType), podLocType = seaLegLocType(legType, sentPodLocType);
-    const polPoint = resolveLegPoint(legType, polLocType, pol, polLatitude, polLongitude);
-    if (polPoint.error) return err(res, polPoint.error);
-    const podPoint = resolveLegPoint(legType, podLocType, pod, podLatitude, podLongitude);
-    if (podPoint.error) return err(res, podPoint.error);
-    if (!validCoord(polPoint.lat, -90, 90)) return err(res, "POL latitude must be between -90 and 90");
-    if (!validCoord(polPoint.lng, -180, 180)) return err(res, "POL longitude must be between -180 and 180");
-    if (!validCoord(podPoint.lat, -90, 90)) return err(res, "POD latitude must be between -90 and 90");
-    if (!validCoord(podPoint.lng, -180, 180)) return err(res, "POD longitude must be between -180 and 180");
-    // The only writer here is this HTTP route (the AIS listener updates etd/eta directly via
-    // its own DB calls, never through this endpoint) — so a changed date reaching this route is
-    // inherently a manual correction, and clears the 'ais'-confirmed flag (the operator is
-    // stating a new estimate/correction, not re-confirming the same detected event). An
-    // unchanged value keeps whatever source it already had, so saving other fields on the same
-    // leg doesn't accidentally erase an existing confirmation.
-    const etdSource = etd !== (existing.etd || null) ? '' : existing.etd_source;
-    const etaSource = eta !== (existing.eta || null) ? '' : existing.eta_source;
-    await query(`UPDATE shipment_legs SET mot=$1,leg_type=$2,movement_type=$3,pol=$4,pod=$5,pol_name=$6,pod_name=$7,pol_loc_type=$8,pod_loc_type=$9,pol_latitude=$10,pol_longitude=$11,pod_latitude=$12,pod_longitude=$13,etd=$14,eta=$15,carrier_code=$16,vessel=$17,vessel_imo=$18,voyage=$19,movement_by=$20,contract_type=$21,contract_ref=$22,leg_order=$23,etd_source=$24,eta_source=$25 WHERE id=$26`,
-      [mot, legType, movementType, polPoint.code, podPoint.code,
-           polPoint.code ? polName : '', podPoint.code ? podName : '',
-           polLocType, podLocType, polPoint.lat, polPoint.lng, podPoint.lat, podPoint.lng,
-           etd||null, eta||null,
-           carrierCode, vessel, vesselImo, voyage, movementBy,
-           contractType, contractRef, legOrder ?? existing.leg_order,
-           etdSource, etaSource, req.params.legId]);
+    const r = legValues(req.body, existing);
+    if (r.error) return err(res, r.error);
+    const route = stored.map(row => ({ id: row.id, row }));
+    const at = route.findIndex(x => x.id === req.params.legId);
+    const legOrder = req.body?.legOrder;
+    const moveTo = Number.isInteger(legOrder) && legOrder !== existing.leg_order ? Math.max(0, Math.min(route.length - 1, legOrder)) : at;
+    const [self] = route.splice(at, 1);
+    route.splice(moveTo, 0, { ...self, v: r.v, row: null, moved: true });
+    if (refuseRoute(res, route)) return;
+    await transaction(async tx => {
+      await updateLeg(tx.query, req.params.legId, route.findIndex(x => x.id === req.params.legId), r.v);
+      await restamp(tx.query, route);
+    });
     await syncShipmentFromLegs(req.params.id, req.user?.name || req.user?.email || "");
     await ensureBookingCreated(req.params.id);
     const [row] = await query("SELECT * FROM shipment_legs WHERE id=$1", [req.params.legId]);

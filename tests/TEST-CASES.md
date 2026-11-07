@@ -1407,3 +1407,200 @@ no customs broker; an export VGM and an import Delivery ordered. Logged in as an
 - The lock leaves the bar above its backdrop; Alt+→ opens VGM
 
 **Status:** PASS (2026-11-02, automated: src/components/shared/ShipmentAdvanceBar.test.jsx; src/components/primitives/Modal.test.jsx; cypress/e2e/shipment-advance-bar.cy.js; real-browser pass in dark and light)
+
+---
+
+## Area 15 — EMO and IMO fill themselves from the ports (2026-11-06)
+
+One rule for the Export and Import Managing Office (ARCHITECTURE.md §8.46, mockup f7b10beb v2): the office at the port,
+else one in its country; your own office only breaks a tie.
+
+### TC-085: The New Shipment form fills EMO and IMO, and a pick of your own sticks
+**Feature:** EMO/IMO lookups filled from the route; the API and quote conversion use the same rule
+**Precondition:** An active SE office at NLRTM and an active SI office at USNYC; a second SE office in the Netherlands
+(NLMOE) for the tie. Logged in as an operator of the Rotterdam office
+**Steps:**
+1. New Shipment, Rotterdam (NLRTM) to New York (USNYC)
+2. Open the EMO lookup and pick the other Dutch office; change the POD to USLAX; click "Use automatic"
+3. Create a shipment through the API with no EMO/IMO, from a port with no office in its country
+4. Convert a quote whose office is the export side
+
+**Expected Result:**
+- EMO and IMO fill with the two offices, tagged AUTO, "At the port of loading, NLRTM" / "At the port of discharge, USNYC" underneath; the lookup lists them first under "Fits this route"
+- The pick stays (YOUR PICK) through the POD change; "Use automatic" puts the rule's office back
+- 400 naming the side and the reason
+- The quote's office stays the EMO; the IMO is filled from the rule; a side the rule can't fill comes back as `officeWarning` and shows as a warning toast
+
+**Status:** PASS (2026-11-06, automated: tests/office-resolution.test.js (34); tests/shipment-integrity.test.js; cypress/e2e/shipment-form.cy.js; Edge pass on the CI test copy, dark and light)
+
+---
+
+## Area 16 — Trade Horizon next: Contracts & Schedules, the shipment header, the » pill (2026-11-06)
+
+The redesigned Contracts & Schedules page, the header's facts on every shipment page and the » pill (ARCHITECTURE.md §8.47,
+mockup 402fb5b5 v3).
+
+### TC-086: The route reads as a rail and is changed in the route table
+**Feature:** Route legs card: View (rail) and ✎ Edit route (the route table, pill look) with the Save checks live
+**Precondition:** A Central FCL export NLRTM → USNYC on MAEU via BEANR: MAERSK ALLEGRO 449F to Antwerp, MAERSK KENSINGTON
+449W to New York, sailing saved; 2 × 40' HC of oak dining tables. A second shipment NLRTM → USNYC with no legs
+**Steps:**
+1. Open Contracts & Schedules on the first shipment
+2. Click ✎ Edit route; change leg 2's From to DEHAM; give leg 2 a vessel with no carrier
+3. Discard; then open the second shipment's Contracts & Schedules
+
+**Expected Result:**
+- The hero shows NLRTM → BEANR → USNYC, 19 days, 2 sea legs, transship at BEANR, the main vessel MAERSK KENSINGTON; the rail shows leg 1 FEEDER and leg 2 MAIN, both Planned, "Legs meet at BEANR"
+- The table opens in the pill look with ✓ on all four checks; after the changes "legs meet end to end" and "a carrier wherever there is a vessel" turn to "!" and the problem list names the gap; the card's footer offers Discard and Save route
+- The rail is back unchanged; the second shipment opens straight in the table, with "No legs yet. + Add leg, then fill in From and To" and no checks row
+
+**Status:** PASS (2026-11-06, automated: src/pages/shipments/schedules/SchedulesParts.test.jsx; cypress/e2e/schedule-leg-cascade.cy.js, schedules-happy-path.cy.js, schedule-catalog-search.cy.js; Edge pass on the CI test copy, dark and light)
+
+---
+
+### TC-089: Pick-ups before the sea legs, and their dates (the user's golden rule)
+**Feature:** journey order on screen and as saved; the order and date checks
+**Precondition:** A shipment NLRTM → USNYC whose stored legs are a SEA leg NLRTM → USNYC and, after it, a Pick-up
+NLAMS → NLRTM (Carrier's Haulage, 16 Nov), as Save stored them before the fix (SHP-IOJNTD)
+**Steps:**
+1. Open Contracts & Schedules, ✎ Edit route
+2. Add Sailing: pick a sailing via BEANR (two sea legs, ETD 20 Nov)
+3. Change the pick-up's dates to 21 Nov → 22 Nov; then clear its arrival date
+4. Put them back to 16 Nov and Save route; reload
+
+**Expected Result:**
+- The Pick-up is the first row, the SEA leg the second; no unsaved changes
+- Pick-up, SEA NLRTM → BEANR, SEA BEANR → USNYC, in that order; every check ✓
+- "! dates in order" with "Leg 2 (SEA) departs 2026-11-20 (ETD), before leg 1 (Pick-up) arrives 2026-11-22 (ETA)", then "… before leg 1 (Pick-up) even departs 2026-11-21 (ETD)"; Save refuses with the same sentence
+- The stored legs read Pick-up 0, SEA 1, SEA 2; in dark mode every dropdown's open list is readable
+
+**Status:** PASS for steps 1 and the rules (2026-11-06, automated: src/utils/legChain.test.js; SchedulesParts.test.jsx; real-browser check of step 1 on SHP-IOJNTD on the developer's stack). Steps 2–4 end to end: not run (they write to the data; the CI test copy was blocked by the developer's running stack)
+
+---
+
+### TC-090: The server refuses a route that breaks the rules
+**Feature:** lib/route-rules.js on every leg write; PUT /api/shipments/:id/legs (whole route, all or nothing)
+**Precondition:** A shipment NLRTM → USNYC (SPOT, FOB, real parties)
+**Steps:**
+1. Save the user's example route in one call: MH NLAMS Door → NLRTM CY, CH NLRTM CY → NLRTM Terminal, SEA NLRTM → USNYC, CH USNYC Terminal → USJEC CY, MH USJEC CY → USCHI Door
+2. Save it with the pick-up moved last; with two CH pick-ups; MH after CH on the pick-up; CH after MH on the delivery; a pick-up reaching the POL after the ETD (with and without an arrival date)
+3. On a route with only a SEA leg, POST a CH pick-up without legOrder; then with legOrder 0; then an MH pick-up at 0
+4. Turn the MH pick-up into CH; move the SEA leg to position 0; change the vessel; set the CH pick-up's arrival after the ETD
+
+**Expected Result:**
+- 1: saved, stored in that order at positions 0–4
+- 2: each 400, code ROUTE_RULES, the error naming the problem and (order) "The order is: the pick-up legs…"; nothing written
+- 3: refused; then added in front; then added in front of it
+- 4: refused; refused; saved; refused
+
+**Status:** Written (tests/route-rules.test.js, in npm test); the rules themselves PASS in Vitest (legChain.parity.test.js, 18). The backend run waits for a server with this code (the developer's stack was running the previous build)
+
+---
+
+### TC-091: A change the route table refuses opens the dialog, not a toast
+**Feature:** LegsTable onRefuse on Contracts & Schedules (ProblemsDialog "That change wasn't made")
+**Precondition:** A Central shipment NLRTM → USNYC (FOB, real parties, one 40HC) with a CH pick-up NLAMS Door → NLRTM and a SEA leg; the contract offers the carrier's pick-up from a door at NLAMS
+**Steps:**
+1. Contracts & Schedules → Edit route → + Add leg → Pick-up (it comes as Merchant's Haulage: the side has its CH)
+2. Change the new leg to Carrier's Haulage and leave the field
+
+**Expected Result:**
+- The dialog "That change wasn't made" lists "A pick-up has at most one Carrier's Haulage leg…" and "The order is: …"; no toast
+- Fix issues closes it; the new leg is back to Merchant's Haulage, one CH pick-up remains
+
+**Status:** PASS (2026-11-06, automated: cypress/e2e/schedules-route-dialogs.cy.js, Edge)
+
+---
+
+### TC-092: A contract that no longer fits the route comes off on Save, after a warning
+**Feature:** Save on Contracts & Schedules with a contract the draft no longer fits (validateDraft dropContract; stillOnContract)
+**Precondition:** Two Central shipments NLRTM → USNYC on the same HLCU contract, each with a saved HLCU sailing
+**Steps:**
+1. Shipment 1: Edit route, change the sea leg's To to USBAL, Save
+2. Back
+3. Save again → Save and remove the contract
+4. Shipment 2: change only the vessel name, Save
+
+**Expected Result:**
+- 1: the dialog "Save the route?" says "<contract> comes off this shipment when you save: it doesn't cover NLRTM → USBAL as the route now stands"
+- 2: closes; nothing saved; the shipment keeps the contract
+- 3: "Saved. <contract> came off: add a contract that fits."; the shipment stays Central with no contract; the sea leg ends at USBAL; Add Contract is enabled
+- 4: "Saved" with no dialog; the contract stays (a shipment with no routing line recorded is judged on the contract alone)
+
+**Status:** PASS (2026-11-06, automated: cypress/e2e/schedules-route-dialogs.cy.js, Edge)
+
+---
+
+### TC-093: A contract line's legs are typed in the editor (Pick-up / SEA / Delivery)
+**Feature:** Master Data → Contracts, the routing lines editor (RoutingLinesEditor Leg dropdown, applyLegType, lineProblems)
+**Precondition:** An active HLCU contract, one line SEA NLRTM → USNYC
+**Steps:**
+1. Edit the contract; + Add leg; From NLAMS, To NLRTM; Leg: Pick-up
+2. Add the place DEBER; By: Truck
+3. Set the SEA leg's Leg to Pick-up
+4. + Add leg; From USNYC, To USCHI; Leg: Delivery; Save Changes
+
+**Expected Result:**
+- 1: the leg moves to the top, its From lists NLAMS, from a Door
+- 2: the line's chips read PKU NLAMS DEBER · Door · Truck
+- 3: "That change wasn't made. A line has at most one Pick-up leg…" and the order; the leg stays SEA
+- 4: the Delivery leg goes last; saved, the contract's legs are Pick-up NLAMS→NLRTM [NLAMS DEBER] by Truck, SEA NLRTM→USNYC, Delivery USNYC→USCHI [USCHI]; a Truck pick-up from DEBER finds it, a Barge one doesn't
+
+**Status:** PASS (2026-11-07, automated: cypress/e2e/contract-typed-legs.cy.js, Edge; src/components/contracts/RoutingLinesEditor.test.jsx)
+
+---
+
+### TC-094: The contract search judges carrier haulage on the typed legs (place, kind, mode), the shipment's CH leg wherever it sits
+**Feature:** findMatchingContractLegs (server.js + service); deriveHaulageNeeds; the startup typing of stored contracts
+**Precondition:** A contract with a door-to-door line (Pick-up NLAMS DEBER Door by Truck, SEA NLRTM → USNYC, Delivery to USCHI Door) and a barge line (Pick-up VNSGN Door by Barge → VNVUT, SEA VNVUT → USSAV)
+**Steps:**
+1. /contracts/match NLRTM → USNYC asking pick-up NLAMS / DEBER / DEHAM Door; NLAMS Container Yard; by Truck; by Barge
+2. VNVUT → USSAV asking pick-up VNSGN Door by Barge; by Truck; no mode; VNSGN → USSAV
+3. GET /api/contracts?pol=NLAMS; routingTerm D2D from NLAMS; CY2P; P2P
+4. A shipment route MH NLAMS Door → NLRTM CY, CH NLRTM CY → NLRTM Terminal, SEA, CH USNYC Terminal → USJEC CY, MH USJEC CY → USCHI Door
+5. Restart the server on data with old-shape contracts
+
+**Expected Result:**
+- 1: NLAMS, DEBER, Truck match (with the Pick-up leg returned, matched legs = SEA); DEHAM, Container Yard, Barge don't
+- 2: Barge and no mode match; Truck doesn't; VNSGN isn't a port of loading
+- 3: not found by NLAMS; found by D2D from NLAMS; not by CY2P or P2P
+- 4: the search asks for pre-carriage from a Container Yard at NLRTM and on-carriage to a Container Yard at USJEC (it used to ask for nothing)
+- 5: each old flag becomes a typed Pick-up / Delivery leg ("CY" → Container Yard); 8 of 40 contracts rewritten, the rest untouched; a second start changes nothing
+
+**Status:** PASS (2026-11-07, automated: tests/contract-typed-legs.test.js (29), tests/routing-lines.test.js (43), src/pages/shipments/haulageNeeds.test.js (4); the startup log on the developer's data)
+
+---
+
+### TC-087: The contract card shows the space (and the steering), never the charges
+**Feature:** The contract card's space figures (total, used, pending, remaining); the Lane steering block; no charges
+**Precondition:** A weekly space configuration of 20 TEU on the shipment's contract and routing line; in the shipment's ETD
+week: two shipments confirmed by the carrier (6 TEU), one booking sent and unanswered (4 TEU), one not booked (1 TEU); the
+shipment itself (4 TEU) linked, its booking sent
+**Steps:**
+1. Open Contracts & Schedules
+2. Add a Lane Steering line EU-N → NAM for everyone ranking the contract #1; reopen the page
+3. `GET /api/allocations?date=<the ETD>`
+
+**Expected Result:**
+- The card reads Week 49, 20 TEU a week: total 20, used 6, pending 9 (8 awaiting the carrier · 1 not booked yet), remaining 14; "6 / 20 TEU confirmed (14 remaining) · +9 pending"; "5 TEU still free once every pending booking is confirmed"; "This shipment: 4 TEU of the pending, awaiting MAEU's answer"; no charges, no currency
+- The space panel gives way to the Lane steering block: EU-N → NAM · for everyone · its dates · auto-switch off; #1 MAEU MAEU-SC-2026-0418 booked here, with the same figures; the verdict #1 · steered
+- The configuration has `awaitingCarrierTEU` 8 and `notBookedTEU` 1, which add up to `pendingTEU` 9
+
+**Status:** PASS (2026-11-06, automated: tests/allocations-crud.test.js (53); tests/where-to-book.test.js; src/pages/shipments/schedules/SchedulesParts.test.jsx; Edge pass on the CI test copy)
+
+---
+
+### TC-088: The header's facts and the » pill (Contracts & Schedules only for now; other pages keep the classic header)
+**Feature:** Principal, Shipper, Consignee, Incoterm, container count with the DG flag, POL + ETD/ATD, POD + ETA/ATA
+**Precondition:** The shipment of TC-086; a direct shipment NLRTM → USNYC whose departure the carrier reported (DCSA
+DEPARTED, actual); a shipment with a container of paint (IMDG class 3, UN 1263)
+**Steps:**
+1. Open Overview, Cargo and Milestones & Events on each; expand the header
+2. Hover the » pill
+
+**Expected Result:**
+- Row 1: the ports in large type, each with its date on its own line (ETD/ETA; ATD on the sailed shipment), "Day 12 of 14" on its track, days to ETA, the container count with "40HC · 4 TEU" (or "mixed · 3 TEU" with a red DG 3 flag beside the count)
+- The folded row starts Principal, Shipper, Consignee, Incoterm (a dash for an empty party), then the carrier and vessel, via, contract; the expanded row has the same order
+- The pill glows on hover and reads the next page's name; » behaves as in TC-083/TC-084
+
+**Status:** PASS (2026-11-06, automated: src/components/shared/ShipmentHeaderBar.test.jsx (15); src/components/shared/ShipmentAdvanceBar.test.jsx; cypress/e2e/shipment-advance-bar.cy.js, main-vessel-carrier-changes.cy.js; Edge pass on the CI test copy, dark and light)

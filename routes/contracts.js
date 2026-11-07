@@ -1,7 +1,7 @@
 "use strict";
 
 const { applyColumnFilters, filterOptions, applySearch, applySort, paginate, blanksLast } = require("../lib/tableQuery");
-const { normalizeRoutingLines } = require("../lib/routingLines");
+const { normalizeRoutingLines, lineProblemsError } = require("../lib/routingLines");
 
 module.exports = function contractsRoutes(app, ctx) {
   const { query, transaction, ok, err, uid, requireRole, mapContract, mapLeg, mapRate, mapContractRouting, logEntityEvent, toUsd, findMatchingContractLegs,
@@ -297,13 +297,14 @@ module.exports = function contractsRoutes(app, ctx) {
       await tx.query("DELETE FROM contract_legs WHERE contract_id=$1", [contractId]);
       for (let i = 0; i < legs.length; i++) {
         const l = legs[i];
-        await tx.query(`INSERT INTO contract_legs (id,contract_id,leg_order,pol,pol_name,pod,pod_name,transit_days,vessel_service,pol_linked_allowed,pod_linked_allowed,pol_carrier_haulage,pod_carrier_haulage,pol_haulage_locations,pod_haulage_locations,pol_loc_type,pod_loc_type,routing_id)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+        await tx.query(`INSERT INTO contract_legs (id,contract_id,leg_order,pol,pol_name,pod,pod_name,transit_days,vessel_service,pol_linked_allowed,pod_linked_allowed,pol_carrier_haulage,pod_carrier_haulage,pol_haulage_locations,pod_haulage_locations,pol_loc_type,pod_loc_type,routing_id,leg_type,movement_by)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
           [`CLEG-${uid()}`, contractId, i, l.pol||"", l.polName||"", l.pod||"", l.podName||"", l.transitDays||0, l.vesselService||"",
            !!l.polLinkedAllowed, !!l.podLinkedAllowed,
            !!l.polCarrierHaulage, !!l.podCarrierHaulage,
            l.polHaulageLocations || "", l.podHaulageLocations || "",
-           l.polLocType || 'Terminal', l.podLocType || 'Terminal', resolveRoutingId(l, routingIds, oldNameById, newIndexByName)]);
+           l.polLocType || 'Terminal', l.podLocType || 'Terminal', resolveRoutingId(l, routingIds, oldNameById, newIndexByName),
+           l.legType || "", l.movementBy || ""]);
       }
     });
   }
@@ -372,6 +373,7 @@ module.exports = function contractsRoutes(app, ctx) {
       const norm = normalizeRoutingLines({ routings: stored.routings, legs: stored.legs, rates, storedLegs: stored.legs });
       if (!norm.changed) continue;
       if (norm.duplicate) { skipped++; console.warn(`  ⚠ Contract ${id}: ${duplicateLineError(norm.duplicate)} — left as is`); continue; }
+      if (norm.problems.length) { skipped++; console.warn(`  ⚠ Contract ${id}: ${lineProblemsError(norm.problems)} — left as is`); continue; }
       if ((await routingsInUse(stored.routings.map(r => r.id), norm.routings)).length) { skipped++; console.warn(`  ⚠ Contract ${id}: a routing in use would be removed — left as is`); continue; }
       const routingIds = await saveRoutings(id, norm.routings);
       await saveLegs(id, norm.legs, routingIds);
@@ -486,7 +488,7 @@ module.exports = function contractsRoutes(app, ctx) {
     }
     const { pol = "", pod = "", etd = "", crd = "", carrier = "",
             needsPolHaulage = "", needsPodHaulage = "", pkuLocation = "", delLocation = "",
-            pkuLocType = "", delLocType = "" } = req.query;
+            pkuLocType = "", delLocType = "", pkuMode = "", delMode = "" } = req.query;
     if (!pol || !pod) return ok(res, []);
 
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
@@ -508,7 +510,7 @@ module.exports = function contractsRoutes(app, ctx) {
     for (const c of candidates) {
       const legs = await query("SELECT * FROM contract_legs WHERE contract_id=$1 ORDER BY leg_order", [c.id]);
       const matches = await findMatchingContractLegs(legs, { pol, pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation,
-        pkuLocType, delLocType });
+        pkuLocType, delLocType, pkuMode, delMode });
       if (matches.length === 0) continue;
       const routingsById = Object.fromEntries(
         (await query("SELECT * FROM contract_routings WHERE contract_id=$1", [c.id])).map(r => [r.id, mapContractRouting(r)])
@@ -519,7 +521,7 @@ module.exports = function contractsRoutes(app, ctx) {
         // findMatchingContractLegs). Callers that chain into a sailing search after picking
         // this contract need matchedLegs' own first pol/last pod, not the shipment's generic
         // SEA-leg span, so the search reflects the specific route this contract was rated for.
-        results.push({ ...mapContract(c), legs: legs.map(mapLeg), matchedLegs: match.legs.map(mapLeg),
+        results.push({ ...mapContract(c), legs: legs.map(mapLeg), matchedLegs: match.legs.map(mapLeg), pickupLeg: match.pickupLeg ? mapLeg(match.pickupLeg) : null, deliveryLeg: match.deliveryLeg ? mapLeg(match.deliveryLeg) : null,
           matchKind: match.matchKind,
           routingId: match.routingId,
           routing: match.routingId ? (routingsById[match.routingId] || null) : null,
@@ -586,15 +588,17 @@ module.exports = function contractsRoutes(app, ctx) {
     if (asOf.trim())          clauses.push(`c.valid_from<=${p(asOf)} AND c.valid_to>=${p(asOf)}`);
     if (containerType.trim()) clauses.push(`EXISTS(SELECT 1 FROM contract_container_types t WHERE t.contract_id=c.id AND t.container_type=${p(containerType.trim())})`);
     if (namedAccount.trim())  { const n = `%${namedAccount.trim()}%`; clauses.push(`(c.named_account ILIKE ${p(n)} OR c.named_account_id ILIKE ${p(n)})`); }
-    if (pol.trim()) clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pol)=UPPER(${p(pol.trim())}))`);
-    if (pod.trim()) clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pod)=UPPER(${p(pod.trim())}))`);
-    // Each end of the routing term (Schedule Search): a DR or CY end needs carrier haulage of that type there
-    // (contract_legs.pol_loc_type / pod_loc_type, agreed 2026-11-05) — at the Pick-up / Delivery location
+    // POL/POD are the sea ports: a Pick-up leg starts at a place (NLAMS), not at a port of loading (typed legs, 2026-11-07).
+    const SEA_LEG = "COALESCE(l.leg_type,'') NOT IN ('Pick-up','Delivery')";
+    if (pol.trim()) clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND ${SEA_LEG} AND UPPER(l.pol)=UPPER(${p(pol.trim())}))`);
+    if (pod.trim()) clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND ${SEA_LEG} AND UPPER(l.pod)=UPPER(${p(pod.trim())}))`);
+    // Each end of the routing term (Schedule Search): a DR or CY end needs the line's Pick-up (Delivery) leg from
+    // (to) that kind of place (agreed 2026-11-05; typed legs 2026-11-07) — at the Pick-up / Delivery location
     // typed in, if any; a PT end needs none. The location alone (no term) needs haulage of any type.
     const TERM_ENDS = { P2P: ["PT", "PT"], D2P: ["Door", "PT"], CY2P: ["Container Yard", "PT"], P2D: ["PT", "Door"], P2CY: ["PT", "Container Yard"],
       D2D: ["Door", "Door"], D2CY: ["Door", "Container Yard"], CY2D: ["Container Yard", "Door"], CY2CY: ["Container Yard", "Container Yard"] };
     const haulageAt = (side, type, location) => {
-      const conds = [`l.${side}_carrier_haulage=TRUE`];
+      const conds = [`l.leg_type=${p(side === "pol" ? "Pick-up" : "Delivery")}`];
       if (type) conds.push(`l.${side}_loc_type=${p(type)}`);
       if (location) conds.push(`(COALESCE(l.${side}_haulage_locations,'')='' OR UPPER(' '||l.${side}_haulage_locations||' ') LIKE UPPER('% '||${p(location)}||' %'))`);
       return `EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND ${conds.join(" AND ")})`;
@@ -651,7 +655,8 @@ module.exports = function contractsRoutes(app, ctx) {
   const summariseContract = (c, legs, containerTypes, full) => ({
     id: c.id, contractNumber: c.contractNumber, contractRef: c.contractRef, carrierCode: c.carrierCode,
     namedAccount: c.namedAccount, dgAllowed: !!c.dgAllowed, validFrom: c.validFrom, validTo: c.validTo, status: c.status,
-    routes: [...new Set(legs.filter(l => l.pol && l.pod).map(l => `${l.pol} › ${l.pod}`))],
+    // The sea legs: a Pick-up or Delivery leg isn't a route of its own (typed legs, 2026-11-07).
+    routes: [...new Set(legs.filter(l => l.pol && l.pod && l.legType !== "Pick-up" && l.legType !== "Delivery").map(l => `${l.pol} › ${l.pod}`))],
     containerTypes,
     legText: legs.map(l => [l.pol, l.pod, l.polName, l.podName].join(" ")).join(" "),
     full,
@@ -671,8 +676,8 @@ module.exports = function contractsRoutes(app, ctx) {
     }
     const rows = (await query("SELECT * FROM contracts ORDER BY valid_from DESC, created_at DESC")).map(mapContract);
     const legsBy = {}, typesBy = {};
-    (await query("SELECT contract_id, pol, pod, pol_name, pod_name FROM contract_legs ORDER BY leg_order"))
-      .forEach(l => { (legsBy[l.contract_id] ||= []).push({ pol: l.pol, pod: l.pod, polName: l.pol_name, podName: l.pod_name }); });
+    (await query("SELECT contract_id, pol, pod, pol_name, pod_name, leg_type FROM contract_legs ORDER BY leg_order"))
+      .forEach(l => { (legsBy[l.contract_id] ||= []).push({ pol: l.pol, pod: l.pod, polName: l.pol_name, podName: l.pod_name, legType: l.leg_type || "" }); });
     (await query("SELECT contract_id, container_type FROM contract_container_types"))
       .forEach(r => { (typesBy[r.contract_id] ||= []).push(r.container_type); });
     return rows.map(c => summariseContract(c, legsBy[c.id] || [], typesBy[c.id] || [], null));
@@ -794,6 +799,7 @@ module.exports = function contractsRoutes(app, ctx) {
   app.post("/api/contracts", write, async (req, res) => {
     const norm = normalizePayload(req.body || {}, { routings: [], legs: [] });
     if (norm.duplicate) return err(res, duplicateLineError(norm.duplicate));
+    if (norm.problems.length) return err(res, lineProblemsError(norm.problems));
     const commodity = await resolveCommodityTypes(req.body?.commodityTypes);
     if (commodity.error) return err(res, commodity.error);
     if (await isRemote()) {
@@ -839,6 +845,7 @@ module.exports = function contractsRoutes(app, ctx) {
         const current = await callContractService("GET", `/internal/contracts/${req.params.id}`);
         const norm = normalizePayload(req.body || {}, { routings: current.routings || [], legs: current.legs || [] });
         if (norm.duplicate) return err(res, duplicateLineError(norm.duplicate));
+        if (norm.problems.length) return err(res, lineProblemsError(norm.problems));
         const commodity = await resolveCommodityTypes(req.body?.commodityTypes);
         if (commodity.error) return err(res, commodity.error);
         const inUse = await routingsInUse((current.routings || []).map(r => r.id), norm.routings);
@@ -852,6 +859,7 @@ module.exports = function contractsRoutes(app, ctx) {
             validFrom="", validTo="", currency="USD", status="Active", notes="" } = req.body;
     const norm = normalizePayload(req.body, await storedRoutingState(req.params.id));
     if (norm.duplicate) return err(res, duplicateLineError(norm.duplicate));
+    if (norm.problems.length) return err(res, lineProblemsError(norm.problems));
     const { routings, legs, rates } = norm;
     const commodity = await resolveCommodityTypes(commodityTypes);
     if (commodity.error) return err(res, commodity.error);

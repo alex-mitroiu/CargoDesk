@@ -370,6 +370,19 @@ module.exports = function quotesRoutes(app, ctx) {
       if (qOffice?.department === "SE") quoteEmoOfficeId = q.office_id;
       else if (qOffice?.department === "SI") quoteImoOfficeId = q.office_id;
     }
+    // The other side (or both, for a quote with no office) comes from the managing-office rule the
+    // New Shipment form uses (lib/office-resolution.js, decided 2026-11-06); the quote's office breaks a
+    // tie first, then the converting user's own. A side nothing fits stays empty and the response says
+    // so (officeWarning), for the user to set it with Reassign Office.
+    let officeWarning = null;
+    if (!quoteEmoOfficeId || !quoteImoOfficeId) {
+      const active = await ctx.resolveActiveOffice(req).catch(() => null);
+      const r = await ctx.resolveShipmentOffices(req, { pol: q.pol, pod: q.pod, prefer: [q.office_id, active?.id] });
+      if (!quoteEmoOfficeId) quoteEmoOfficeId = r.emo.officeId;
+      if (!quoteImoOfficeId) quoteImoOfficeId = r.imo.officeId;
+      const open = [!quoteEmoOfficeId && `export managing office (${r.emo.reason})`, !quoteImoOfficeId && `import managing office (${r.imo.reason})`].filter(Boolean);
+      if (open.length) officeWarning = `No ${open.join(" and no ")}. Set it on the shipment's Parties & Offices page with Reassign Office.`;
+    }
 
     // Only the columns a quote actually has a value for are listed — every other shipments
     // column (etd, vessel, bookingRef, ...) is genuinely unknown at this point and correctly
@@ -508,6 +521,7 @@ module.exports = function quotesRoutes(app, ctx) {
       shipment: mapShipment(shipmentRow),
       screening: silentScreening || null,
       creditWarning: heldParties.length ? { onHold: heldParties } : null,
+      officeWarning,
     });
   });
 };

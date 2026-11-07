@@ -9,10 +9,11 @@ import { Modal } from "../../components/primitives/Modal";
 import DatePicker from "../../components/primitives/DatePicker";
 import PortCombobox from "../../components/shared/PortCombobox";
 import CarrierCombobox from "../../components/shared/CarrierCombobox";
-import { inputBase, Inp, Sel, Textarea, Field, ContractTypeInput } from "../../components/primitives/Form";
+import { inputBase, FIELD_CLASS, Inp, Sel, Textarea, Field, ContractTypeInput } from "../../components/primitives/Form";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns";
 import { CommodityCombobox } from "../../components/shared/CommodityCombobox";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
+import OfficeCombobox from "../../components/shared/OfficeCombobox";
 import Spinner from "../../components/primitives/Spinner";
 import Pagination from "../../components/primitives/Pagination";
 import InfoHint from "../../components/primitives/InfoHint";
@@ -20,7 +21,7 @@ import { ContainerTypeField } from "../../components/shared/ContainerTypePickerM
 import SailingPickerModal from "../../components/shared/SailingPickerModal";
 import { IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconRefresh, IconLock, IconAnchor, IconShip } from "../../components/primitives/Icon";
 import { GPS_LOC_TYPE, formatLegPoint, isGpsLeg, legLocType, LOC_TYPE_OPTIONS } from "../../utils/legLocation";
-import { legChainProblems } from "../../utils/legChain";
+import { legChainProblems, journeyOrder, ORDER_HELP } from "../../utils/legChain";
 import useContractLineHubs from "../../hooks/useContractLineHubs";
 import { countryCodeOf } from "../../utils/countryTag";
 import useResolvedPortName from "../../hooks/useResolvedPortName";
@@ -526,8 +527,8 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
               <SearchTermChip label="POD" value={searchCriteria.pod} />
               <SearchTermChip label="Cargo Ready" value={searchCriteria.crd} />
               <SearchTermChip label="Carrier" value={searchCriteria.carrierCode} />
-              <SearchTermChip label="POL Haulage" value={searchCriteria.needsPolHaulage ? haulageChip(searchCriteria.pkuLocation, searchCriteria.pkuLocType) : null} />
-              <SearchTermChip label="POD Haulage" value={searchCriteria.needsPodHaulage ? haulageChip(searchCriteria.delLocation, searchCriteria.delLocType) : null} />
+              <SearchTermChip label="POL Haulage" value={searchCriteria.needsPolHaulage ? haulageChip(searchCriteria.pkuLocation, searchCriteria.pkuLocType, searchCriteria.pkuMode) : null} />
+              <SearchTermChip label="POD Haulage" value={searchCriteria.needsPodHaulage ? haulageChip(searchCriteria.delLocation, searchCriteria.delLocType, searchCriteria.delMode) : null} />
             </div>
           </div>
         )}
@@ -684,12 +685,11 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
 // form, Schedules page, header mismatch badge) agrees on what "needs haulage" means, instead
 // of each recomputing it — or worse, passing shipment.routingTerm (the door-to-door bookend
 // term) straight through unexamined.
-// The route's first leg when it's a Pick-up the carrier hauls, and its last when it's a Delivery the carrier hauls.
-export const carrierPickUpLeg = legs => (legs[0]?.legType === "Pick-up" && legs[0]?.movementType === "Carrier's Haulage" ? legs[0] : null);
-export const carrierDeliveryLeg = legs => {
-  const last = legs[legs.length - 1];
-  return last?.legType === "Delivery" && last?.movementType === "Carrier's Haulage" ? last : null;
-};
+// The side's Carrier's Haulage leg, wherever it sits in the route (the user, 2026-11-07): Merchant's Haulage comes
+// before it on a pick-up and after it on a delivery (legChain.js journeyOrder), so it isn't always the first or last
+// leg. Each side has at most one (lib/route-rules.js). The server's copy is lib/where-to-book.js forShipment.
+export const carrierPickUpLeg = legs => legs.find(l => l.legType === "Pick-up" && l.movementType === "Carrier's Haulage") || null;
+export const carrierDeliveryLeg = legs => legs.find(l => l.legType === "Delivery" && l.movementType === "Carrier's Haulage") || null;
 export const deriveHaulageNeeds = (legs) => {
   const pkuLeg = carrierPickUpLeg(legs), delLeg = carrierDeliveryLeg(legs);
   return {
@@ -701,6 +701,10 @@ export const deriveHaulageNeeds = (legs) => {
     // there, since the routing term comes from the first and last location (agreed 2026-11-05).
     pkuLocType: pkuLeg ? haulageEndType(pkuLeg, "pol") : "",
     delLocType: delLeg ? haulageEndType(delLeg, "pod") : "",
+    // The mode (Barge, Rail, Truck, Vessel): a contract Pick-up / Delivery leg that names one needs the same
+    // (2026-11-07, decision 3 of mockup ff9c67cb); blank = don't judge.
+    pkuMode: pkuLeg?.movementBy || "",
+    delMode: delLeg?.movementBy || "",
   };
 };
 // A classified site given by GPS coordinates is a door (same rule server-side, lib/where-to-book.js).
@@ -711,9 +715,11 @@ export const haulageMatchParams = h => ({
   ...(h.pkuLocation && { pkuLocation: h.pkuLocation }), ...(h.delLocation && { delLocation: h.delLocation }),
   ...(h.needsPolHaulage && h.pkuLocType && { pkuLocType: h.pkuLocType }),
   ...(h.needsPodHaulage && h.delLocType && { delLocType: h.delLocType }),
+  ...(h.needsPolHaulage && h.pkuMode && { pkuMode: h.pkuMode }),
+  ...(h.needsPodHaulage && h.delMode && { delMode: h.delMode }),
 });
-// "CNTAG · Door" for the Search Terms chips; "Required" when the location isn't filled in yet.
-export const haulageChip = (location, type) => [location || "Required", type].filter(Boolean).join(" · ");
+// "CNTAG · Door · Truck" for the Search Terms chips; "Required" when the location isn't filled in yet.
+export const haulageChip = (location, type, mode = "") => [location || "Required", type, mode].filter(Boolean).join(" · ");
 
 export const ContractField = ({ value, onChange, pol, pod, etd, crd, haulage = {}, contractType, carrierCode, shipmentTEU = 0, cargo = {} }) => {
   const isCentral = contractType === "Central";
@@ -766,7 +772,7 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, haulage = {
         setMatches([]); setAllocs([]);
       } finally { setMatching(false); }
     }, 400);
-  }, [isCentral, pol, pod, dateRef, haulage.needsPolHaulage, haulage.needsPodHaulage, haulage.pkuLocation, haulage.delLocation, haulage.pkuLocType, haulage.delLocType, carrierCode, cargo.principalId, cargo.commodityCode, cargo.loopCode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isCentral, pol, pod, dateRef, haulage.needsPolHaulage, haulage.needsPodHaulage, haulage.pkuLocation, haulage.delLocation, haulage.pkuLocType, haulage.delLocType, haulage.pkuMode, haulage.delMode, carrierCode, cargo.principalId, cargo.commodityCode, cargo.loopCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearContract = () => { onChange({ id: "", ref: "", carrierCode: null, routingId: "", allocationId: "", spaceSkipReason: "", spaceOverageReason: "", spaceSelection: "" }); autoSelected.current = false; };
   // c.routingId is '' for a contract with no named routings, or the specific routing (e.g.
@@ -893,7 +899,7 @@ const cellInput = () => ({
 });
 
 // seaRole: "MAIN" or "FEEDER" on a SEA leg of a transshipment (lib/mainLeg.js rule, 2026-10-21), else null.
-const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inheritedContractRef, loopCode = "", showContractCols = true, locked = false, onUpdateSchedule = null, theme = T, seaRole = null }) => {
+const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inheritedContractRef, loopCode = "", showContractCols = true, locked = false, onUpdateSchedule = null, theme = T, seaRole = null, variant = "classic" }) => {
   // Local shadows of the module-level T/cellInput/legTypeColor — every existing T.xxx,
   // cellInput(), and legTypeColor() reference below (all of them; confirmed via grep that
   // nothing outside LegRow calls either helper) resolves to these instead whenever a caller
@@ -902,8 +908,21 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
   // form (LegsTable's other consumer, out of that redesign's scope) keeps passing nothing and
   // getting the app's normal theme exactly as before.
   const T = theme;
-  const cellInput = () => ({ background: "transparent", border: "none", outline: "none",
-    fontFamily: T.mono, fontSize: 12, color: T.text, width: "100%", padding: 0 });
+  // variant "pill" (Contracts & Schedules, Trade Horizon next, 2026-11-06): every field is an outlined pill on
+  // a faint tint, rows are hairlines with no column rules; the New/Edit Shipment form keeps the classic cells.
+  const pill = variant === "pill";
+  const colSep = pill ? "none" : `1px solid ${T.border}33`;
+  const fc = pill ? FIELD_CLASS : undefined;
+  const cellInput = () => pill
+    ? { background: T.tint, border: `1px solid ${T.border}`, borderRadius: 999, outline: "none", boxSizing: "border-box",
+        fontFamily: T.mono, fontSize: 12, color: T.text, width: "calc(100% - 8px)", padding: "5px 10px", minHeight: 28 }
+    : { background: "transparent", border: "none", outline: "none",
+        fontFamily: T.mono, fontSize: 12, color: T.text, width: "100%", padding: 0 };
+  const pillField = pill ? { borderRadius: 999, background: T.tint, padding: "5px 10px", minHeight: 30, boxSizing: "border-box" } : undefined;
+  // A select's open list takes the select's text colour, but the browser paints it on its own (white) ground when
+  // the select's background is see-through, as the pill's tint is: white on white in dark mode (reported
+  // 2026-11-06 on Loc. Type). Each option gets the theme's solid surface and text.
+  const optStyle = pill ? { background: T.surfaceSolid, color: T.text } : undefined;
   const legTypeColor = type => ({ "Pick-up": T.accent, "SEA": T.info, "Delivery": T.textMuted }[type]);
 
   const [d, setD] = useState(leg);
@@ -954,7 +973,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
             out of alignment with the header, which has no matching leading cell of its own. */}
         <div style={{ width: LEG_LEAD_COL_W, minWidth: LEG_LEAD_COL_W,
           display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
-          borderRight: `1px solid ${T.border}22`, color: T.textMuted, fontSize: 11 }}>
+          borderRight: colSep, color: T.textMuted, fontSize: 11 }}>
           {locked && canEdit && (<>
             <IconLock size={11} />
             {onUpdateSchedule && d.legType === "SEA" && (
@@ -983,7 +1002,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           return (
             <div key={c.key} id={`leg-${d.id}-${c.key}`} data-testid={`shipment-form-leg-${d.id}-${c.key}`}
               style={{ width: widths[i], minWidth: widths[i], padding: "8px 8px 8px 10px",
-              display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}22` }}>
+              display: "flex", alignItems: "center", borderRight: colSep }}>
               {/* Ports get the same bordered chip weight as the editable PortCombobox, so a
                   locked row doesn't look visually "cheaper" than an editable one beside it. */}
               {isPort && portPoint.code ? (
@@ -1028,18 +1047,18 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
   }
 
   return (
-    <div style={{ display: "flex", borderBottom: `1px solid ${T.border}` }}
+    <div style={{ display: "flex", borderBottom: `1px solid ${T.border}`, padding: pill ? "6px 0" : 0 }}
       onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) flush(); }}>
 
       {/* Blank — same LEG_LEAD_COL_W the locked/read-only row's own lock-icon column reserves,
           so an editable row's columns land at the exact same x-position as a locked row's (and
           the header's) regardless of which of the two this leg happens to render as right now. */}
-      <div style={{ width: LEG_LEAD_COL_W, minWidth: LEG_LEAD_COL_W, borderRight: `1px solid ${T.border}22` }} />
+      <div style={{ width: LEG_LEAD_COL_W, minWidth: LEG_LEAD_COL_W, borderRight: colSep }} />
 
       {/* Leg Type */}
       <div id={`leg-${d.id}-legType`} data-testid={`shipment-form-leg-${d.id}-legType`} style={{ width: widths[0], minWidth: widths[0], padding: "0 0 0 10px",
-        display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
-        <select value={d.legType || "SEA"} onChange={e => {
+        display: "flex", alignItems: "center", borderRight: colSep }}>
+        <select className={fc} value={d.legType || "SEA"} onChange={e => {
           const lt = e.target.value;
           const newD = { ...d, legType: lt, movementType: LEG_TYPE_DEFAULT_MT[lt] || d.movementType,
             // Becoming a SEA leg: both ends are terminals from now on (legLocType).
@@ -1047,26 +1066,26 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
               polLatitude: null, polLongitude: null, podLatitude: null, podLongitude: null }) };
           setD(newD); onSave(newD);
         }} style={{ ...cellInput(), cursor: "pointer", color: legTypeColor(d.legType) || T.textMuted, fontWeight: 700 }}>
-          {LEG_TYPE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
+          {LEG_TYPE_OPTIONS.map(m => <option key={m} value={m} style={optStyle}>{m}</option>)}
         </select>
         {seaRole && <span style={{ margin: "0 6px" }}><LegRoleChip role={seaRole} /></span>}
       </div>
 
       {/* Movement Type */}
       <div id={`leg-${d.id}-movementType`} data-testid={`shipment-form-leg-${d.id}-movementType`} style={{ width: widths[1], minWidth: widths[1], padding: "0 0 0 10px",
-        display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
+        display: "flex", alignItems: "center", borderRight: colSep }}>
         {(d.legType || "SEA") === "SEA"
           ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
-          : <select value={d.movementType || "Carrier's Haulage"} onChange={e => set("movementType")(e.target.value)} onBlur={flush}
+          : <select className={fc} value={d.movementType || "Carrier's Haulage"} onChange={e => set("movementType")(e.target.value)} onBlur={flush}
               style={{ ...cellInput(), cursor: "pointer" }}>
-              {MOVEMENT_TYPE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
+              {MOVEMENT_TYPE_OPTIONS.map(m => <option key={m} value={m} style={optStyle}>{m}</option>)}
             </select>
         }
       </div>
 
       {/* From (POL) — a classified-location Pick-up/Delivery leg swaps the port picker for two
           plain number inputs (Lat/Lng) once its Loc. Type is set to GPS Coordinates. */}
-      <div id={`leg-${d.id}-pol`} data-testid={`shipment-form-leg-${d.id}-pol`} style={{ width: widths[2], minWidth: widths[2], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
+      <div id={`leg-${d.id}-pol`} data-testid={`shipment-form-leg-${d.id}-pol`} style={{ width: widths[2], minWidth: widths[2], borderRight: colSep, overflow: "visible", paddingRight: pill ? 8 : 0, boxSizing: "border-box" }}>
         {d.polLocType === GPS_LOC_TYPE ? (
           <div style={{ display: "flex", gap: 4, padding: "0 8px 0 0" }}>
             <input type="number" step="any" min={-90} max={90} placeholder="Lat" value={d.polLatitude ?? ""}
@@ -1083,16 +1102,16 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
               const newD = { ...d, pol: v?.unlocode || "", polName: v?.name || "" };
               setD(newD); if (v?.unlocode) onSave(newD);
             }}
-            placeholder="Search From…"
+            placeholder="Search From…" fieldStyle={pillField}
           />
         )}
       </div>
 
       {/* Loc. Type (From) */}
       <div id={`leg-${d.id}-polLocType`} data-testid={`shipment-form-leg-${d.id}-polLocType`} style={{ width: widths[3], minWidth: widths[3], padding: "0 0 0 10px",
-        display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
+        display: "flex", alignItems: "center", borderRight: colSep }}>
         {(d.legType || "SEA") === "SEA" ? <SeaLegTerminal /> : (
-        <select value={d.polLocType || "Terminal"} onChange={e => {
+        <select className={fc} value={d.polLocType || "Terminal"} onChange={e => {
             const lt = e.target.value;
             // Switching away from GPS clears the coordinates client-side too (belt-and-suspenders
             // with the server-side clear in routes/shipments.js) so stale values never linger.
@@ -1101,7 +1120,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
             setD(newD); onSave(newD);
           }}
           style={{ ...cellInput(), cursor: "pointer" }}>
-          {LEG_END_LOC_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+          {LEG_END_LOC_OPTIONS.map(t => <option key={t} value={t} style={optStyle}>{t}</option>)}
         </select>
         )}
       </div>
@@ -1111,19 +1130,19 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           ZFO2OM); the ship icon marks it as confirmed rather than still just an estimate. A
           human can always type over it — editing clears the confirmed flag on the next save. */}
       <div id={`leg-${d.id}-etd`} data-testid={`shipment-form-leg-${d.id}-etd`} style={{ width: widths[4], minWidth: widths[4], padding: "0 0 0 10px",
-        display: "flex", alignItems: "center", gap: 4, borderRight: `1px solid ${T.border}33` }}>
+        display: "flex", alignItems: "center", gap: 4, borderRight: colSep }}>
         {d.etdSource === "ais" && (
           <span title={`Confirmed departure — detected via AIS`} style={{ color: T.accent, flexShrink: 0, display: "inline-flex" }}>
             <IconShip size={11} />
           </span>
         )}
-        <input type="date" value={d.etd || ""} max={d.eta || undefined}
+        <input className={fc} type="date" value={d.etd || ""} max={d.eta || undefined}
           onChange={e => setD(p => ({ ...p, etd: e.target.value || null, etdSource: "" }))}
           onBlur={flush} style={cellInput()} />
       </div>
 
       {/* To (POD) — same GPS-mode swap as From (POL) above */}
-      <div id={`leg-${d.id}-pod`} data-testid={`shipment-form-leg-${d.id}-pod`} style={{ width: widths[5], minWidth: widths[5], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
+      <div id={`leg-${d.id}-pod`} data-testid={`shipment-form-leg-${d.id}-pod`} style={{ width: widths[5], minWidth: widths[5], borderRight: colSep, overflow: "visible", paddingRight: pill ? 8 : 0, boxSizing: "border-box" }}>
         {d.podLocType === GPS_LOC_TYPE ? (
           <div style={{ display: "flex", gap: 4, padding: "0 8px 0 0" }}>
             <input type="number" step="any" min={-90} max={90} placeholder="Lat" value={d.podLatitude ?? ""}
@@ -1140,29 +1159,29 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
               const newD = { ...d, pod: v?.unlocode || "", podName: v?.name || "" };
               setD(newD); if (v?.unlocode) onSave(newD);
             }}
-            placeholder="Search To…"
+            placeholder="Search To…" fieldStyle={pillField}
           />
         )}
       </div>
 
       {/* Loc. Type (To) */}
       <div id={`leg-${d.id}-podLocType`} data-testid={`shipment-form-leg-${d.id}-podLocType`} style={{ width: widths[6], minWidth: widths[6], padding: "0 0 0 10px",
-        display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
+        display: "flex", alignItems: "center", borderRight: colSep }}>
         {(d.legType || "SEA") === "SEA" ? <SeaLegTerminal /> : (
-        <select value={d.podLocType || "Terminal"} onChange={e => {
+        <select className={fc} value={d.podLocType || "Terminal"} onChange={e => {
             const lt = e.target.value;
             const newD = lt === GPS_LOC_TYPE ? { ...d, podLocType: lt }
               : { ...d, podLocType: lt, podLatitude: null, podLongitude: null };
             setD(newD); onSave(newD);
           }}
           style={{ ...cellInput(), cursor: "pointer" }}>
-          {LEG_END_LOC_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+          {LEG_END_LOC_OPTIONS.map(t => <option key={t} value={t} style={optStyle}>{t}</option>)}
         </select>
         )}
       </div>
 
       {/* Date (ETA) — same confirmed-in-place behavior as ETD above */}
-      <div id={`leg-${d.id}-eta`} data-testid={`shipment-form-leg-${d.id}-eta`} style={{ width: widths[7], minWidth: widths[7], padding: "0 0 0 10px", borderRight: `1px solid ${T.border}33`,
+      <div id={`leg-${d.id}-eta`} data-testid={`shipment-form-leg-${d.id}-eta`} style={{ width: widths[7], minWidth: widths[7], padding: "0 0 0 10px", borderRight: colSep,
         display: "flex", flexDirection: "column", justifyContent: "center", gap: 3 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {d.etaSource === "ais" && (
@@ -1170,7 +1189,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
               <IconShip size={11} />
             </span>
           )}
-          <input type="date" value={d.eta || ""} min={d.etd || undefined}
+          <input className={fc} type="date" value={d.eta || ""} min={d.etd || undefined}
             onChange={e => setD(p => ({ ...p, eta: e.target.value || null, etaSource: "" }))}
             onBlur={flush} style={cellInput()} />
         </div>
@@ -1191,25 +1210,26 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           own dropdown already escapes via position:fixed, so this doesn't need to allow it) is
           what makes the selected chip's name actually truncate/ellipsis at the column's real
           width instead of visibly overflowing into Movement By next to it. */}
-      <div id={`leg-${d.id}-carrierCode`} data-testid={`shipment-form-leg-${d.id}-carrierCode`} style={{ width: widths[8], minWidth: widths[8], borderRight: `1px solid ${T.border}33`, overflow: "hidden",
+      <div id={`leg-${d.id}-carrierCode`} data-testid={`shipment-form-leg-${d.id}-carrierCode`} style={{ width: widths[8], minWidth: widths[8], borderRight: colSep, overflow: "hidden", paddingRight: pill ? 8 : 0, boxSizing: "border-box",
         display: "flex", alignItems: "center" }}>
         {d.legType === "Pick-up" || d.legType === "Delivery"
           ? <span style={{ display: "block", padding: "0 8px 0 10px", fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>—</span>
           : <CarrierCombobox
               value={d.carrierCode || ""}
               onChange={v => { const newD = { ...d, carrierCode: v }; setD(newD); onSave(newD); }}
+              fieldStyle={pillField}
             />
         }
       </div>
 
       {/* Movement by */}
       <div id={`leg-${d.id}-movementBy`} data-testid={`shipment-form-leg-${d.id}-movementBy`} style={{ width: widths[9], minWidth: widths[9], padding: "0 0 0 10px",
-        display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
+        display: "flex", alignItems: "center", borderRight: colSep }}>
         {(d.legType || "SEA") === "SEA"
           ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
-          : <select value={d.movementBy || ""} onChange={e => set("movementBy")(e.target.value)} onBlur={flush}
+          : <select className={fc} value={d.movementBy || ""} onChange={e => set("movementBy")(e.target.value)} onBlur={flush}
               style={{ ...cellInput(), cursor: "pointer" }}>
-              {MOVEMENT_BY_OPTIONS.map(b => <option key={b} value={b}>{b || "—"}</option>)}
+              {MOVEMENT_BY_OPTIONS.map(b => <option key={b} value={b} style={optStyle}>{b || "—"}</option>)}
             </select>
         }
       </div>
@@ -1219,10 +1239,10 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         const vesselDisabled = (d.legType === "Pick-up" || d.legType === "Delivery") && d.movementBy !== "Barge";
         return (
           <div id={`leg-${d.id}-vessel`} data-testid={`shipment-form-leg-${d.id}-vessel`} style={{ width: widths[10], minWidth: widths[10], padding: "0 0 0 10px",
-            display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
+            display: "flex", alignItems: "center", borderRight: colSep }}>
             {vesselDisabled
               ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
-              : <input value={d.vessel} onChange={e => set("vessel")(e.target.value)}
+              : <input className={fc} value={d.vessel} onChange={e => set("vessel")(e.target.value)}
                   onBlur={flush} placeholder="Name…" style={{ ...cellInput(), fontFamily: T.body }} />}
           </div>
         );
@@ -1233,10 +1253,10 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         const voyageDisabled = (d.legType === "Pick-up" || d.legType === "Delivery") && d.movementBy !== "Barge";
         return (
           <div id={`leg-${d.id}-voyage`} data-testid={`shipment-form-leg-${d.id}-voyage`} style={{ width: widths[11], minWidth: widths[11], padding: "0 0 0 10px",
-            display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
+            display: "flex", alignItems: "center", borderRight: colSep }}>
             {voyageDisabled
               ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
-              : <input value={d.voyage} onChange={e => set("voyage")(e.target.value)}
+              : <input className={fc} value={d.voyage} onChange={e => set("voyage")(e.target.value)}
                   onBlur={flush} placeholder="423E" style={cellInput()} />}
           </div>
         );
@@ -1250,7 +1270,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         const legIsTrucking = (d.legType === "Pick-up" || d.legType === "Delivery") && d.movementBy !== "Barge";
         return (
           <div id={`leg-${d.id}-loopCode`} style={{ width: widths[12], minWidth: widths[12], padding: "0 0 0 10px",
-            display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33`,
+            display: "flex", alignItems: "center", borderRight: colSep,
             fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>
             {legIsTrucking ? "—" : (loopCode || "—")}
           </div>
@@ -1261,14 +1281,14 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         <>
           {/* Contract Type — read-only, inherited */}
           <div id={`leg-${d.id}-contractType`} style={{ width: widths[13], minWidth: widths[13], padding: "0 0 0 10px",
-            display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33`,
+            display: "flex", alignItems: "center", borderRight: colSep,
             fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
             {inheritedContractType || "—"}
           </div>
 
           {/* Contract No. — read-only, inherited */}
           <div id={`leg-${d.id}-contractRef`} style={{ width: widths[14], minWidth: widths[14], padding: "0 0 0 10px",
-            display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33`,
+            display: "flex", alignItems: "center", borderRight: colSep,
             fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>
             {inheritedContractRef || "—"}
           </div>
@@ -1283,15 +1303,45 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
 // already assume this (e.g. ShipmentForm's pkuLeg/delLeg derivation reads legs[0]/legs[-1]
 // directly). Array.prototype.sort is stable, so this only moves Pick-up/Delivery legs to
 // their group's edge and leaves every other relative ordering untouched.
-const LEG_TYPE_RANK = { "Pick-up": 0, "Delivery": 2 };
-const orderLegs = legsArr => [...legsArr].sort((a, b) =>
-  (LEG_TYPE_RANK[a.legType] ?? 1) - (LEG_TYPE_RANK[b.legType] ?? 1));
+// The rule itself lives in legChain.js (journeyOrder), shared with Contracts & Schedules' draft and Save.
+const orderLegs = journeyOrder;
+
+// The pill look's wider columns (dates, lookups, vessel), by LEG_COLS key.
+const LEG_PILL_W = { legType: 150, pol: 200, pod: 200, etd: 140, eta: 140, carrierCode: 150, vessel: 150, voyage: 96 };
+
+// The Save checks of Contracts & Schedules (validateDraft), shown live under the pill-look table: every sea leg
+// has its From and To, the legs meet end to end and their dates run in order (legChain.js), and a leg with a
+// vessel or voyage has a carrier. Same rules, so a green row here means Save will not refuse the route for them.
+const LegChecks = ({ legs, T }) => {
+  if (!legs.length) return null; // the table's empty row already says what to do first
+  const sea = legs.filter(l => (l.legType || "SEA") === "SEA");
+  const probs = legChainProblems(legs);
+  const checks = [
+    ["ports", sea.every(l => l.pol && l.pod), "From and To on every sea leg"],
+    ["meet", !probs.some(p => p.kind === "handover" || p.kind === "order"), "legs meet end to end"],
+    ["dates", !probs.some(p => p.kind === "dates"), "dates in order"],
+    ["carrier", sea.every(l => l.carrierCode || !(l.vessel || l.voyage)), "a carrier wherever there is a vessel"],
+  ];
+  return (
+    <div data-testid="shipment-form-leg-checks" style={{ display: "flex", gap: "4px 14px", flexWrap: "wrap", flex: "1 1 260px",
+      fontFamily: T.mono, fontSize: 11.5, fontWeight: 500 }}>
+      {checks.map(([key, ok, text]) => (
+        <span key={key} data-testid={`shipment-form-leg-check-${key}`} data-ok={ok ? "true" : "false"} style={{ color: ok ? T.good : T.warning, whiteSpace: "nowrap" }}>
+          {ok ? "✓" : "!"} {text}
+        </span>
+      ))}
+    </div>
+  );
+};
 
 export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChange, inheritedCarrier, inheritedContractType, inheritedContractRef, loopCode = "", canEdit, showContractCols = true, extraAction = null, lockedSeaLegs = false, onUpdateSchedule = null,
-  draftBannerText = "Draft — legs will be saved when you create the shipment.", hideDraftBanner = false, theme = T }) => {
+  draftBannerText = "Draft — legs will be saved when you create the shipment.", hideDraftBanner = false, theme = T, variant = "classic",
+  onRefuse = null }) => {
   // Same local shadow as LegRow above, plus threaded down to it — see that component's own
   // comment for why this is safe (nothing outside these two components reads T here).
   const T = theme;
+  const pill = variant === "pill";
+  const colSep = pill ? "none" : `1px solid ${T.border}33`;
   const [legs,          setLegs]          = useState([]);
   const [saving,        setSaving]        = useState(null);
   const [selectedLegId, setSelectedLegId] = useState(null);
@@ -1314,7 +1364,9 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
   // v2: widened defaults to fit real option text (e.g. "Merchant's Haulage", "Container
   // Yard") without clipping against the native <select> arrow — new key so anyone with
   // previously-persisted (narrower) widths picks up the fix instead of loading stale ones.
-  const { widths, startResize } = useResizableColumns(showContractCols ? "legs-v2" : "legs-compact-v2", visibleCols.map(c => c.w));
+  // The pill look needs a little more room for the date and lookup pills, under its own saved-widths key.
+  const { widths, startResize } = useResizableColumns(pill ? "legs-pill-v1" : showContractCols ? "legs-v2" : "legs-compact-v2",
+    visibleCols.map(c => (pill && LEG_PILL_W[c.key]) || c.w));
 
   useEffect(() => {
     if (isDraft) {
@@ -1340,6 +1392,25 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
     onLegsChange?.(newLegs);
   };
 
+  // The route's rules on screen (the user, 2026-11-06): the table puts legs in journey order on its own (PKU, SEA, DEL;
+  // Merchant's Haulage before Carrier's Haulage on a pick-up, after it on a delivery). A change ordering can't put
+  // right, a second Carrier's Haulage leg on one side, is refused here with what's wrong and the order it should have;
+  // the row goes back to what it was. The server refuses the same (lib/route-rules.js).
+  // A refused change goes to the page's own problems dialog when it has one (onRefuse: Contracts & Schedules, the
+  // user 2026-11-06: "shown in a toaster, instead of the error pop-up"): what's wrong, then what to do. Else a toast.
+  const refuse = items => { if (onRefuse) onRefuse(items); else toast.error(items.join(" ")); };
+  // The server refused the route (lib/route-rules.js): its problems and the order, through the same path.
+  const refuseServer = e => e.body?.code === "ROUTE_RULES"
+    ? refuse([...(e.body.problems?.length ? e.body.problems : [e.message]), ...(e.body.help ? [e.body.help] : [])])
+    : toast.error(e.message);
+  const secondCarrierSide = list => ["Pick-up", "Delivery"].find(t =>
+    list.filter(l => l.legType === t && l.movementType === "Carrier's Haulage").length > 1);
+  const refuseSecondCarrier = side => {
+    const word = side === "Pick-up" ? "pick-up" : "delivery";
+    refuse([`A ${word} has at most one Carrier's Haulage leg, and this change would make a second one. Make one of them Merchant's Haulage, or remove it.`, ORDER_HELP]);
+    setLegs(prev => prev.map(l => ({ ...l }))); // new objects: each LegRow resets to its stored leg
+  };
+
   const addLeg = async (legType = "SEA") => {
     // A leg with no POL/POD/carrier yet is already "blank" — adding another on top of it
     // (e.g. the one New Shipment pre-seeds) silently doubles the empty-leg count and turns
@@ -1356,7 +1427,9 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
       // on a type change (only legType/movementType update there); every existing Pick-up/
       // Delivery leg already carries this same "stale mot: SEA, real type in legType" shape.
       legType, mot: "SEA", pol: "", pod: "", etd: null, eta: null,
-      movementType: LEG_TYPE_DEFAULT_MT[legType] || "Carrier's Haulage",
+      // A side that already has its Carrier's Haulage leg gets the customer's own leg (one CH per side).
+      movementType: (legType === "Pick-up" || legType === "Delivery") && legs.some(l => l.legType === legType && l.movementType === "Carrier's Haulage")
+        ? "Merchant's Haulage" : (LEG_TYPE_DEFAULT_MT[legType] || "Carrier's Haulage"),
       carrierCode: inheritedCarrier || "",
       vessel: "", vesselImo: "", voyage: "",
       contractType: inheritedContractType || "SPOT",
@@ -1366,13 +1439,14 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
       const draftLeg = { ...newLeg, id: `draft_${Date.now()}` };
       propagate(orderLegs([...legs, draftLeg]));
     } else {
-      // New legs default to legType SEA (middle group) but a trailing Delivery leg would
-      // otherwise land after it — reorder + re-stamp legOrder the same way saveLeg does.
-      const created = await api.legs.create(shipmentId, newLeg);
-      const ordered = orderLegs([...legs, created]).map((l, i) => ({ ...l, legOrder: i }));
-      const next = await Promise.all(ordered.map(l => api.legs.update(shipmentId, l.id, l)));
-      setLegs(next);
-      onLegsChange?.(next);
+      // Created straight into its place in the journey (the server puts it at legOrder and checks the route).
+      const at = orderLegs([...legs, { ...newLeg, id: "new" }]).findIndex(l => l.id === "new");
+      try {
+        await api.legs.create(shipmentId, { ...newLeg, legOrder: at });
+        const next = await api.legs.list(shipmentId);
+        setLegs(next);
+        onLegsChange?.(next);
+      } catch (e) { refuseServer(e); }
     }
   };
 
@@ -1382,25 +1456,26 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
     // legs are edited (and auto-saved on blur) straight from the Schedules page, which never
     // goes through that top-level gate at all — this is the only choke point for that path.
     if (leg.etd && leg.eta && leg.etd > leg.eta) {
-      toast.error(`ETA (${leg.eta}) is before ETD (${leg.etd}) — fix the dates before saving this leg.`);
+      refuse([`ETA (${leg.eta}) is before ETD (${leg.etd}) on this leg. Fix the dates: a leg arrives after it departs.`]);
       return;
     }
     const toSave = { ...leg, contractType: inheritedContractType || leg.contractType, contractRef: inheritedContractRef || leg.contractRef };
+    const merged = legs.map(l => l.id === toSave.id ? toSave : l);
+    const twice = secondCarrierSide(merged);
+    if (twice && twice !== secondCarrierSide(legs)) { refuseSecondCarrier(twice); return; }
     if (isDraft) {
-      const merged = legs.map(l => l.id === toSave.id ? toSave : l);
       propagate(orderLegs(merged));
     } else {
       setSaving(toSave.id);
       try {
-        // Reorder (Pick-up first, Delivery last) before persisting, so a legType change
-        // — the common way a leg becomes a Pick-up/Delivery — lands in the right position
-        // instead of staying wherever it was created. legOrder is re-stamped on every leg
-        // so GET .../legs (ORDER BY leg_order) reflects the same sequence next load.
-        const merged  = legs.map(l => l.id === toSave.id ? toSave : l);
-        const ordered = orderLegs(merged).map((l, i) => ({ ...l, legOrder: i }));
-        const next = await Promise.all(ordered.map(l => api.legs.update(shipmentId, l.id, l)));
+        // The whole route in journey order, in one call (a leg type change, the common way a leg becomes a
+        // Pick-up/Delivery, moves it), checked once by the server; a refusal leaves everything as it was.
+        const next = await api.legs.saveRoute(shipmentId, orderLegs(merged));
         setLegs(next);
         onLegsChange?.(next);
+      } catch (e) {
+        refuseServer(e);
+        setLegs(prev => prev.map(l => ({ ...l })));
       } finally { setSaving(null); }
     }
   };
@@ -1420,22 +1495,24 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
   const totalCols = widths.reduce((s, w) => s + w, 0);
 
   return (
-    <div data-testid="shipment-form-legs-table" style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
+    <div data-testid="shipment-form-legs-table" data-variant={pill ? "pill" : undefined}
+      style={pill ? {} : { border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
       {isDraft && !hideDraftBanner && (
         <div style={{ padding: "6px 14px", background: T.info + "12", borderBottom: `1px solid ${T.info}33`,
           fontFamily: T.body, fontSize: 11, color: T.info }}>
           ℹ {draftBannerText}
         </div>
       )}
-      <div style={{ overflowX: "auto" }}>
+      {/* colorScheme: the browser draws this box's scrollbar dark in dark mode (it was white, 2026-11-06). */}
+      <div style={{ overflowX: "auto", colorScheme: T.scheme }}>
         <div style={{ minWidth: totalCols }}>
-          <div style={{ display: "flex", padding: "10px 0", borderBottom: `1px solid ${T.border}`, background: T.surface }}>
+          <div style={{ display: "flex", padding: pill ? "8px 0" : "10px 0", borderBottom: `1px solid ${T.border}`, background: pill ? "transparent" : T.surface }}>
             <div style={{ width: LEG_LEAD_COL_W, minWidth: LEG_LEAD_COL_W }} />
             {visibleCols.map((c, i) => (
               <div key={c.key} style={{ position: "relative", width: widths[i], minWidth: widths[i], paddingLeft: 10,
-                fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
+                fontFamily: pill ? T.mono : T.body, fontSize: pill ? 9.5 : 10.5, fontWeight: pill ? 700 : 600,
                 color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em",
-                borderRight: `1px solid ${T.border}33` }}>
+                borderRight: colSep }}>
                 {c.label}
                 {i < visibleCols.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
               </div>
@@ -1446,8 +1523,9 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
               <Spinner size="sm" label="Loading legs…" />
             </div>
           ) : legs.length === 0 ? (
-            <div style={{ padding: "14px 16px", fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>
-              No legs yet — add one below.
+            <div data-testid="shipment-form-legs-empty" style={{ padding: "14px 16px", fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>
+              {pill ? "No legs yet. + Add leg, then fill in From and To: the contract match and the sailing search start from these two ports."
+                : "No legs yet — add one below."}
             </div>
           ) : legs.map(leg => {
             // The main vessel's leg on a transshipment (the SEA leg with the longest transit) and its feeders.
@@ -1472,7 +1550,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
                     editable so its type can still be changed to Pick-up/Delivery. Previously this
                     locked on legType alone, trapping a fresh leg as uneditable the instant it was
                     created whenever any schedule already existed on the shipment. */}
-                <LegRow leg={leg} onSave={saveLeg} canEdit={canEdit} widths={widths} inheritedContractType={inheritedContractType} inheritedContractRef={inheritedContractRef} loopCode={loopCode} showContractCols={showContractCols} locked={lockedSeaLegs && leg.legType === "SEA" && !!(leg.vessel || leg.voyage)} onUpdateSchedule={onUpdateSchedule} theme={theme} seaRole={seaRole} />
+                <LegRow leg={leg} onSave={saveLeg} canEdit={canEdit} widths={widths} inheritedContractType={inheritedContractType} inheritedContractRef={inheritedContractRef} loopCode={loopCode} showContractCols={showContractCols} locked={lockedSeaLegs && leg.legType === "SEA" && !!(leg.vessel || leg.voyage)} onUpdateSchedule={onUpdateSchedule} theme={theme} seaRole={seaRole} variant={variant} />
               </div>
             );
           })}
@@ -1484,14 +1562,17 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
         const problems = legChainProblems(legs);
         if (!problems.length) return null;
         return (
-          <div data-testid="shipment-form-leg-chain-problems" style={{ padding: "8px 14px", background: T.warning + "14",
-            borderTop: `1px solid ${T.warning}44`, fontFamily: T.body, fontSize: 12, color: T.warning }}>
+          <div data-testid="shipment-form-leg-chain-problems" style={{ padding: pill ? "8px 4px" : "8px 14px", background: pill ? "transparent" : T.warning + "14",
+            borderTop: `1px solid ${pill ? T.border : T.warning + "44"}`, fontFamily: T.body, fontSize: 12, color: T.warning }}>
             {problems.map((p, i) => (
               <div key={i} style={{ display: "flex", gap: 6, alignItems: "baseline", padding: "2px 0" }}>
                 <IconWarning size={11} style={{ flexShrink: 0, position: "relative", top: 1 }} />
                 <span>{p.message}</span>
               </div>
             ))}
+            {problems.some(p => p.kind === "order") && (
+              <div data-testid="shipment-form-leg-order-help" style={{ padding: "4px 0 2px 17px", color: T.text }}>{ORDER_HELP}</div>
+            )}
           </div>
         );
       })()}
@@ -1502,8 +1583,8 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
             (LEG_LOC_ABBR_C[legLocType(cLegs[cLegs.length-1], "pod")] || "PT")
           : null;
         return (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-            padding: "8px 12px", borderTop: legs.length ? `1px solid ${T.border}` : "none", background: T.surface }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: pill ? "wrap" : "nowrap",
+            padding: pill ? "10px 4px 2px" : "8px 12px", borderTop: legs.length ? `1px solid ${T.border}` : "none", background: pill ? "transparent" : T.surface }}>
             <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, display: "flex", alignItems: "center", gap: 8 }}>
               {legs.length} leg{legs.length !== 1 ? "s" : ""}
               {legs.length > 1 && (
@@ -1518,15 +1599,17 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
                 </span>
               )}
             </span>
+            {pill && !loading && <LegChecks legs={legs} T={T} />}
             {canEdit && (
-              <div style={{ display: "flex", gap: 6 }}>
+              <div style={{ display: "flex", gap: 6, order: pill ? -1 : 0 }}>
                 <div ref={addLegMenuRef} style={{ position: "relative" }}>
                   <button onClick={() => setAddLegMenuOpen(o => !o)} data-testid="shipment-form-add-leg-btn"
-                    style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
+                    style={{ background: "none", border: pill ? `1px dashed color-mix(in srgb, ${T.accent} 55%, transparent)` : `1px solid ${T.border}`,
+                      borderRadius: pill ? 999 : 6, fontWeight: pill ? 600 : 400,
                       padding: "4px 12px", fontFamily: T.body, fontSize: 12, color: T.accent, cursor: "pointer",
                       display: "flex", alignItems: "center", gap: 5 }}
                     onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
-                    onMouseLeave={e => e.currentTarget.style.borderColor = T.border}>
+                    onMouseLeave={e => e.currentTarget.style.borderColor = pill ? `color-mix(in srgb, ${T.accent} 55%, transparent)` : T.border}>
                     + Add leg <span style={{ fontSize: 8 }}>{addLegMenuOpen ? "▴" : "▾"}</span>
                   </button>
                   {addLegMenuOpen && (
@@ -1553,7 +1636,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
                   disabled={!selectedLegId}
                   data-testid="shipment-form-remove-leg-btn"
                   onClick={() => selectedLegId && setConfirmRemove(legs.find(l => l.id === selectedLegId) || null)}
-                  style={{ background: "none", borderRadius: 6, padding: "4px 12px",
+                  style={{ background: "none", borderRadius: pill ? 999 : 6, padding: "4px 12px",
                     fontFamily: T.body, fontSize: 12, cursor: selectedLegId ? "pointer" : "default",
                     border: `1px solid ${selectedLegId ? T.danger + "88" : T.border}`,
                     color: selectedLegId ? T.danger : T.textMuted,
@@ -1680,26 +1763,14 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
   const [offices, setOffices] = useState([]);
   useEffect(() => { api.offices.list().then(setOffices).catch(() => {}); }, []);
 
-  // Smart-default offices when creating a new shipment based on user's active office
-  useEffect(() => {
-    if (init.id) return; // edit mode — don't override
-    if (!activeOffice) return;
-    setF(p => ({
-      ...p,
-      emoOfficeId: activeOffice.department === 'SE' ? activeOffice.id : (p.emoOfficeId || ""),
-      imoOfficeId: activeOffice.department === 'SI' ? activeOffice.id : (p.imoOfficeId || ""),
-    }));
-  }, [activeOffice?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // IMO office suggestion: when POD country matches an active SI office, suggest it
-  const [imoSuggestion, setImoSuggestion] = useState(null);
-  useEffect(() => {
-    if (init.id || f.imoOfficeId) { setImoSuggestion(null); return; }
-    const podCode = (legs[legs.length - 1]?.pod || "").slice(0, 2).toUpperCase();
-    if (!podCode) { setImoSuggestion(null); return; }
-    const match = offices.find(o => o.department === "SI" && o.isActive && (o.countryCode || "").toUpperCase() === podCode);
-    setImoSuggestion(match || null);
-  }, [legs, offices, f.imoOfficeId, init.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // EMO/IMO auto-resolution (decided 2026-11-06, mockup f7b10beb). On a new shipment each managing
+  // office fills itself from the ports by the server's rule (GET /api/offices/resolve, the rule in
+  // lib/office-resolution.js: port, then country, your own office only breaks a tie). An office you
+  // pick yourself sticks until "Use automatic"; an office the form opened with counts as picked. On an
+  // existing shipment nothing switches on its own: the field only says what the rule would pick now.
+  // (Replaces the old defaults: EMO = your own office if it was an export office, and an IMO "Use" chip.)
+  const [officeRes, setOfficeRes] = useState(null);
+  const [officePicked, setOfficePicked] = useState({ emo: !!init.emoOfficeId, imo: !!init.imoOfficeId });
 
   const [carrierUpdated, setCarrierUpdated] = useState("");
   const [isSaving, withSaving] = useSaving();
@@ -1797,6 +1868,29 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
   const cLegsForMatch = legs.filter(l => !["Merchant's Haulage", "Customer Arranged"].includes(l.movementType));
   const derivedPol  = cLegsForMatch[0]?.pol || firstLeg?.pol || "";
   const derivedPod  = cLegsForMatch[cLegsForMatch.length - 1]?.pod || lastLeg?.pod || "";
+
+  // EMO/IMO auto-resolution (see officeRes above): ask the server whenever the ports or your own office change...
+  useEffect(() => {
+    let live = true;
+    api.offices.resolve({ pol: derivedPol, pod: derivedPod })
+      .then(r => { if (live) setOfficeRes(r); })
+      .catch(() => { if (live) setOfficeRes(null); });
+    return () => { live = false; };
+  }, [derivedPol, derivedPod, activeOffice?.id]);
+  // ...and, on a new shipment only, put its answer in every side you haven't picked yourself.
+  useEffect(() => {
+    if (init.id || !officeRes) return;
+    setF(p => ({
+      ...p,
+      emoOfficeId: officePicked.emo ? p.emoOfficeId : (officeRes.emo?.officeId || ""),
+      imoOfficeId: officePicked.imo ? p.imoOfficeId : (officeRes.imo?.officeId || ""),
+    }));
+  }, [officeRes, officePicked.emo, officePicked.imo, init.id]);
+  const pickOffice = (side, key) => id => {
+    setF(p => ({ ...p, [key]: id || "" }));
+    // Picking the office the rule would pick anyway isn't a pick of your own: ports changing later still move it.
+    if (side && !init.id) setOfficePicked(p => ({ ...p, [side]: !!id && id !== officeRes?.[side]?.officeId }));
+  };
   const derivedEtd  = firstLeg?.etd || "";
   const derivedEta  = lastLeg?.eta  || "";
 
@@ -2096,58 +2190,68 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       <SectionDivider label="Offices" id="shpform-offices" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
         {[
-          { key: "emoOfficeId", label: "Export Managing Office (EMO)", required: true,  dept: "SE" },
-          { key: "imoOfficeId", label: "Import Managing Office (IMO)", required: true,  dept: "SI" },
-          { key: "controllingOfficeId", label: "Controlling Office",   required: false, dept: null },
-        ].map(({ key, label, required, dept }) => {
+          { key: "emoOfficeId", side: "emo", label: "Export Managing Office (EMO)", required: true,  dept: "SE", portWord: "port of loading" },
+          { key: "imoOfficeId", side: "imo", label: "Import Managing Office (IMO)", required: true,  dept: "SI", portWord: "port of discharge" },
+          { key: "controllingOfficeId", side: null, label: "Controlling Office",   required: false, dept: null },
+        ].map(({ key, side, label, required, dept, portWord }) => {
           const candidates = dept ? offices.filter(o => o.department === dept && o.isActive) : offices.filter(o => o.isActive);
+          const res = side ? officeRes?.[side] : null;
+          const picked = side ? officePicked[side] : false;
+          const missing = required && touched.offices && !f[key];
+          const officeWord = dept === "SE" ? "export" : "import";
+          const nameOf = id => offices.find(o => o.id === id)?.name || "";
+          const linkBtn = (text, onClick, testid) => (
+            <button type="button" onClick={onClick} data-testid={testid}
+              style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: T.accent,
+                fontFamily: T.body, fontSize: 11.5, fontWeight: 600, textDecoration: "underline", textUnderlineOffset: 2 }}>{text}</button>
+          );
+          // The line under the lookup says where the office came from, or why there's none yet.
+          let source = null;
+          if (side && !init.id) {
+            if (f[key] && picked) source = <>Chosen by you{res && (res.status === "auto" || res.status === "several") && linkBtn(
+              res.status === "auto" && res.officeId !== f[key] ? `Use automatic: ${nameOf(res.officeId)}` : "Use automatic",
+              () => setOfficePicked(p => ({ ...p, [side]: false })), `shipment-form-office-use-auto-${key}`)}</>;
+            else if (f[key] && res?.status === "auto" && res.officeId === f[key]) source = res.reason;
+            else if (!f[key] && (res?.status === "several" || res?.status === "none")) source = `${res.reason}.`;
+          } else if (side && init.id && res?.status === "auto" && res.officeId && res.officeId !== f[key]) {
+            source = <>For these ports the rule would pick {nameOf(res.officeId)}{linkBtn("Use it",
+              () => setF(p => ({ ...p, [key]: res.officeId })), `shipment-form-office-use-rule-${key}`)}</>;
+          }
+          const tag = side && !init.id && f[key] ? (
+            <span data-testid={`shipment-form-office-tag-${key}`}
+              style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, letterSpacing: ".08em", padding: "2px 6px", borderRadius: 4, flexShrink: 0,
+                ...(picked ? { background: T.info + "1a", color: T.info } : { background: T.accent + "1f", color: T.accent }) }}>
+              {picked ? "YOUR PICK" : "AUTO"}
+            </span>
+          ) : null;
+          const placeholder = !side ? "None (optional) · search to add…"
+            : (!res || res.status === "wait") && !init.id ? `Search ${officeWord} offices… (fills in from the ${portWord})`
+            : `Search ${officeWord} office by name, code or country…`;
           return (
             <div key={key} data-testid={`shipment-form-office-field-${key}`}>
               <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
                 textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
                 {label}{required && <span style={{ color: T.danger, marginLeft: 2 }}>*</span>}
               </div>
-              <select value={f[key] || ""} onChange={e => setF(p => ({ ...p, [key]: e.target.value || null }))}
-                data-testid={`shipment-form-office-select-${key}`}
-                style={{ width: "100%", padding: "7px 10px", borderRadius: 7, fontFamily: T.mono, fontSize: 12,
-                  color: f[key] ? T.text : T.textMuted,
-                  border: `1px solid ${required && touched.offices && !f[key] ? T.danger : T.border}`,
-                  background: T.bg, outline: "none", cursor: "pointer", boxSizing: "border-box" }}>
-                <option value="">{required ? "Select office…" : "None (optional)"}</option>
-                {candidates.map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
-              </select>
-              {key === "imoOfficeId" && imoSuggestion && !f.imoOfficeId && (
-                <div style={{ marginTop: 5, padding: "5px 9px", borderRadius: 7,
-                  background: T.info + "18", border: `1px solid ${T.info}44`,
-                  display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.info, flex: 1 }}>
-                    ✦ {imoSuggestion.code} — {imoSuggestion.name}
-                  </span>
-                  <button type="button"
-                    onClick={() => setF(p => ({ ...p, imoOfficeId: imoSuggestion.id }))}
-                    data-testid="shipment-form-imo-suggestion-use-btn"
-                    style={{ padding: "2px 8px", borderRadius: 5, border: "none", background: T.info,
-                      color: "#fff", cursor: "pointer", fontFamily: T.body, fontSize: 11, fontWeight: 600 }}>
-                    Use
-                  </button>
-                  <button type="button" onClick={() => setImoSuggestion(null)}
-                    data-testid="shipment-form-imo-suggestion-dismiss-btn"
-                    style={{ padding: "2px 4px", borderRadius: 5, border: "none", background: "none",
-                      cursor: "pointer", fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1,
-                      display: "inline-flex", alignItems: "center" }}>
-                    <IconClose size={11} />
-                  </button>
+              <OfficeCombobox offices={candidates} value={f[key] || ""} onChange={pickOffice(side, key)}
+                placeholder={placeholder} allowClear={!required}
+                fitIds={res?.fitIds || null} fitWhy={res?.reason || ""} chipTag={tag} invalid={missing}
+                testId={`shipment-form-office-${key}`} />
+              {source && (
+                <div data-testid={`shipment-form-office-source-${key}`}
+                  style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, marginTop: 5, display: "flex", flexWrap: "wrap", gap: "4px 10px", alignItems: "baseline" }}>
+                  {source}
+                </div>
+              )}
+              {missing && (
+                <div data-testid={`shipment-form-office-error-${key}`} style={{ fontFamily: T.body, fontSize: 11.5, color: T.danger, fontWeight: 600, marginTop: 5 }}>
+                  {(!res || res.status === "wait") ? `Choose the ${portWord}, or search for an office.` : `${dept === "SE" ? "An export" : "An import"} managing office is required.`}
                 </div>
               )}
             </div>
           );
         })}
       </div>
-      {touched.offices && (!f.emoOfficeId || !f.imoOfficeId) && (
-        <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.danger, marginTop: -4 }}>
-          EMO and IMO are required
-        </div>
-      )}
 
       {/* ── Transport & References ─────────────────────────────────────────────── */}
       <SectionDivider label="Transport & References" id="shpform-transport" />
@@ -2637,6 +2741,8 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
               voyage:      sailing.legs[0].voyageNumber || firstSeaLeg.voyage,
               etd:         sailing.legs[0].etd          || firstSeaLeg.etd,
               eta:         sailing.legs[0].eta          || firstSeaLeg.eta,
+              pol:         sailing.legs[0].pol          || firstSeaLeg.pol,
+              polName:     sailing.legs[0].pol !== firstSeaLeg.pol ? "" : firstSeaLeg.polName,
               pod:         sailing.legs[0].pod          || firstSeaLeg.pod,
               podName:     sailing.legs[0].pod !== firstSeaLeg.pod ? "" : firstSeaLeg.podName,
               carrierCode: sailing.carrier              || firstSeaLeg.carrierCode,

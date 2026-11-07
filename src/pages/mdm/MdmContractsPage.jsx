@@ -20,7 +20,7 @@ import { legRoles } from "../../utils/mainLeg";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
 import { CommodityCombobox } from "../../components/shared/CommodityCombobox";
 import RoutingLinesEditor from "../../components/contracts/RoutingLinesEditor";
-import { lineChain, chainLabel, findChainGaps, findDuplicateLines, tooManyLocations } from "../../utils/routingLines";
+import { lineChain, chainLabel, findChainGaps, findDuplicateLines, lineProblems, legMissingPorts, legTypeOf, LINE_ORDER_HELP } from "../../utils/routingLines";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -134,7 +134,8 @@ const CommodityTypesField = ({ value, onChange }) => {
   );
 };
 
-const emptyLeg = routingIndex => ({ pol:"", polName:"", pod:"", podName:"", transitDays:0, vesselService:"", polLinkedAllowed:false, podLinkedAllowed:false, polCarrierHaulage:false, podCarrierHaulage:false, polHaulageLocations:"", podHaulageLocations:"", polLocType:"Terminal", podLocType:"Terminal", routingIndex });
+// A new leg is a SEA leg; its Leg dropdown makes it the line's Pick-up or Delivery leg (typed legs, 2026-11-07).
+const emptyLeg = routingIndex => ({ legType:"SEA", movementBy:"", pol:"", polName:"", pod:"", podName:"", transitDays:0, vesselService:"", polLinkedAllowed:false, podLinkedAllowed:false, polCarrierHaulage:false, podCarrierHaulage:false, polHaulageLocations:"", podHaulageLocations:"", polLocType:"Terminal", podLocType:"Terminal", routingIndex });
 const emptyRouting = () => ({ name: "", transitDays: 0, notes: "" });
 
 // ─── Contract Modal Form ──────────────────────────────────────────────────────
@@ -209,8 +210,21 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
 
   // routingIndex: an index into f.routings — the routing line the new leg belongs to (each
   // line's own "＋ Add leg" button passes its index).
+  // A new SEA leg goes before the line's Delivery leg, which stays last (the line's order, lib/routingLines.js).
   const addLeg = (routingIndex = -1) =>
-    setF(p => ({ ...p, legs: [...p.legs, emptyLeg(routingIndex)] }));
+    setF(p => {
+      const at = p.legs.findIndex(l => l.routingIndex === routingIndex && legTypeOf(l) === "Delivery");
+      const legs = [...p.legs];
+      legs.splice(at >= 0 ? at : legs.length, 0, emptyLeg(routingIndex));
+      return { ...p, legs };
+    });
+
+  // The Leg dropdown (RoutingLinesEditor): a line's legs, re-typed and re-ordered, back into the line's own slots.
+  const setLineLegs = (routingIndex, lineLegs) =>
+    setF(p => {
+      const queue = lineLegs.map(({ _i, ...l }) => l);
+      return { ...p, legs: p.legs.map(l => (l.routingIndex === routingIndex ? { ...queue.shift(), routingIndex } : l)) };
+    });
 
   const removeLeg = i =>
     setF(p => ({ ...p, legs: p.legs.filter((_, idx) => idx !== i) }));
@@ -289,12 +303,13 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
     for (let ri = 0; ri < f.routings.length; ri++) {
       const own = f.legs.filter(l => l.routingIndex === ri);
       if (!own.length) return toast.error(`Line ${ri + 1} has no legs — add one or remove the line`);
-      const blank = own.findIndex(l => !l.pol || !l.pod);
-      if (blank >= 0) return toast.error(`Line ${ri + 1}, leg ${blank + 1}: pick both the From and To port`);
+      // A Pick-up leg's From and a Delivery leg's To may stay blank (anywhere); every other end needs its port.
+      const blank = own.findIndex(legMissingPorts);
+      if (blank >= 0) return toast.error(`Line ${ri + 1}, leg ${blank + 1}: pick the ${legTypeOf(own[blank]) === "Pick-up" ? "To" : legTypeOf(own[blank]) === "Delivery" ? "From" : "From and To"} port`);
+      const problems = lineProblems(own);
+      if (problems.length) return toast.error(`Line ${ri + 1}: ${problems.join(" ")} ${LINE_ORDER_HELP}`);
       const gaps = findChainGaps(own);
       if (gaps.length > 0) return toast.error(`Line ${ri + 1}: leg ${gaps[0].afterLegPos} discharges at ${gaps[0].prevPod} but leg ${gaps[0].afterLegPos + 1} loads from ${gaps[0].nextPol}`);
-      const many = tooManyLocations(own);
-      if (many) return toast.error(`Line ${ri + 1}: one ${many} location per line — add another line for each additional location`);
     }
     const dups = findDuplicateLines(f.routings.length, f.legs);
     const firstDup = Object.keys(dups)[0];
@@ -471,11 +486,11 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
       {/* ── Section 3: Routing lines (approved mockup Option 1) ── */}
       <div style={sectionHeader()}>Routing lines <span style={{ color: T.danger }}>*</span></div>
       <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "-4px 0 10px", lineHeight: 1.5 }}>
-        One line per routing: a connected run of legs with at most one pick-up and one delivery location. A contract can't list the same routing twice. Space configurations pick from these lines.
+        One line per routing: the Pick-up leg when the carrier collects, the SEA legs, then the Delivery leg when the carrier delivers. Set each leg's type in its Leg column; a Pick-up leg collects from its places (blank = anywhere), a Delivery leg delivers to them. A contract can't list the same routing twice. Space configurations pick from these lines.
       </p>
       <RoutingLinesEditor routings={f.routings} legs={f.legs}
         onAddRouting={addRouting} onUpdateRouting={updateRouting} onRemoveRouting={removeRouting}
-        onAddLeg={addLeg} onUpdateLeg={updateLeg} onRemoveLeg={removeLeg} />
+        onAddLeg={addLeg} onUpdateLeg={updateLeg} onRemoveLeg={removeLeg} onSetLineLegs={setLineLegs} />
 
       {/* ── Section 4: Container & DG ── */}
       <div style={sectionHeader()}>Container Types &amp; Dangerous Goods</div>
@@ -687,9 +702,8 @@ const SchedulesModal = ({ contract, onClose }) => {
       .catch(() => setLegs([]));
   }, [contract.id]);
 
-  // Derive the sea leg: first leg where POL side has no carrier haulage;
-  // fall back to first leg if all legs have haulage (single-leg contracts).
-  const seaLeg = legs && (legs.find(l => !l.polCarrierHaulage) || legs[0]);
+  // The first SEA leg (typed legs: a Pick-up leg starts at a place, not the port of loading).
+  const seaLeg = legs && (legs.find(l => legTypeOf(l) === "SEA") || legs[0]);
   const pol = seaLeg?.pol;
   const pod = seaLeg?.pod;
 
@@ -1113,7 +1127,7 @@ const MdmContractsPage = ({ highlightContractId, onHighlightHandled } = {}) => {
               : `Edit — ${modal.contractNumber}`
           }
           onClose={() => { setModal(null); setCloneSource(null); }}
-          width={820}
+          width={900}
         >
           <ContractModal
             editing={modal === "new" ? null : modal}

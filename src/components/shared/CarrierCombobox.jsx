@@ -77,7 +77,8 @@ const CarrierPickerModal = ({ carriers, onSelect, onClose }) => {
 // Self-contained carrier selector. value = carrier code string (e.g. "MAEU").
 // Fetches its own carrier list; no carriers prop required from the parent.
 
-const CarrierCombobox = ({ value = "", onChange, required = false }) => {
+const CarrierCombobox = ({ value = "", onChange, required = false, fieldStyle = null }) => {
+  // fieldStyle: shape overrides from a caller with its own look (the route table's pill fields); null keeps the default.
   const [carriers,    setCarriers]    = useState([]);
   const [loaded,      setLoaded]      = useState(false);
   const [query,       setQuery]       = useState("");
@@ -183,7 +184,7 @@ const CarrierCombobox = ({ value = "", onChange, required = false }) => {
       {selected ? (
         // ── Selected chip ────────────────────────────────────────────────────
         <div style={{ ...inputBase, display: "flex", alignItems: "center", gap: 8,
-          border: `1px solid ${T.accent}55`, padding: "7px 10px" }}>
+          border: `1px solid ${T.accent}55`, padding: "7px 10px", ...fieldStyle }}>
           <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent,
             fontWeight: 700, flexShrink: 0 }}>
             {selected.code}
@@ -219,8 +220,8 @@ const CarrierCombobox = ({ value = "", onChange, required = false }) => {
               onKeyDown={handleKeyDown}
               placeholder="Search carrier code or name…"
               autoComplete="off"
-              style={{ ...inputBase, fontFamily: T.body, fontSize: 13,
-                paddingRight: 36, width: "100%", boxSizing: "border-box" }}
+              style={{ ...inputBase, fontFamily: T.body, fontSize: 13, width: "100%", boxSizing: "border-box",
+                ...fieldStyle, paddingRight: 36 }}
             />
             <button type="button" onClick={() => setPickerOpen(true)}
               title="Browse all carriers"

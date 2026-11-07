@@ -105,7 +105,7 @@ async function login() {
         resaved.status === 200 && resaved.body.routings.length === 1 && resaved.body.routings[0].id === r.body.routings[0].id, JSON.stringify(resaved.body.routings));
     }
 
-    console.log("\nSide-by-side lanes and multi-location pick-ups become separate lines; duplicates are refused");
+    console.log("\nSide-by-side lanes become separate lines; several pick-up places stay on one line's Pick-up leg (typed legs, 2026-11-07); duplicates are refused");
     {
       const lanes = await request("POST", "/api/contracts", {
         contractNumber: `RTGTEST-LANES-${Date.now()}`, carrierCode: "HLCU", status: "Active", validFrom: "2026-01-01", validTo: "2027-01-01",
@@ -118,8 +118,9 @@ async function login() {
       }, token);
       assert("contract created", lanes.status === 201, JSON.stringify(lanes.body));
       if (lanes.body.id) cleanupContracts.push(lanes.body.id);
-      assert("four lines: two lanes + one per pick-up", lanes.body.routings?.length === 4, JSON.stringify(lanes.body.routings?.map(x => x.name)));
-      assert("each door leg now has a single pick-up", (lanes.body.legs || []).filter(l => l.polCarrierHaulage).map(l => l.polHaulageLocations).sort().join(",") === "DEBER,NLAMS");
+      assert("three lines: the two lanes + the door-to-door line", lanes.body.routings?.length === 3, JSON.stringify(lanes.body.routings?.map(x => x.name)));
+      assert("the door-to-door line's Pick-up leg collects from both places", (lanes.body.legs || []).filter(l => l.legType === "Pick-up").map(l => l.polHaulageLocations).join(",") === "DEBER NLAMS",
+        JSON.stringify((lanes.body.legs || []).map(l => [l.legType, l.pol, l.pod])));
 
       const dup = await request("POST", "/api/contracts", {
         contractNumber: `RTGTEST-DUP-${Date.now()}`, carrierCode: "HLCU", status: "Draft", validFrom: "2026-01-01", validTo: "2027-01-01",

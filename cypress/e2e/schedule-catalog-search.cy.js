@@ -87,7 +87,7 @@ describe("Add Sailing — Catalog-First Search Suite", () => {
         // it must be explicitly Saved before it reaches the server.
         cy.contains("button", /Select →|Add →|✓ Active/).first().click();
         cy.contains(/Sailing staged/, { timeout: 15000 }).should("exist");
-        cy.contains("button", "💾 Save").click();
+        cy.get('[data-testid="shipment-schedules-save-btn"]').click();
         cy.contains("Saved", { timeout: 15000 }).should("be.visible");
 
         cy.then(() => api("GET", `/shipments/${shipmentId}/legs`)).then(res => {
@@ -123,7 +123,7 @@ describe("Add Sailing — Catalog-First Search Suite", () => {
         // it must be explicitly Saved before either SEA leg reaches the server.
         cy.contains("button", /Select →|Add →|✓ Active/).first().click();
         cy.contains(/TSP sailing staged/, { timeout: 15000 }).should("exist");
-        cy.contains("button", "💾 Save").click();
+        cy.get('[data-testid="shipment-schedules-save-btn"]').click();
         cy.contains("Saved", { timeout: 15000 }).should("be.visible");
 
         cy.then(() => api("GET", `/shipments/${shipmentId}/legs`)).then(res => {

@@ -23,8 +23,8 @@ import { Modal } from "../components/primitives/Modal";
 
 const CONTRACT_STATUSES = ["Active", "Draft", "Expired", "On Hold"];
 
-// A DR or CY end matches contract lines whose carrier haulage there is of that type
-// (contract_legs.pol_loc_type / pod_loc_type — GET /api/contracts, agreed 2026-11-05).
+// A DR or CY end matches contract lines whose Pick-up (Delivery) leg starts (ends) at that kind of place
+// (GET /api/contracts, agreed 2026-11-05; typed legs 2026-11-07).
 const ROUTING_TERMS = [
   { value: "P2P",   label: "PT–PT",  polOriginLabel: "Pick-up",         podDestLabel: "Delivery"         },
   { value: "D2P",   label: "DR–PT",  polOriginLabel: "Door pick-up",    podDestLabel: "Delivery"         },
@@ -52,21 +52,24 @@ const EMPTY_FILTERS = {
   routingTerm: "P2P",
 };
 
-// Schedule query uses the sea leg POL and POD — not the barge/haulage leg endpoints.
-// When a search POL/POD query is available, prefer the leg that matches it.
+// Schedule query uses the sea leg POL and POD — not the barge/haulage leg endpoints. A contract leg says what it
+// is (typed legs, 2026-11-07): only SEA legs count here. When a search POL/POD query is available, prefer the
+// SEA leg that matches it.
+const isSeaLeg = l => l.legType !== "Pick-up" && l.legType !== "Delivery";
 function deriveSeaLeg(legs, polQuery, podQuery) {
   if (!legs || legs.length === 0) return null;
+  const sea = legs.filter(isSeaLeg);
   if (polQuery || podQuery) {
-    const match = legs.find(l =>
+    const match = sea.find(l =>
       (!polQuery || l.pol === polQuery) &&
       (!podQuery || l.pod === podQuery)
     );
     if (match) return match;
   }
-  return legs.find(l => !l.polCarrierHaulage) || legs[0];
+  return sea[0] || legs[0];
 }
 
-const hasHaulage = legs => legs?.some(l => l.polCarrierHaulage || l.podCarrierHaulage);
+const hasHaulage = legs => legs?.some(l => !isSeaLeg(l));
 
 // ─── Rate compute helpers ─────────────────────────────────────────────────────
 
@@ -858,7 +861,7 @@ const ContractRow = ({ contract, selected, onSelect, inGroup, isChild, polQuery,
                     borderRadius: 3, padding: "1px 5px",
                     color: leg === seaLeg ? (isActive ? T.accent : T.textMuted) : T.border,
                   }}>
-                    {leg.polCarrierHaulage ? "● " : ""}{leg.pol}→{leg.pod}{leg.podCarrierHaulage ? " ●" : ""}
+                    {leg.legType === "Pick-up" ? "● " : ""}{leg.pol || "any"}→{leg.pod || "any"}{leg.legType === "Delivery" ? " ●" : ""}
                   </span>
                 ))}
               </div>
@@ -1027,11 +1030,11 @@ const SchedulePanel = ({ contract, polQuery, podQuery, containers = [] }) => {
                       padding: "1px 5px", flexShrink: 0 }}>
                       {i + 1}
                     </span>
-                    {leg.polCarrierHaulage && (
+                    {leg.legType === "Pick-up" && (
                       <span title="Carrier's Haulage" style={{ fontSize: 10 }}>🔵</span>
                     )}
                     <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-                      color: isSea ? T.accent : T.text }}>{leg.pol}</span>
+                      color: isSea ? T.accent : T.text }}>{leg.pol || (leg.legType === "Pick-up" ? (leg.polHaulageLocations || "any place") : "")}</span>
                     {leg.polName && (
                       <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>
                         {leg.polName}
@@ -1039,13 +1042,13 @@ const SchedulePanel = ({ contract, polQuery, podQuery, containers = [] }) => {
                     )}
                     <span style={{ color: T.border }}>›</span>
                     <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-                      color: isSea ? T.accent : T.text }}>{leg.pod}</span>
+                      color: isSea ? T.accent : T.text }}>{leg.pod || (leg.legType === "Delivery" ? (leg.podHaulageLocations || "any place") : "")}</span>
                     {leg.podName && (
                       <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>
                         {leg.podName}
                       </span>
                     )}
-                    {leg.podCarrierHaulage && (
+                    {leg.legType === "Delivery" && (
                       <span title="Carrier's Haulage" style={{ fontSize: 10 }}>🔵</span>
                     )}
                     {leg.transitDays > 0 && (

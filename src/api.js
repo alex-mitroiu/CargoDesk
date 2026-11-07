@@ -167,6 +167,9 @@ export const api = {
     create: (shipmentId, data)        => req("POST",   `/shipments/${shipmentId}/legs`, data),
     update: (shipmentId, legId, data) => req("PUT",    `/shipments/${shipmentId}/legs/${legId}`, data),
     remove: (shipmentId, legId)       => req("DELETE", `/shipments/${shipmentId}/legs/${legId}`),
+    // The whole route at once, in order (legs with a stored id update, without one are added, left-out ones removed);
+    // checked once against the route rules, all or nothing (routes/shipments.js, 2026-11-06).
+    saveRoute: (shipmentId, legs)     => req("PUT",    `/shipments/${shipmentId}/legs`, { legs }),
   },
   shipments: {
     list:   (p = {})  => req("GET",    `/shipments?${new URLSearchParams(p)}`),
@@ -970,6 +973,7 @@ export const api = {
   },
   offices: {
     list:           ()               => req("GET",    "/offices"),
+    resolve:        (p = {})         => req("GET",    `/offices/resolve?${new URLSearchParams(p)}`),
     create:         (data)           => req("POST",   "/offices", data),
     update:         (id, data)       => req("PUT",    `/offices/${id}`, data),
     remove:         (id)             => req("DELETE", `/offices/${id}`),

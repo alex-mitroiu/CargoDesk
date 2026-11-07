@@ -2,7 +2,7 @@
 const express = require("express");
 const { query, transaction } = require("./lib/db");
 const { readSecret } = require("./lib/dockerSecret");
-const { normalizeRoutingLines, droppedRoutingIds } = require("./lib/routingLines");
+const { normalizeRoutingLines, droppedRoutingIds, lineProblemsError } = require("./lib/routingLines");
 
 const PORT = process.env.CONTRACT_SERVICE_PORT || 3004;
 const SERVICE_SECRET_DEV_DEFAULT = "cargoDesk-dev-contract-service-secret-do-not-use-in-prod";
@@ -99,6 +99,10 @@ async function initSchema() {
     )
   `);
   await query(`CREATE INDEX IF NOT EXISTS idx_contract_legs_contract ON contract_legs(contract_id)`);
+  // Typed contract legs (2026-11-07, lib/routingLines.js) — same columns and reasons as the monolith's
+  // lib/schema.js: the type defaults to '' so a row stored before typed legs is converted on startup.
+  await query(`ALTER TABLE contract_legs ADD COLUMN IF NOT EXISTS leg_type TEXT DEFAULT ''`);
+  await query(`ALTER TABLE contract_legs ADD COLUMN IF NOT EXISTS movement_by TEXT DEFAULT ''`);
 
   await query(`
     CREATE TABLE IF NOT EXISTS contract_rates (
@@ -193,6 +197,7 @@ const mapLeg = r => ({
   polHaulageLocations: r.pol_haulage_locations || "", podHaulageLocations: r.pod_haulage_locations || "",
   polLocType: r.pol_loc_type || (r.pol_carrier_haulage ? "Door" : "Terminal"),
   podLocType: r.pod_loc_type || (r.pod_carrier_haulage ? "Door" : "Terminal"),
+  legType: r.leg_type || "", movementBy: r.movement_by || "",
 });
 const mapRate = r => ({
   id: r.id, contractId: r.contract_id, routingId: r.routing_id || "", serviceCode: r.service_code,
@@ -239,35 +244,29 @@ async function toUsd(amount, currency) {
 // the original — a contract's legs can each have a different port needing its own expansion.
 // Unchanged by the Postgres migration — every boolean field it reads is used as a plain truthy
 // check, which works identically whether the underlying value is SQLite's 1/0 or a real boolean.
-// A carrier-haulage end is judged on its location AND its type, and allowLinked (a Lane Steering
-// line allowing linked ports) widens every leg like its own flag — same as the monolith's copy
-// (server.js findMatchingContractLegs, agreed 2026-11-05).
+// Typed legs (2026-11-07): the run is walked over SEA legs only, and carrier haulage is judged on the line's
+// Pick-up leg right before it and its Delivery leg right after it — place, kind of place and mode, and allowLinked
+// (a Lane Steering line allowing linked ports) widens every SEA leg like its own flag. Same rule as the monolith's
+// copy (server.js findMatchingContractLegs, agreed 2026-11-05 and 2026-11-07).
+const HAULAGE_LEG_TYPES = new Set(["Pick-up", "Delivery"]);
+const canonLocType = t => (t === "CY" ? "Container Yard" : t === "GPS Coordinates" ? "Door" : t || "Terminal");
 const findMatchingContractLegs = (legs, { pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation = "", delLocation = "",
-                                          pkuLocType = "", delLocType = "", allowLinked = false, linkedPortCodes = () => [] }) => {
+                                          pkuLocType = "", delLocType = "", pkuMode = "", delMode = "", allowLinked = false, linkedPortCodes = () => [] }) => {
   if (legs.length === 0) return [];
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
-  const pkuU = pkuLocation.toUpperCase(), delU = delLocation.toUpperCase();
+  const isSea = leg => !HAULAGE_LEG_TYPES.has(leg.leg_type);
+  const upper = s => String(s || "").trim().toUpperCase();
 
   const polMatches = leg => (allowLinked || leg.pol_linked_allowed ? [leg.pol, ...linkedPortCodes(leg.pol)] : [leg.pol]).includes(polU);
   const podMatches = leg => (allowLinked || leg.pod_linked_allowed ? [leg.pod, ...linkedPortCodes(leg.pod)] : [leg.pod]).includes(podU);
 
-  const haulageOk = (first, last) => {
-    if (needsPolHaulage) {
-      if (!first.pol_carrier_haulage) return false;
-      if (pkuLocType && (first.pol_loc_type || "Terminal") !== pkuLocType) return false;
-      if (first.pol_haulage_locations) {
-        const allowed = first.pol_haulage_locations.split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
-        if (allowed.length > 0 && pkuU && !allowed.includes(pkuU)) return false;
-      }
-    }
-    if (needsPodHaulage) {
-      if (!last.pod_carrier_haulage) return false;
-      if (delLocType && (last.pod_loc_type || "Terminal") !== delLocType) return false;
-      if (last.pod_haulage_locations) {
-        const allowed = last.pod_haulage_locations.split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
-        if (allowed.length > 0 && delU && !allowed.includes(delU)) return false;
-      }
-    }
+  // One carrier-haulage end: the typed leg, its outer side ("pol" for a Pick-up, "pod" for a Delivery), and the ask.
+  const endFits = (leg, side, location, type, mode) => {
+    if (!leg) return false;
+    if (type && canonLocType(leg[`${side}_loc_type`]) !== canonLocType(type)) return false;
+    const places = String(leg[`${side}_haulage_locations`] || "").split(/[\s,]+/).map(upper).filter(Boolean);
+    if (places.length && location && !places.includes(upper(location))) return false;
+    if (mode && leg.movement_by && upper(leg.movement_by) !== upper(mode)) return false;
     return true;
   };
 
@@ -282,18 +281,22 @@ const findMatchingContractLegs = (legs, { pol, pod, needsPolHaulage, needsPodHau
   for (const [routingId, groupLegs] of groups) {
     const ordered = [...groupLegs].sort((a, b) => a.leg_order - b.leg_order);
     for (let i = 0; i < ordered.length; i++) {
-      if (!polMatches(ordered[i])) continue;
+      if (!isSea(ordered[i]) || !polMatches(ordered[i])) continue;
       let j = i;
       for (;;) {
         if (podMatches(ordered[j])) {
-          if (haulageOk(ordered[i], ordered[j])) {
-            matches.push({ routingId, legs: ordered.slice(i, j + 1), firstLeg: ordered[i], lastLeg: ordered[j],
+          const before = ordered[i - 1], after = ordered[j + 1];
+          const pickupLeg = before && before.leg_type === "Pick-up" && upper(before.pod) === upper(ordered[i].pol) ? before : null;
+          const deliveryLeg = after && after.leg_type === "Delivery" && upper(after.pol) === upper(ordered[j].pod) ? after : null;
+          if ((!needsPolHaulage || endFits(pickupLeg, "pol", pkuLocation, pkuLocType, pkuMode))
+            && (!needsPodHaulage || endFits(deliveryLeg, "pod", delLocation, delLocType, delMode))) {
+            matches.push({ routingId, legs: ordered.slice(i, j + 1), firstLeg: ordered[i], lastLeg: ordered[j], pickupLeg, deliveryLeg,
               matchKind: (ordered[i].pol === polU && ordered[j].pod === podU) ? "exact" : "linked" });
           }
           break;
         }
         const next = ordered[j + 1];
-        if (!next || ordered[j].pod !== next.pol) break;
+        if (!next || !isSea(next) || ordered[j].pod !== next.pol) break;
         j++;
       }
     }
@@ -352,13 +355,14 @@ async function saveLegs(contractId, legs, routingIds = [], oldNameById = {}, new
     await q("DELETE FROM contract_legs WHERE contract_id=$1", [contractId]);
     for (let i = 0; i < legs.length; i++) {
       const l = legs[i];
-      await q(`INSERT INTO contract_legs (id,contract_id,leg_order,pol,pol_name,pod,pod_name,transit_days,vessel_service,pol_linked_allowed,pod_linked_allowed,pol_carrier_haulage,pod_carrier_haulage,pol_haulage_locations,pod_haulage_locations,pol_loc_type,pod_loc_type,routing_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+      await q(`INSERT INTO contract_legs (id,contract_id,leg_order,pol,pol_name,pod,pod_name,transit_days,vessel_service,pol_linked_allowed,pod_linked_allowed,pol_carrier_haulage,pod_carrier_haulage,pol_haulage_locations,pod_haulage_locations,pol_loc_type,pod_loc_type,routing_id,leg_type,movement_by)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
         [`CLEG-${uid()}`, contractId, i, l.pol || "", l.polName || "", l.pod || "", l.podName || "", l.transitDays || 0, l.vesselService || "",
          !!l.polLinkedAllowed, !!l.podLinkedAllowed,
          !!l.polCarrierHaulage, !!l.podCarrierHaulage,
          l.polHaulageLocations || "", l.podHaulageLocations || "",
-         l.polLocType || "Terminal", l.podLocType || "Terminal", resolveRoutingId(l, routingIds, oldNameById, newIndexByName)]);
+         l.polLocType || "Terminal", l.podLocType || "Terminal", resolveRoutingId(l, routingIds, oldNameById, newIndexByName),
+         l.legType || "", l.movementBy || ""]);
     }
   });
 }
@@ -409,7 +413,7 @@ async function migrateRoutingLines() {
     if (!stored.legs.length && !stored.routings.length) continue;
     const rates = (await query("SELECT * FROM contract_rates WHERE contract_id=$1 ORDER BY sort_order", [id])).map(mapRate);
     const norm = normalizeRoutingLines({ routings: stored.routings, legs: stored.legs, rates, storedLegs: stored.legs });
-    if (!norm.changed || norm.duplicate) continue;
+    if (!norm.changed || norm.duplicate || norm.problems.length) continue;
     // This service owns no shipments, so it can't tell whether a routing it would remove is still
     // used by one (the monolith's copy of this migration checks, routingsInUse). Leave any contract
     // that would lose a stored routing as it is: the next save goes through the monolith's
@@ -494,7 +498,7 @@ app.use("/internal", (req, res, next) => {
 app.get("/internal/contracts/match", async (req, res) => {
   const { pol = "", pod = "", etd = "", crd = "", carrier = "",
           needsPolHaulage = "", needsPodHaulage = "", pkuLocation = "", delLocation = "",
-          pkuLocType = "", delLocType = "", linkedPorts = "" } = req.query;
+          pkuLocType = "", delLocType = "", pkuMode = "", delMode = "", linkedPorts = "" } = req.query;
   if (!pol || !pod) return ok(res, []);
 
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
@@ -526,12 +530,12 @@ app.get("/internal/contracts/match", async (req, res) => {
   for (const c of candidates) {
     const legs = await query("SELECT * FROM contract_legs WHERE contract_id=$1 ORDER BY leg_order", [c.id]);
     const matches = findMatchingContractLegs(legs, { pol, pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation,
-      pkuLocType, delLocType, linkedPortCodes });
+      pkuLocType, delLocType, pkuMode, delMode, linkedPortCodes });
     if (matches.length === 0) continue;
     const routingRows = await query("SELECT * FROM contract_routings WHERE contract_id=$1", [c.id]);
     const routingsById = Object.fromEntries(routingRows.map(r => [r.id, mapContractRouting(r)]));
     for (const match of matches) {
-      results.push({ ...mapContract(c), legs: legs.map(mapLeg), matchedLegs: match.legs.map(mapLeg),
+      results.push({ ...mapContract(c), legs: legs.map(mapLeg), matchedLegs: match.legs.map(mapLeg), pickupLeg: match.pickupLeg ? mapLeg(match.pickupLeg) : null, deliveryLeg: match.deliveryLeg ? mapLeg(match.deliveryLeg) : null,
         matchKind: match.matchKind, routingId: match.routingId,
         routing: match.routingId ? (routingsById[match.routingId] || null) : null,
         linkedPolVia: match.firstLeg.pol !== polU ? match.firstLeg.pol : null,
@@ -585,15 +589,17 @@ app.get("/internal/contracts", async (req, res) => {
   if (asOf.trim()) { clauses.push(`c.valid_from<=${p(asOf)} AND c.valid_to>=${p(asOf)}`); }
   if (containerType.trim()) { clauses.push(`EXISTS(SELECT 1 FROM contract_container_types t WHERE t.contract_id=c.id AND t.container_type=${p(containerType.trim())})`); }
   if (namedAccount.trim()) { const n = `%${namedAccount.trim()}%`; clauses.push(`(c.named_account ILIKE ${p(n)} OR c.named_account_id ILIKE ${p(n)})`); }
-  if (pol.trim()) { clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pol)=UPPER(${p(pol.trim())}))`); }
-  if (pod.trim()) { clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pod)=UPPER(${p(pod.trim())}))`); }
-  // Each end of the routing term (Schedule Search): a DR or CY end needs carrier haulage of that type there
-  // (contract_legs.pol_loc_type / pod_loc_type, agreed 2026-11-05) — at the Pick-up / Delivery location
+  // POL/POD are the sea ports: a Pick-up leg starts at a place, not at a port of loading (typed legs, 2026-11-07).
+  const SEA_LEG = "COALESCE(l.leg_type,'') NOT IN ('Pick-up','Delivery')";
+  if (pol.trim()) { clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND ${SEA_LEG} AND UPPER(l.pol)=UPPER(${p(pol.trim())}))`); }
+  if (pod.trim()) { clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND ${SEA_LEG} AND UPPER(l.pod)=UPPER(${p(pod.trim())}))`); }
+  // Each end of the routing term (Schedule Search): a DR or CY end needs the line's Pick-up (Delivery) leg from
+  // (to) that kind of place (agreed 2026-11-05; typed legs 2026-11-07) — at the Pick-up / Delivery location
   // typed in, if any; a PT end needs none. The location alone (no term) needs haulage of any type.
   const TERM_ENDS = { P2P: ["PT", "PT"], D2P: ["Door", "PT"], CY2P: ["Container Yard", "PT"], P2D: ["PT", "Door"], P2CY: ["PT", "Container Yard"],
     D2D: ["Door", "Door"], D2CY: ["Door", "Container Yard"], CY2D: ["Container Yard", "Door"], CY2CY: ["Container Yard", "Container Yard"] };
   const haulageAt = (side, type, location) => {
-    const conds = [`l.${side}_carrier_haulage=true`];
+    const conds = [`l.leg_type=${p(side === "pol" ? "Pick-up" : "Delivery")}`];
     if (type) conds.push(`l.${side}_loc_type=${p(type)}`);
     if (location) conds.push(`(COALESCE(l.${side}_haulage_locations,'')='' OR UPPER(' '||l.${side}_haulage_locations||' ') LIKE UPPER('% '||${p(location)}||' %'))`);
     return `EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND ${conds.join(" AND ")})`;
@@ -673,6 +679,7 @@ app.post("/internal/contracts", async (req, res) => {
           } = req.body;
   const norm = normalizePayload(req.body, { routings: [], legs: [] });
   if (norm.duplicate) return err(res, duplicateLineError(norm.duplicate));
+  if (norm.problems.length) return err(res, lineProblemsError(norm.problems));
   const { routings, legs, rates } = norm;
   const [dup] = await query("SELECT id FROM contracts WHERE contract_number=$1 AND contract_ref=$2 AND named_account_id=$3", [contractNumber, contractRef, namedAccountId]);
   if (dup) return err(res, `A contract with this number${contractRef ? ", reference" : ""}${namedAccountId ? ", and account" : ""} already exists (${dup.id})`);
@@ -707,6 +714,7 @@ app.put("/internal/contracts/:id", async (req, res) => {
           } = req.body;
   const norm = normalizePayload(req.body, await storedRoutingState(req.params.id));
   if (norm.duplicate) return err(res, duplicateLineError(norm.duplicate));
+  if (norm.problems.length) return err(res, lineProblemsError(norm.problems));
   const { routings, legs, rates } = norm;
   // Registry commodity codes, comma-separated (the monolith validates them before calling here);
   // none means FAK, the registry's own code 9999.

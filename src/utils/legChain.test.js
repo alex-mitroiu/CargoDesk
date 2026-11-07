@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { legChainProblems } from "./legChain";
+import { legChainProblems, journeyOrder } from "./legChain";
 import { legLocType } from "./legLocation";
 
 const leg = (legType, pol, polLocType, pod, podLocType, etd = null, eta = null, extra = {}) =>
@@ -108,6 +108,90 @@ describe("legChainProblems — dates", () => {
   });
 
   it("skips a date not filled in yet", () => {
-    expect(legChainProblems([{ ...sea, eta: null }, { ...del, etd: "2026-10-01" }])).toEqual([]);
+    expect(legChainProblems([{ ...sea, eta: null }, { ...del, etd: "2026-11-10" }])).toEqual([]);
+    expect(legChainProblems([{ ...sea, etd: null, eta: null }, { ...del, etd: "2026-10-01" }])).toEqual([]);
+  });
+
+  // The user's golden rule (2026-11-06): a pick-up dated after the sailing's ETD is wrong data to correct, also when
+  // it has no arrival date; with no arrival on the previous leg, its departure is the bound.
+  it("flags a leg that departs before the previous one even departs, when that one has no arrival date", () => {
+    const p = legChainProblems([{ ...pku, podLocType: "Terminal", etd: "2026-11-02", eta: null }, sea]);
+    expect(p).toEqual([expect.objectContaining({ legIndex: 1, kind: "dates" })]);
+    expect(p[0].message).toBe("Leg 2 (SEA) departs 2026-11-01 (ETD), before leg 1 (Pick-up) even departs 2026-11-02 (ETD).");
+  });
+
+  it("flags a pick-up that arrives after the sailing's ETD", () => {
+    const p = legChainProblems([{ ...pku, podLocType: "Terminal", etd: "2026-11-01", eta: "2026-11-03" }, sea]);
+    expect(p[0].message).toBe("Leg 2 (SEA) departs 2026-11-01 (ETD), before leg 1 (Pick-up) arrives 2026-11-03 (ETA).");
+  });
+});
+
+// The user's golden rule (2026-11-06): Pick-up legs never after the sea legs, Delivery legs never before them.
+// The route that broke it: a Pick-up NLAMS → NLRTM stored after the sea leg, a TSP sailing staged next to that leg.
+describe("journey order", () => {
+  const pkuAms = leg("Pick-up", "NLAMS", "Terminal", "NLRTM", "Terminal", "2026-11-16", "2026-11-16");
+  const feeder = leg("SEA", "NLRTM", "Terminal", "BEANR", "Terminal", "2026-11-20", "2026-11-22", { id: "f" });
+  const main = leg("SEA", "BEANR", "Terminal", "USNYC", "Terminal", "2026-11-23", "2026-12-20", { id: "m" });
+
+  it("flags a Pick-up after a sea leg", () => {
+    const p = legChainProblems([feeder, main, pkuAms]);
+    expect(p).toEqual(expect.arrayContaining([expect.objectContaining({ legIndex: 2, kind: "order" })]));
+    expect(p.find(x => x.kind === "order").message)
+      .toBe("Leg 3 (Pick-up) comes after a sea leg: a pick-up brings the container to the port of loading, so it goes before the sea legs.");
+  });
+
+  it("flags a Delivery before a sea leg", () => {
+    const p = legChainProblems([del, sea]);
+    expect(p).toEqual(expect.arrayContaining([expect.objectContaining({ legIndex: 0, kind: "order" })]));
+  });
+
+  it("puts Pick-up legs first and Delivery legs last, the sea legs keeping their own order", () => {
+    const fixed = journeyOrder([feeder, del, main, pkuAms]);
+    expect(fixed.map(l => `${l.legType} ${l.pol}`)).toEqual(["Pick-up NLAMS", "SEA NLRTM", "SEA BEANR", "Delivery USLAX"]);
+  });
+
+  it("turns the reported route into one with no problems", () => {
+    expect(legChainProblems(journeyOrder([feeder, main, pkuAms]))).toEqual([]);
+  });
+
+  it("doesn't change a route already in order, nor the list it was given", () => {
+    const route = [pkuAms, feeder, main];
+    expect(journeyOrder(route)).toEqual(route);
+    expect(journeyOrder(route)).not.toBe(route);
+  });
+});
+
+// The user's worked example (2026-11-06): PKU = MH then CH, SEA, DEL = CH then MH.
+describe("journey order within the pick-up and delivery sides", () => {
+  const mhPku = leg("Pick-up", "NLAMS", "Door", "NLRTM", "Container Yard", "2026-11-17", "2026-11-17", { id: "1", movementType: "Merchant's Haulage" });
+  const chPku = leg("Pick-up", "NLRTM", "Container Yard", "NLRTM", "Terminal", "2026-11-18", "2026-11-18", { id: "2", movementType: "Carrier's Haulage" });
+  const seaLeg = leg("SEA", "NLRTM", "Terminal", "USNYC", "Terminal", "2026-11-20", "2026-12-01", { id: "3", movementType: "SEA" });
+  const chDel = leg("Delivery", "USNYC", "Terminal", "USJEC", "Container Yard", "2026-12-02", "2026-12-02", { id: "4", movementType: "Carrier's Haulage" });
+  const mhDel = leg("Delivery", "USJEC", "Container Yard", "USCHI", "Door", "2026-12-03", "2026-12-05", { id: "5", movementType: "Merchant's Haulage" });
+  const route = [mhPku, chPku, seaLeg, chDel, mhDel];
+
+  it("accepts the example route as it is", () => {
+    expect(legChainProblems(route)).toEqual([]);
+  });
+
+  it("puts any shuffle of it back in that order", () => {
+    expect(journeyOrder([mhDel, seaLeg, chPku, chDel, mhPku]).map(l => l.id)).toEqual(["1", "2", "3", "4", "5"]);
+  });
+
+  it("flags a merchant's pick-up after the carrier's one", () => {
+    const p = legChainProblems([chPku, mhPku, seaLeg]).filter(x => x.kind === "order");
+    expect(p).toHaveLength(1);
+    expect(p[0].message).toBe("Leg 2 (Pick-up) is Merchant's Haulage after a Carrier's Haulage pick-up: the merchant's leg comes first, then the carrier's to the port.");
+  });
+
+  it("flags a carrier's delivery after the merchant's one", () => {
+    const p = legChainProblems([seaLeg, mhDel, chDel]).filter(x => x.kind === "order");
+    expect(p).toHaveLength(1);
+    expect(p[0].message).toBe("Leg 3 (Delivery) is Carrier's Haulage after a Merchant's Haulage delivery: the carrier's leg from the port comes first, then the merchant's.");
+  });
+
+  it("ranks Customer Arranged with Merchant's Haulage", () => {
+    const ca = { ...mhPku, id: "ca", movementType: "Customer Arranged" };
+    expect(journeyOrder([chPku, ca]).map(l => l.id)).toEqual(["ca", "2"]);
   });
 });
