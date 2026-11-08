@@ -13,9 +13,12 @@
  * Prerequisites:
  *   - Express server running on :3001, not in production (the built-in DCSA carrier answers the booking)
  *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
+ *   - Nothing else: the shipments get their managing offices from the ports, so the test makes sure each port it uses
+ *     has one active office of its department (CI's fresh database has none) and retires the ones it had to create.
  */
 
 import http from "node:http";
+import { retireOffice } from "./helpers/offices.mjs";
 
 let passed = 0;
 let failed = 0;
@@ -65,12 +68,33 @@ const dropOf = s => ({ ...s, contractType: "Central", contractId: "", contractRe
 
 (async () => {
   const users = [];
+  const madeOffices = [];
   let admin;
   try {
     console.log("Logging in…");
     admin = await login("claudeagent@localhost", "TestFixture!2026Zq");
     console.log("  ✓ Logged in");
     const stamp = Date.now();
+    // The managing offices come from the ports (lib/office-resolution.js): an active office of the department at the
+    // port, else the country's. A long-lived database has them; CI's fresh one has none, so the shipments below would be
+    // refused (400 "emoOfficeId required"). Use the active office at the port when there is one; otherwise create it (or
+    // bring back the one an earlier run deactivated, its code is fixed) and retire it at the end: an office decides
+    // every later shipment's offices on that port, so a scratch one is never left active.
+    const officesAt = async (department, port) => ((await request("GET", "/api/offices", null, admin)).body || [])
+      .filter(o => o.department === department && o.unlocode === port);
+    const portOffice = async (department, port, name) => {
+      const here = await officesAt(department, port);
+      const active = here.find(o => o.isActive !== false);
+      if (active) return active;
+      const made = await request("POST", "/api/offices", { unlocode: port, department, name }, admin);
+      let office = made.status === 201 ? made.body : null;
+      const dormant = here.find(o => o.code === `${port.slice(0, 2)}-${port}-${department}`);
+      if (!office && dormant && (await request("PUT", `/api/offices/${dormant.id}`, { isActive: true }, admin)).status === 200) office = { ...dormant, isActive: true };
+      if (!office) throw new Error(`no ${department} office at ${port}, and none could be made (${made.status} ${JSON.stringify(made.body)})`);
+      madeOffices.push(office.id);
+      return office;
+    };
+    await portOffice("SI", "USNYC", "New York Import");
     const customer = async name => (await request("POST", "/api/customers", { companyName: `${name} ${stamp}` }, admin)).body;
     const shipper = await customer("Audit Fix Shipper BV"), consignee = await customer("Audit Fix Consignee Inc");
     const contract = async n => {
@@ -111,6 +135,7 @@ const dropOf = s => ({ ...s, contractType: "Central", contractId: "", contractRe
     const get = async id => (await request("GET", `/api/shipments/${id}`, null, admin)).body;
 
     console.log("\nA1 — the contract stays while the carrier has the booking");
+    const mine = await portOffice("SE", "NLRTM", "Rotterdam Export");
     const c1 = await contract("A1"), c2 = await contract("A1B");
     const booked = await shipment(c1, "1");
     await confirmBooking(booked);
@@ -125,11 +150,14 @@ const dropOf = s => ({ ...s, contractType: "Central", contractId: "", contractRe
     assert("before the booking is sent, the contract comes off as before", r.status === 200 && !r.body?.contractId, `${r.status} ${JSON.stringify(r.body?.error || "")}`);
 
     console.log("\nA2 — the creator keeps seeing what they create");
-    const offices = (await request("GET", "/api/offices", null, admin)).body || [];
-    const se = offices.filter(o => String(o.department || "").toUpperCase() === "SE" && o.isActive !== false && o.unlocode);
-    const mine = se.find(o => o.unlocode === "NLRTM") || se[0];
-    const elsewhere = se.find(o => o.unlocode !== mine.unlocode && o.countryCode !== mine.countryCode);
-    assert("two export offices in different countries to test with", !!(mine && elsewhere), JSON.stringify({ mine: mine?.code, elsewhere: elsewhere?.code }));
+    // The other export office: the first port with at most one active export office (with several, none is picked for
+    // a user who works in none of them, and the shipment would be refused).
+    let elsewhere = null;
+    for (const [port, name] of [["DEHAM", "Hamburg Export"], ["BEANR", "Antwerp Export"], ["GBFXT", "Felixstowe Export"]]) {
+      if ((await officesAt("SE", port)).filter(o => o.isActive !== false).length <= 1) { elsewhere = await portOffice("SE", port, name); break; }
+    }
+    assert("two export offices in different countries to test with", !!(mine && elsewhere && elsewhere.countryCode !== mine.countryCode),
+      JSON.stringify({ mine: mine?.code, elsewhere: elsewhere?.code }));
     const email = `audit-fix-${stamp}@test.local`;
     const u = await request("POST", "/api/users", { email, name: "Audit fix operator", roles: ["occ_bk"], password: "AuditFixture!2026Zq" }, admin);
     users.push(u.body.id);
@@ -152,8 +180,10 @@ const dropOf = s => ({ ...s, contractType: "Central", contractId: "", contractRe
     console.error(`\n✗ ${e.message}`);
     failed++;
   } finally {
-    // The temporary account goes (a live login with a known password); the shipments and contracts stay as verification data.
+    // The temporary account goes (a live login with a known password), and so do the offices this run had to create
+    // (deactivated, as shipments use them); the shipments and contracts stay as verification data.
     for (const id of users) await request("DELETE", `/api/users/${id}`, null, admin).catch(() => {});
+    for (const id of madeOffices) await retireOffice(admin, id).catch(() => {});
     console.log(`\n${passed} passed, ${failed} failed`);
     process.exit(failed > 0 ? 1 : 0);
   }
