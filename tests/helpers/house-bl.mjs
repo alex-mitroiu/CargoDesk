@@ -17,7 +17,25 @@ const asList = b => (Array.isArray(b) ? b : (b?.results ?? []));
 // office's legal entity, with a SCAC, a street address and a city. Provisions it where the test database
 // has none (a fresh CI database's fixture office has no legal entity at all) or an incomplete one —
 // realistic data, as the shipments are. Idempotent: a complete legal entity is left as it is.
+// The House B/L's terms (2026-11-10): an entity's own English terms, so its B/Ls aren't held at the organisation's
+// starter text (which can't be issued). Text only: the terms print from it. Idempotent.
+export const TEST_TERMS_TEXT = "1. Definitions\n“Carrier” means the company named as carrier on the face of this Bill of Lading.\n\n"
+  + "2. Law and jurisdiction\nThis Bill of Lading is governed by Dutch law; disputes go to the District Court of Rotterdam.";
+export async function ensureEntityTerms(request, token, branchId) {
+  const list = (await request("GET", "/api/bl-terms", null, token)).body;
+  const set = (list?.sets || []).find(s => s.branchId === branchId);
+  if (set?.docs?.some(d => d.language === "en" && !d.isStarter)) return;
+  const r = await request("POST", "/api/bl-terms", { branchId, language: "en", title: "Terms and Conditions of the House Bill of Lading", text: TEST_TERMS_TEXT }, token);
+  if (r.status !== 201) throw new Error(`ensureEntityTerms: ${branchId}: ${r.status} ${JSON.stringify(r.body)}`);
+}
+
 export async function ensureIssuingEntity(request, token, officeId) {
+  const id = await ensureIssuingEntityOnly(request, token, officeId);
+  await ensureEntityTerms(request, token, id);
+  return id;
+}
+
+async function ensureIssuingEntityOnly(request, token, officeId) {
   const office = asList((await request("GET", "/api/offices", null, token)).body).find(o => o.id === officeId);
   if (!office) throw new Error(`ensureIssuingEntity: office ${officeId} not found`);
   if (office.branchId) {

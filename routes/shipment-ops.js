@@ -1309,7 +1309,11 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     let storedName = null, committed = false, replacedDrafts = [];
     try {
       const cert = await getActiveSigningCert(query);
-      const rawPdf = await renderHtmlToPdf(html);
+      // A House B/L carries its terms and conditions from a new page after the face (lib/bl-terms.js), numbered
+      // and signed as one PDF.
+      const rawPdf = docType === HOUSE_BL && houseStatement?.terms_id
+        ? await ctx.blTerms.printWithTerms({ html, termsId: houseStatement.terms_id, blNumber: houseStatement.print_reference || "", renderHtmlToPdf })
+        : await renderHtmlToPdf(html);
       const signedPdf = await signPdfBuffer(Buffer.from(rawPdf), cert);
 
       const pdfFilename = `${path.parse(filename).name}.pdf`;

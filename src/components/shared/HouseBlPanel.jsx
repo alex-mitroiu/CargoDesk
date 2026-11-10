@@ -5,7 +5,7 @@ import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
 import { useAuth } from "../../AuthContext";
 import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
-import { buildHouseBlHtml, houseBlStatement, houseBlNumber } from "../../utils/houseBlDocument";
+import { buildHouseBlHtml, houseBlStatement, houseBlNumber, houseBlTermsOf } from "../../utils/houseBlDocument";
 
 // ─── House B/L panel (Epic TKT-C7EBU3) ────────────────────────────────────────
 // Top of the shipment's Documents page (approved mockups https://claude.ai/artifact/Tr9cyqXe31HqYTxy63ap7Z
@@ -181,6 +181,8 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
   const [amendReason, setAmendReason] = useState("");
   const [handover, setHandover] = useState(null);
   const [presentedBy, setPresentedBy] = useState("");
+  // The terms and conditions picked (2026-11-10); null = the export office's default.
+  const [termsKey, setTermsKey] = useState(null);
   const docsKey = docs.filter(d => d.docType === "BL01").map(d => `${d.id}:${d.status}:${d.blSurrenderedAt || ""}:${d.blReleasedAt || ""}`).join("|");
 
   const load = useCallback(async () => {
@@ -201,6 +203,7 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
   useEffect(() => {
     if (basisKey === null) return;
     setCounts({ originals: basis?.originals ?? (shipment.blReleaseType === "Seaway Bill" ? 0 : 3), copies: basis?.copies ?? 0, withCharges: !!basis?.withCharges });
+    setTermsKey(summary?.terms?.draft?.key || null);
   }, [basisKey]);
 
   const live = summary?.live || null, draft = summary?.draft || null, amends = summary?.amends || null;
@@ -219,10 +222,16 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
   const chip = statusChipOf(live || draft, amends);
   const facts = summary.onBoard || {};
   const swb = shipment.blReleaseType === "Seaway Bill";
-  const statement = houseBlStatement(choice, facts, typed, { ...counts, originals: swb ? 0 : counts.originals });
+  const terms = summary.terms || null;
+  const termsOpt = houseBlTermsOf(terms, termsKey);
+  const statement = houseBlStatement(choice, facts, typed, { ...counts, originals: swb ? 0 : counts.originals, ...(termsKey && !terms?.locked && { termsKey }) });
   const statementOk = choice === "received" || !!typed || !!facts.shippedOnBoard;
-  // The server's loading item judges the current draft; the copy about to be made follows `choice`.
-  const missing = (summary.readiness?.missing || []).filter(m => !(statementOk && /^Loading/.test(m)));
+  // The server's loading item judges the current draft; the copy about to be made follows `choice`. Its terms
+  // item judges the draft or the office's default; the copy about to be made carries the terms picked here.
+  const termsMissing = !termsOpt ? "Terms and conditions: none on file. An admin loads them under Organisation → B/L Terms"
+    : termsOpt.isStarter ? "Terms and conditions: CargoDesk's starter text can't be issued. Pick your own terms, or an admin loads them (Organisation → B/L Terms)" : null;
+  const missing = [...(summary.readiness?.missing || []).filter(m => !(statementOk && /^Loading/.test(m)) && !/^Terms and conditions:/.test(m)),
+    ...(termsMissing ? [termsMissing] : [])];
   const countsOk = swb ? true : Number.isInteger(Number(counts.originals)) && counts.originals >= 1 && counts.originals <= 9;
   const ready = !live && missing.length === 0 && statementOk && countsOk;
   const canOverride = isAdmin || !!user?.canViewFinance;
@@ -444,6 +453,35 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
                       ? `the shipment's ${summary.charges.length} selling charge${summary.charges.length === 1 ? "" : "s"}, prepaid and collect`
                       : "the shipment has no selling charges yet"}</span></span>
                   </label>
+                </div>
+                <div style={{ height: 1, background: HZ.border }} />
+                <div data-testid="house-bl-terms" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <label htmlFor={`house-bl-terms-${shipment.id}`} style={{ fontSize: 13, fontWeight: 700 }}>Terms and conditions</label>
+                    {terms?.locked ? (
+                      <span data-testid="house-bl-terms-locked" style={{ fontSize: 13 }}>{terms.locked.languageName} · {terms.locked.ownerName}, version {terms.locked.version}</span>
+                    ) : (
+                      <select id={`house-bl-terms-${shipment.id}`} data-testid="house-bl-terms-select" value={termsOpt?.key || ""} disabled={!terms?.options?.length}
+                        onChange={e => setTermsKey(e.target.value)}
+                        style={{ padding: "5px 8px", borderRadius: 7, border: `1px solid ${HZ.borderStrong}`, background: HZ.bg, color: HZ.text, fontFamily: HZ_BODY, fontSize: 13 }}>
+                        {!terms?.options?.length && <option value="">None on file</option>}
+                        {(terms?.options || []).map(o => (
+                          <option key={o.key} value={o.key}>{o.languageName} · {o.ownerName}{o.isStarter ? " (starter text)" : ""}</option>
+                        ))}
+                      </select>
+                    )}
+                    <span style={{ fontSize: 12, color: HZ.textMuted }}>
+                      {terms?.locked ? "kept from the B/L this amendment replaces"
+                        : termsOpt && termsOpt.key === terms?.defaultKey ? `the ${terms?.officeCode || "export office"} default` : termsOpt ? "changed from the office's default" : ""}
+                    </span>
+                  </div>
+                  {termsOpt && (
+                    <span data-testid="house-bl-terms-source" style={{ fontSize: 12, color: termsOpt.isStarter ? HZ.crit : HZ.textMuted }}>
+                      {termsOpt.isStarter
+                        ? "CargoDesk's starter text, not your terms: drafts print it marked as such, and it can't be issued."
+                        : `${termsOpt.ownerName}, version ${termsOpt.version} · ${termsOpt.hasPdf ? `${termsOpt.pdfFilename}, ${termsOpt.pdfPages} page${termsOpt.pdfPages === 1 ? "" : "s"}` : "printed from its text"} · from a new page after the B/L; an eBL carries the text.`}
+                    </span>
+                  )}
                 </div>
               </fieldset>
               {canEdit && (

@@ -917,13 +917,11 @@ export const getEventSummary = ev => {
 // ─── Messages drawer ─────────────────────────────────────────────────────────
 
 export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
-  const { user, activeRole } = useAuth();
   const [body,    setBody]    = useState("");
   const [posting, setPosting] = useState(false);
   const [sortAsc, setSortAsc] = useState(true);
   const listRef = useRef(null);
   const shipmentId = shipment.id;
-  const roleLabel = { admin: "Admin", operator: "Operator", viewer: "Viewer" }[activeRole] ?? activeRole;
 
   const sorted = sortAsc ? [...messages] : [...messages].reverse();
 
@@ -948,7 +946,8 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
     if (!valid || posting) return;
     setPosting(true);
     try {
-      await api.shipmentMessages.post(shipmentId, { body, author: user?.name || "User", role: roleLabel });
+      // The server signs it with the signed-in user's name and role.
+      await api.shipmentMessages.post(shipmentId, { body });
       await onPost();
       setBody("");
     } finally { setPosting(false); }

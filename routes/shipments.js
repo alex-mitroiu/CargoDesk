@@ -2259,14 +2259,22 @@ module.exports = function shipmentsRoutes(app, ctx) {
       author: r.author, role: r.role, createdAt: r.created_at })));
   });
 
+  // A message is signed by whoever is signed in: their name, and the role they work in (the X-Active-Role they switched
+  // to, else their highest), labelled as the app's role switcher labels it. The request's own author/role are ignored:
+  // they used to be stored as sent, so any signed-in user could post under someone else's name (found 2026-11-09).
+  const MESSAGE_ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", occ_ay: "OCC/AY", ccl_co: "CCL/CO",
+    trade_ay: "Trade/AY", trade_manager: "Trade Manager", sales: "Sales", viewer: "Viewer" };
   app.post("/api/shipments/:id/messages", async (req, res) => {
-    const { body, author = "User", role = "" } = req.body;
-    if (!body || body.trim().length < 15) return err(res, "Message must be at least 15 characters", 400);
+    const body = typeof req.body?.body === "string" ? req.body.body : "";
+    if (body.trim().length < 15) return err(res, "Message must be at least 15 characters", 400);
     if (body.trim().length > 500) return err(res, "Message must be at most 500 characters", 400);
+    const author = String(req.user?.name || req.user?.email || "User").trim();
+    const roleId = ctx.deriveEffectiveRole(req.user, req);
+    const role = MESSAGE_ROLE_LABELS[roleId] || roleId || "";
     const id = `MSG-${uid()}`;
     const createdAt = new Date().toISOString();
     await query("INSERT INTO shipment_messages (id,shipment_id,body,author,role,created_at) VALUES ($1,$2,$3,$4,$5,$6)",
-      [id, req.params.id, body.trim(), author.trim(), role.trim(), createdAt]);
+      [id, req.params.id, body.trim(), author, role, createdAt]);
     const newMsg = { id, shipmentId: req.params.id, body: body.trim(), author, role, createdAt };
     broadcastMessage(req.params.id, newMsg);
     ok(res, newMsg, 201);

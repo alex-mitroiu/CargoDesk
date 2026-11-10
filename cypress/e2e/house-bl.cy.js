@@ -107,6 +107,23 @@ describe("House B/L screens", () => {
       .then(() => api("POST", "/offices", { unlocode: `NL${letters}`, countryCode: "NL", department: "SE", name: `Export eBL ${letters}`, branchId }))
       .then(r => { expect(r.status, JSON.stringify(r.body)).to.eq(201); eblOfficeId = r.body.id; });
   });
+  // The House B/L's terms (2026-11-10): each issuing entity needs its own, as the organisation's starter text can't
+  // be issued. The twin of tests/helpers/house-bl.mjs ensureEntityTerms.
+  before(() => {
+    const text = "1. Definitions\n“Carrier” means the company named as carrier on the face of this Bill of Lading.\n\n"
+      + "2. Law and jurisdiction\nThis Bill of Lading is governed by Dutch law; disputes go to the District Court of Rotterdam.";
+    const asList = b => (Array.isArray(b) ? b : b?.results || []);
+    api("GET", "/offices").then(res => {
+      const ids = [...new Set([asList(res.body).find(o => o.id === emoOfficeId)?.branchId, branchId].filter(Boolean))];
+      return api("GET", "/bl-terms").then(({ body }) => {
+        ids.forEach(id => {
+          const set = (body.sets || []).find(s => s.branchId === id);
+          if (!set?.docs?.some(d => d.language === "en" && !d.isStarter))
+            api("POST", "/bl-terms", { branchId: id, language: "en", text }).then(r => expect(r.status, JSON.stringify(r.body)).to.eq(201));
+        });
+      });
+    });
+  });
   before(() => readyShipment("A"));
   before(() => readyShipment("B", { packages: false }));
   // C's House B/L is issued from the scratch eBL office (set by the hook above before this one runs).

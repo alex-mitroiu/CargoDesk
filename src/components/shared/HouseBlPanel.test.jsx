@@ -24,7 +24,22 @@ import { AuthContext } from "../../AuthContext";
 
 const shipment = { id: "SHP-T1", shipperName: "Acme Freight B.V.", consigneeName: "Empire Logistics Partners (Brooklyn) Inc", podName: "New York", pod: "USNYC",
   blReleaseType: "Original", blNumber: "", freightTerms: "Prepaid" };
+// GET …/house-bl `terms`, as lib/bl-terms.js forShipment returns it: Rotterdam Branch's English and Dutch, the
+// organisation's English starter text; the office starts with its entity's English.
+const termsOption = (over = {}) => ({ id: "BLT-RTM-EN-2", key: "BRANCH:en", owner: "BRANCH", branchId: "BRN-79E27Q", ownerName: "Rotterdam Branch",
+  language: "en", languageName: "English", version: 2, title: "Terms and Conditions of the House Bill of Lading", chars: 4180, hasPdf: true,
+  pdfFilename: "RTM-bl-terms-2026-EN.pdf", pdfPages: 2, isStarter: false, createdAt: "2026-11-10T09:00:00.000Z", createdBy: "Admin", retired: false, ...over });
+const TERMS = {
+  options: [
+    termsOption(),
+    termsOption({ id: "BLT-RTM-NL-2", key: "BRANCH:nl", language: "nl", languageName: "Dutch", pdfFilename: "RTM-cognossementsvoorwaarden-2026.pdf" }),
+    termsOption({ id: "BLT-ORG-EN-1", key: "ORG:en", owner: "ORG", branchId: null, ownerName: "Organisation default", version: 1, hasPdf: false,
+      pdfFilename: "", pdfPages: 0, isStarter: true, createdBy: "CargoDesk" }),
+  ],
+  defaultKey: "BRANCH:en", officeDefault: "BRANCH:en", officeCode: "NL-NLRTM-SE", entityName: "Rotterdam Branch", draft: null, issued: null, locked: null,
+};
 const summary = (over = {}) => ({
+  terms: TERMS,
   documents: [], live: null, draft: null, amends: null, changedSinceIssue: null, charges: [], routing: null,
   handoverMethods: ["In person", "Courier", "Mail"],
   readiness: { ready: true, missing: [], number: { value: null, source: "SERIES", next: "RTMHBL2600018", officeName: "Rotterdam Office" } }, release: null,
@@ -120,6 +135,52 @@ describe("HouseBlPanel", () => {
     expect(screen.getByTestId("house-bl-issue")).toBeDisabled();
     fireEvent.change(screen.getByTestId("house-bl-onboard-date"), { target: { value: "2026-10-20" } });
     expect(screen.getByTestId("house-bl-issue")).not.toBeDisabled();
+  });
+
+  it("starts with the office's default terms; Dutch picked goes with the copy", async () => {
+    api.documents.generate.mockResolvedValue({ id: "DOC-D" });
+    // The server judged the office's default (fine here); its terms line, if any, is replaced by the pick's.
+    renderPanel(summary({ readiness: { ready: false, missing: ["Terms and conditions: NL-NLRTM-SE starts with CargoDesk's starter text. Pick other terms, or an admin loads yours (Organisation → B/L Terms)"],
+      number: { value: null, source: "SERIES", next: "RTMHBL2600018", officeName: "Rotterdam Office" } } }));
+    await screen.findByTestId("house-bl-ready");
+    const select = screen.getByTestId("house-bl-terms-select");
+    expect(select).toHaveValue("BRANCH:en");
+    expect(screen.getByTestId("house-bl-terms")).toHaveTextContent("the NL-NLRTM-SE default");
+    expect(screen.getByTestId("house-bl-terms-source")).toHaveTextContent("Rotterdam Branch, version 2 · RTM-bl-terms-2026-EN.pdf, 2 pages");
+    fireEvent.change(select, { target: { value: "BRANCH:nl" } });
+    expect(screen.getByTestId("house-bl-terms")).toHaveTextContent("changed from the office's default");
+    fireEvent.click(screen.getByTestId("house-bl-generate-draft"));
+    await waitFor(() => expect(api.documents.generate).toHaveBeenCalled());
+    expect(buildHouseBlHtml.mock.calls[0][1].statement).toEqual({ shippedOnBoard: true, onBoardDate: "2026-10-21", originals: 3, copies: 0, withCharges: false, termsKey: "BRANCH:nl" });
+  });
+
+  it("CargoDesk's starter text can be drafted but not issued", async () => {
+    renderPanel(summary());
+    await screen.findByTestId("house-bl-ready");
+    fireEvent.change(screen.getByTestId("house-bl-terms-select"), { target: { value: "ORG:en" } });
+    expect(screen.getByTestId("house-bl-terms-source")).toHaveTextContent("CargoDesk's starter text, not your terms");
+    expect(screen.getByTestId("house-bl-readiness")).toHaveTextContent("CargoDesk's starter text can't be issued");
+    expect(screen.getByTestId("house-bl-issue")).toBeDisabled();
+    expect(screen.getByTestId("house-bl-generate-draft")).not.toBeDisabled();
+  });
+
+  it("an amendment keeps the terms the B/L it replaces was issued with", async () => {
+    api.documents.generate.mockResolvedValue({ id: "DOC-V2" });
+    renderPanel(summary({ amends: issued({ status: "SURRENDERED_FOR_AMENDMENT" }),
+      terms: { ...TERMS, locked: termsOption({ id: "BLT-RTM-NL-1", key: "BRANCH:nl", language: "nl", languageName: "Dutch", version: 1 }) },
+      readiness: { ready: true, missing: [], number: { value: "RTMHBL2600018", source: "SERIES", officeName: "Rotterdam Office" } } }));
+    expect(await screen.findByTestId("house-bl-terms-locked")).toHaveTextContent("Dutch · Rotterdam Branch, version 1");
+    expect(screen.queryByTestId("house-bl-terms-select")).toBeNull();
+    expect(screen.getByTestId("house-bl-terms")).toHaveTextContent("kept from the B/L this amendment replaces");
+    fireEvent.click(screen.getByTestId("house-bl-generate-draft"));
+    await waitFor(() => expect(api.documents.generate).toHaveBeenCalled());
+    expect(buildHouseBlHtml.mock.calls[0][1].statement.termsKey).toBeUndefined();
+  });
+
+  it("with no terms on file, nothing can be issued", async () => {
+    renderPanel(summary({ terms: { ...TERMS, options: [], defaultKey: null } }));
+    expect(await screen.findByTestId("house-bl-readiness")).toHaveTextContent("Terms and conditions: none on file");
+    expect(screen.getByTestId("house-bl-issue")).toBeDisabled();
   });
 
   it("an issued Original B/L: originals presented at destination, then release with the finance override", async () => {

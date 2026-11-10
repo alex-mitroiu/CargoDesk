@@ -16,7 +16,14 @@ export const houseBlStatement = (choice, facts, typedDate, counts = {}) => ({
   ...(counts.originals !== undefined && counts.originals !== "" && { originals: Number(counts.originals) }),
   ...(counts.copies !== undefined && counts.copies !== "" && { copies: Number(counts.copies) }),
   ...(counts.withCharges !== undefined && { withCharges: !!counts.withCharges }),
+  // The terms and conditions picked (2026-11-10): "BRANCH:nl", "ORG:en"…; none = the export office's default.
+  ...(counts.termsKey && { termsKey: counts.termsKey }),
 });
+
+// The terms a copy prints (lib/bl-terms.js): an amendment keeps the original's; else the one picked; else the
+// export office's default. → an option from GET …/house-bl `terms`, or null.
+export const houseBlTermsOf = (terms, termsKey) =>
+  terms?.locked || terms?.options?.find(o => o.key === (termsKey || terms?.defaultKey)) || null;
 
 // The B/L number the copy prints (gap G5): the shipment's (typed, or taken from the office series), the
 // version an amendment replaces, the draft's. "" = not taken yet: the copy says "assigned at issue",
@@ -38,7 +45,10 @@ export async function buildHouseBlHtml(shipment, { docNum, docDate, notes = "", 
   const allCtrs = Array.isArray(ctrsRaw) ? ctrsRaw : (ctrsRaw?.results ?? []);
   const containers = allCtrs.filter(c => c.shipmentId === shipment.id);
   const exportFilingItn = filings.find(f => f.filingType === "AES_EEI" && f.status === "Accepted")?.confirmationNumber || null;
-  const houseBl = { ...statement, ...(statement?.shippedOnBoard === false && { receivedDate: house?.onBoard?.receivedDate || null }) };
+  // The face names the terms it prints (the server adds their pages after the face).
+  const termsOpt = houseBlTermsOf(house?.terms, statement?.termsKey);
+  const houseBl = { ...statement, ...(statement?.shippedOnBoard === false && { receivedDate: house?.onBoard?.receivedDate || null }),
+    ...(termsOpt && { terms: { languageName: termsOpt.languageName, ownerName: termsOpt.ownerName, version: termsOpt.version } }) };
   const issuer = house?.issuer ? { ...house.issuer, signatory } : (signatory ? { signatory } : null);
   // An amendment prints its version and the date of the B/L it replaces (gap G6).
   const amends = house?.amends || null;
@@ -55,6 +65,6 @@ export async function buildHouseBlHtml(shipment, { docNum, docDate, notes = "", 
     if (missing.length) return { missing };
     html = dispatchDocBuilder("BL01", dataBag);
   }
-  const { receivedDate, ...claim } = houseBl;
+  const { receivedDate, terms, ...claim } = houseBl;
   return { html, filename: `BL01-${docNum || "DRAFT"}-${docDate}.pdf`, houseBl: claim };
 }

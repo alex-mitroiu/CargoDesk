@@ -8,7 +8,9 @@ module.exports = function officesRoutes(app, ctx) {
   // The House B/L number series (TKT-C7EBU3 gap G5, decision D1): its prefix, and the number the next
   // issue would take. A prefix an admin sets is unique across offices; empty = the default.
   const withSeries = async (row, mapped) => ({ ...mapped, hblPrefix: row.hbl_prefix || "", hblDefaultPrefix: ctx.houseBl.seriesPrefix({ ...row, hbl_prefix: "" }),
-    hblNextNumber: await ctx.houseBl.nextSeriesNumber(row) });
+    hblNextNumber: await ctx.houseBl.nextSeriesNumber(row),
+    // The terms its House B/Ls start with (lib/bl-terms.js): 'BRANCH:<lang>', 'ORG:<lang>', or '' = English.
+    blTermsDefault: row.bl_terms_default || "" });
   const prefixError = async (prefix, officeId) => {
     if (!prefix) return null;
     if (!ctx.houseBl.PREFIX_RE.test(prefix)) return "hblPrefix: 2 to 10 capital letters or digits";
@@ -81,6 +83,13 @@ module.exports = function officesRoutes(app, ctx) {
     if (badPrefix) return err(res, badPrefix);
     const active = isActive !== undefined ? !!isActive : existing.is_active;
     const bid = branchId !== undefined ? (branchId || null) : existing.branch_id;
+    // The default House B/L terms (2026-11-10): checked against the terms the office's legal entity (after this
+    // save) and the organisation have; a key the entity no longer has (a changed entity) is dropped.
+    let termsDefault = req.body?.blTermsDefault !== undefined ? String(req.body.blTermsDefault || "").trim() : (existing.bl_terms_default || "");
+    if (req.body?.blTermsDefault !== undefined) {
+      const bad = await ctx.blTerms.officeDefaultError(bid, termsDefault);
+      if (bad) return err(res, bad);
+    } else if (termsDefault && await ctx.blTerms.officeDefaultError(bid, termsDefault)) termsDefault = "";
     // Invoice Collections thresholds (Epic TKT-G11AHW) — an office's own manager_user_id is also
     // the authority allowed to edit these fields (adminOnly already gates the whole route; a
     // future pass could relax this to "admin OR that office's own manager" if that authority
@@ -97,10 +106,10 @@ module.exports = function officesRoutes(app, ctx) {
     if (alertDays != null && escalationDays != null && escalationDays <= alertDays)
       return err(res, "invoiceEscalationBusinessDays must be greater than invoiceAlertBusinessDays");
     await query(`UPDATE offices SET name=$1, is_active=$2, branch_id=$3, manager_user_id=$4,
-      invoice_alert_business_days=$5, invoice_escalation_business_days=$6, hbl_prefix=$7 WHERE id=$8`,
-      [name, active, bid, mgr, alertDays, escalationDays, hblPrefix, req.params.id]);
+      invoice_alert_business_days=$5, invoice_escalation_business_days=$6, hbl_prefix=$7, bl_terms_default=$9 WHERE id=$8`,
+      [name, active, bid, mgr, alertDays, escalationDays, hblPrefix, req.params.id, termsDefault]);
     const [managerName] = mgr ? await query("SELECT name, email FROM users WHERE id=$1", [mgr]) : [null];
-    const row = { ...existing, name, is_active: active, branch_id: bid, manager_user_id: mgr, hbl_prefix: hblPrefix,
+    const row = { ...existing, name, is_active: active, branch_id: bid, manager_user_id: mgr, hbl_prefix: hblPrefix, bl_terms_default: termsDefault,
       manager_name: managerName ? (managerName.name || managerName.email) : null,
       invoice_alert_business_days: alertDays, invoice_escalation_business_days: escalationDays };
     ok(res, await withSeries(row, mapOffice(row)));

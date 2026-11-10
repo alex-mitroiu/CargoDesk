@@ -416,7 +416,12 @@ fetch. See ARCHITECTURE.md §8.1. A loop's rotation is two independent lists (ea
 Eastbound or Westbound, a port allowed in both) that a shipment header's Loop field resolves and
 draws. The HS Codes page can look a classification up live from the EU's public tariff service, but
 that result is shown and copied by hand, never stored — the service's terms forbid caching it.
-See ARCHITECTURE.md §8.24.
+See ARCHITECTURE.md §8.24. Shipments, quotes, opportunities and contracts name their commodity by its
+code in this registry, and codes are compared exactly. A contract lists the commodities it covers;
+9999 (FAK, Freight All Kinds) covers all of them and is what a contract with none gets. A space
+configuration may hold space for one of its contract's commodities: a shipment counts against it, and
+Where to book offers it, only when it is for the shipment's commodity or for FAK. The commodity's
+description goes on the carrier booking.
 
 ### 5.7 Operations — Kanban / Testing (P7 / P7a)
 **Purpose**: internal engineering/ops ticket tracking and manual test-case management, linked to
@@ -461,7 +466,7 @@ containers with packages and HS codes, a confirmed booking, loading for a shippe
 destination waits for the originals, paid collect charges and no credit hold (a finance override with a reason);
 and the House B/L can be issued and surrendered as an eBL (DCSA eBL Issuance and Surrender 3.0). Its number comes
 from the issuing office's series (e.g. RTMHBL2600123), taken when it is issued and never reused, unless one was typed
-for a B/L already issued on paper. A correction is a surrender for amendment followed by version 2 under the same
+for a B/L already issued on paper. Its terms and conditions (2026-11-10) are the issuing legal entity's, per language (a PDF for print, the same terms as text for an eBL), else the organisation's English default: printed from a new page after the face, every page numbered, and kept with the B/L in the version it was issued with (an amendment keeps them). Each export office picks the terms its House B/Ls start with; the face stays in English; CargoDesk's starter text is never issued. A correction is a surrender for amendment followed by version 2 under the same
 number. The B/L can be issued to order, in a chosen number of originals and copies, with the charges or "freight as
 arranged"; it prints every vessel and the on-carriage, a reefer's temperature and dangerous goods. The originals
 handed over are logged, and a telex release surrendered at origin sends the import office a task. All of it is run

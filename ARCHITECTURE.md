@@ -610,10 +610,12 @@ and 25 indexes now exist beyond primary keys (§11 — this resolves the old "no
 
 ## 6. Data Model
 
-**129 tables** in the monolith's own database, plus the Contract Management service's own 4-table
+**130 tables** in the monolith's own database, plus the Contract Management service's own 4-table
 copy (`contracts`/`contract_legs`/`contract_rates`/`contract_routings`) when
 `contract_source='remote'` (§8.1) — never both populated as the live source at once.
 
+- **2026-11-10 (House B/L terms and conditions, §8.48):** +1, `bl_terms`; columns `offices.bl_terms_default`,
+  `transport_documents.terms_id`.
 - **2026-10-29 (the House B/L audit's fixes and the shipper's DG contact, §8.44):** columns only, still 129 tables.
   - `transport_documents`: `on_board_notation_date`, `on_board_notation_at`, `on_board_notation_by`, `extra_clauses`
     (JSON list), `approval_status`, `approval_document_id`, `approval_sent_to`, `approval_sent_at`, `approval_sent_by`,
@@ -4502,6 +4504,47 @@ charges on a steered shipment. Built uncommitted for the user's verdict.
   Edit route and selects a row on its left edge (a pill-look row can be wider than the visible table); Save by its
   testid. Full Cypress suite in Edge on the CI test copy, real-browser pass in both themes.
 
+### 8.48 House B/L terms and conditions, per legal entity and language (2026-11-10)
+
+Asked as a top-priority item: users issue the House B/L with the forwarder's terms and conditions as a secondary page,
+from a default document, in several languages. Mockup https://claude.ai/code/artifact/2b9f3473-f14e-4065-bf33-6a6f0e81f35c,
+approved with the user's choices: per issuing legal entity; a PDF and the text; only the terms page changes language;
+the starter text can't be issued; the organisation default is English; each office picks its default; a language with
+text but no PDF prints the text; the terms have their own page.
+
+- **The record (`lib/bl-terms.js` = `ctx.blTerms`, table `bl_terms`).** One row per version per (legal entity,
+  language); `branch_id` NULL is the organisation default. `text` (required, at most 50,000 characters: DCSA's
+  termsAndConditions limit), `title`, an optional PDF (`pdf_stored_name` in uploads/documents, `pdf_filename`,
+  `pdf_pages`; read with pdf-lib, so a password-protected or unreadable file is refused; 10 MB), `is_starter`,
+  `retired_at`. Every save is a new version; a new text keeps the PDF unless it is replaced or removed. A language that
+  stops being offered keeps its versions. The organisation's English starter text is seeded once (`ensureStarter`)
+  and can't be removed.
+- **Which terms a House B/L prints.** An office picks the terms its House B/Ls start with (`offices.bl_terms_default`:
+  `BRANCH:<lang>` its own entity's, `ORG:<lang>` the organisation's; checked on save; Organisation → Offices, next to
+  the B/L number prefix). Unset, or no longer on file: English, the entity's, else the organisation's. The panel offers
+  the entity's and the organisation's current terms and sends the pick as `houseBl.termsKey`; `draftStatement`
+  resolves it and `onDraftGenerated` stores `transport_documents.terms_id`, which issue keeps. An amendment keeps
+  the terms the B/L it replaces was issued with.
+- **Readiness.** CargoDesk's starter text is never issued: a draft on it can be made, its readiness says so, and the
+  confirm is refused (409). With no draft yet, the office's default is judged; an uploaded BL01 isn't (it prints what
+  its file says).
+- **The print (`printWithTerms`, POST …/documents/generate for BL01, before signing).** The face first: the client
+  prints `__BL_TERMS_PAGES__` in its sentence ("…subject to the terms and conditions on pages 2–3 of this Bill of Lading
+  (Dutch, Rotterdam Branch, version 2), which form part of it."); the server fills it in and renders again if that
+  changes the face's page count. Then the terms from a new page: the PDF, or for a language without one the text set as
+  two columns (`termsHtml`). Every page is stamped "Page n of N · B/L <number>", a starter-text draft is stamped as
+  such, and the whole is signed. A Document Template Editor layout gets the terms pages too (its face has no sentence).
+- **The eBL.** `buildDcsaDocument` sends the terms' text as `termsAndConditions`; a B/L issued before them keeps the
+  one-sentence statement.
+- **API.** GET and POST /api/bl-terms, DELETE /api/bl-terms/:owner/:language (admin); GET /api/bl-terms/options?officeId=
+  and GET /api/bl-terms/:id/pdf (any user: the terms print on every B/L); GET …/house-bl `terms` { options, defaultKey,
+  officeDefault, officeCode, entityName, draft, issued, locked }; PUT /api/offices/:id `blTermsDefault`.
+- **Screens.** Organisation → B/L Terms (`src/pages/org/BlTermsPage.jsx`, admins); the office form's "Default terms
+  and conditions"; the House B/L panel's terms row (`houseBlTermsOf` in src/utils/houseBlDocument.js).
+- **Tests.** `tests/bl-terms.test.js`; `tests/helpers/house-bl.mjs` `ensureEntityTerms` (every House B/L suite issues
+  on its entity's own English terms, since the starter text can't be issued); Vitest `BlTermsPage.test.jsx`,
+  `HouseBlPanel.test.jsx`, `houseBlPrint.test.js`; Cypress `house-bl.cy.js` provisions the terms.
+
 ## 9. Data Flow Diagrams
 
 The four diagrams in this section (shipment creation with auto-screening; contract recalculation;
@@ -4766,6 +4809,7 @@ continues; don't rewrite history once an item's checked.
 | 2026-10-09 | Shipment status lock and cancellation rules (TKT-SPXTGR, decided by the user the same day). | **Built; uncommitted.** | Completed and Cancelled shipments are locked (`server.js` `shipmentStatusLock`, an `app.param` guard on every `/api/shipments/:id/<section>` write, plus `PUT /api/shipments/:id`, `POST /api/containers` and `DELETE /api/schedules/:id`, each 409 `SHIPMENT_LOCKED`). Cancelled is final and Completed can't be left either. Still open: cost lines, credit override, documents, messages, milestones, container events, edit lock, share link and screening. Cancelling needs the carrier booking (Pending/Confirmed) and every submitted filing (Filed/Accepted) cancelled first, else 409 `ACTIVE_ITEMS` with the list, which `App.jsx` shows in a pop-up (from the detail pages and the Edit Shipment form). A submitted filing can be cancelled with a reason (`POST .../customs-filings/:filingId/cancel`, `customs_filings.cancelled_at/by/cancel_reason`) and reset to Draft from there. On the way: TKT-LXQNQG's update path still accepted a negative Declared Value (fixed), and every failed Edit Shipment save left an unhandled promise rejection (caught). Tests: `tests/shipment-status-lock.test.js` (52), `tests/shipment-integrity.test.js` (21, pins TKT-HZOAE0/FH5Q94/LXQNQG), `src/utils/shipmentLock.test.js`, `ShipmentHeaderBar.test.jsx`; a real-browser pass 17/17. |
 | 2026-10-29 | **0.91.12 release audit (TKT-KT4QIC)**: everything 0.91.12 adds apart from the House B/L, which had its own audit the same morning (TKT-J0SDVB): the DCSA message review, the Master B/L and its amendment, VGM declarations, carrier events and vessel times, equipment and seals, the Arrival Notice, Port Call, DG in the booking and the shipper's DG contact. Method: a read by risk class (scope and roles on every new route, endpoints outside the login guard, carrier pushes, delete paths, retired paths, unused exports, one rule in two places), live probes. Report https://claude.ai/code/artifact/a08cf4f7-710e-4b5d-93e7-95d92dba25b0. | **7 findings (1 high, 4 medium, 2 low); R1–R5 fixed before the release by the user's call, R6–R7 open.** | **Sound:** every new per-shipment route behind the scope guard and a role; carrier pushes signed (no secret, refused); the eBL endpoints' per-process secret; Track & Trace scoped to the carrier and open shipments; the print and the record agree on shipped on board; the DG contact's rules the same in both services. **Fixed (§8.44):** R1 TKT-Z9GE5C a shipment with an issued House B/L could be deleted, taking the B/L with it (confirmed live: an operator, 3 originals out) → refused; R2 TKT-NFHNIK `/dcsa-sim` answered with no credentials (confirmed live: a transport document with parties) → a per-process token; R3 TKT-H1H7RN an Arrival Notice matched by B/L number alone, any carrier → the pushing carrier's shipments only; R4 TKT-EV4W5Y Arrival Notices and Port Call changed Completed/Cancelled shipments → skipped; R5 TKT-A794HR the retired VGM Simulator still answered any VGM → removed. **Open:** R6 TKT-58E1KT Test Tools' demo lists unscoped; R7 TKT-1ZMR6N two unused exports. |
 | 2026-11-07 | **0.91.13 release audit (TKT-YZ2EON)**: everything 0.91.13 adds since v0.91.12 (local commit ddd9f70): Contracts & Schedules next, the route rules and the whole-route save, the route dialogs and the contract drop on Save, EMO/IMO auto-resolution, typed contract legs (normalizer, migration, matcher in both copies, list filters, every reader of contract legs). Method: a read by risk class (scope, lock and foreign ids on the new route, every other writer of shipment legs, what the new defaults do to who sees a shipment, what a carrier already holds, inputs the editor never sends), live probes (scratchpad audit-batch-verify.mjs). | **4 findings (2 medium, 2 low); all fixed before the release** | A1 TKT-ZX70NT Save took the contract off a shipment whose booking the carrier had confirmed (SHP-1BEFC3) → refused, client and server (409 BOOKING_WITH_CARRIER); A2 TKT-72U6CG an office-scoped creator couldn't open a shipment whose ports resolved to other offices (SHP-O7EANW, 404) → the creator's office becomes the controlling office; A3 TKT-19CS91 a contract Pick-up leg with no To was saved as a line with no SEA leg → refused; A4 TKT-01L0RE the Dashboard listed a Pick-up leg as a route ("→ NLRTM") → PKU/DEL chips. Checked clean: the whole-route save's scope (app.param), status lock and foreign leg ids; the booking-escalation rebook keeps the route's order. |
+| 2026-11-09 | **Shipment messages** (found while writing the User Manual's Messages step for the AI Assistant's test set): POST /api/shipments/:id/messages. | **1 finding (medium); fixed** | The author and role were stored as the request named them, so any signed-in user (a Viewer included) could post under someone else's name → the server signs a message with the signed-in user's name and the role they work in (`deriveEffectiveRole`, labelled like the role switcher); a body that isn't text is a 400, not a 500; the Messages drawer sends only the body. Older messages keep the names they were posted with. Test: tests/shipment-messages.test.js. |
 
 ### Low / Enhancement
 

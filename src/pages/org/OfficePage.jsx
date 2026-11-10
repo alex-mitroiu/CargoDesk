@@ -393,7 +393,15 @@ function OfficeForm({ office, branches, onSave, onCancel }) {
     invoiceAlertBusinessDays: office?.invoiceAlertBusinessDays != null ? String(office.invoiceAlertBusinessDays) : "",
     invoiceEscalationBusinessDays: office?.invoiceEscalationBusinessDays != null ? String(office.invoiceEscalationBusinessDays) : "",
     hblPrefix: office?.hblPrefix || "",
+    blTermsDefault: office?.blTermsDefault || "",
   });
+  // The terms its House B/Ls start with (2026-11-10): its legal entity's or the organisation's (GET /api/bl-terms/options).
+  const [termsOptions, setTermsOptions] = useState(null);
+  useEffect(() => {
+    if (!isEdit || office.department !== "SE") return;
+    api.blTerms.options(office.id).then(setTermsOptions).catch(() => setTermsOptions({ options: [] }));
+  }, [isEdit, office?.id, office?.department]);
+  const branchChanged = isEdit && (form.branchId || "") !== (office.branchId || "");
   // The House B/L number series (TKT-C7EBU3 gap G5): prefix + 2-digit year + 5-digit sequence. The
   // preview keeps the year and sequence the server reported and swaps in the prefix being typed.
   const hblPrefix = form.hblPrefix.trim().toUpperCase();
@@ -438,6 +446,8 @@ function OfficeForm({ office, branches, onSave, onCancel }) {
           invoiceAlertBusinessDays: form.invoiceAlertBusinessDays === "" ? null : form.invoiceAlertBusinessDays,
           invoiceEscalationBusinessDays: form.invoiceEscalationBusinessDays === "" ? null : form.invoiceEscalationBusinessDays,
           hblPrefix,
+          // A changed legal entity offers other terms: the server keeps the default only if the new entity has it.
+          ...(!branchChanged && { blTermsDefault: form.blTermsDefault }),
         });
         toast.success("Office updated");
       } else {
@@ -557,6 +567,22 @@ function OfficeForm({ office, branches, onSave, onCancel }) {
             Empty means the default, {office.hblDefaultPrefix || "the UN/LOCODE's place letters and HBL"}. The number is taken when a House B/L is
             issued from this office, never before, and the sequence starts again at 00001 each January. A number used anywhere,
             voided ones included, is skipped; no two offices can share a prefix you set.
+          </div>
+          <label htmlFor="office-bl-terms-default" style={{ display: "flex", flexDirection: "column", gap: 4, fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 14 }}>
+            Default terms and conditions
+            <select id="office-bl-terms-default" data-testid="office-bl-terms-default" value={form.blTermsDefault} disabled={branchChanged || !termsOptions}
+              onChange={e => setForm(p => ({ ...p, blTermsDefault: e.target.value }))}
+              style={{ ...inp, maxWidth: 380, cursor: "pointer" }}>
+              <option value="">English (no default set)</option>
+              {(termsOptions?.options || []).map(o => (
+                <option key={o.key} value={o.key}>{o.languageName} · {o.ownerName}{o.isStarter ? " (starter text)" : ""}</option>
+              ))}
+            </select>
+          </label>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 8, lineHeight: 1.5 }}>
+            {branchChanged
+              ? "Save the branch change first: the choices are that branch's terms and the organisation's."
+              : "The terms this office's House B/Ls start with; the export desk can pick others at issue. With none set, English: the branch's, else the organisation's. Terms are kept under Organisation → B/L Terms."}
           </div>
         </div>
       )}

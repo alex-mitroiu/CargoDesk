@@ -971,6 +971,19 @@ export const api = {
     resetDemoData: (confirm) => req("POST", "/admin/reset-demo-data", { confirm }),
     devShutdown: () => req("POST", "/admin/dev-shutdown"),
   },
+  // House B/L terms and conditions (2026-11-10): Organisation → B/L Terms, and an office's choices.
+  blTerms: {
+    list:    ()                        => req("GET",    "/bl-terms"),
+    save:    (data)                    => req("POST",   "/bl-terms", data),
+    retire:  (branchId, language)      => req("DELETE", `/bl-terms/${branchId || "org"}/${language}`),
+    options: (officeId)                => req("GET",    `/bl-terms/options?officeId=${encodeURIComponent(officeId)}`),
+    // Opens a version's PDF in a new tab (the route needs the login token, so it goes through a blob).
+    openPdf: async (id) => {
+      const res = await fetch(`/api/bl-terms/${id}/pdf`, { headers: { Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY)}` } });
+      if (!res.ok) throw new Error("The PDF couldn't be opened");
+      window.open(URL.createObjectURL(await res.blob()), "_blank", "noopener");
+    },
+  },
   offices: {
     list:           ()               => req("GET",    "/offices"),
     resolve:        (p = {})         => req("GET",    `/offices/resolve?${new URLSearchParams(p)}`),

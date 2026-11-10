@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { dispatchDocBuilder } from "./documentBuilders";
+import { dispatchDocBuilder, BL_TERMS_PAGES_TOKEN } from "./documentBuilders";
+import { houseBlTermsOf } from "./houseBlDocument";
 
 // The printed House B/L (Epic TKT-C7EBU3, approved mockups https://claude.ai/artifact/Tr9cyqXe31HqYTxy63ap7Z and
 // https://claude.ai/artifact/CnuymDL2eUEnxnD8oDtj57): on board or received for shipment with its date, packages
@@ -105,5 +106,22 @@ describe("BL01, the remaining gaps", () => {
     const h = html({ houseBl: on, version: 2, amendsIssueDate: "2026-10-21" });
     expect(h).toContain("VERSION 2 · AMENDED · REPLACES THE B/L ISSUED 21 OCTOBER 2026");
     expect(html({ houseBl: on })).not.toContain("AMENDED");
+  });
+
+  it("names the pages its terms are on (the server fills them in), and which terms (2026-11-10)", () => {
+    const h = html({ houseBl: { ...on, terms: { languageName: "Dutch", ownerName: "Rotterdam Branch", version: 2 } } });
+    expect(h).toContain(`for carriage subject to the terms and conditions on ${BL_TERMS_PAGES_TOKEN} of this Bill of Lading (Dutch, Rotterdam Branch, version 2), which form part of it.`);
+    expect(h).not.toContain("terms and conditions of the carrier's House Bill of Lading");
+    expect(html({ houseBl: on })).toContain("subject to all the terms and conditions of the carrier's House Bill of Lading");
+    expect(BL_TERMS_PAGES_TOKEN).toBe("__BL_TERMS_PAGES__"); // = lib/bl-terms.js FACE_TOKEN
+  });
+
+  it("the terms a copy prints: the amendment's original ones, else the pick, else the office default", () => {
+    const en = { key: "BRANCH:en" }, nl = { key: "BRANCH:nl" }, locked = { key: "BRANCH:nl", version: 1 };
+    const terms = { options: [en, nl], defaultKey: "BRANCH:en", locked: null };
+    expect(houseBlTermsOf(terms, null)).toBe(en);
+    expect(houseBlTermsOf(terms, "BRANCH:nl")).toBe(nl);
+    expect(houseBlTermsOf({ ...terms, locked }, "BRANCH:en")).toBe(locked);
+    expect(houseBlTermsOf({ options: [], defaultKey: null }, null)).toBeNull();
   });
 });

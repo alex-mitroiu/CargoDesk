@@ -145,6 +145,7 @@ All protected-endpoint tests first obtain a JWT via `POST /api/auth/login` with 
 | P1 | Shipments CRUD | Critical | Core business domain |
 | P1 | Containers | Critical | Auto cost-line creation for Central contracts |
 | P2 | Contracts: routing lines with typed legs | High | The Leg type, places, kind and mode on contract lines decide which contracts a shipment's carrier haulage is offered (TC-093–TC-094, TC-097) |
+| P1 | House B/L terms and conditions (2026-11-10) | High | The terms printed after the B/L in the language picked, the starter text never issued, the issued version kept, the eBL's text (TC-099) |
 | P1 | Release audit 0.91.13: the contract while the carrier has the booking; who sees a new shipment | High | A contract a carrier booked on can't be dropped by a route change; the creator keeps seeing what they create (TC-095–TC-096) |
 | P1 | Share Token / Tracking Page | High | New in v0.23.0; public endpoint with no auth |
 | P2 | Cost Lines | High | Finance calculations depend on correct data |

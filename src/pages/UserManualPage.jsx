@@ -299,6 +299,19 @@ const UserManualPage = () => {
             where you are: the bar flashes red and a message says what to fix. While a dialog is open,
             close it first. On the last item in the sidebar there's no bar.</P>
         </StepBody>
+        <Step n={5}>Leave a message on the shipment</Step>
+        <StepBody>
+          <P>The envelope icon at the top right of the shipment header opens <Tag>Messages</Tag>: notes on
+            this shipment for everyone who can open it, for example "Customer asks to hold the booking until
+            Friday". A number on the envelope counts the messages posted since you last opened them on this
+            computer.</P>
+          <P>Type in the box at the bottom (15 to 500 characters) and click <Tag>Post</Tag>, or press{" "}
+            <Tag>Ctrl</Tag> + <Tag>Enter</Tag>. Each message shows who posted it, their role and when, and
+            appears at once for anyone with the panel open. <Tag>Oldest first</Tag> switches the order. A
+            message can't be edited or deleted once posted, and Messages stay open on a Completed or
+            Cancelled shipment. CargoDesk posts some itself, signed System, for example when a booking
+            skips its space configuration.</P>
+        </StepBody>
         <Screenshot src={imgShipmentOverview} alt="A shipment's Overview page" caption="A shipment's Overview page. The header bar at the top — route, ETD/ETA, vessel, shipper/consignee — stays visible on every page you navigate to for this shipment, so you never lose that context." />
       </div>
     ),
@@ -944,8 +957,9 @@ const UserManualPage = () => {
         <P>The top of a shipment's <Tag>Documents</Tag> page shows the House B/L: where it is (Draft,
           Issued, Surrendered, Released), its record and history, and the next step.</P>
         <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
-          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Before issue</strong> — what is still missing, each with a link to the page where you fix it. Choose what the B/L says: <em>Shipped on board</em> (dated by the last container's loading, or a date you type) or <em>Received for shipment</em>; how many originals and non-negotiable copies; and whether the freight shows as <em>as arranged</em> or with the shipment's charges. <Tag>Generate draft</Tag> makes a copy to check or send for approval (it says the number is assigned at issue); <Tag>Issue House B/L</Tag> takes the number, prints it dated today and issues it.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Before issue</strong> — what is still missing, each with a link to the page where you fix it. Choose what the B/L says: <em>Shipped on board</em> (dated by the last container's loading, or a date you type) or <em>Received for shipment</em>; how many originals and non-negotiable copies; whether the freight shows as <em>as arranged</em> or with the shipment's charges; and the <strong>terms and conditions</strong>, which start as the export office's default and can be any language its legal entity (or the organisation) has. <Tag>Generate draft</Tag> makes a copy to check or send for approval (it says the number is assigned at issue); <Tag>Issue House B/L</Tag> takes the number, prints it dated today and issues it.</li>
           <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>The B/L number</strong> — taken from the issuing office's series when you issue (e.g. RTMHBL2600123: the prefix, the year, a sequence). An admin sets the prefix under Organisation → Offices → Edit. A voided number is never used again. For a B/L already issued on paper, type its number on <Tag>Conditions</Tag> first.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Terms and conditions</strong> — printed after the B/L, from a new page (a 2-page B/L has them from page 3), every page numbered; the B/L's own wording says which pages and which terms. The face stays in English; the terms are in the language picked. An admin keeps them under Organisation → B/L Terms: for each legal entity and language, a PDF for print and the same terms as text, which an eBL carries (a language without a PDF prints its text). Every save is a new version, and an issued B/L keeps the one it was issued with; an amendment keeps the original's. Each export office picks its default next to its B/L number prefix (Organisation → Offices → Edit); without one, English. CargoDesk's starter text is an example, not your terms: a draft can show it, but no House B/L is issued on it.</li>
           <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>After issue, on paper</strong> — log who received the originals (<Tag>＋ Record handover</Tag>: to whom, in person, by courier with its tracking number, or by mail). Record them as presented at destination (an Original B/L, with who presented them) or surrendered at origin (a telex release, once every original handed over is back: the import office gets a task telling it to release without originals), then <Tag>Release cargo</Tag>. A live eBL is surrendered only on its platform. The release dialog shows its three checks; an admin or finance user can override with a reason.</li>
           <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Corrections</strong> — if the shipment changes after issue, the panel says what no longer matches. <Tag>Surrender for amendment</Tag> records the originals coming back, with the reason; then issue version 2, which keeps the same number and prints "VERSION 2 · AMENDED". An eBL is corrected by its holder asking on the platform.</li>
           <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Or electronic</strong> — <Tag>Issue as eBL</Tag> sends it to an eBL platform, issued to the shipper by its platform id (Customers → Identifiers, type WAVE, CARX…). The issuing legal entity needs a SCAC, a street address and a phone or email (Organisation → Branches). The holder endorses it on the platform; when the consignee asks to surrender it for delivery, CargoDesk checks payment and credit and releases the cargo.</li>
@@ -1128,7 +1142,12 @@ const UserManualPage = () => {
         <P>The IMO vessel registry — tens of thousands of real ships, each with its own IMO number, flag, build year, and tonnage. Search by name, IMO, or type. A vessel with no confirmed name yet shows <em>"Name pending — awaiting a clean AIS report"</em> rather than garbled data; it fills in automatically once a real position report comes through.</P>
         <Screenshot src={imgMdmVessels} alt="The Master Data Vessels list" caption="Master Data → Vessels — a searchable index of the IMO registry." />
         <H3>Commodities</H3>
-        <P>The freight commodity code list used when describing what a shipment is carrying, each with its own grade classification. Add a custom code if the one you need isn't already there.</P>
+        <P>The freight commodity code list, each code with its own grade classification. Add a custom code if the one you need isn't already there. Shipments, quotes, opportunities and contracts all name their commodity by a code from this list. A shipment's commodity is set on the New Shipment form or later on its <Tag>Conditions</Tag> page. It is used in three places:</P>
+        <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Contracts</strong> — a contract's <Tag>Commodity Types</Tag> lists the commodities it covers. <Tag>9999</Tag> (FAK, Freight All Kinds) covers every commodity, and a contract saved with none picked is FAK.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Space</strong> — a space configuration can hold space for one of its contract's commodities. A shipment counts against it, and Where to book offers it, only when the configuration is for the shipment's commodity or for FAK.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>The booking</strong> — the commodity's description goes to the carrier on the booking request.</li>
+        </ul>
         <H3>Port Locations</H3>
         <P>The port database contains 14,000+ UN/LOCODE records with coordinates. Use the search bar to filter by code or name. Every row with coordinates includes a <strong>📍 Map</strong> link that opens Google Maps at that location. You can add custom ports or edit existing ones.</P>
         <H3>Linked Ports</H3>

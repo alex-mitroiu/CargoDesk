@@ -120,6 +120,7 @@ import RateBenchmarkPage       from "./pages/RateBenchmarkPage";
 import BranchPage              from "./pages/org/BranchPage";
 import OfficePage              from "./pages/org/OfficePage";
 import CountryPage             from "./pages/org/CountryPage";
+import BlTermsPage             from "./pages/org/BlTermsPage";
 import SpaceConfigurationsPage from "./pages/SpaceConfigurationsPage";
 import FreightAuditPage from "./pages/FreightAuditPage";
 import QuotesPage from "./pages/QuotesPage";
@@ -733,7 +734,7 @@ function App() {
 
   // kanban is top-level, not MDM
   const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-carrier-integrations", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-loop-map-explorer", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "mdm-lane-steering", "mdm-margin-rules", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-charge-defaults", "mdm-gl-account-mappings", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
-  const ORG_PAGES = ["org-country", "org-branch", "org-office"];
+  const ORG_PAGES = ["org-country", "org-branch", "org-office", "org-bl-terms"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
   const isOrgActive = ORG_PAGES.includes(page);
@@ -859,6 +860,7 @@ function App() {
     "org-country":      "Organization — Countries",
     "org-branch":       "Organization — Branches",
     "org-office":       "Organization — Offices",
+    "org-bl-terms":     "Organization — B/L Terms",
     schedules:          "Schedule Search",
     manual:             "User Manual",
   };
@@ -2090,6 +2092,7 @@ function App() {
                   <NavBtn pageKey="org-country" icon={IconEarth} label="Country"  indent />
                   <NavBtn pageKey="org-branch"  icon={IconGovernment} label="Branch"   indent />
                   <NavBtn pageKey="org-office"  icon={IconBuilding} label="Office"   indent />
+                  {effectiveRoles.includes("admin") && <NavBtn pageKey="org-bl-terms" icon={IconFile} label="B/L Terms" indent />}
                 </div>
               )}
             </div>
@@ -2531,6 +2534,7 @@ function App() {
         {page === "org-country"    && <CountryPage />}
         {page === "org-branch"     && <BranchPage />}
         {page === "org-office"     && <OfficePage />}
+        {page === "org-bl-terms"   && <BlTermsPage />}
         {page === "schedules"      && <SchedulesPage />}
         {page === "manual"         && <UserManualPage />}
         {page === "about"          && <AboutPage />}

@@ -1619,6 +1619,48 @@ NLAMS → NLRTM (Carrier's Haulage, 16 Nov), as Save stored them before the fix 
 
 ---
 
+### TC-099: The House B/L prints its terms and conditions from a new page, in the language picked
+**Feature:** Organisation → B/L Terms; the office's default terms; the House B/L panel's terms row; the BL01 print; the eBL's termsAndConditions
+**Precondition:** An export office with its own legal entity (SCAC, address); the entity's English terms (text) and Dutch terms (text + a 2-page PDF); a ready House B/L shipment NLRTM → USNYC
+**Steps:**
+1. Save Dutch terms with a non-ISO language, with no text, with 50,001 characters, with a file that isn't a PDF; then with the PDF, then a new text only, then without the PDF, then with a PDF again
+2. Set the office's default to German (none on file), then to Dutch
+3. Draft the House B/L on the organisation's English starter text, and issue it
+4. Draft it with the Dutch terms; download the PDF; read its DCSA document
+5. Issue it with the Dutch terms; save a newer Dutch version
+6. Surrender it for amendment and draft version 2 asking for English
+7. Clear the office's default; draft another shipment's House B/L; stop offering Dutch
+
+**Expected Result:**
+- 1: each refused with what's wrong (400); then versions 1–4, the PDF kept by version 2, gone in 3, back in 4
+- 2: 400 "no German terms"; then Dutch is the office's default and the panel starts with it
+- 3: the draft is made; its readiness says the starter text can't be issued; issuing is refused (409)
+- 4: 3 pages (the face, then the 2-page PDF); termsAndConditions is the Dutch text
+- 5: the issued B/L records Dutch version 4; the newer version leaves it on version 4
+- 6: the panel shows the terms as kept; version 2's draft prints Dutch version 4
+- 7: the office starts with its entity's English; the draft is the face plus the terms text set as pages; Dutch disappears from the choices, the office falls back to English
+
+**Status:** PASS (2026-11-10, automated: tests/bl-terms.test.js; src/pages/org/BlTermsPage.test.jsx, src/components/shared/HouseBlPanel.test.jsx, src/utils/houseBlPrint.test.js)
+
+---
+
+### TC-098: A shipment message is signed by whoever is signed in
+**Feature:** POST /api/shipments/:id/messages; the Messages drawer (the envelope in the shipment header)
+**Precondition:** A Central HLCU shipment NLRTM → USNYC (FCA, real parties, one 40HC); a user holding Operator and OCC Booking, working in the shipment's export office
+**Steps:**
+1. As the admin, post a message naming another author ("Someone Else") and role ("Viewer")
+2. As the user, post one; then post one with the role switched to OCC Booking; then one claiming Admin through X-Active-Role
+3. Post a body under 15 characters, over 500, and one that isn't text
+
+**Expected Result:**
+- 1: 201, signed with the admin's own name and "Admin"; stored that way
+- 2: signed "Messages Test Operator" / "Operator", then "OCC Booking", then "Operator" (a role not held is ignored)
+- 3: 400 each (the non-text body used to be a server error)
+
+**Status:** PASS (2026-11-09, automated: tests/shipment-messages.test.js)
+
+---
+
 ### TC-087: The contract card shows the space (and the steering), never the charges
 **Feature:** The contract card's space figures (total, used, pending, remaining); the Lane steering block; no charges
 **Precondition:** A weekly space configuration of 20 TEU on the shipment's contract and routing line; in the shipment's ETD

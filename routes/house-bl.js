@@ -64,7 +64,10 @@ module.exports = function houseBlRoutes(app, ctx) {
       draft: hb.mapTransportDocument(draft),
       // The version an amendment replaces (G6): the next issue is its version + 1, same number.
       amends: hb.mapTransportDocument(amends || null),
-      readiness: live ? null : await hb.readiness(req.params.id, { td: draft || (amends && { reference: amends.reference }) }),
+      readiness: live ? null : await hb.readiness(req.params.id, { td: draft || (amends && { reference: amends.reference }), amendsTermsId: amends?.terms_id || null }),
+      // The terms and conditions (2026-11-10): the choices, the office's default, what the draft / issued B/L carries,
+      // and the terms an amendment keeps (locked).
+      terms: await ctx.blTerms.forShipment(d.s, { draft, live, amends }),
       release: live ? await hb.releaseChecks(req.params.id).then(r => ({ blocks: r.blocks })) : null,
       changedSinceIssue: live ? await hb.changedSinceIssue(live, d) : null,
       onBoard: await hb.onBoardFacts(req.params.id),

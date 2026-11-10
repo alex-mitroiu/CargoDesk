@@ -4451,6 +4451,10 @@ schemaReadyPromise = schemaReadyPromise.then(() => ctx.assistantKnowledge.syncFr
 // …and its live-data lookups: a closed allowlist of GETs to this API, made as the user and read-only.
 ctx.aiTools = require('./lib/ai-tools')(ctx);
 schemaReadyPromise = schemaReadyPromise.then(() => ctx.houseBl.migrateLegacyHouseBls());
+// The House B/L's terms and conditions (2026-11-10, §8.48): per legal entity and language, with the organisation's
+// English starter text seeded once (never issued on).
+ctx.blTerms = require('./lib/bl-terms')(ctx);
+schemaReadyPromise = schemaReadyPromise.then(() => ctx.blTerms.ensureStarter()).catch(e => console.error("B/L terms starter:", e.message));
 // …and as an eBL (gap G24): CargoDesk as issuer, and the built-in eBL platform it talks to.
 ctx.ebl = require('./lib/ebl')(ctx);
 ctx.eblPlatform = require('./lib/ebl-platform-simulator')({ query, uid, getActiveSigningCert,
@@ -4470,6 +4474,7 @@ require('./routes/booking-escalations')(app, ctx);
 require('./routes/lane-steering')(app, ctx);
 require('./routes/where-to-book')(app, ctx);
 require('./routes/house-bl')(app, ctx);
+require('./routes/bl-terms')(app, ctx);
 require('./routes/ebl')(app, ctx);
 require('./routes/carrier-tracking')(app, ctx);
 require('./routes/vessel-schedules')(app, ctx);
