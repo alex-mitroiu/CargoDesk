@@ -149,6 +149,14 @@ export const api = {
     amendmentPreview: (shipmentId) => req("GET", `/shipments/${shipmentId}/master-bl/amendment-preview`),
     amend:            (shipmentId) => req("POST", `/shipments/${shipmentId}/master-bl/amend`, {}),
     cancelAmendment:  (shipmentId) => req("POST", `/shipments/${shipmentId}/master-bl/amendment/cancel`, {}),
+    // The carrier's Master B/L as sent to you (2026-11-10, routes/carrier-mbl.js): the Documents page's panel.
+    custody:     (shipmentId)       => req("GET",  `/shipments/${shipmentId}/master-bl/custody`),
+    setup:       (shipmentId, data) => req("PUT",  `/shipments/${shipmentId}/master-bl/custody`, data),
+    recordStep:  (shipmentId, data) => req("POST", `/shipments/${shipmentId}/master-bl/custody/steps`, data),
+    undoStep:    (shipmentId, reason) => req("POST", `/shipments/${shipmentId}/master-bl/custody/undo`, { reason }),
+    uploadPdf:   (shipmentId, data) => req("POST", `/shipments/${shipmentId}/master-bl/pdf`, data),
+    checkPdf:    (shipmentId, data = {}) => req("POST", `/shipments/${shipmentId}/master-bl/pdf/check`, data),
+    printCopy:   (shipmentId)       => req("POST", `/shipments/${shipmentId}/master-bl/print`, {}),
   },
   // The carrier's DCSA Arrival Notice on the shipment (import side): the current one, ask again, settle a
   // free-time difference ({ containerId, kind: DEM | DET, use }), add charges as BUY accruals ({ indices }).

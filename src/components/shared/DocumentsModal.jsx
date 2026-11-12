@@ -6,6 +6,7 @@ import Btn from "../primitives/Btn";
 import TrackedDocPreviewModal from "./TrackedDocPreviewModal";
 import EntityHistoryModal from "./EntityHistoryModal";
 import GenerateDocumentModal from "./GenerateDocumentModal";
+import CarrierMasterBlPanel from "./CarrierMasterBlPanel";
 import SendDocumentEmailModal from "./SendDocumentEmailModal";
 import SendDocumentEdiModal from "./SendDocumentEdiModal";
 import SendDocumentWebhookModal from "./SendDocumentWebhookModal";
@@ -203,6 +204,9 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
             must not carry one shipment's choices (e.g. what the B/L says) into the next. */}
         {standalone && <HouseBlPanel key={shipment.id} shipment={shipment} canEdit={canEdit} docs={docs} onChanged={loadDocs} />}
 
+        {/* The carrier's Master B/L as sent to you (2026-11-10): its print or PDF, its originals or eBL until released. */}
+        {standalone && <CarrierMasterBlPanel key={`mbl-${shipment.id}`} shipment={shipment} canEdit={canEdit} onChanged={loadDocs} />}
+
         {/* Toolbar */}
         <div style={{ display: "flex", justifyContent: "flex-end" }}>
           <button type="button" onClick={() => { setGenDefaultCode(null); setGenInvOpen(true); }}
@@ -249,6 +253,8 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
                 const col  = docReadinessColor(stat);
                 const handleRowClick = () => {
                   if (doc) { setPreviewDoc(doc); }
+                  // The Master B/L is the carrier's: printed from its data or its PDF, in the panel above.
+                  else if (t.code === "MB01") { document.getElementById("carrier-mbl-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }); }
                   else     { setGenDefaultCode(t.code); setGenInvOpen(true); }
                 };
                 return (
@@ -272,7 +278,7 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
                       {!doc && canEdit && (
                         <span style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.cyan,
                           background: HZ.cyanBg, borderRadius: 4, padding: "1px 8px", whiteSpace: "nowrap" }}>
-                          ⚡ Generate
+                          {t.code === "MB01" ? "From the carrier ↑" : "⚡ Generate"}
                         </span>
                       )}
                     </td>

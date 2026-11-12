@@ -92,7 +92,7 @@ const CHECKS = [
   { key: "collect_charges", name: "Collect charges paid", ok: "None open" },
   { key: "credit_hold", name: "Consignee not on credit hold", ok: "No hold" },
 ];
-export const ReleaseCargoModal = ({ blocks = [], canOverride, onRelease, onClose }) => {
+export const ReleaseCargoModal = ({ blocks = [], warnings = [], canOverride, onRelease, onClose }) => {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const blocked = blocks.length > 0;
@@ -116,6 +116,14 @@ export const ReleaseCargoModal = ({ blocks = [], canOverride, onRelease, onClose
             );
           })}
         </ul>
+        {/* The carrier's release of the Master B/L (2026-11-10): told, never a block. */}
+        {warnings.map(w => (
+          <div key={w.key} data-testid={`house-bl-release-warning-${w.key}`}
+            style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "10px 12px", borderRadius: 8, background: HZ.warnBg, border: `1px solid ${HZ.warn}55` }}>
+            <span style={chipStyle("transparent", HZ.warn, HZ.warn + "66")}>NOTE</span>
+            <span style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text }}>{w.message}. You can still release to your consignee.</span>
+          </div>
+        ))}
         {blocked && canOverride && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 14px", borderRadius: 8, background: HZ.warnBg, border: `1px solid ${HZ.warn}55` }}>
             <b style={{ fontFamily: HZ_BODY, fontSize: 13, color: HZ.text }}>Override, finance only</b>
@@ -675,7 +683,7 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
       </div>
 
       {releaseOpen && live && (
-        <ReleaseCargoModal blocks={summary.release?.blocks || []} canOverride={canOverride} onRelease={release} onClose={() => setReleaseOpen(false)} />
+        <ReleaseCargoModal blocks={summary.release?.blocks || []} warnings={summary.release?.warnings || []} canOverride={canOverride} onRelease={release} onClose={() => setReleaseOpen(false)} />
       )}
       {voidOpen && live && <VoidModal onVoid={voidIt} onClose={() => setVoidOpen(false)} />}
     </section>

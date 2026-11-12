@@ -610,10 +610,12 @@ and 25 indexes now exist beyond primary keys (§11 — this resolves the old "no
 
 ## 6. Data Model
 
-**130 tables** in the monolith's own database, plus the Contract Management service's own 4-table
+**132 tables** in the monolith's own database, plus the Contract Management service's own 4-table
 copy (`contracts`/`contract_legs`/`contract_rates`/`contract_routings`) when
 `contract_source='remote'` (§8.1) — never both populated as the live source at once.
 
+- **2026-11-10, later (the carrier's Master B/L as sent to the forwarder, §8.49):** +2, `master_bl_custody`,
+  `master_bl_custody_events`.
 - **2026-11-10 (House B/L terms and conditions, §8.48):** +1, `bl_terms`; columns `offices.bl_terms_default`,
   `transport_documents.terms_id`.
 - **2026-10-29 (the House B/L audit's fixes and the shipper's DG contact, §8.44):** columns only, still 129 tables.
@@ -4544,6 +4546,48 @@ text but no PDF prints the text; the terms have their own page.
 - **Tests.** `tests/bl-terms.test.js`; `tests/helpers/house-bl.mjs` `ensureEntityTerms` (every House B/L suite issues
   on its entity's own English terms, since the starter text can't be issued); Vitest `BlTermsPage.test.jsx`,
   `HouseBlPanel.test.jsx`, `houseBlPrint.test.js`; Cypress `house-bl.cy.js` provisions the terms.
+
+### 8.49 The carrier's Master B/L as sent to the forwarder: print, PDF, originals, eBL (2026-11-10)
+
+Asked as the second half of the same top-priority item: the Master Bill of Lading issued by the carrier and sent to
+the forwarder. Mockup https://claude.ai/code/artifact/ceca35b0-aca5-414e-91f8-672884686979, approved with all four
+recommendations: a panel on the Documents page (the draft review and approval stay on Shipping Instructions, §8.42);
+CargoDesk's own MB01 retired; the carrier's PDF read with pdf.js; the House B/L's release warns, never blocks. The
+user had chosen all four forms and, for the eBL, tracking rather than a platform connection (carriers issue only onto
+the P&I-approved platforms they work with; DCSA doesn't standardise the holder's actions).
+
+- **The record (`lib/carrier-mbl.js` = `ctx.carrierMbl`).** `master_bl_custody` (one per shipment: `form` PAPER |
+  EBL | SWB or '' = derived, `originals_total`, `ebl_platform/_reference/_issued_to`, `pdf_document_id` + `pdf_check`,
+  `print_document_id`, `stage`, `released_at`, `release_ref`) and `master_bl_custody_events` (each step, its detail,
+  undone ones kept with `undone_at/_by` and `undo_reason`). The form: as set, else the carrier's issued transport
+  document (`is_electronic` → EBL, type SWB → SWB), else the shipment's Master B/L release type (Seaway Bill → SWB),
+  else paper; fixed once a step is recorded. The number: `shipments.master_bl_number`, else the issued document's.
+- **The chain.** Paper: RECEIVED (count of the set, from, courier) → SENT (to, courier) → SURRENDERED (destination) →
+  RELEASED (ref), or RECEIVED → SURRENDERED (origin, a telex release) → RELEASED. eBL: ISSUED (platform from a fixed
+  list: WAVE BL, CargoX, essDOCS, Bolero, edoxOnline, IQAX eBL, Other; its reference) → TRANSFERRED → SURRENDERED →
+  RELEASED, every step marked by hand. Sea waybill: RELEASED only. Each step in order (409 with what comes next), dated
+  (not in the future, not before the step before), on the shipment's History (`MASTER_BL_<STEP>`); the last one can be
+  undone with a reason. Steps at origin are the export side's; at destination either side's.
+- **The carrier's PDF.** POST …/master-bl/pdf stores it as MB01 (status confirmed) and reads its text with pdf.js
+  (`pdfjs-dist` 4.10.38, legacy build, loaded on first use): the Master B/L number, every container (spaces and dashes
+  ignored) and the vessel, found or not, and any container number (ISO 6346) it names that isn't on the shipment. A
+  PDF with no text (a scan) is checked by eye: `byEye` ticks per item, complete = checked.
+- **The print.** POST …/master-bl/print builds the copy on the server from the issued transport document's DCSA
+  payload (`printHtml`): the carrier's parties, transport, cargo and equipment with seals, clauses, the on-board
+  statement, originals, place and date of issue, and the carrier's `termsAndConditions` from a new page, every page
+  marked COPY · NOT NEGOTIABLE; rendered, signed, stored as MB01. Refused (409) until the carrier has issued it.
+- **CargoDesk's own MB01 is retired.** POST …/documents/generate refuses MB01 (409); `buildMasterBillOfLadingHtml`
+  is gone; Generate Document doesn't offer it; the Documents list's MB01 row points to the panel. An MB01 is the
+  carrier's: the printed copy or an uploaded file (the plain upload route still takes one).
+- **The House B/L's release.** `releaseChecks` returns `warnings` beside `blocks`: while the shipment has a carrier's
+  Master B/L (an issued document, a number, a PDF or a step) that isn't released, `master_bl` "The carrier hasn't
+  released the cargo to you yet…". It never blocks; the release records it on the House B/L's history.
+- **API.** GET/PUT /api/shipments/:id/master-bl/custody, POST …/custody/steps, POST …/custody/undo, POST …/master-bl/pdf,
+  POST …/master-bl/pdf/check, POST …/master-bl/print (routes/carrier-mbl.js); GET …/house-bl `release.warnings`.
+- **Screens.** `src/components/shared/CarrierMasterBlPanel.jsx` under the House B/L panel on Documents; the release
+  dialog's NOTE line.
+- **Tests.** `tests/carrier-mbl.test.js`; carrier-booking and receivables-gross upload their MB01 instead of
+  generating it; Vitest `CarrierMasterBlPanel.test.jsx`.
 
 ## 9. Data Flow Diagrams
 

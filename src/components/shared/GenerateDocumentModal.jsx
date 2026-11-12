@@ -144,7 +144,7 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
             {/* CN01 is excluded — it's only ever produced by the Reverse action on Invoice Entry,
                 never picked ad hoc (it needs real reversal-line data behind it). */}
             {/* CN01 has its own flow; VG01 is generated per declaration on the VGM page, VG02 is an upload. */}
-            {DOC_TYPES.filter(t => !["CN01", "VG01", "VG02"].includes(t.code)).map(t => <option key={t.code} value={t.code}>{t.code} · {t.label}</option>)}
+            {DOC_TYPES.filter(t => !["CN01", "VG01", "VG02", "MB01"].includes(t.code)).map(t => <option key={t.code} value={t.code}>{t.code} · {t.label}</option>)}
           </select>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>

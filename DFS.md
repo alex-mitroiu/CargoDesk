@@ -561,6 +561,13 @@ facts, with the full field list behind a button. It approves the draft, or corre
 update. The carrier issues it (B/L Issued completes), and its surrender for delivery completes the
 instructions. An issued House B/L travels in the Master's instructions where the destination's advance
 filing needs House-level data (EU ICS2, US AMS, Mercosur).
+**The Master B/L as sent to you** (2026-11-10): the Documents page keeps the carrier's Master B/L in whichever form it
+arrives. From the carrier's data, CargoDesk prints a copy word for word (marked COPY · NOT NEGOTIABLE, with the carrier's
+terms); the carrier's PDF is read for its B/L number, containers and vessel (a scan is checked by eye). Where it is
+until the carrier releases the cargo is recorded step by step: paper originals received, sent to destination,
+surrendered, released (or surrendered at origin for a telex release); an eBL issued, transferred, surrendered, released,
+marked by hand from the platform; a sea waybill's release. CargoDesk no longer builds a Master B/L of its own. Releasing
+the House B/L at destination notes a Master the carrier hasn't released yet; it doesn't block.
 **Amending the issued Master B/L** (2026-10-28): after the carrier has issued it, a correction to the shipment
 (a seal replaced at an inspection, a changed notify party) goes to the carrier as an amendment of the issued
 B/L. The user first sees what differs; nothing is sent when nothing does. The carrier declines it (a task, with
@@ -693,7 +700,7 @@ and `loop_code_ports` (carrier service loops and their directional rotations) an
 | **TEU** | Twenty-foot Equivalent Unit — the standard unit for container/space capacity (20ft = 1 TEU, 40ft = 2 TEU, admin-overridable per container type). |
 | **EDI** | Electronic Data Interchange — the carrier booking request/response protocol; DCSA is the specific industry-standard EDI schema this app targets for real carrier integrations. |
 | **DCSA** | Digital Container Shipping Association — the carriers' interface standards (Booking 2.0, eBL, Track & Trace…). Every CargoDesk booking goes out as DCSA Booking 2.0, Shipping Instructions as DCSA Shipping Instructions 3.0, and each container's VGM as DCSA VGM 1.0; carriers without an integration are played by the built-in demo carrier. |
-| **Master B/L** | The carrier's own bill of lading for the shipment, drafted from the Shipping Instructions; CargoDesk reviews and approves the draft, the carrier issues it (§5.12). |
+| **Master B/L** | The carrier's own bill of lading for the shipment, drafted from the Shipping Instructions; CargoDesk reviews and approves the draft, the carrier issues it, and CargoDesk keeps it (a copy from its data, or its PDF) and where its originals or eBL are until the carrier releases the cargo (§5.12). |
 | **VGM evidence / VG01** | What a VGM declaration rests on (weighbridge ticket, weight calculation) and the printable VGM Declaration CargoDesk generates for it. |
 | **Line Agent (Export / Import)** | The carrier's local representative at the port of loading (Export) or discharge (Import). A booking is placed with the Line Agent (Export), sent as the DCSA carrier booking office. |
 | **Booking escalation** | Handing a rejected, changed or unanswered booking to OCC/AY or CCL/CO (and on to Trade/AY) for an alternative, which OCC/BK then books as instructed (§5.12). |

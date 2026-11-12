@@ -68,7 +68,7 @@ module.exports = function houseBlRoutes(app, ctx) {
       // The terms and conditions (2026-11-10): the choices, the office's default, what the draft / issued B/L carries,
       // and the terms an amendment keeps (locked).
       terms: await ctx.blTerms.forShipment(d.s, { draft, live, amends }),
-      release: live ? await hb.releaseChecks(req.params.id).then(r => ({ blocks: r.blocks })) : null,
+      release: live ? await hb.releaseChecks(req.params.id).then(r => ({ blocks: r.blocks, warnings: r.warnings || [] })) : null,
       changedSinceIssue: live ? await hb.changedSinceIssue(live, d) : null,
       onBoard: await hb.onBoardFacts(req.params.id),
       packageCodes: Object.entries(hb.PACKAGE_CODES).map(([code, label]) => ({ code, label })),

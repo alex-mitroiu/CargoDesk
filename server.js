@@ -4481,6 +4481,9 @@ require('./routes/vessel-schedules')(app, ctx);
 require('./routes/customs-filing')(app, ctx);
 require('./routes/shipping-instructions')(app, ctx);
 require('./routes/master-bl')(app, ctx);
+// The carrier's Master B/L as sent to the forwarder (2026-11-10, §8.49): its print, its PDF, its originals or eBL.
+ctx.carrierMbl = require('./lib/carrier-mbl')(ctx);
+require('./routes/carrier-mbl')(app, ctx);
 require('./routes/arrival-notices')(app, ctx);
 require('./routes/customers')(app, ctx);
 require('./routes/contracts')(app, ctx);

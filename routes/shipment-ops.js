@@ -1262,6 +1262,10 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   app.post("/api/shipments/:id/documents/generate", shipmentWrite, documentActionRateLimit, async (req, res) => {
     const { html, filename, docType, containerId = '', responsibleParty = '', sourceCostLineIds = null, relatedDocId = null, vgmDeclarationId = '' } = req.body;
     if (!html || !filename) return err(res, "html and filename are required");
+    // A Master B/L is the carrier's document (2026-11-10, lib/carrier-mbl.js): printed from the carrier's own data or its
+    // PDF uploaded, never built by CargoDesk from the shipment.
+    if (docType === "MB01")
+      return err(res, "A Master B/L is the carrier's document: print it from the carrier's data, or upload the carrier's PDF (Documents → Carrier's Master B/L)", 409);
     if (await blockIfWrongSideForDocType(req, res, req.params.id, docType)) return;
     const vgmDecl = await vgmDeclarationFor(res, req.params.id, docType, vgmDeclarationId);
     if (vgmDecl === null) return;

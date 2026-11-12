@@ -1619,6 +1619,29 @@ NLAMS → NLRTM (Carrier's Haulage, 16 Nov), as Save stored them before the fix 
 
 ---
 
+### TC-100: The carrier's Master B/L: printed, its PDF read, its originals or eBL until released
+**Feature:** Documents → Carrier's Master B/L (lib/carrier-mbl.js); POST …/documents/generate refusing MB01; the House B/L's release note
+**Precondition:** A scratch export office with its legal entity; complete NLRTM → USNYC MAEU shipments (real parties, FOB, sealed 40' HCs on MAERSK KENSINGTON); one booked through the demo carrier
+**Steps:**
+1. Generate an MB01 through POST …/documents/generate; print the Master B/L of a shipment the carrier hasn't issued one for
+2. Paper: record Sent first; Received with 4 of 3; with a future date; then 3 of 3; change the form; Sent without where; Sent; Surrendered dated before; Surrendered; Released; Released again; undo without and with a reason; Released again
+3. Received then Surrendered straight away (origin); an eBL: Issued without a reference, on an unknown platform, then on WAVE BL, transferred, surrendered, released; a Seaway Bill shipment
+4. Upload a file that isn't a PDF; a PDF with the number, both containers (spaced) and the vessel; one missing a container and naming another; a scan, then tick every item
+5. Submit the Shipping Instructions, the carrier drafts, approve, the carrier issues; print
+6. Issue a House B/L on a shipment with a Master B/L number; read its release checks; record the Master released
+
+**Expected Result:**
+- 1: 409 each: the Master B/L is the carrier's; upload its PDF
+- 2: 409 with what comes next; 400 "1 to 3"; 400 future; recorded; 409 form fixed; 400; recorded; 400 not before the previous step; destination; released; 409; 400; back to Surrendered with the release kept as undone; released; every step on History
+- 3: surrendered at origin, path Received · Surrendered · Released; 400, 400, then each step, released; a sea waybill offers the release only (Received 409)
+- 4: 400; all found, MB01 on Documents; not ok, the missing and the extra container named; unreadable; checked by eye
+- 5: pending (not printable) while a draft; then issued, printable; the copy says COPY · NOT NEGOTIABLE, the number, the containers, and the carrier's terms on page 2
+- 6: a master_bl warning, not a block; gone once the carrier released
+
+**Status:** PASS (2026-11-10, automated: tests/carrier-mbl.test.js; src/components/shared/CarrierMasterBlPanel.test.jsx)
+
+---
+
 ### TC-099: The House B/L prints its terms and conditions from a new page, in the language picked
 **Feature:** Organisation → B/L Terms; the office's default terms; the House B/L panel's terms row; the BL01 print; the eBL's termsAndConditions
 **Precondition:** An export office with its own legal entity (SCAC, address); the entity's English terms (text) and Dutch terms (text + a 2-page PDF); a ready House B/L shipment NLRTM → USNYC

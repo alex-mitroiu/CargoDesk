@@ -929,11 +929,10 @@ const UserManualPage = () => {
           by each other's B/L number, but they're legally two separate contracts of carriage covering
           two different legs of the same relationship — carrier-to-forwarder, and forwarder-to-shipper.</P>
         <P>CargoDesk builds this directly: every shipment gets a <Tag>BL01</Tag> House Bill of Lading
-          (from CargoDesk's operator to the shipment's own Shipper/Consignee). If you assign an{" "}
-          <strong>NVOCC</strong> party on the Parties & Offices page, a second, independent{" "}
-          <Tag>MB01</Tag> Master Bill of Lading also becomes available — shipper is the assigned NVOCC,
-          consignee reads <em>"TO ORDER OF {"{NVOCC}"}"</em>, and each document's generated HTML
-          cross-references the other's B/L number, exactly matching how the two are used in practice.</P>
+          (from CargoDesk's operator to the shipment's own Shipper/Consignee). The <Tag>MB01</Tag> Master Bill of
+          Lading is always the carrier's: CargoDesk prints a copy of the one the carrier issued from its own data, or
+          keeps the PDF the carrier sent (see <em>The carrier's Master B/L, until the cargo is released</em> under
+          Shipping Instructions &amp; VGM). CargoDesk doesn't write a Master B/L of its own.</P>
         <P>An issued House B/L is a document of title, so it only moves forward. Confirming a BL01 issues
           it; after that it can't be deleted or set back to draft. If it's wrong, an admin clicks{" "}
           <strong>Void</strong> on the Documents page and gives a reason: it stays on record, marked
@@ -1076,6 +1075,20 @@ const UserManualPage = () => {
           glance before you submit, since those fields render blank on the generated document
           otherwise.</Callout>
 
+        <H3>The carrier's Master B/L, until the cargo is released</H3>
+        <P>The shipment's <Tag>Documents</Tag> page shows the carrier's Master B/L under the House B/L, in whichever
+          form it reaches you:</P>
+        <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>From the carrier's data</strong> — once the carrier has issued it, <Tag>Print the carrier's B/L</Tag> prints it word for word from what the carrier sent, with the carrier's own terms after it. It is a copy, marked COPY · NOT NEGOTIABLE: only the carrier's originals or its eBL are the title to the cargo.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>The carrier's PDF</strong> — <Tag>Upload the carrier's PDF</Tag> saves it as MB01 and reads it: the B/L number, each container and the vessel, found or not, and any container it names that isn't on the shipment. A scan has no text to read: tick each item once you have checked it by eye.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Paper originals</strong> — record each step as it happens: received from the carrier (how many, from whom, the courier), sent to destination, surrendered to the carrier, released. For a telex release, surrender them at origin straight after receiving them.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>An eBL</strong> — the platform and the eBL's reference, then issued, transferred to destination, surrendered, released. CargoDesk doesn't connect to the platform: do each step there, then mark it here.</li>
+        </ul>
+        <P>A sea waybill has nothing to surrender: only the carrier's release is recorded. The form is set from what
+          the carrier issued (or the shipment's Master B/L release type) and can be changed until a step is recorded. Each
+          step has a date and goes on the shipment's History; a step recorded by mistake can be undone with a reason.
+          When you release the cargo against the House B/L before the carrier has released the Master, the release
+          dialog notes it; it doesn't stop you.</P>
         <H3>VGM (Verified Gross Mass)</H3>
         <P>SOLAS requires a verified weight for every container before it can be loaded, declared
           one of two ways: <strong>Method 1</strong> — weighing the fully packed container — or{" "}

@@ -316,118 +316,8 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
   return _invShell(`Bill of Lading — ${blNumber || "draft"}`, "BILL OF LADING", blNumber || "Assigned at issue", invDate, body);
 };
 
-// Master B/L — issued by the real vessel operator TO the NVOCC, a genuinely different document
-// from the House B/L above (issued BY the NVOCC to the underlying shipper): different Shipper/
-// Consignee, same physical movement (Epic TKT-Q52B38, Finding 05). Deliberately its own builder,
-// not a mode flag on buildBillOfLadingHtml — the two documents' party resolution is different
-// enough (NVOCC-as-shipper here vs. NVOCC-as-carrier-identity there) that branching one function
-// would obscure more than it'd share. Consignee is rendered "TO ORDER OF {NVOCC}" — standard
-// trade language for a non-negotiable master bill controlled by the NVOCC, not a fabricated
-// party; Notify Party is left "—" since the NVOCC's own destination agent isn't modeled as a
-// distinct party (TKT-IB5IEX shipped the two-stage RELEASE TYPE tracking, master_bl_release_type,
-// a narrower thing than an actual agent contact) and showing the House-side notify here would
-// misattribute a party that has no role on this document.
-const buildMasterBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, containers, parties, exportFilingItn }) => {
-  const { w: totalWeight, v: totalVolume } = _ctrTotals(containers);
-  const nvocc = partyByRole(parties, "NVOCC");
-  // Co-loading (TKT-UR1X17): when this shipment's own NVOCC has no direct contract with the
-  // vessel operator for this lane, it tenders cargo through another NVOCC's own tariff instead —
-  // that OTHER NVOCC is who actually holds the direct Master B/L relationship with the vessel
-  // operator, so it (not the primary NVOCC) is the real Shipper here. Falls back to today's
-  // exact direct-NVOCC-to-vessel-operator behavior when no Co-Loading NVOCC party is assigned.
-  const coload = partyByRole(parties, "Co-Loading NVOCC");
-  const mblShipper = coload || nvocc;
-  const rows = containers.length === 0
-    ? `<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
-    : containers.map(c => `<tr>
-        <td><span class="code">${_esc(c.containerNumber || "TBC")}</span></td>
-        <td>${_esc(c.sealNumber || "—")}</td>
-        <td>${_esc(c.size)}ft ${_esc(c.type)}${c.isDg ? ` <span class="dg">DG ${_esc(c.dgClass)}</span>` : ""}</td>
-        <td>${_esc(c.cargoDescription || "—")}</td>
-        <td class="num">${c.grossWeightKg != null ? Number(c.grossWeightKg).toLocaleString() + " kg" : "—"}</td>
-        <td class="num">${c.volumeCbm != null ? Number(c.volumeCbm) + " CBM" : "—"}</td>
-        <td>${c.hsCode ? `<span class="code" style="font-size:11px">${_esc(c.hsCode)}</span>` : "—"}</td>
-      </tr>`).join("");
-
-  const body = `
-    <div class="parties" style="grid-template-columns:1fr 1fr 1fr">
-      <div class="party"><div class="party-label">Shipper (NVOCC)</div>
-        <div class="party-name">${_esc(mblShipper?.customerName || "—")}</div>
-      </div>
-      <div class="party"><div class="party-label">Consignee</div>
-        <div class="party-name">${mblShipper ? `TO ORDER OF ${_esc(mblShipper.customerName)}` : "—"}</div>
-      </div>
-      <div class="party"><div class="party-label">Notify Party</div>
-        <div class="party-name">—</div>
-      </div>
-    </div>
-    <div class="shp-block"><div class="block-label">Transport Details</div>
-      <div class="details-grid">${_detailGrid([
-        ["Master B/L Number", _esc(sh.masterBlNumber || invNumber)],
-        ["House B/L Number", _esc(sh.blNumber || "—")],
-        ...(coload ? [
-          ["Co-Loaded Via (Underlying NVOCC)", _esc(nvocc?.customerName || "—")],
-          ["Co-Load Tariff Reference", _esc(sh.coloadTariffReference || "—")],
-        ] : []),
-        ["Booking Ref", _esc(sh.bookingRef || "—")],
-        // Same additive ITN row as the House B/L — see that builder's own comment.
-        ...(exportFilingItn ? [["Export Filing ITN", _esc(exportFilingItn)]] : []),
-        ["Vessel", _esc(sh.vessel || "—")], ["Voyage", _esc(sh.voyage || "—")],
-        ["Port of Loading", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
-        ["Port of Discharge", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
-        ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
-        ["ETA", sh.eta ? new Date(sh.eta).toLocaleDateString("en-GB") : "—"],
-        ["Carrier", _esc(sh.carrierCode || "—")],
-        ["Movement", _esc(sh.movementType || "FCL")],
-        // Two-stage release (TKT-IB5IEX): the vessel operator's own release of the container to
-        // the NVOCC's destination agent is a genuinely separate event from the NVOCC's later
-        // release to the actual consignee (bl_release_type, on the House B/L / Delivery Order).
-        ["Master B/L Release Type", _esc(sh.masterBlReleaseType || "Not yet decided")],
-      ])}</div>
-    </div>
-    <div style="background:${["Telex Release", "Surrendered", "Seaway Bill"].includes(sh.masterBlReleaseType) ? "#f0fdf4" : "#fef2f2"};
-      color:${["Telex Release", "Surrendered", "Seaway Bill"].includes(sh.masterBlReleaseType) ? "#166534" : "#991b1b"};
-      border:1px solid ${["Telex Release", "Surrendered", "Seaway Bill"].includes(sh.masterBlReleaseType) ? "#bbf7d0" : "#fecaca"};
-      border-radius:8px;padding:10px 14px;margin-bottom:20px;font-size:12px;font-weight:600">
-      ${["Telex Release", "Surrendered", "Seaway Bill"].includes(sh.masterBlReleaseType)
-        ? `Released to the NVOCC's destination agent — ${_esc(sh.masterBlReleaseType)}. The NVOCC's own release to the actual consignee (House B/L) is a separate, later event.`
-        : "Not yet released to the NVOCC's destination agent — an Original Master B/L must be surrendered (or the release type above confirmed) before the NVOCC's own agent can take custody."}
-    </div>
-    <div class="section-label">Containers / Cargo</div>
-    <table><thead><tr>
-      <th>Container #</th><th>Seal #</th><th>Type</th><th>Cargo Description</th>
-      <th style="text-align:right">Gross Weight</th><th style="text-align:right">Volume</th><th>HS Code</th>
-    </tr></thead><tbody>${rows}</tbody>
-    ${containers.length > 0 ? `<tfoot><tr>
-      <td colspan="4" style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.5px">
-        ${containers.length} container${containers.length > 1 ? "s" : ""} total
-      </td>
-      <td class="num" style="font-weight:700">${totalWeight > 0 ? totalWeight.toLocaleString() + " kg" : "—"}</td>
-      <td class="num" style="font-weight:700">${totalVolume > 0 ? totalVolume.toFixed(2) + " CBM" : "—"}</td>
-      <td></td>
-    </tr></tfoot>` : ""}
-    </table>
-    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:11px;color:#374151;line-height:1.7">
-      <strong>SHIPPED ON BOARD</strong> the above named vessel in apparent good order and condition,
-      weight, measure, marks, numbers, quality, contents and value unknown. Freight and charges payable as indicated.
-      In accepting this Bill of Lading, the shipper, consignee and holder agree to be bound by all stipulations,
-      exceptions and conditions stated herein.
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
-      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
-        <div class="party-label">Place and Date of Issue</div>
-        <div style="font-size:12px;margin-top:4px">${_esc(sh.pol || "—")} / ${new Date(invDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" })}</div>
-      </div>
-      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
-        <div class="party-label">Signed for the Carrier</div>
-        <div style="height:48px"></div>
-        <div style="border-top:1px solid #d1d5db;padding-top:8px;font-size:11px;color:#6b7280">Authorised Signatory</div>
-      </div>
-    </div>
-    ${notes ? `<div class="notes"><div class="notes-label">Notes / Special Instructions</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
-
-  return _invShell(`Master Bill of Lading — ${invNumber}`, "MASTER BILL OF LADING", invNumber, invDate, body);
-};
+// The Master B/L (MB01) is the carrier's document (2026-11-10, lib/carrier-mbl.js): printed by the server from the
+// carrier's DCSA data, or its PDF uploaded. CargoDesk no longer builds one of its own from the shipment.
 
 // Carrier Booking Request (TKT — real bug report on SHP-XNLGBH: a carrier with no eAdapter
 // config, e.g. CMDU here, has no EDI channel at all, so "Send Booking Request" is correctly
@@ -1145,13 +1035,7 @@ const getMissingDocRequirements = (docCode, { shipment: sh, containers, shipper,
     if (!sh.pol) missing.push("Port of Loading");
     if (!sh.pod) missing.push("Port of Discharge");
   }
-  if (docCode === "MB01") {
-    if (!partyByRole(parties, "NVOCC")?.customerName) missing.push("NVOCC (assign one on Parties & Offices)");
-    if (!sh.masterBlNumber) missing.push("Master B/L Number (set on the Conditions page)");
-    if (containers.length === 0) missing.push("At least one container");
-    if (!sh.pol) missing.push("Port of Loading");
-    if (!sh.pod) missing.push("Port of Discharge");
-  }
+  if (docCode === "MB01") missing.push("The carrier's Master B/L: print it from the carrier's data, or upload its PDF (Documents → Carrier's Master B/L)");
   if (docCode === "BR01") {
     if (containers.length === 0) missing.push("At least one container");
     if (!sh.pol) missing.push("Port of Loading");
@@ -1193,7 +1077,6 @@ const getMissingDocRequirements = (docCode, { shipment: sh, containers, shipper,
 const dispatchDocBuilder = (code, data) => {
   switch (code) {
     case "BL01":             return buildBillOfLadingHtml(data);
-    case "MB01":             return buildMasterBillOfLadingHtml(data);
     case "BR01":             return buildCarrierBookingRequestHtml(data);
     case "BC01":             return buildBookingConfirmationHtml(data);
     case "SI01":             return buildShippingInstructionsHtml(data);
