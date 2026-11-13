@@ -145,6 +145,7 @@ All protected-endpoint tests first obtain a JWT via `POST /api/auth/login` with 
 | P1 | Shipments CRUD | Critical | Core business domain |
 | P1 | Containers | Critical | Auto cost-line creation for Central contracts |
 | P2 | Contracts: routing lines with typed legs | High | The Leg type, places, kind and mode on contract lines decide which contracts a shipment's carrier haulage is offered (TC-093–TC-094, TC-097) |
+| P1 | The principal follows the incoterm (2026-11-13) + pre-release audit TKT-E1GOI6 | High | Who a shipment is billed to: set from the incoterm on every path, kept when chosen, on the History with its reason; named contracts and space flagged; the invoice and its credit note name the right party (TC-104) |
 | P1 | Shipment QA export / import (2026-11-13) | High | A production shipment reproduced on a test system: every record and file, a new id, IMPORTED, and nothing sent from it (TC-103) |
 | P1 | Pre-release audit TKT-GC05AS: the terms and the carrier's Master B/L | High | Each side records and undoes only its own steps; the panel stays open on closed shipments; a replaced or removed PDF; an uploaded House B/L's terms; a language that stops being offered (TC-101–TC-102) |
 | P1 | The carrier's Master B/L as sent to you (2026-11-10) | High | MB01 only ever the carrier's; its PDF checked against the shipment; paper originals and eBL tracked to the carrier's release; the House B/L's release notes it (TC-100) |

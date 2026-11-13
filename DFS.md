@@ -286,6 +286,15 @@ several or none the user chooses. An office the user picks is never replaced; an
 only by hand (Reassign Office). The same rule fills a side left empty when a shipment is created through the API
 or converted from a quote (ARCHITECTURE.md §8.46). When the creator's own office is neither managing office, it
 becomes the shipment's controlling office, so the creator keeps seeing the shipment they created.
+**The principal**: the customer the shipment is billed to. The Incoterm decides it while nobody has chosen one: under a
+C or D term (CFR, CIF, CPT, CIP, DAP, DPU, DDP) the seller pays the main carriage, so the shipper is the principal;
+under an E or F term (EXW, FCA, FAS, FOB) the buyer does, so the consignee is. A new shipment, one created through the
+API and one converted from a quote take that principal when none is given, and it moves with the Incoterm, the
+shipper or the consignee on every screen (the New/Edit form, Conditions, Parties & Offices) as long as it is still the
+party the Incoterm implied. A principal someone chose (a parent company, a third party, the shipper under FOB) never
+moves. Every change of shipper, consignee, notify party or principal is on the shipment's History, and one the
+Incoterm made says so. When the new principal is on a contract or space configuration named for another customer,
+saving warns (never blocks), and the steering verdict is worked out again (ARCHITECTURE.md §8.51).
 
 ### 5.3 Commercial — Contracts & Space Allocation (P3 / P3a)
 **Purpose**: the commercial terms a shipment books against, and the physical capacity a carrier has
@@ -526,7 +535,9 @@ page is shown to every role.
 and `customer_identifiers`.
 **Business rules**: an invoice or credit note counts as *issued* if it was confirmed, or voided by
 a proper credit note (the original and its credit note both count and net to zero) — a bare manual
-void never counted; every revenue and tax figure uses this one definition. Revenue is recognised
+void never counted; every revenue and tax figure uses this one definition. An invoice is billed to the
+shipment's principal, else its consignee, and its Bill To box names that party (with its VAT number); a credit or
+debit note goes to the party its invoice billed, even if the principal has changed since (ARCHITECTURE.md §8.51). Revenue is recognised
 when a billing document is confirmed, cost when a vendor line is posted. A non-standard VAT
 treatment always means 0% on the line itself; the three kinds are kept apart because a VAT return
 reports them in different boxes. A charge line is billed once: a statement skips lines already on

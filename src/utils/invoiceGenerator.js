@@ -71,7 +71,6 @@ export const INV_CSS = `
   .inv-date{font-size:12px;color:#374151;margin-top:5px}
   .parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
   .parties.three{grid-template-columns:1fr 1fr 1fr}
-  .party-role{font-size:10px;color:#6b7280;margin-top:2px}
   .party{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px}
   .party-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#9ca3af;margin-bottom:8px}
   .party-name{font-size:14px;font-weight:700;color:#111827;margin-bottom:4px}
@@ -135,12 +134,26 @@ export const invoiceBillTo = sh => (sh.principalId || sh.principalName
   ? { name: sh.principalName || "—", role: "Principal" }
   : { name: sh.consigneeName || "—", role: "Consignee" });
 
-// Bill To, then the shipper and the consignee.
+// The shipment as its invoice saw it (audit D2, 2026-11-13): a credit or debit note is owed by the party the invoice billed
+// (the document's responsibleParty, a name), not by whoever is the principal now (it moves with the incoterm). Matched to
+// the shipment's parties so the VAT number (resolveInvoiceTaxInfo) is that party's; a name no party carries any more is
+// printed as it is, without a customer VAT number rather than another party's.
+export const shipmentBilledAs = (sh, party) => {
+  const name = String(party || "").trim();
+  if (!name || name === invoiceBillTo(sh).name) return sh;
+  const as = (id, nm) => ({ ...sh, principalId: id || "", principalName: nm });
+  if (name === sh.shipperName) return as(sh.shipperId, sh.shipperName);
+  if (name === sh.consigneeName) return as(sh.consigneeId, sh.consigneeName);
+  if (name === sh.notifyName) return as(sh.notifyId, sh.notifyName);
+  return { ...as("", name), consigneeId: "" };
+};
+
+// Bill To, then the shipper and the consignee. The Bill To box carries the name only: the document goes to the customer,
+// so no CargoDesk wording ("principal") under it (audit D4).
 const partiesBlock = sh => {
   const billTo = invoiceBillTo(sh);
   return `<div class="parties three">
-      <div class="party" data-bill-to><div class="party-label">Bill To</div><div class="party-name">${_esc(billTo.name)}</div>
-        <div class="party-role">${billTo.role === "Principal" ? "the shipment's principal" : "the consignee (no principal set)"}</div></div>
+      <div class="party" data-bill-to><div class="party-label">Bill To</div><div class="party-name">${_esc(billTo.name)}</div></div>
       <div class="party"><div class="party-label">Shipper / Exporter</div><div class="party-name">${_esc(sh.shipperName || "—")}</div></div>
       <div class="party"><div class="party-label">Consignee</div><div class="party-name">${_esc(sh.consigneeName || "—")}</div></div>
     </div>`;

@@ -617,10 +617,12 @@ module.exports = function shipmentsRoutes(app, ctx) {
             controllingOfficeId = null,
             contractRoutingId = "" } = req.body;
     // No principal sent: the one the incoterm implies (lib/incoterm-principal.js: C/D terms the shipper, E/F the consignee),
-    // so an API call or an import gets the same principal the New Shipment form would have filled in (2026-11-13).
-    const impliedP = sentPrincipalId ? null : impliedPrincipal(incoterm, { shipperId, shipperName, consigneeId, consigneeName });
+    // so an API call or an import gets the same principal the New Shipment form would have filled in (2026-11-13). One sent
+    // by name only is the caller's too (audit D5).
+    const principalSent = !!sentPrincipalId || !!String(sentPrincipalName || "").trim();
+    const impliedP = principalSent ? null : impliedPrincipal(incoterm, { shipperId, shipperName, consigneeId, consigneeName });
     const principalId = sentPrincipalId || impliedP?.id || "";
-    const principalName = sentPrincipalId ? sentPrincipalName : (impliedP?.name || sentPrincipalName || "");
+    const principalName = principalSent ? sentPrincipalName : (impliedP?.name || "");
     let { emoOfficeId = null, imoOfficeId = null } = req.body;
     if (!pol || !pod || !carrierCode || !contractType) return err(res, "pol, pod, carrierCode, contractType required");
     // A side sent empty is filled by the managing-office rule (lib/office-resolution.js, the one the New
@@ -793,12 +795,14 @@ module.exports = function shipmentsRoutes(app, ctx) {
       const incotermNow = field('incoterm', 'incoterm');
       const termsOrPartiesChanged = (incotermNow || "") !== (existing.incoterm || "") || (shipperId || "") !== (existing.shipper_id || "")
         || (consigneeId || "") !== (existing.consignee_id || "");
-      if (!principalChosenNow && (termsOrPartiesChanged || !principalId)) {
+      if (termsOrPartiesChanged || !existing.principal_id) {
         const f = followPrincipal(
           { incoterm: existing.incoterm, shipperId: existing.shipper_id, shipperName: existing.shipper_name, consigneeId: existing.consignee_id,
             consigneeName: existing.consignee_name, principalId: existing.principal_id, principalName: existing.principal_name },
           { incoterm: incotermNow, shipperId, shipperName, consigneeId, consigneeName });
-        principalId = f.id; principalName = f.name; principalFollowed = f.moved;
+        if (!principalChosenNow) { principalId = f.id; principalName = f.name; principalFollowed = f.moved; }
+        // The screens apply the rule themselves and send the result: still the rule's move, so the History says why (audit D3).
+        else principalFollowed = f.moved && f.id === (principalId || "");
       }
     }
     const allocationId = field('allocationId', 'allocation_id') || '';
@@ -1068,8 +1072,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // gained capacity back; the new pool has a fresh member).
     // The steering verdict (Epic TKT-KFGL81, Story 3): judged again whenever the contract, its space,
     // the contract type or the carrier changes, or the desk gives a reason.
+    // The principal too (audit D1, 2026-11-13): a customer's own steering line follows its principal, which now moves with
+    // the incoterm.
     if ((existing.contract_id || '') !== (effContractId || '') || (existing.allocation_id || '') !== (effAllocationId || '')
-        || (existing.contract_type || '') !== (contractType || '') || (existing.carrier_code || '') !== (carrierCode || '')) await recordSteering(req.params.id, req);
+        || (existing.contract_type || '') !== (contractType || '') || (existing.carrier_code || '') !== (carrierCode || '')
+        || (existing.principal_id || '') !== (principalId || '')) await recordSteering(req.params.id, req);
     else if (reqBody.steeringReason !== undefined) await recordSteering(req.params.id, req, { reasonOnly: true });
     if ((existing.allocation_id || '') !== (effAllocationId || '')) {
       if (existing.allocation_id) await recomputeSpaceBadgesForAllocation(existing.allocation_id);
@@ -1122,7 +1129,28 @@ module.exports = function shipmentsRoutes(app, ctx) {
       if (!isOverridden && partyOrRouteChanged) silentScreening = await screenShipmentById(req.params.id);
     }
     const body = mapShipment(updated);
-    ok(res, { ...body, ...(silentScreening ? { screening: silentScreening } : {}), ...(scheduleDropped ? { scheduleDropped: true } : {}) });
+    // A new principal on a contract or space named for another customer (audit D1, 2026-11-13): the principal now moves with
+    // the incoterm, so say so rather than leave the shipment on the old principal's commitments. Never a block.
+    let principalNotice = null;
+    if ((existing.principal_id || '') !== (principalId || '') && principalId) {
+      const named = [];
+      try {
+        const c = updated.contract_id && ctx.loadContract ? await ctx.loadContract(updated.contract_id) : null;
+        if (c?.namedAccountId && c.namedAccountId !== principalId)
+          named.push({ what: "contract", ref: c.contractNumber || updated.contract_ref || "", customerName: c.namedAccount || c.namedAccountId });
+      } catch (e) { console.error(`principal notice, contract of ${req.params.id}:`, e.message); }
+      if (updated.allocation_id) {
+        const [a] = await query("SELECT customer_id, customer_name FROM allocations WHERE id=$1", [updated.allocation_id]);
+        if (a?.customer_id && a.customer_id !== principalId) named.push({ what: "space", customerName: a.customer_name || a.customer_id });
+      }
+      if (named.length) {
+        const parts = named.map(n => n.what === "contract" ? `contract ${n.ref} is named for ${n.customerName}` : `its space configuration is ${n.customerName}'s`);
+        principalNotice = { principalName, principalFollowed, named,
+          message: `${principalName} is now the principal, but ${parts.join(" and ")}. Pick another contract on Contracts & Schedules.` };
+      }
+    }
+    ok(res, { ...body, ...(silentScreening ? { screening: silentScreening } : {}), ...(scheduleDropped ? { scheduleDropped: true } : {}),
+      ...(principalNotice ? { principalNotice } : {}) });
   });
 
   app.delete("/api/shipments/:id", shipmentWrite, async (req, res) => {

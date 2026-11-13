@@ -87,7 +87,7 @@ footer{font-size:13px;color:var(--muted);border-top:1px solid var(--line);paddin
     <h2>In short</h2>
     <ul>
       <li><b>Each incoterm shares out the transport steps</b> between the seller (the shipper) and the buyer (the consignee): the table in section 1. CargoDesk records the incoterm but doesn't share out charges by it.</li>
-      <li><b>The incoterm suggests the principal.</b> With an E or F term (EXW, FCA, FAS, FOB) the buyer arranges the main carriage, so the <b>consignee</b> becomes the principal. With a C or D term (CPT, CIP, CFR, CIF, DAP, DPU, DDP) the seller pays it, so the <b>shipper</b> does. You can always choose someone else.</li>
+      <li><b>The incoterm sets the principal.</b> With an E or F term (EXW, FCA, FAS, FOB) the buyer arranges the main carriage, so the <b>consignee</b> is the principal. With a C or D term (CPT, CIP, CFR, CIF, DAP, DPU, DDP) the seller pays it, so the <b>shipper</b> is. The principal follows the incoterm, the shipper and the consignee until you choose someone else.</li>
       <li><b>The principal is the customer the shipment is billed to.</b> It sets the invoice currency, who is chased for payment and whose credit is checked. It also picks customer-specific contract space and charge defaults.</li>
       <li><b>Each cost or charge line is marked Prepaid or Collect, by hand.</b> The incoterm doesn't set this mark. It decides what the House B/L shows and what must be paid before the cargo is released at destination.</li>
       <li><b>A shipment's costs and charges all belong to one legal entity</b>: the export office's, or the import office's if the export office has none. CargoDesk doesn't divide a shipment's money between the export and the import office.</li>
@@ -97,7 +97,7 @@ footer{font-size:13px;color:var(--muted);border-top:1px solid var(--line);paddin
   <section>
     <div class="col">
       <h2>1. The incoterm and the principal it suggests</h2>
-      <p>The incoterm is one of the eleven Incoterms 2020 rules. It is required on a new shipment and appears on the shipment header, on Conditions and on every invoice. CargoDesk uses it for one thing automatically: it suggests the principal. The rule asks who pays for the main carriage:</p>
+      <p>The incoterm is one of the eleven Incoterms 2020 rules. It is required on a new shipment and appears on the shipment header, on Conditions and on every invoice. CargoDesk uses it for one thing automatically: it sets the principal, unless you choose one. The rule asks who pays for the main carriage:</p>
     </div>
     <div class="scroll"><table class="terms">
       <thead><tr><th>Term</th><th>Name</th><th>Where the risk passes to the buyer</th><th>Principal CargoDesk fills in</th></tr></thead>
@@ -152,7 +152,7 @@ footer{font-size:13px;color:var(--muted);border-top:1px solid var(--line);paddin
       <li><b>Insurance:</b> only CIF (minimum cover, Institute Cargo Clauses C) and CIP (all risks, clauses A) oblige the seller to insure. Under the other terms neither side has to; each insures the risk it carries.</li>
       <li><b>DAP and DDP</b> deliver ready for unloading: when the named place is the destination terminal, unloading there is the buyer’s (DPU is the term that includes it).</li>
     </ol>
-    <p class="col" style="margin-top:12px;color:var(--muted);font-size:14.5px">CargoDesk records the incoterm on the shipment but doesn’t share out costs and charges by this table: each line is entered on the shipment as it comes (section 4). It uses the incoterm to suggest the principal, as in the first table.</p>
+    <p class="col" style="margin-top:12px;color:var(--muted);font-size:14.5px">CargoDesk records the incoterm on the shipment but doesn’t share out costs and charges by this table: each line is entered on the shipment as it comes (section 4). It uses the incoterm to set the principal, as in the first table.</p>
   </section>
 
   <section class="col">
@@ -160,17 +160,17 @@ footer{font-size:13px;color:var(--muted);border-top:1px solid var(--line);paddin
     <p>On <b>New Shipment</b> (and <b>Edit Shipment</b>):</p>
     <ol>
       <li>In <b>Parties</b>, choose the <b>Shipper</b> and the <b>Consignee</b>.</li>
-      <li>Choose the <b>Incoterm</b>. CargoDesk puts the party from the table above into <b>Principal</b>.</li>
+      <li>Choose the <b>Incoterm</b>. CargoDesk puts the party from the table above into <b>Principal</b>, and says so under the field.</li>
       <li>Check the principal. If someone else pays you, choose them instead: a parent company, a forwarder who buys the freight from you, or another third party. Any customer can be the principal.</li>
       <li>Save. Shipper, Consignee, Principal and Incoterm are all required on this form.</li>
     </ol>
-    <h3>When the principal is not filled in for you</h3>
+    <h3>When the principal follows, and when it stays</h3>
     <ul>
-      <li><b>The party wasn't chosen yet.</b> If you pick the incoterm before the shipper or consignee, the principal stays as it was. Choose it yourself, or pick the incoterm again.</li>
-      <li><b>You change the shipper or consignee afterwards.</b> The principal doesn't follow; change it yourself if needed.</li>
-      <li><b>You change the incoterm on Conditions.</b> That page changes the incoterm only; the principal stays.</li>
-      <li><b>The shipment was converted from a quote.</b> It takes the quote's principal, which is optional on a quote and isn't set from the incoterm. Check it on Parties &amp; Offices after converting.</li>
-      <li><b>Shipments created through the API</b> keep whatever principal they were sent with. CargoDesk doesn't check it against the incoterm.</li>
+      <li><b>It follows</b> while it is empty or is the party the incoterm points to. Change the incoterm (on the form or on <b>Conditions</b>, which tells you the new principal before you save), the shipper or the consignee (on the form or on <b>Parties &amp; Offices</b>), and the principal moves with them.</li>
+      <li><b>It stays</b> once someone has chosen another party: a parent company, a third party, the shipper under FOB, or a name typed in by hand.</li>
+      <li><b>A quote converted to a shipment</b> takes the quote's principal, or the one its incoterm sets when the quote has none.</li>
+      <li><b>Shipments created through the API</b> get the same principal the form would fill in when none is sent.</li>
+      <li><b>Every change is on the shipment's History</b>, with "Follows the incoterm …" when the incoterm moved it.</li>
     </ul>
     <div class="flow" aria-label="Example">
       <div class="card"><span class="k">CIF Rotterdam → New York</span><span class="v">Principal: Van Leeuwen Meubelen BV</span><span class="s">The Dutch shipper pays the freight to New York, so it is billed.</span></div>
@@ -190,14 +190,14 @@ footer{font-size:13px;color:var(--muted);border-top:1px solid var(--line);paddin
         <tr><td>Who owes the invoice</td><td>The invoice's receivable is the principal's, so reminders go to the principal. They are sent on the principal's payment terms and reminder settings, and the collections alerts are about the principal's debt.</td></tr>
         <tr><td>Credit control</td><td>A new invoice is refused while the principal, the shipper, the consignee or the contract's named account is on credit hold. The over-limit check is on the principal (the consignee when there is none); only the lane's trade manager can approve going over.</td></tr>
         <tr><td>Tax details on the invoice</td><td>The customer VAT number printed is the principal's (its primary VAT identifier, else any VAT, else a Tax ID).</td></tr>
-        <tr><td>Contract space</td><td>When you look for a contract, space configurations made for this principal (its named account) are offered first. Lane Steering lines for this customer apply too, and Where to book follows them.</td></tr>
+        <tr><td>Contract space</td><td>When you look for a contract, space configurations made for this principal (its named account) are offered first. Lane Steering lines for this customer apply too, and Where to book follows them. If the principal changes while the shipment is on a contract or space configuration named for another customer, saving warns you, and the steering is worked out again.</td></tr>
         <tr><td>Charge Defaults</td><td>A Charge Default set up for this principal adds its charge and cost lines the first time Cost Entry opens. It is chosen before a general setup for the same lane.</td></tr>
         <tr><td>Statements</td><td>A consolidated statement for a customer takes the unbilled charges of the shipments where that customer is the principal or the consignee.</td></tr>
       </tbody>
     </table></div>
     <div class="note col">
-      <h3>Check the "Bill To" box on the invoice</h3>
-      <p>The invoice's party box is labelled "Consignee / Bill To" and always shows the consignee. With a C or D term the principal is the shipper. The invoice is then still owed by the shipper, in the shipper's currency and with the shipper's VAT number, but the box names the consignee. Check the invoice before you send it in that case.</p>
+      <h3>The "Bill To" box on the invoice</h3>
+      <p>The invoice names three parties: <b>Bill To</b> (the principal, or the consignee when there is none), the shipper and the consignee. A credit or debit note goes to the party its invoice billed, with that party's VAT number, even if the principal has changed since.</p>
     </div>
   </section>
 
@@ -256,8 +256,8 @@ footer{font-size:13px;color:var(--muted);border-top:1px solid var(--line);paddin
     <div class="scroll"><table>
       <thead><tr><th>What</th><th>Automatic?</th></tr></thead>
       <tbody>
-        <tr><td>Principal from the incoterm (New/Edit Shipment)</td><td><span class="pill p-yes">Suggested</span> Only when the incoterm is chosen and the party is already set.</td></tr>
-        <tr><td>Principal on a converted quote</td><td><span class="pill p-no">By hand</span> Copied from the quote.</td></tr>
+        <tr><td>Principal from the incoterm</td><td><span class="pill p-yes">Automatic</span> On every screen and through the API, until someone chooses a principal of their own.</td></tr>
+        <tr><td>Principal on a converted quote</td><td><span class="pill p-yes">Automatic</span> The quote's principal, else the one its incoterm sets.</td></tr>
         <tr><td>Contract rates as cost lines</td><td><span class="pill p-yes">Automatic</span> Once, for a Central contract.</td></tr>
         <tr><td>Charge Defaults</td><td><span class="pill p-yes">Automatic</span> Once, the first time Cost Entry opens.</td></tr>
         <tr><td>Prepaid or Collect on a line</td><td><span class="pill p-no">By hand</span> Starts as Prepaid. Arrival Notice lines follow the carrier.</td></tr>
@@ -268,5 +268,5 @@ footer{font-size:13px;color:var(--muted);border-top:1px solid var(--line);paddin
     </table></div>
   </section>
 
-  <footer class="col">Written for CargoDesk users from the application as of 13 November 2026 (v0.91.13 plus unreleased changes). The User Manual in CargoDesk is the live reference; this page explains the rules behind the screens.</footer>
+  <footer class="col">Written for CargoDesk users from the application as of 13 November 2026 (v0.91.14). The User Manual in CargoDesk is the live reference; this page explains the rules behind the screens.</footer>
 </div>

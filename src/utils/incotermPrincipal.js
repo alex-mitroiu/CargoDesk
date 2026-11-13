@@ -20,8 +20,9 @@ export function impliedPrincipal(incoterm, p = {}) {
   return null;
 }
 
-// Did the principal follow the rule? (empty, or the party the incoterm implied)
-export const follows = s => !s.principalId || impliedPrincipal(s.incoterm, s)?.id === s.principalId;
+// Did the principal follow the rule? (empty, or the party the incoterm implied). A principal given by name only, with no
+// customer id, was typed by someone: it is theirs, not the rule's (audit 2026-11-13, D5).
+export const follows = s => (!s.principalId && !String(s.principalName || "").trim()) || impliedPrincipal(s.incoterm, s)?.id === s.principalId;
 
 // The principal after the incoterm or the parties change, from before → after → { id, name, moved }.
 export function followPrincipal(before, after) {

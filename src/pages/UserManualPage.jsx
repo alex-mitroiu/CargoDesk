@@ -529,6 +529,16 @@ const UserManualPage = () => {
           <P>Open <Tag>Parties & Offices</Tag> and click <Tag>Edit</Tag>. Every shipment has four
             fixed roles worth setting as early as possible: Shipper, Consignee, Notify Party, and
             Principal — each one feeds compliance screening automatically the moment it's saved.</P>
+          <P>You rarely need to pick the <Tag>Principal</Tag> yourself: the Incoterm decides it. Under a C or D term
+            (CFR, CIF, CPT, CIP, DAP, DPU, DDP) the seller pays the main carriage, so the shipper is the principal;
+            under an E or F term (EXW, FCA, FAS, FOB) the buyer does, so the consignee is. Change the Incoterm, the
+            shipper or the consignee, here, on <Tag>Conditions</Tag> or in the shipment form, and the principal follows,
+            with the reason on the shipment's <Tag>History</Tag>. Pick someone else (a parent company, a third party who
+            pays) and it stays put whatever the Incoterm does.</P>
+          <P>The principal is who the shipment's invoices are billed to (the consignee when there is none); their name
+            is in the invoice's <Tag>Bill To</Tag> box. A credit note always goes to whoever its invoice billed, even
+            if the principal has changed since. If the new principal is on a contract or space configuration named for
+            another customer, saving warns you: pick another contract on <Tag>Contracts &amp; Schedules</Tag>.</P>
         </StepBody>
         <Step n={2}>Everyone else</Step>
         <StepBody>
@@ -980,7 +990,7 @@ const UserManualPage = () => {
         <P><Tag>Shipper</Tag> the party sending the goods · <Tag>Consignee</Tag> the party receiving
           them · <Tag>Notify Party</Tag> who the carrier alerts on arrival, often the same as the
           consignee · <Tag>Principal</Tag> CargoDesk's own commercial customer of record for the
-          shipment · <Tag>NVOCC</Tag> a Non-Vessel Operating Common Carrier — acts as a carrier to its
+          shipment, the one it's billed to; the Incoterm sets it unless someone picks one (Chapter 6) · <Tag>NVOCC</Tag> a Non-Vessel Operating Common Carrier — acts as a carrier to its
           own customer while being a shipper to the real vessel operator, exactly the dual role
           described above. Assign any of these from a shipment's Parties & Offices page.</P>
 
@@ -1412,6 +1422,8 @@ const UserManualPage = () => {
         <P><strong>Sea and inland waterway only</strong> (FAS, FOB, CFR, CIF) — intended for bulk and break-bulk. For containerised cargo, prefer FCA over FOB and CIP over CIF.</P>
         <H3>Key principle</H3>
         <P>Incoterms define where <em>risk</em> and <em>cost</em> transfer from seller to buyer. They do not determine title of goods, payment terms, or liability for cargo damage beyond the risk transfer point.</P>
+        <H3>The Incoterm and the principal</H3>
+        <P>The Incoterm says who pays the main carriage, and that party is the shipment's principal, the customer CargoDesk bills: the <strong>shipper</strong> under CFR, CIF, CPT, CIP, DAP, DPU and DDP; the <strong>consignee</strong> under EXW, FCA, FAS and FOB. CargoDesk fills the principal in from the Incoterm and moves it when the Incoterm, the shipper or the consignee changes, until someone picks a principal of their own (Chapter 6).</P>
         {showIncoterms && <IncotermsModal onClose={() => setShowIncoterms(false)} />}
       </div>
     ),

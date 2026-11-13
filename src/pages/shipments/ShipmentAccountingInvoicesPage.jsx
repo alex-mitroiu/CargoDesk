@@ -6,7 +6,7 @@ import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import TrackedDocPreviewModal from "../../components/shared/TrackedDocPreviewModal";
 import CreditHoldModal from "../../components/shared/CreditHoldModal";
 import { CostLineForm, CostLineHistoryModal, CostLineRow, CostLineActualizeModal } from "./ShipmentDetailPage";
-import { generateInvoices, resolveInvoiceCurrency, resolveCreditGate, buildCreditDebitNoteHtml, resolveInvoiceTaxInfo } from "../../utils/invoiceGenerator";
+import { generateInvoices, resolveInvoiceCurrency, resolveCreditGate, buildCreditDebitNoteHtml, resolveInvoiceTaxInfo, shipmentBilledAs } from "../../utils/invoiceGenerator";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { Textarea, Inp } from "../../components/primitives/Form";
@@ -439,8 +439,10 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       const now     = new Date();
       const invDate = now.toISOString().slice(0, 10);
       const invNumber = `${doc.filename.replace(/\.pdf$/i, "")}-CN`;
-      const taxInfo = await resolveInvoiceTaxInfo(shipment);
-      const html = buildCreditDebitNoteHtml({ shipment, invNumber, invDate, notes: reason, costLines: reversalLines, container, originalDoc: doc, taxInfo });
+      // Owed by the party the invoice billed, whoever the principal is now (audit D2, 2026-11-13).
+      const billed = shipmentBilledAs(shipment, doc.responsibleParty);
+      const taxInfo = await resolveInvoiceTaxInfo(billed);
+      const html = buildCreditDebitNoteHtml({ shipment: billed, invNumber, invDate, notes: reason, costLines: reversalLines, container, originalDoc: doc, taxInfo });
       const filename = `CN01-${invNumber}-${invDate}.pdf`;
       // The CN01 records the reversal lines it's built from, like an invoice records its lines:
       // GL Export and the VAT Liability report net the reversed invoice through them, and it's

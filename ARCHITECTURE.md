@@ -1,10 +1,14 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.91.13 "Drayage" · **Date:** 2026-11-07
+**Version:** 0.91.14 "Telex" · **Date:** 2026-11-13
 **Audience:** Software architects, senior engineers, technical reviewers
 **See also:** [`DFS.md`](DFS.md) — the Design & Functional Specification (data flow diagrams,
 per-domain functional scope, roles) covers *what* the system does and *how data moves through it*;
 this document covers *how it's built*.
 
+> **2026-11-13 (v0.91.14 "Telex") — release.** §8.48 (House B/L terms), §8.49 (the carrier's Master B/L as sent to you),
+> §8.50 (the QA export and import) and §8.51 (the principal follows the incoterm; the invoice's Bill To) were written as the
+> work landed and ship in v0.91.14; the pre-release audits TKT-GC05AS and TKT-E1GOI6 and their fixes are logged in §11.
+>
 > **2026-11-07 (v0.91.13 "Drayage") — release.** §8.33 (typed contract legs), §8.46 (EMO and IMO from the ports) and §8.47
 > (Contracts & Schedules next, the route rules, the route dialogs, the contract drop on Save) were written as the work landed
 > and ship in v0.91.13; the pre-release audit TKT-YZ2EON and its four fixes are logged in §11.
@@ -103,7 +107,7 @@ this document covers *how it's built*.
 ---
 
 ## Table of Contents
-_(§8.47 added 2026-11-06 (Trade Horizon next: Contracts & Schedules, the shipment header, the » pill; the §8.6 bucket split; no §6 or §14 change); §8.46 added 2026-11-06 (EMO/IMO fill themselves from the ports, with §14); §8.45 added 2026-11-02 (the » Advance bar on shipment pages; no §6 or §14 change); §8.44 added 2026-10-29 (the House B/L audit's fixes, dangerous goods in the DCSA booking and the shipper's DG emergency contact, with §6 and §14); §8.43 added 2026-10-28 (the remaining DCSA phases: Master B/L amendments, equipment, Arrival Notice, Port Call, with §6 and §14); §8.42 added 2026-10-28 (DCSA phases 4–6, with §6 and §14); §8.41 added 2026-10-27 (the DCSA message review, with §6 and §14); §8.40 added 2026-10-21 (House B/L, Story 1) and completed 2026-10-24 (the remaining gaps, with §6 and §14); §8.33–8.39 added 2026-09-30 → 2026-10-21, with the §6 table count and groupings and the §14
+_(§8.51 added 2026-11-13 (the principal follows the incoterm, the invoice's Bill To; §14 and the §11 audit row TKT-E1GOI6); §8.47 added 2026-11-06 (Trade Horizon next: Contracts & Schedules, the shipment header, the » pill; the §8.6 bucket split; no §6 or §14 change); §8.46 added 2026-11-06 (EMO/IMO fill themselves from the ports, with §14); §8.45 added 2026-11-02 (the » Advance bar on shipment pages; no §6 or §14 change); §8.44 added 2026-10-29 (the House B/L audit's fixes, dangerous goods in the DCSA booking and the shipper's DG emergency contact, with §6 and §14); §8.43 added 2026-10-28 (the remaining DCSA phases: Master B/L amendments, equipment, Arrival Notice, Port Call, with §6 and §14); §8.42 added 2026-10-28 (DCSA phases 4–6, with §6 and §14); §8.41 added 2026-10-27 (the DCSA message review, with §6 and §14); §8.40 added 2026-10-21 (House B/L, Story 1) and completed 2026-10-24 (the remaining gaps, with §6 and §14); §8.33–8.39 added 2026-09-30 → 2026-10-21, with the §6 table count and groupings and the §14
 write-triggered side effects brought up to date on 2026-10-21 (§8.39, Where to book); §8.28–8.32, the full §5 `routes/` re-measure and the §4/§6/§8.5/§8.6/§11/§14 updates added
 2026-09-29 (v0.91.9 + unreleased); §8.26–8.27 and the §4/§6/§11 updates added 2026-09-25 (v0.91.8); §8.25 added 2026-09-20 (v0.91.6);
 §8.23–8.24 added 2026-09-19 (v0.91.5); §8.15 extended 2026-08-29 (v0.87.0); §8.21 added 2026-08-29
@@ -4666,6 +4670,48 @@ shipments' offices); customers matched by VAT/LEI/EORI, else exact name, else cr
   pickers, warnings, Import, the result with a link; App Settings → API Controls → External APIs → Shipment imports.
 - **Tests.** `tests/shipment-transfer.test.js` (38); Vitest `ShipmentQaExport.test.jsx`, `ShipmentImportPanel.test.jsx`.
 
+### 8.51 The principal follows the incoterm; the invoice's Bill To (2026-11-13)
+
+A user asked how the principal is assigned and how costs and charges reach the offices; the answer,
+`documentation/incoterms-principal-and-charges.html`, found gaps, and the user asked to implement them: the New/Edit
+Shipment form applied the rule but overwrote a principal picked by hand; the Conditions page, the Parties page, the API
+and quote conversion didn't apply it at all; the invoice's party box said "Consignee / Bill To" with the consignee
+whoever was billed. Still open: how the export and import offices split the money (gap 2, waiting on the user).
+
+- **The rule** (`lib/incoterm-principal.js`; the browser's copy `src/utils/incotermPrincipal.js`, kept identical by
+  `incotermPrincipal.parity.test.js`). Under a C or D term the seller pays the main carriage, so the shipper is the
+  principal; under an E or F term the buyer does, so the consignee is (`payerOf`, `impliedPrincipal`). A principal
+  **follows** while it is empty or is the party the incoterm implied (`follows`); one someone chose (a parent company, the
+  shipper under FOB, a name typed with no customer id) never moves. `followPrincipal(before, after)` → `{ id, name, moved }`.
+- **Where it applies.** `POST /api/shipments` without a principal (no id and no name) takes the implied one; quote
+  conversion likewise (the quote's customer is the shipper). `PUT /api/shipments/:id`: the Conditions and Parties pages
+  send the whole record, the old principal with it, so a principal sent unchanged follows a new incoterm, shipper or
+  consignee while it follows, and an empty one is filled on any save; a principal changed in the request is the caller's.
+  The screens apply the rule themselves (`withFollowedPrincipal`; the Conditions page says "The principal becomes …", the
+  form's Principal field "From the incoterm: …") and send the result; the server still counts it as the rule's move when
+  it is exactly what the rule gives. A Completed or Cancelled shipment refuses the save before the rule runs.
+- **History.** `TRACKED_FIELDS` (server.js) includes `shipper_name`, `consignee_name`, `notify_name`, `principal_name`. A
+  principal moved by the rule carries `meta.reason` "Follows the incoterm CIF: shipper pays the main carriage", shown after
+  the change (`FIELD_LABELS`, `getEventSummary`, ShipmentDetailPage.jsx). Sanctions screening re-runs on the new principal
+  (the existing party-change check).
+- **Commitments named for a customer** (pre-release audit D1). When the principal changes, by the rule or by hand, the
+  steering verdict is judged again (a customer's own Lane Steering line follows its principal), and the response carries
+  `principalNotice` { `principalName`, `principalFollowed`, `named`: [{ `what`: contract | space, `ref`, `customerName` }],
+  `message` } when the contract's named account or the space configuration's customer is someone else; App.jsx shows the
+  message as a warning toast. Never a block: the principal still follows the incoterm, the user picks another contract on
+  Contracts & Schedules.
+- **The invoice's Bill To** (`src/utils/invoiceGenerator.js`). `invoiceBillTo(sh)` = the principal, else the consignee: the
+  party `generateInvoices` bills (`responsibleParty` = principal name, else consignee name, stored on the document) and
+  `resolveInvoiceTaxInfo` prints the VAT number of. The party row on FR01/FR02/CN01 is Bill To (the name only: the
+  document goes to the customer), Shipper / Exporter, Consignee. A credit or debit note is owed by the party its invoice
+  billed, whoever the principal is now: `shipmentBilledAs(sh, doc.responsibleParty)` matches that name to the shipment's
+  parties for the VAT number; a name no party carries any more is printed without a customer VAT number.
+- **Unchanged.** Freight terms (Prepaid by default), the eight charge codes (no export/import side), one legal entity per
+  shipment (`entityByShipment`).
+- **Tests.** `tests/incoterm-principal.test.js` (create, full-record saves, the History reason, the name-only principal,
+  the named contract and space, quote conversion); Vitest `incotermPrincipal.parity.test.js`, `invoiceGenerator.test.js`
+  (Bill To, the credit note's party), `historySummary.test.js`.
+
 ## 9. Data Flow Diagrams
 
 The four diagrams in this section (shipment creation with auto-screening; contract recalculation;
@@ -4932,6 +4978,7 @@ continues; don't rewrite history once an item's checked.
 | 2026-11-07 | **0.91.13 release audit (TKT-YZ2EON)**: everything 0.91.13 adds since v0.91.12 (local commit ddd9f70): Contracts & Schedules next, the route rules and the whole-route save, the route dialogs and the contract drop on Save, EMO/IMO auto-resolution, typed contract legs (normalizer, migration, matcher in both copies, list filters, every reader of contract legs). Method: a read by risk class (scope, lock and foreign ids on the new route, every other writer of shipment legs, what the new defaults do to who sees a shipment, what a carrier already holds, inputs the editor never sends), live probes (scratchpad audit-batch-verify.mjs). | **4 findings (2 medium, 2 low); all fixed before the release** | A1 TKT-ZX70NT Save took the contract off a shipment whose booking the carrier had confirmed (SHP-1BEFC3) → refused, client and server (409 BOOKING_WITH_CARRIER); A2 TKT-72U6CG an office-scoped creator couldn't open a shipment whose ports resolved to other offices (SHP-O7EANW, 404) → the creator's office becomes the controlling office; A3 TKT-19CS91 a contract Pick-up leg with no To was saved as a line with no SEA leg → refused; A4 TKT-01L0RE the Dashboard listed a Pick-up leg as a route ("→ NLRTM") → PKU/DEL chips. Checked clean: the whole-route save's scope (app.param), status lock and foreign leg ids; the booking-escalation rebook keeps the route's order. |
 | 2026-11-09 | **Shipment messages** (found while writing the User Manual's Messages step for the AI Assistant's test set): POST /api/shipments/:id/messages. | **1 finding (medium); fixed** | The author and role were stored as the request named them, so any signed-in user (a Viewer included) could post under someone else's name → the server signs a message with the signed-in user's name and the role they work in (`deriveEffectiveRole`, labelled like the role switcher); a body that isn't text is a 400, not a 500; the Messages drawer sends only the body. Older messages keep the names they were posted with. Test: tests/shipment-messages.test.js. |
 | 2026-11-12 | **Pre-release audit of the terms + carrier's Master B/L batch (TKT-GC05AS)**: everything since v0.91.13 (local commits 4979350 + b9b01d9, not pushed): House B/L terms and conditions (§8.48), Messages signed by the user, the manual gaps and AI test set, the carrier's Master B/L (§8.49: custody, print, PDF, MB01 retired, release warning). Method: a read by risk class (scope, side, role and status lock on the new routes; every other writer and reader of MB01, BL01, offices and transport_documents; what the terms change for the eBL; what a deleted or replaced document leaves behind; inputs the screens never send), live probes (scratchpad audit-0914-probe.mjs). Report https://claude.ai/code/artifact/0d1815e1-7a00-4297-b9f1-ce18e4a1e542. | **8 findings (3 medium, 5 low); all fixed the same day ("fix all findings"; C2 and C4 as recommended, the user: C2 "document this in the manual", C4 "for historical purposes we need to allow access, especially in the US"), §8.48/§8.49** | C1 TKT-I5FX4A the import side can undo the export side's custody steps and save a by-eye check of its PDF (SHP-5RSTKS: 200 where recording is 403); C2 TKT-H5UFMT an eBL issued from an uploaded BL01 carries the one-sentence placeholder, not the entity's terms (SHP-7TFI1J vs SHP-RFVBG1); C3 TKT-NR3S73 stopping a language an office defaults to: no warning, the office still listed, and its form refused 400 until changed (NL-NLRTM-SE, restored); C4 TKT-8W3S3B the panel offers actions the server refuses (Completed: 409 SHIPMENT_LOCKED while a Documents MB01 upload works; the import side: 403); C5 TKT-C4D2E8 deleting the panel's MB01 leaves it pointing at nothing; C6 TKT-C7UJL7 Replace / Print again leave the earlier MB01 confirmed, no document history entry; C7 TKT-H55WTK a Document Template Editor BL01 face can't name the terms pages (read); C8 TKT-QC6PWN step dates default to and are checked against the UTC date (read). Checked clean: scope on every new route, the role set, cascades on shipment delete, pdf.js with eval off and its Docker install, Messages signing for every role, an amendment's terms, MB01 generate refused. **Fixed:** C1 undo and the by-eye check follow the step's side; C2 an uploaded BL01 is issued with the panel's terms (stored, carried by the eBL; manual explains); C3 stopping a language moves its offices to English, named first, and the office save checks only a changed default; C4 the panel's PDF, print, steps and undo stay open on closed shipments, the panel hides what the side can't do; C5 deleting/voiding the panel's MB01 clears its link; C6 a replaced PDF or copy is voided ("Replaced by"), history logged; C7 a "Terms reference" field in the template editor; C8 dates in the user's day (server: up to UTC + 1). Tests: carrier-mbl (59), bl-terms (48), Vitest CarrierMasterBlPanel, HouseBlPanel, BlTermsPage, houseBlPrint. |
+| 2026-11-13 | **Pre-release audit of the incoterm principal rule (TKT-E1GOI6)**: the latest addition in 85fbff4 (§8.51): the principal following the incoterm on create, save and quote conversion, the parties on the History, the invoice's Bill To. Method: every reader of the principal (screening, credit, Where to book and the steering verdict, space and contract matching, invoices and credit notes, statements, carrier messages), every path that writes it (form, Conditions, Parties, API, quote conversion, QA import), the History field list's other users; live probe (scratchpad audit-0914-incoterm-probe.mjs). The QA export/import in the same commit was verified, not audited. | **5 findings (2 medium, 3 low); all fixed the same day, §8.51** | D1 TKT-XXZSOF a principal moved by the incoterm kept the old principal's named-account contract and space, its steering verdict still on the old principal's line, no warning (SHP-ISA729: FOB → CIF on the Conditions page); D2 TKT-DV6AUG a credit/debit note addressed (Bill To and VAT number) to the principal now, not the party its invoice billed; D3 TKT-2LDA6I the History reason never written for edits made in the app (the screens send the moved principal, the server took it as chosen); D4 TKT-DWCMLA the Bill To box printed CargoDesk wording ("the shipment's principal") on the customer's document; D5 TKT-XH02PJ a principal given by name only replaced by the implied party (API only; none in the user's 1,856 shipments). Checked clean: only the shipment save walks `TRACKED_FIELDS`; screening re-runs on the moved principal; a locked shipment refuses the save before the rule runs; no carrier message carries the principal; quote conversion keeps the quote's customer as shipper (an FOB quote billed the consignee before too). **Fixed:** D1 the verdict is judged again on any principal change and the save returns `principalNotice` (a warning toast); D2 `shipmentBilledAs`; D3 the reason is recorded when the principal sent is the rule's; D4 the name only; D5 a name-only principal is the caller's (both copies of the rule). Tests: incoterm-principal (20), Vitest invoiceGenerator (21), incotermPrincipal parity (10). |
 
 ### Low / Enhancement
 
@@ -5333,13 +5380,21 @@ here:
 - **`backfillMainVessel()`** (server.js, §8.37). At startup, open shipments with a transshipment get
   the main sea leg's vessel/voyage/IMO. Idempotent: rows already right are untouched.
 
+**Added 2026-11-13 (the principal follows the incoterm, §8.51).**
+
+- **The principal rule on save** (`followPrincipal`, lib/incoterm-principal.js). `POST /api/shipments` and quote conversion
+  fill an empty principal from the incoterm; `PUT /api/shipments/:id` moves a principal that follows when the incoterm,
+  the shipper or the consignee changes, and fills an empty one on any save. It writes a `FIELD_UPDATED` principal_name
+  event with the reason, re-runs screening (party change) and the steering verdict (above). Deterministic: a repeat
+  changes nothing.
+
 **Added 2026-10-21 (Where to book, §8.39).**
 
 - **`ctx.whereToBook.recordVerdict(shipmentId)`** (lib/where-to-book.js). It works out and saves
   `shipments.steering_*`. Triggers:
   1. `POST /api/shipments`;
-  2. `PUT /api/shipments/:id` when the contract, its space, the contract type or the carrier
-     changes (a `steeringReason` alone only updates the reason);
+  2. `PUT /api/shipments/:id` when the contract, its space, the contract type, the carrier or (since
+     2026-11-13, §8.51) the principal changes (a `steeringReason` alone only updates the reason);
   3. quote conversion (routes/quotes.js);
   4. an escalation rebook, given `rebooked` (lib/booking-escalations.js);
   5. `revalidateSpaceLoop` dropping the space, given `other_loop` (server.js).

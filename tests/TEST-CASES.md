@@ -1619,6 +1619,29 @@ NLAMS → NLRTM (Carrier's Haulage, 16 Nov), as Save stored them before the fix 
 
 ---
 
+### TC-104: The principal follows the incoterm; the invoice and its credit note name who pays
+**Feature:** lib/incoterm-principal.js on create, on every save and on quote conversion; the parties on the History; the invoice's Bill To; the pre-release audit TKT-E1GOI6 (D1–D5) (ARCHITECTURE.md §8.51)
+**Precondition:** Customers Van Leeuwen Meubelen BV (NL, shipper), Hudson Home Imports Inc and Atlantic Living LLC (US, consignees), Van Leeuwen Holding NV (parent); an NLRTM → USNYC MAEU shipment template with offices, dates, commodity and a 40' HC; a MAEU contract named for the first consignee with its space and the consignee's own steering line
+**Steps:**
+1. Create FOB and CIF shipments without a principal; one CIF with the parent as principal; one with a principal typed by name only
+2. On Conditions, change FOB → CIF; on Parties & Offices, give the FOB shipment a new consignee; change the parent's shipment to FOB
+3. Open each shipment's History
+4. Convert an accepted FOB quote with no principal
+5. Put an FOB shipment on the named contract and its space, then change it to CIF on Conditions
+6. Generate the CIF shipment's freight invoice; on a shipment invoiced while FOB and since changed to CIF, reverse the invoice
+
+**Expected Result:**
+- 1: FOB → the consignee, CIF → the shipper; the parent and the typed name are kept
+- 2: the principal becomes the shipper (Conditions shows "The principal becomes …" before saving), then the new consignee; the parent stays
+- 3: "Principal: Hudson Home Imports Inc → Van Leeuwen Meubelen BV · Follows the incoterm CIF: shipper pays the main carriage"; a principal picked by hand has no reason; consignee changes are listed
+- 4: the shipment's principal is the consignee
+- 5: the principal becomes the shipper; a warning names the contract and its space as the consignee's; the steering verdict is no longer on the consignee's line
+- 6: Bill To shows the principal's name only (no "principal" wording); the credit note is addressed to the consignee the invoice billed, with its VAT number
+
+**Status:** PASS (2026-11-13, automated: tests/incoterm-principal.test.js (20); src/utils/incotermPrincipal.parity.test.js; src/utils/invoiceGenerator.test.js; src/pages/shipments/historySummary.test.js)
+
+---
+
 ### TC-103: A production shipment exported for QA and imported into a test system
 **Feature:** Export for QA (shipment header, admins) and Test Tools → Shipment Import (lib/shipment-transfer.js, ARCHITECTURE.md §8.50)
 **Precondition:** A complete NLRTM → USNYC MAEU shipment: booked by the demo carrier, a 40' HC loaded, a House B/L issued, a charge, a message; an operator account

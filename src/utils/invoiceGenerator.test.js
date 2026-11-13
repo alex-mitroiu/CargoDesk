@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildFreightInvoiceHtml, buildCreditDebitNoteHtml, buildStatementHtml } from "./invoiceGenerator";
+import { buildFreightInvoiceHtml, buildCreditDebitNoteHtml, buildStatementHtml, shipmentBilledAs } from "./invoiceGenerator";
 
 // Tax handling (2026-09-29) — the invoice/credit-note HTML is built in the browser, so these are
 // the only automated checks on what actually lands in the signed PDF a customer receives.
@@ -136,22 +136,44 @@ describe("customer statement — VAT, Gross / VAT / Net", () => {
 describe("freight invoice and credit note — who it is billed to", () => {
   const cif = { ...shipment, shipperName: "Van Leeuwen Meubelen BV", consigneeName: "Hudson Home Imports Inc",
     principalId: "CUS-VLM", principalName: "Van Leeuwen Meubelen BV", incoterm: "CIF" };
-  const billToOf = html => (html.match(/data-bill-to><div class="party-label">Bill To<\/div><div class="party-name">([^<]*)<\/div>\s*<div class="party-role">([^<]*)</) || []).slice(1);
+  const billToOf = html => (html.match(/data-bill-to><div class="party-label">Bill To<\/div><div class="party-name">([^<]*)<\/div><\/div>/) || [])[1];
 
   it("CIF: billed to the principal (the shipper), the consignee shown as the consignee", () => {
     const html = build([line()], { shipment: cif });
-    expect(billToOf(html)).toEqual(["Van Leeuwen Meubelen BV", "the shipment's principal"]);
+    expect(billToOf(html)).toBe("Van Leeuwen Meubelen BV");
     expect(html).toContain('<div class="party-label">Consignee</div><div class="party-name">Hudson Home Imports Inc</div>');
     expect(html).not.toContain("Consignee / Bill To");
+    // The customer's document carries no CargoDesk wording under the name (audit D4).
+    expect(html).not.toMatch(/principal/i);
   });
 
-  it("no principal: billed to the consignee, and says so", () => {
+  it("no principal: billed to the consignee", () => {
     const html = build([line()]);
-    expect(billToOf(html)).toEqual(["Consignee Co", "the consignee (no principal set)"]);
+    expect(billToOf(html)).toBe("Consignee Co");
   });
 
   it("the credit note names the same party", () => {
     const html = buildCreditDebitNoteHtml({ shipment: cif, invNumber: "INV-1-CN", invDate: "2026-11-13", notes: "", costLines: [line({ amount: -300 })], originalDoc: { filename: "FR01.pdf" }, taxInfo });
-    expect(billToOf(html)).toEqual(["Van Leeuwen Meubelen BV", "the shipment's principal"]);
+    expect(billToOf(html)).toBe("Van Leeuwen Meubelen BV");
+  });
+
+  // Audit D2: the principal moved after the invoice (FOB → CIF moves it from the consignee to the shipper). The credit note
+  // reversing an invoice billed to the consignee is owed by the consignee, with the consignee's VAT number.
+  const fobThenCif = { ...cif, shipperId: "CUS-VLM", consigneeId: "CUS-HHI", notifyId: "CUS-HHI", notifyName: "Hudson Home Imports Inc" };
+  it("a credit note goes to the party its invoice billed, not to the principal now", () => {
+    const billed = shipmentBilledAs(fobThenCif, "Hudson Home Imports Inc");
+    expect(billed).toMatchObject({ principalId: "CUS-HHI", principalName: "Hudson Home Imports Inc" });
+    const html = buildCreditDebitNoteHtml({ shipment: billed, invNumber: "INV-2-CN", invDate: "2026-11-13", notes: "", costLines: [line({ amount: -300 })], originalDoc: { filename: "FR01.pdf" }, taxInfo });
+    expect(billToOf(html)).toBe("Hudson Home Imports Inc");
+  });
+  it("…the same principal, or an older invoice that recorded nobody: the shipment as it is", () => {
+    expect(shipmentBilledAs(fobThenCif, "Van Leeuwen Meubelen BV")).toBe(fobThenCif);
+    expect(shipmentBilledAs(fobThenCif, "")).toBe(fobThenCif);
+    expect(shipmentBilledAs(fobThenCif, undefined)).toBe(fobThenCif);
+  });
+  it("…a name no party carries any more: that name, and no other party's VAT number", () => {
+    const billed = shipmentBilledAs(fobThenCif, "Hudson Home Holdings LLC");
+    expect(billed).toMatchObject({ principalId: "", principalName: "Hudson Home Holdings LLC", consigneeId: "" });
+    expect(billed.consigneeName).toBe("Hudson Home Imports Inc");
   });
 });

@@ -2,12 +2,18 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.91.13";
-export const BUILD     = "2026-11-07";
-export const CODENAME  = "Drayage";
-export const BUILD_FINGERPRINT = "4c7d19e2";
+export const VERSION   = "0.91.14";
+export const BUILD     = "2026-11-13";
+export const CODENAME  = "Telex";
+export const BUILD_FINGERPRINT = "18952d59";
 
 export const CHANGELOG = [
+  {
+    version:  "0.91.14",
+    date:     "2026-11-13",
+    codename: "Telex",
+    summary:  "Bundled release — House B/L terms and conditions per legal entity and language, printed after the face and carried by the eBL; the carrier's Master B/L as sent to you: printed from the carrier's DCSA data or its PDF read and checked against the shipment, its paper originals or eBL tracked until the carrier releases the cargo, and CargoDesk's own MB01 retired; shipment messages signed by whoever is signed in; Export for QA, a production shipment as one JSON file that a test system imports as an IMPORTED shipment that never sends anything; the principal set by the incoterm on every screen, through the API and on quote conversion, kept once someone chooses one, every party change on the History, and the invoice's Bill To naming who pays (a credit note the party its invoice billed); and the findings of the two pre-release audits (TKT-GC05AS, TKT-E1GOI6) fixed.",
+  },
   {
     version:  "0.91.13",
     date:     "2026-11-07",

@@ -27,6 +27,7 @@ describe("The principal an incoterm implies", () => {
     ["a new consignee under FOB takes over", { incoterm: "FOB", ...parties, principalId: "CUS-HHI", principalName: "Hudson Home Imports Inc" },
       { incoterm: "FOB", ...VLM, consigneeId: "CUS-NEW", consigneeName: "Atlantic Living LLC" }],
     ["the incoterm cleared: the principal stays", { incoterm: "FOB", ...parties, principalId: "CUS-HHI", principalName: "Hudson Home Imports Inc" }, { incoterm: "", ...parties }],
+    ["a principal typed by name only stays (audit D5)", { incoterm: "CIF", ...parties, principalId: "", principalName: "Van Leeuwen Holding NV" }, { incoterm: "FOB", ...parties }],
   ];
   it.each(cases)("%s — the same in the browser and on the server", (_, before, after) => {
     expect(browser.followPrincipal(before, after)).toEqual(server.followPrincipal(before, after));
@@ -38,6 +39,7 @@ describe("The principal an incoterm implies", () => {
     expect(browser.followPrincipal(cases[2][1], cases[2][2])).toEqual({ id: "CUS-PAR", name: "Van Leeuwen Holding NV", moved: false });
     expect(browser.followPrincipal(cases[3][1], cases[3][2]).id).toBe("CUS-VLM");
     expect(browser.followPrincipal(cases[4][1], cases[4][2])).toEqual({ id: "CUS-NEW", name: "Atlantic Living LLC", moved: true });
+    expect(browser.followPrincipal(cases[6][1], cases[6][2])).toEqual({ id: "", name: "Van Leeuwen Holding NV", moved: false });
     expect(browser.followPrincipal(cases[5][1], cases[5][2])).toEqual({ id: "CUS-HHI", name: "Hudson Home Imports Inc", moved: false });
   });
 

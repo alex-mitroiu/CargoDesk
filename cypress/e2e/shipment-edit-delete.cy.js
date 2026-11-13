@@ -129,10 +129,12 @@ describe("Shipment Edit + Delete Suite", () => {
       cy.contains("h1", "Shipments", { timeout: 20000 }).should("be.visible");
       cy.get('input[placeholder="Search ID, POL, POD, booking ref…"]').type(shipmentId);
       cy.wait("@shipmentSearch");
-      cy.contains("span", shipmentId, { timeout: 10000 }).should("be.visible")
-        .parent().within(() => {
-          cy.get("button").last().click(); // ActionMenu's gear trigger — last button in the row
-        });
+      // The row by its test id: the ID cell also holds the IMPORTED chip since 2026-11-13, so the ID's parent is no
+      // longer the row.
+      cy.contains("span", shipmentId, { timeout: 10000 }).should("be.visible");
+      cy.get(`[data-testid="shipments-list-row-${shipmentId}"]`).within(() => {
+        cy.get("button").last().click(); // ActionMenu's gear trigger — last button in the row
+      });
     };
 
     it("Cancel on the confirm modal leaves the shipment untouched", () => {

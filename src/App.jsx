@@ -621,6 +621,8 @@ function App() {
       if (updated.scheduleDropped) {
         toast.warning("Cargo Ready Date is now after ETD — the linked contract and schedule no longer apply and were cleared; shipment flagged Requires Review.");
       }
+      // The principal moved onto someone else's contract or space (audit D1, 2026-11-13; never a block).
+      if (updated.principalNotice) toast.warning(updated.principalNotice.message);
       return updated;
     } catch (e) {
       if (e.code === "ACTIVE_ITEMS") setCancelBlocked({ shipmentId: id, items: e.body?.activeItems || [] });
@@ -2237,6 +2239,7 @@ function App() {
                   if (updated.scheduleDropped) {
                     toast.warning("Cargo Ready Date is now after ETD — the linked contract and schedule no longer apply and were cleared; shipment flagged Requires Review.");
                   }
+                  if (updated.principalNotice) toast.warning(updated.principalNotice.message);
                   navigate("detail", shp.id);
                 } catch (e) {
                   // Same pop-up as handleUpdateShipment: setting Cancelled here is the usual way to cancel.

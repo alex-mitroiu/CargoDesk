@@ -1,7 +1,7 @@
 {
   "version": 1,
   "built": "2026-11-09",
-  "knowledge": "data/assistant-knowledge.json (172 passages: User Manual + Functional Spec)",
+  "knowledge": "data/assistant-knowledge.json (181 passages: User Manual + Functional Spec)",
   "heldOut": "These are the TEST questions. Never use them, or close rewordings of them, as training examples: a model trained on its own test scores well without being any better.",
   "scoring": {
     "facts": "Case-insensitive substring match. A fact group counts when any one of its alternatives appears in the answer.",
@@ -126,9 +126,9 @@
     { "id": "M46", "from": "manual", "kind": "concept", "question": "Can I book a Ro-Ro shipment in CargoDesk?",
       "passages": ["manual:freight-basics:2"], "facts": [["not", "doesn't", "does not"], ["container", "Lo-Lo"]] },
     { "id": "M47", "from": "manual", "kind": "concept", "question": "What is FOB, and should I use it for containers?",
-      "passages": ["manual:incoterms:12", "manual:incoterms:2"], "facts": [["Free On Board"], ["FCA"]] },
+      "passages": ["manual:incoterms:13", "manual:incoterms:2"], "facts": [["Free On Board"], ["FCA"]] },
     { "id": "M48", "from": "manual", "kind": "concept", "question": "Which incoterm puts the most obligation on the buyer?",
-      "passages": ["manual:incoterms:4"], "facts": [["EXW", "Ex Works"]] },
+      "passages": ["manual:incoterms:5"], "facts": [["EXW", "Ex Works"]] },
     { "id": "M49", "from": "manual", "kind": "concept", "question": "What is IMDG class 3?",
       "passages": ["manual:dg-classes:4"], "facts": [["Flammable"], ["60"]] },
     { "id": "M50", "from": "manual", "kind": "concept", "question": "What does a Pick-up leg on a contract mean?",

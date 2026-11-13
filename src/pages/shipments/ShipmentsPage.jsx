@@ -404,7 +404,7 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
         ) : pageItems.map(s => {
           const carrier = carriers.find(c => c.code === s.carrierCode);
           return (
-            <div key={s.id} onDoubleClick={() => window.open(`#shipments/${s.id}`, "_blank")}
+            <div key={s.id} data-testid={`shipments-list-row-${s.id}`} onDoubleClick={() => window.open(`#shipments/${s.id}`, "_blank")}
               title="Double-click to open"
               style={{ display: "grid", gridTemplateColumns: shipTemplate, ...ROW_WIDTH,
                 padding: "14px 20px", borderBottom: `1px solid ${T.border}22`,
