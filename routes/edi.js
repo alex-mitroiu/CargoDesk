@@ -438,6 +438,8 @@ module.exports = function ediRoutes(app, ctx) {
     const fail = (status, error) => ({ status, body: { error } });
     const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
     if (!shipment) return fail(404, "Shipment not found");
+    // An imported shipment (QA export) never books with a carrier, whoever asks: a route, an escalation's rebook.
+    if (shipment.imported_from) return fail(409, ctx.importedSendError(shipment.id));
     // DCSA only (2026-10-11): the carrier's own integration, or the built-in simulator where allowed.
     const integ = await carrierIntegrationFor(shipment.carrier_code, "booking");
     if (!integ)
@@ -781,7 +783,8 @@ module.exports = function ediRoutes(app, ctx) {
       SELECT cb.* FROM carrier_bookings cb
       JOIN carrier_integrations ci ON ci.carrier_code = cb.carrier_code AND ci.is_active = TRUE
       WHERE cb.status IN ('Pending','Confirmed') AND COALESCE(cb.carrier_booking_request_reference, '') <> ''
-        AND (cb.carrier_state_at IS NULL OR cb.carrier_state_at <= $1)`, [cutoff]);
+        AND (cb.carrier_state_at IS NULL OR cb.carrier_state_at <= $1)
+        AND NOT EXISTS (SELECT 1 FROM shipments s WHERE s.id = cb.shipment_id AND COALESCE(s.imported_from,'') <> '')`, [cutoff]);
     const summary = { polled: 0, changed: 0, failed: 0 };
     for (const booking of rows) {
       const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [booking.shipment_id]);

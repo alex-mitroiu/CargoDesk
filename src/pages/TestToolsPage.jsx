@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import DcsaCarrierPanel from "./DcsaCarrierPanel";
 import EblPlatformPanel from "./EblPlatformPanel";
+import ShipmentImportPanel from "./ShipmentImportPanel";
 import { T } from "../tokens";
+import { useAuth } from "../AuthContext";
 import { api } from "../api";
 import { toast } from "../toast";
 import Spinner from "../components/primitives/Spinner";
@@ -11,7 +13,7 @@ import EdiMessageList from "../components/shared/EdiMessageList";
 import { VesselField, VesselCombobox } from "../components/shared/VesselCombobox";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import PortCombobox from "../components/shared/PortCombobox";
-import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate, IconShip, IconLink, IconMail, IconClipboard, IconReceipt } from "../components/primitives/Icon";
+import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate, IconShip, IconLink, IconMail, IconClipboard, IconReceipt, IconUpload } from "../components/primitives/Icon";
 import { servicePageKey } from "../shipmentServicePages";
 
 // ─── Test Tools ────────────────────────────────────────────────────────────────
@@ -53,7 +55,8 @@ const inputStyle = () => ({
 
 const label = () => ({ display: "block", fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 5 });
 
-const TestToolsPage = ({ navigate }) => {
+const TestToolsPage = ({ navigate, onShipmentCreated }) => {
+  const { isAdmin } = useAuth();
   const [activeTab, setActiveTab] = useState("carrier"); // "carrier" | "generator" | …
 
   // ─── Schedule Generator state ─────────────────────────────────────────────
@@ -369,6 +372,8 @@ const TestToolsPage = ({ navigate }) => {
   const TABS = [
     { key: "carrier",   label: "DCSA Carrier", icon: IconBaseStation },
     { key: "ebl",       label: "eBL Platform", icon: IconFileCertificate },
+    // A production shipment's QA export, imported as a new shipment marked IMPORTED (2026-11-13). Admins.
+    ...(isAdmin ? [{ key: "import", label: "Shipment Import", icon: IconUpload }] : []),
     { key: "generator",  label: "Schedule Generator", icon: IconAnchor },
     { key: "filings",    label: "Filing Simulator", icon: IconFileCertificate },
     { key: "si",         label: "Shipping Instructions", icon: IconClipboard },
@@ -397,6 +402,7 @@ const TestToolsPage = ({ navigate }) => {
 
       {activeTab === "carrier" && <DcsaCarrierPanel navigate={navigate} />}
       {activeTab === "ebl" && <EblPlatformPanel navigate={navigate} />}
+      {activeTab === "import" && isAdmin && <ShipmentImportPanel navigate={navigate} onShipmentCreated={onShipmentCreated} />}
 
       {activeTab === "generator" && (
         <div style={{ display: "flex", gap: 24 }}>

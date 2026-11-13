@@ -14,6 +14,7 @@ import EntityHistoryModal from "../../components/shared/EntityHistoryModal";
 import ExportFieldsModal, { ALL_EXPORT_FIELDS } from "../../components/shared/ExportFieldsModal";
 import Pagination from "../../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
+import { ImportedChip } from "../../components/shared/ShipmentQaExport";
 import { PageSpinner } from "../../components/primitives/Spinner";
 import { IconRefresh, IconDownload, IconClose, IconWarning, IconEye, IconClipboard }
   from "../../components/primitives/Icon";
@@ -410,7 +411,11 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
                 cursor: "pointer", alignItems: "center", transition: "background .1s" }}
               onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-              <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textCode, fontWeight: 700 }}>{s.id}</span>
+              <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3 }}>
+                <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textCode, fontWeight: 700 }}>{s.id}</span>
+                {/* Imported from another system's QA export (2026-11-13): it sends nothing. */}
+                {s.importedFrom && <ImportedChip style={{ fontSize: 9.5, padding: "1px 6px" }} />}
+              </span>
               <div style={{ display: "flex", flexDirection: "column", gap: 1 }}
                 title={s.seaPol && s.seaPol !== s.pol ? `Door pickup: ${s.pol}${s.polName ? ` (${s.polName})` : ""}` : undefined}>
                 <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{s.seaPol || s.pol}</span>

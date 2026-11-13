@@ -27,10 +27,10 @@ const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");
 const BASE = "http://localhost:3001";
 let passed = 0, failed = 0;
 
-async function request(method, path, body, token) {
+async function request(method, path, body, token, headers = {}) {
   const res = await fetch(BASE + path, {
     method,
-    headers: { "Content-Type": "application/json", ...(token && { Authorization: `Bearer ${token}` }) },
+    headers: { "Content-Type": "application/json", ...(token && { Authorization: `Bearer ${token}` }), ...headers },
     ...(body !== undefined && body !== null && { body: JSON.stringify(body) }),
   });
   let parsed = null;
@@ -61,7 +61,7 @@ async function scanPdf() {
 }
 
 (async () => {
-  const cleanup = { office: null, branch: null };
+  const cleanup = { office: null, branch: null, user: null };
   let token;
   try {
     token = (await request("POST", "/api/auth/login", { email: "claudeagent@localhost", password: "TestFixture!2026Zq" })).body.token;
@@ -233,6 +233,78 @@ async function scanPdf() {
         JSON.stringify({ pages, sample: text.slice(0, 160) }));
     }
 
+    // ── The pre-release audit's fixes (TKT-GC05AS, 2026-11-12) ──
+    console.log("\nThe import side: the destination steps, never the export side's (C1)");
+    // A temporary import-office OCC/BK account (removed at the end).
+    const impEmail = `mbl.import.${rand.toLowerCase()}@cargodesk.example`;
+    const impUser = await request("POST", "/api/users", { email: impEmail, name: "MBL import desk", roles: ["occ_bk"], password: "AuditFixture!2026Zq" }, token);
+    cleanup.user = impUser.body?.id || null;
+    await request("POST", `/api/users/${impUser.body?.id}/offices`, { officeId: imoOfficeId }, token);
+    const imp = (await request("POST", "/api/auth/login", { email: impEmail, password: "AuditFixture!2026Zq" })).body?.token;
+    const IH = { "X-Office-Id": imoOfficeId };
+    const I = await shipment("I");
+    assert("(setup) the import desk sees the shipment from the import side", (await request("GET", `/api/shipments/${I.id}`, null, imp, IH)).body?.myOfficeSide === "import");
+    await step(I.id, { step: "RECEIVED", on: today, count: 3, from: "Maersk Rotterdam", courier: "DHL 4471 0921 55" });
+    r = await request("POST", `/api/shipments/${I.id}/master-bl/custody/undo`, { reason: "Not ours to undo" }, imp, IH);
+    assert("it can't undo the export desk's 'Received from the carrier' (403)", r.status === 403 && /export-side/.test(r.body?.error), JSON.stringify(r.body));
+    r = await request("POST", `/api/shipments/${I.id}/master-bl/pdf/check`, { byEye: {} }, imp, IH);
+    assert("…nor check the carrier's PDF (403)", r.status === 403, JSON.stringify(r.body));
+    r = await request("POST", `/api/shipments/${I.id}/master-bl/custody/steps`, { step: "SENT", on: today, to: "New York Harbor" }, imp, IH);
+    assert("…nor send it on (403)", r.status === 403, JSON.stringify(r.body));
+    await step(I.id, { step: "SENT", on: today, to: "New York Harbor", courier: "DHL 4471 0921 77" });
+    v = await view(I.id);
+    assert("the steps say which side they belong to", v.events.find(e => e.step === "SENT")?.atOrigin === true && v.next.find(n => n.step === "SURRENDERED")?.atOrigin === false,
+      JSON.stringify({ events: v.events.map(e => [e.step, e.atOrigin]), next: v.next }));
+    r = await request("POST", `/api/shipments/${I.id}/master-bl/custody/steps`, { step: "SURRENDERED", on: today, count: 3, to: "Maersk New York" }, imp, IH);
+    assert("the import desk surrenders the originals at destination (201)", r.status === 201 && r.body.stage === "SURRENDERED", JSON.stringify(r.body?.error || r.body?.stage));
+    r = await request("POST", `/api/shipments/${I.id}/master-bl/custody/undo`, { reason: "Surrendered to the wrong desk" }, imp, IH);
+    assert("…and may undo its own step (200)", r.status === 200 && r.body.stage === "SENT", JSON.stringify(r.body?.error || r.body?.stage));
+    await request("POST", `/api/shipments/${I.id}/master-bl/custody/steps`, { step: "SURRENDERED", on: today, count: 3, to: "Maersk New York" }, imp, IH);
+    r = await request("POST", `/api/shipments/${I.id}/master-bl/custody/steps`, { step: "RELEASED", on: today, ref: "MNY-REL-55102" }, imp, IH);
+    assert("…and records the carrier's release (201)", r.status === 201 && r.body.released, JSON.stringify(r.body?.error || r.body?.stage));
+
+    console.log("\nA replaced or removed PDF (C5, C6)");
+    const R = await shipment("R");
+    const docsOf = async id => list((await request("GET", `/api/shipments/${id}/documents`, null, token)).body).filter(d => d.docType === "MB01");
+    const first = (await request("POST", `/api/shipments/${R.id}/master-bl/pdf`, { filename: "MAEU-scan-1.pdf", data: await scanPdf() }, token)).body?.pdf?.documentId;
+    const second = (await request("POST", `/api/shipments/${R.id}/master-bl/pdf`, { filename: "MAEU-scan-2.pdf", data: await scanPdf() }, token)).body?.pdf?.documentId;
+    let mb = await docsOf(R.id);
+    assert("replacing the carrier's PDF voids the earlier one", mb.find(d => d.id === first)?.status === "voided" && mb.find(d => d.id === second)?.status === "confirmed",
+      JSON.stringify(mb.map(d => [d.filename, d.status])));
+    const docHist = (await request("GET", `/api/entity-events/document/${first}`, null, token)).body;
+    assert("…saying by what, in the document's history", list(docHist).some(e => e.eventType === "VOIDED" && /Replaced by MAEU-scan-2\.pdf/.test(JSON.stringify(e)))
+      && list(docHist).some(e => e.eventType === "GENERATED"), JSON.stringify(docHist).slice(0, 300));
+    r = await request("DELETE", `/api/shipments/${R.id}/documents/${second}`, null, token);
+    v = await view(R.id);
+    assert("deleting the panel's PDF from Documents: the panel lets go of it and its check", r.status === 200 && v.pdf === null, JSON.stringify(v.pdf));
+    const third = (await request("POST", `/api/shipments/${R.id}/master-bl/pdf`, { filename: "MAEU-scan-3.pdf", data: await scanPdf() }, token)).body?.pdf?.documentId;
+    await request("PATCH", `/api/shipments/${R.id}/documents/${third}`, { status: "voided", voidReason: "The carrier sent the wrong B/L" }, token);
+    v = await view(R.id);
+    assert("…and of one voided there", v.pdf === null, JSON.stringify(v.pdf));
+
+    console.log("\nOpen on a Completed shipment, for the record (C4)");
+    const printedBefore = (await view(D.id)).print?.documentId;
+    const done = await request("PUT", `/api/shipments/${D.id}`, { status: "Completed" }, token);
+    assert("(setup) the shipment is Completed", done.status === 200, JSON.stringify(done.body).slice(0, 200));
+    r = await request("POST", `/api/shipments/${D.id}/master-bl/print`, {}, token);
+    assert("the carrier's B/L can still be printed (201)…", r.status === 201 && !!r.body.print?.documentId && r.body.print.documentId !== printedBefore, JSON.stringify(r.body?.error || r.body?.print));
+    mb = await docsOf(D.id);
+    assert("…and the earlier copy is voided", mb.find(d => d.id === printedBefore)?.status === "voided", JSON.stringify(mb.map(d => [d.filename, d.status])));
+    r = await request("POST", `/api/shipments/${D.id}/master-bl/pdf`, { filename: "MAEU-original-scan.pdf", data: await scanPdf() }, token);
+    assert("its PDF uploaded (201)", r.status === 201, JSON.stringify(r.body?.error));
+    r = await step(D.id, { step: "RECEIVED", on: today, count: 3, from: "Maersk Rotterdam" });
+    assert("a step recorded (201)", r.status === 201, JSON.stringify(r.body?.error));
+    r = await request("POST", `/api/shipments/${D.id}/master-bl/custody/undo`, { reason: "Recorded twice" }, token);
+    assert("…and undone (200)", r.status === 200, JSON.stringify(r.body?.error));
+    r = await request("PUT", `/api/shipments/${D.id}/master-bl/custody`, { form: "SWB" }, token);
+    assert("the form stays locked (409 SHIPMENT_LOCKED)", r.status === 409 && r.body?.code === "SHIPMENT_LOCKED", JSON.stringify(r.body));
+
+    console.log("\nStep dates in the user's day (C8)");
+    const T = await shipment("T");
+    const utcTomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+    r = await step(T.id, { step: "RECEIVED", on: utcTomorrow, count: 3 });
+    assert("a day ahead of UTC is someone's today east of Greenwich (201)", r.status === 201, JSON.stringify(r.body));
+
     console.log("\nThe House B/L's release notes a Master the carrier hasn't released");
     const H = await readyHouseBlShipment(request, token, { tag: "MB", emoOfficeId: office.id });
     await assignHouseBlNumber(request, token, H.shipment.id);
@@ -255,6 +327,8 @@ async function scanPdf() {
     // The office and its legal entity decide other shipments' offices (resolver rows): retired. The shipments, their
     // documents and custody stay as verification data.
     console.log("\nCleanup");
+    // The temporary import-desk account (a known password) goes.
+    if (cleanup.user) console.log(`  user: ${(await request("DELETE", `/api/users/${cleanup.user}`, null, token)).status}`);
     if (cleanup.office) console.log(`  office: ${await retireOffice(token, cleanup.office)}`);
     if (cleanup.branch) console.log(`  branch: ${await retireBranch(token, cleanup.branch)}`);
     console.log(`\n${passed} passed, ${failed} failed`);

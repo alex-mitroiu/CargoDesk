@@ -83,11 +83,14 @@ export default function BlTermsPage() {
       await load();
     } catch (e) { toast.error(e.message); } finally { setSaving(false); }
   };
+  // The offices that start their House B/Ls with this language: told before, switched to English after (C3, 2026-11-12).
+  const usedBy = (set.defaultFor || []).filter(o => o.key === `${set.branchId ? "BRANCH" : "ORG"}:${lang}`);
   const retire = async () => {
     if (!retireArmed) return setRetireArmed(true);
     try {
-      await api.blTerms.retire(set.branchId, lang);
-      toast.success(`${langName(lang)} is no longer offered for ${set.name}`);
+      const r = await api.blTerms.retire(set.branchId, lang);
+      const moved = (r?.clearedOffices || []).map(o => o.code);
+      toast.success(`${langName(lang)} is no longer offered for ${set.name}${moved.length ? `. ${moved.join(", ")} now start${moved.length === 1 ? "s" : ""} with English` : ""}`);
       setLang("en"); await load();
     } catch (e) { toast.error(e.message); }
   };
@@ -218,8 +221,10 @@ export default function BlTermsPage() {
             </div>
 
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-                Saving makes version {nextVersion} of the {langName(lang)} terms. Issued House B/Ls keep the version they were issued with.
+              <span style={{ fontFamily: T.body, fontSize: 12, color: retireArmed && usedBy.length ? T.danger : T.textMuted }} data-testid="bl-terms-retire-note">
+                {retireArmed && usedBy.length
+                  ? `${usedBy.map(o => o.code).join(", ")} start${usedBy.length === 1 ? "s" : ""} House B/Ls with these terms: once they're no longer offered, ${usedBy.length === 1 ? "it starts" : "they start"} with English.`
+                  : `Saving makes version ${nextVersion} of the ${langName(lang)} terms. Issued House B/Ls keep the version they were issued with.`}
               </span>
               <div style={{ display: "flex", gap: 8 }}>
                 {doc && !(set.branchId === null && lang === "en") && (

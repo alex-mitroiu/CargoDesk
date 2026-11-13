@@ -60,7 +60,7 @@ module.exports = function vesselScheduleRoutes(app, ctx) {
     const rows = await query(`SELECT DISTINCT s.* FROM shipments s JOIN shipment_legs l ON l.shipment_id = s.id
       JOIN carrier_integrations ci ON ci.carrier_code = COALESCE(NULLIF(l.carrier_code, ''), s.carrier_code) AND ci.is_active = TRUE
         AND ci.capabilities LIKE '%vessel-schedules%'
-      WHERE s.status NOT IN ('Cancelled', 'Completed') AND (l.leg_type='SEA' OR (COALESCE(l.leg_type,'')='' AND l.mot='SEA')) AND COALESCE(l.voyage,'') <> ''
+      WHERE s.status NOT IN ('Cancelled', 'Completed') AND COALESCE(s.imported_from,'') = '' AND (l.leg_type='SEA' OR (COALESCE(l.leg_type,'')='' AND l.mot='SEA')) AND COALESCE(l.voyage,'') <> ''
         AND (COALESCE(l.etd_source,'') <> 'dcsa_actual' OR COALESCE(l.eta_source,'') <> 'dcsa_actual')`);
     const summary = { synced: 0, changes: 0, failed: 0 };
     for (const s of rows) {

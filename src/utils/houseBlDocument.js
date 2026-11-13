@@ -4,7 +4,7 @@
 // this copy says: the `houseBl` statement that goes to the server with the PDF — loading, originals,
 // copies, with or without charges — which the server checks (lib/house-bl.js draftStatement).
 import { api } from "../api";
-import { getMissingDocRequirements, dispatchDocBuilder } from "./documentBuilders";
+import { getMissingDocRequirements, dispatchDocBuilder, blTermsReference } from "./documentBuilders";
 import { renderTemplateHtml } from "./templateRenderer";
 
 // choice "onboard" | "received"; a typed on-board date wins over the Loaded event. `counts` adds the
@@ -54,7 +54,9 @@ export async function buildHouseBlHtml(shipment, { docNum, docDate, notes = "", 
   const amends = house?.amends || null;
   const version = amends ? amends.version + 1 : (house?.draft?.version || 1);
   const dataBag = { shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, notify, parties, exportFilingItn, houseBl, issuer,
-    routing: house?.routing || null, charges: house?.charges || [], version, amendsIssueDate: amends?.issueDate || null };
+    routing: house?.routing || null, charges: house?.charges || [], version, amendsIssueDate: amends?.issueDate || null,
+    // A Document Template Editor layout prints this where its "Terms reference" field sits (C7); the server fills the pages.
+    termsReference: blTermsReference(houseBl.terms || null) };
 
   // Document Template Editor — an office+carrier layout replaces the built-in one (BL01 pilot).
   const template = await api.documentTemplates.resolve("BL01", shipment.emoOfficeId || "", shipment.carrierCode || "").catch(() => null);

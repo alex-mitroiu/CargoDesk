@@ -1,6 +1,7 @@
 "use strict";
 const ExcelJS = require("exceljs");
 const { mainLegIndex } = require("../lib/mainLeg");
+const { impliedPrincipal, followPrincipal, payerOf } = require("../lib/incoterm-principal");
 const { routeProblems, refusal: routeRefusal } = require("../lib/route-rules");
 const { PACKAGE_CODES, TO_ORDER_MODES } = require("../lib/house-bl");
 const { buildVgmDeclaration, retraction: vgmRetraction, vgmProblems } = require("../lib/carrier-integrations/dcsa-vgm-v1");
@@ -607,7 +608,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
             etd = "", eta = "", bookingRef = "", blNumber = "", blReleaseType = "", masterBlNumber = "", masterBlReleaseType = "", coloadTariffReference = "", vessel = "", voyage = "",
             incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
             shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
-            principalId = "", principalName = "",
+            principalId: sentPrincipalId = "", principalName: sentPrincipalName = "",
             allocationId = "", spaceSkipReason = "", spaceOverageReason = "",
             freightTerms = "Prepaid", movementType = "FCL", serviceType = "Port-to-Port",
             placeOfReceipt = "", placeOfDelivery = "", cargoReadyDate = null,
@@ -615,6 +616,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
             declaredValue = null, declaredValueCurrency = "USD",
             controllingOfficeId = null,
             contractRoutingId = "" } = req.body;
+    // No principal sent: the one the incoterm implies (lib/incoterm-principal.js: C/D terms the shipper, E/F the consignee),
+    // so an API call or an import gets the same principal the New Shipment form would have filled in (2026-11-13).
+    const impliedP = sentPrincipalId ? null : impliedPrincipal(incoterm, { shipperId, shipperName, consigneeId, consigneeName });
+    const principalId = sentPrincipalId || impliedP?.id || "";
+    const principalName = sentPrincipalId ? sentPrincipalName : (impliedP?.name || sentPrincipalName || "");
     let { emoOfficeId = null, imoOfficeId = null } = req.body;
     if (!pol || !pod || !carrierCode || !contractType) return err(res, "pol, pod, carrierCode, contractType required");
     // A side sent empty is filled by the managing-office rule (lib/office-resolution.js, the one the New
@@ -775,8 +781,26 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const shipperName = field('shipperName', 'shipper_name');
     const consigneeId = field('consigneeId', 'consignee_id');
     const consigneeName = field('consigneeName', 'consignee_name');
-    const principalId = field('principalId', 'principal_id');
-    const principalName = field('principalName', 'principal_name');
+    let principalId = field('principalId', 'principal_id');
+    let principalName = field('principalName', 'principal_name');
+    // The principal follows the incoterm and the parties (lib/incoterm-principal.js, 2026-11-13): the Conditions and
+    // Parties pages send the whole record back, the old principal with it, so one sent back UNCHANGED follows a new
+    // incoterm, shipper or consignee while it was empty or the implied party; one changed in this request is the
+    // caller's choice, and one someone chose before (a third party, the shipper under FOB) never moves.
+    let principalFollowed = false;
+    {
+      const principalChosenNow = reqBody.principalId !== undefined && (reqBody.principalId || "") !== (existing.principal_id || "");
+      const incotermNow = field('incoterm', 'incoterm');
+      const termsOrPartiesChanged = (incotermNow || "") !== (existing.incoterm || "") || (shipperId || "") !== (existing.shipper_id || "")
+        || (consigneeId || "") !== (existing.consignee_id || "");
+      if (!principalChosenNow && (termsOrPartiesChanged || !principalId)) {
+        const f = followPrincipal(
+          { incoterm: existing.incoterm, shipperId: existing.shipper_id, shipperName: existing.shipper_name, consigneeId: existing.consignee_id,
+            consigneeName: existing.consignee_name, principalId: existing.principal_id, principalName: existing.principal_name },
+          { incoterm: incotermNow, shipperId, shipperName, consigneeId, consigneeName });
+        principalId = f.id; principalName = f.name; principalFollowed = f.moved;
+      }
+    }
     const allocationId = field('allocationId', 'allocation_id') || '';
     const spaceSkipReason = field('spaceSkipReason', 'space_skip_reason');
     const spaceOverageReason = field('spaceOverageReason', 'space_overage_reason');
@@ -957,12 +981,16 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const newVals = { pol: polU, pod: podU, status: effStatus, etd, eta, carrier_code: carrierCode,
       vessel, vessel_imo: vesselImo, voyage, incoterm, commodity_code: commodityCode,
       booking_ref: bookingRef, bl_number: blNumber, bl_release_type: blReleaseType, master_bl_number: masterBlNumber, master_bl_release_type: masterBlReleaseType, coload_tariff_reference: coloadTariffReference, contract_type: contractType,
-      contract_id: effContractId, contract_ref: effContractRef, allocation_id: effAllocationId };
+      contract_id: effContractId, contract_ref: effContractRef, allocation_id: effAllocationId,
+      shipper_name: shipperName, consignee_name: consigneeName, notify_name: notifyName, principal_name: principalName };
     for (const [col] of Object.entries(TRACKED_FIELDS)) {
       const o = String(existing[col] || ''), n = String(newVals[col] || '');
       if (o !== n) {
         const type = col === 'status' ? 'STATUS_CHANGED' : 'FIELD_UPDATED';
-        await logEvent(req.params.id, type, col, o || null, n || null, '', req.user?.name || req.user?.email || "");
+        // A principal moved by the incoterm rule says so (the user didn't pick it).
+        const meta = col === 'principal_name' && principalFollowed
+          ? JSON.stringify({ reason: `Follows the incoterm ${field('incoterm', 'incoterm') || ''}: ${String(payerOf(field('incoterm', 'incoterm')) || '').toLowerCase()} pays the main carriage` }) : '';
+        await logEvent(req.params.id, type, col, o || null, n || null, meta, req.user?.name || req.user?.email || "");
       }
     }
     // Audit trail for the office changes authorized above (2026-09-12 QA fix) — mirrors
@@ -1318,6 +1346,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
   // Nothing is saved unless the carrier took it. Before 2026-10-27 only a home-made note was logged.
   // `ctr` = the container row as it is about to be saved. → { ok } | { ok:false, status, error }
   async function sendVgm(shipment, ctr, user, { retract = false } = {}) {
+    // An imported shipment (QA export) sends nothing to the carrier: a VGM change that needs sending is refused.
+    if (shipment.imported_from) return { ok: false, status: 409, error: ctx.importedSendError(shipment.id) };
     const integ = await ctx.carrierIntegrationFor(shipment.carrier_code, "vgm");
     if (!integ?.adapter.sendVgmDeclarations)
       return { ok: false, status: 400, error: `No DCSA connection for ${shipment.carrier_code || "this carrier"} to send the VGM to: set one up under Carrier Integrations (or, for a demo, turn on App Settings → Demo carrier)` };

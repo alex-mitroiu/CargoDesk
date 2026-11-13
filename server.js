@@ -4,6 +4,8 @@ const http       = require("http");
 const https      = require("https");
 const path       = require("path");
 const fs         = require("fs");
+// An imported shipment sends nothing (QA export, 2026-11-13): see shipmentImportGuard below.
+const { importedShipmentContext, importedSendError } = require("./lib/imported-shipment-context");
 const { WebSocketServer } = require("ws");
 const bcrypt = require("bcryptjs");
 const jwt    = require("jsonwebtoken");
@@ -357,6 +359,9 @@ app.use((req, res, next) => {
 // one path, registered ahead of the global json() parser — Express only applies path-scoped
 // middleware to matching requests, so no other route is affected.
 app.use("/api/carrier-webhooks", express.raw({ type: "*/*" }));
+// A shipment's QA export carries its documents (base64), so an import can be far bigger than any other request
+// (routes/shipment-transfer.js); parsed here, ahead of the global limit, for that path only.
+app.use("/api/shipment-import", express.json({ limit: "300mb" }));
 app.use(express.json({ limit: "25mb" }));
 // The AI Assistant's lookups (lib/ai-tools.js) call this API as the user with X-CargoDesk-Agent: readonly;
 // such a request runs in read-only mode, where lib/db.js refuses every statement that changes data.
@@ -684,6 +689,9 @@ const SETTING_DEFAULTS = {
   ais_api_key:            '',
   // The built-in DCSA carrier simulator in production (lib/dcsa-simulator; always on elsewhere).
   dcsa_demo_carrier_enabled: 'false',
+  // Shipment imports (QA export, 2026-11-13, §8.50): outside production always allowed; in production only while an
+  // admin has this on (a staging server running in production mode).
+  shipment_import_enabled: 'false',
   // Booking escalations (Epic TKT-ASIYFL, App Settings → Bookings): the group OCC/BK's Escalate
   // pop-up pre-selects and automatic escalations go to; hours without a carrier decision before a
   // booking counts as unanswered; whether Trade/AY may escalate further to the Trade Managers;
@@ -1621,6 +1629,7 @@ async function runDunningSweep() {
     FROM shipment_documents d
     JOIN shipments s ON s.id = d.shipment_id
     WHERE d.doc_type IN ('FR01','FR02') AND d.status='confirmed'
+      AND COALESCE(s.imported_from,'') = ''   -- an imported shipment (QA export) never reminds anyone
   `);
 
   const nowMs = Date.now();
@@ -1813,6 +1822,7 @@ async function runInvoiceCollectionsSweep() {
     FROM shipment_documents d
     JOIN shipments s ON s.id = d.shipment_id
     WHERE d.doc_type IN ('FR01','FR02') AND d.status='confirmed'
+      AND COALESCE(s.imported_from,'') = ''   -- an imported shipment (QA export) is never chased
   `);
 
   const todayIso = new Date().toISOString();
@@ -2110,6 +2120,8 @@ const dcsaSimulator = createDcsaSimulator({ query, uid, getSettings, port: () =>
 // `row.is_simulator` tells the two apart.
 async function carrierIntegrationFor(carrierCode, capability) {
   if (!carrierCode) return null;
+  // No carrier connection for a request about an imported shipment (lib/imported-shipment-context.js).
+  if (importedShipmentContext.getStore()) return null;
   if ((await getSettings()).api_carrier_integrations_enabled !== 'false') {
     const [row] = await query("SELECT * FROM carrier_integrations WHERE carrier_code=$1 AND is_active=TRUE", [carrierCode]);
     let caps = [];
@@ -2760,7 +2772,9 @@ app.param("shipmentId", shipmentScopeParamCheck);
 // out-of-scope shipment still 404s rather than revealing its status.
 const LOCKED_SHIPMENT_STATUSES = ["Completed", "Cancelled"];
 const LOCK_OPEN_SECTIONS = new Set(["cost-lines", "credit-override", "documents", "messages", "milestones", "container-events", "carrier-events",
-  "edit-lock", "share-token", "screen", "screening"]);
+  "edit-lock", "share-token", "screen", "screening",
+  // The QA export only reads the shipment (2026-11-13): a closed shipment is exported like any other.
+  "qa-export"]);
 const lockedShipmentMessage = (id, status) =>
   `${id} is ${status}, so its details are locked. Finance, documents, messages and milestones stay open.`;
 function isOpenOnLockedShipment(path) {
@@ -2768,6 +2782,11 @@ function isOpenOnLockedShipment(path) {
   if (!m) return true; // /api/shipments/:id itself: PUT checks the lock in its own route; DELETE keeps its own rules
   const [, section, rest = ""] = m;
   if (LOCK_OPEN_SECTIONS.has(section)) return true;
+  // The carrier's Master B/L as sent to you (routes/carrier-mbl.js): its PDF, the printed copy and the custody steps stay
+  // open, so a closed shipment's file can still be completed for the record (the user, 2026-11-12: "for historical
+  // purposes… especially in the US where all the documents need to be accessed"). The form (PUT …/custody) and the
+  // carrier's draft review (routes/master-bl.js) stay locked.
+  if (section === "master-bl" && /^\/(custody\/(steps|undo)|pdf(\/check)?|print)$/.test(rest)) return true;
   return section === "containers" && /^\/[^/]+\/events$/.test(rest); // container events, recorded per container
 }
 async function shipmentStatusLock(req, res, next, id) {
@@ -2788,6 +2807,37 @@ async function lockedShipmentError(shipmentId) {
 }
 app.param("id", shipmentStatusLock);
 app.param("shipmentId", shipmentStatusLock);
+
+// An imported shipment sends nothing (QA export, 2026-11-13, lib/shipment-transfer.js, ARCHITECTURE.md §8.50): its
+// contacts and carrier references are production's. The actions that send answer 409 IMPORTED_SHIPMENT with a plain
+// reason; every other request about it runs inside importedShipmentContext, where carrierIntegrationFor finds no
+// carrier connection and office mail refuses, so a send buried in a helper still goes nowhere. Sweeps leave imported
+// shipments out in their own queries.
+const IMPORTED_SENDING_PATHS = [
+  /^\/documents\/[^/]+\/send-(email|edi|webhook)$/,
+  /^\/edi-messages\/booking-request$/,
+  /^\/carrier-booking\/(send-update|accept-changes|check-status|cancel)$/,
+  /^\/shipping-instructions\/(submit|send-update|cancel|reset)$/,
+  /^\/master-bl\/(approve|refresh|amend|amendment\/cancel)$/,
+  /^\/house-bl\/(issue-ebl|approval\/send)$/,
+  /^\/arrival-notice\/refresh$/,
+  /^\/vessel-times\/sync$/,
+  /^\/carrier-events\/sync$/,
+];
+async function shipmentImportGuard(req, res, next, id) {
+  if (typeof id !== "string" || !id.startsWith("SHP-")) return next();
+  try {
+    const [row] = await query("SELECT imported_from FROM shipments WHERE id=$1", [id]);
+    if (!row?.imported_from) return next();
+    const rest = (req.path.match(/^\/api\/shipments\/[^/]+(\/.*)?$/) || [])[1] || "";
+    if (req.method !== "GET" && IMPORTED_SENDING_PATHS.some(re => re.test(rest)))
+      return res.status(409).json({ error: importedSendError(id), code: "IMPORTED_SHIPMENT" });
+    importedShipmentContext.run({ shipmentId: id }, () => next());
+  } catch (e) { next(e); }
+}
+app.param("id", shipmentImportGuard);
+app.param("shipmentId", shipmentImportGuard);
+const isImportedShipment = async id => !!id && !!(await query("SELECT imported_from FROM shipments WHERE id=$1", [id]))[0]?.imported_from;
 
 const INVERSE_LINK_LABEL = { "Blocks": "Is blocked by", "Duplicates": "Is duplicated by", "Implements": "Is implemented by", "Relates to": "Relates to" };
 const inverseLinkLabel = t => INVERSE_LINK_LABEL[t] || t;
@@ -2864,6 +2914,12 @@ const TRACKED_FIELDS = {
   contract_id:    'Contract ID',
   contract_ref:   'Contract Reference',
   allocation_id:  'Space Configuration',
+  // The parties (2026-11-13): the principal can now move with the incoterm (lib/incoterm-principal.js), so who changed
+  // a party, and why, is on the History.
+  shipper_name:   'Shipper',
+  consignee_name: 'Consignee',
+  notify_name:    'Notify Party',
+  principal_name: 'Principal',
 };
 
 const TRACKED_CTR_FIELDS = {
@@ -3244,6 +3300,7 @@ const runOpsAutomationSweep = async () => {
   const staleBookings = await query(`
     SELECT id, shipment_id, carrier_code, requested_at FROM carrier_bookings
     WHERE status='Pending' AND requested_at IS NOT NULL AND requested_at != ''
+      AND NOT EXISTS (SELECT 1 FROM shipments s WHERE s.id = carrier_bookings.shipment_id AND COALESCE(s.imported_from,'') <> '')
   `);
   for (const b of staleBookings) {
     const ageHours = (now - new Date(b.requested_at).getTime()) / 36e5;
@@ -3260,7 +3317,7 @@ const runOpsAutomationSweep = async () => {
     SELECT m.id, m.shipment_id, m.label, m.estimated_date FROM shipment_milestones m
     JOIN shipments s ON s.id = m.shipment_id
     WHERE (m.completed_at IS NULL OR m.completed_at='') AND m.estimated_date != '' AND m.estimated_date < $1
-      AND s.status NOT IN ('Completed', 'Cancelled')
+      AND s.status NOT IN ('Completed', 'Cancelled') AND COALESCE(s.imported_from,'') = ''
   `, [today]);
   // …and the other way (gap G21): close the ones whose milestone is done since, or whose shipment is
   // closed. Catches a completion made while the server was down, or before this existed.
@@ -3287,7 +3344,7 @@ const runOpsAutomationSweep = async () => {
   const complianceHits = await query(`
     SELECT sc.id, sc.shipment_id FROM shipment_screenings sc
     JOIN shipments s ON s.id = sc.shipment_id
-    WHERE sc.result='HIT' AND sc.overridden_at IS NULL AND s.status NOT IN ('Completed', 'Cancelled')
+    WHERE sc.result='HIT' AND sc.overridden_at IS NULL AND s.status NOT IN ('Completed', 'Cancelled') AND COALESCE(s.imported_from,'') = ''
   `);
   for (const sc of complianceHits) {
     // Dedupe on shipment_id, not sc.id — shipment_screenings has UNIQUE(shipment_id), so a
@@ -3321,7 +3378,7 @@ const runOpsAutomationSweep = async () => {
     FROM shipment_milestones m
     JOIN shipments s ON s.id = m.shipment_id
     LEFT JOIN offices o ON o.id = s.imo_office_id
-    WHERE m.milestone_key='vessel_arrived' AND m.completed_at != '' AND s.status NOT IN ('Completed', 'Cancelled')
+    WHERE m.milestone_key='vessel_arrived' AND m.completed_at != '' AND s.status NOT IN ('Completed', 'Cancelled') AND COALESCE(s.imported_from,'') = ''
   `);
   for (const h of vesselArrivedHandoffs) {
     const officeLabel = h.imo_name || 'the Import Office';
@@ -4484,6 +4541,11 @@ require('./routes/master-bl')(app, ctx);
 // The carrier's Master B/L as sent to the forwarder (2026-11-10, §8.49): its print, its PDF, its originals or eBL.
 ctx.carrierMbl = require('./lib/carrier-mbl')(ctx);
 require('./routes/carrier-mbl')(app, ctx);
+// A shipment as a JSON file for QA, and imported into a test system (2026-11-13, §8.50); an imported shipment sends nothing.
+ctx.isImportedShipment = isImportedShipment;
+ctx.importedSendError = importedSendError;
+ctx.shipmentTransfer = require('./lib/shipment-transfer')(ctx);
+require('./routes/shipment-transfer')(app, ctx);
 require('./routes/arrival-notices')(app, ctx);
 require('./routes/customers')(app, ctx);
 require('./routes/contracts')(app, ctx);

@@ -96,7 +96,7 @@
     { "id": "M31", "from": "manual", "kind": "concept", "question": "When can I submit the Shipping Instructions?",
       "passages": ["manual:si-vgm:2"], "facts": [["confirm"], ["Shipper"], ["Consignee"], ["container"]] },
     { "id": "M32", "from": "manual", "kind": "concept", "question": "What are the two VGM methods?",
-      "passages": ["manual:si-vgm:6"], "facts": [["Method 1", "weigh"], ["Method 2", "tare", "sum"]] },
+      "passages": ["manual:si-vgm:7"], "facts": [["Method 1", "weigh"], ["Method 2", "tare", "sum"]] },
     { "id": "M33", "from": "manual", "kind": "concept", "question": "What does Lane Steering do?",
       "passages": ["manual:mdm:9", "dfs:dfs-8:2"], "facts": [["order"], ["carrier"], ["trade lane", "customer"]] },
     { "id": "M34", "from": "manual", "kind": "concept", "question": "What is the Where to book panel?",

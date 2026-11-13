@@ -10,7 +10,8 @@ import { deriveHaulageNeeds } from "../../pages/shipments/ShipmentFormPage";
 import useContractMismatch from "../../hooks/useContractMismatch";
 import ContractMismatchModal from "./ContractMismatchModal";
 import { AnyIcon, IconClipboard, IconLink, IconRefresh, IconPencil, IconWarning, IconCheck,
-  IconMail, IconMailUnread, IconLock, IconGroup, IconArrowUp, IconArrowDown } from "../primitives/Icon";
+  IconMail, IconMailUnread, IconLock, IconGroup, IconArrowUp, IconArrowDown, IconDownload } from "../primitives/Icon";
+import ShipmentQaExportModal, { ImportedChip, ImportedShipmentBanner } from "./ShipmentQaExport";
 import { fmtCurr } from "../../utils/invoiceGenerator";
 import { onCargoValueChanged } from "../../cargoValueBus";
 import { onLegsScheduleChanged } from "../../legsScheduleBus";
@@ -287,7 +288,9 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
   const [folded, setFolded] = useState(true);
   const [loopModalOpen, setLoopModalOpen] = useState(false);
   useEffect(() => { setFolded(true); }, [shipment.id]);
-  const { canEditShipments: canEdit, shipmentLock } = useAuth();
+  const { canEditShipments: canEdit, shipmentLock, isAdmin } = useAuth();
+  // Export for QA (2026-11-13): admins save the shipment as one JSON file for a test system.
+  const [qaExportOpen, setQaExportOpen] = useState(false);
   const [schedules, setSchedules] = useState([]);
   const [screening, setScreening] = useState(null);
   const [complianceOpen, setComplianceOpen] = useState(false);
@@ -508,6 +511,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
             onMouseLeave={e => { e.currentTarget.style.color = HZ.textMuted; }}>
             <IconClipboard size={12} />
           </button>
+          {shipment.importedFrom && <ImportedChip style={{ marginLeft: 4 }} />}
         </span>
         <span id="shphdr-movement-type" data-testid="shipment-detail-header-movement-type" style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, letterSpacing: "0.03em",
           padding: "3px 9px", borderRadius: 6, background: HZ.cyanBg, color: HZ.cyan,
@@ -590,6 +594,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
             title: openTicketCount > 0 ? `${openTicketCount} open ticket${openTicketCount > 1 ? "s" : ""}` : "Related tickets",
             onClick: () => setTicketsOpen(true) },
           ...(canEdit && !isShipmentLocked(shipment) ? [{ key: "edit", icon: IconPencil, title: "Edit Shipment", onClick: () => onEdit?.() }] : []),
+          ...(isAdmin ? [{ key: "qa-export", icon: IconDownload, title: "Export for QA", onClick: () => setQaExportOpen(true) }] : []),
         ]} />
 
         <button id="shphdr-fold-toggle" data-testid="shipment-detail-header-fold-toggle" type="button" onClick={() => setFolded(f => !f)}
@@ -682,6 +687,8 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
           </span>
         )}
       </div>
+
+      <ImportedShipmentBanner shipment={shipment} />
 
       {folded ? (
         // Minimized (default) state — Row 1 above stays exactly as-is; everything below
@@ -779,6 +786,8 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
       />}
 
       {ticketsOpen && <TicketsDrawer shipment={shipment} onClose={() => setTicketsOpen(false)} />}
+
+      {qaExportOpen && <ShipmentQaExportModal shipment={shipment} onClose={() => setQaExportOpen(false)} />}
 
       {loopModalOpen && (
         <LoopRouteModal code={loopCode} polCode={shipment.pol} podCode={shipment.pod}

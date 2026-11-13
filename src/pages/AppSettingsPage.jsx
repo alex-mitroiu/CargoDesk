@@ -1945,6 +1945,47 @@ export default function AppSettingsPage() {
     );
   };
 
+  // ── Shipment imports card (QA export, 2026-11-13, lib/shipment-transfer.js) — whether this server takes a shipment's QA
+  // export (Test Tools → Shipment Import). Outside production always; in production only while an admin has it on, for a
+  // staging server that runs in production mode. Same shape as the Demo carrier card above.
+  const ShipmentImportsCard = () => {
+    const production = !!demoCarrier?.production;
+    const on = production ? settings?.shipment_import_enabled === 'true' : true;
+    const flip = () => {
+      const next = on ? 'false' : 'true';
+      setSettings(s => ({ ...s, shipment_import_enabled: next }));
+      api.settings.update({ shipment_import_enabled: next })
+        .then(() => toast.success(`Shipment imports ${next === 'true' ? 'on' : 'off'}`))
+        .catch(() => { setSettings(s => ({ ...s, shipment_import_enabled: on ? 'true' : 'false' })); toast.error("Save failed"); });
+    };
+    const tag = !production ? { text: "ALWAYS ON OUTSIDE PRODUCTION", color: T.success }
+      : on ? { text: "PRODUCTION · ON", color: T.warning } : { text: "PRODUCTION · OFF", color: T.textMuted };
+    return (
+      <div data-testid="settings-shipment-imports-card" style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface, overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, padding: "16px 20px 14px" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 5, flexWrap: "wrap" }}>
+              <span style={{ fontFamily: T.body, fontSize: 15, fontWeight: 700, color: T.text }}>Shipment imports</span>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: tag.color, background: `${tag.color}18`,
+                border: `1px solid ${tag.color}44`, borderRadius: 4, padding: "2px 8px" }}>{tag.text}</span>
+            </div>
+            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
+              Lets an admin import a shipment's QA export (Export for QA on a shipment, in production) as a new shipment marked
+              IMPORTED, so QA can reproduce an issue: Test Tools → Shipment Import. An imported shipment sends nothing.
+            </div>
+            {production && (
+              <div style={{ fontFamily: T.body, fontSize: 11.5, color: on ? T.warning : T.textMuted, marginTop: 6, lineHeight: 1.5 }}>
+                {on ? "This server takes imported shipments. Turn it on only on a test or staging server, never on the live one."
+                  : "While off, this server refuses imported shipments. Keep it off on the live server."}
+              </div>
+            )}
+          </div>
+          {production && <Toggle on={on} onChange={flip} />}
+        </div>
+      </div>
+    );
+  };
+
   // ── Carrier Integrations card — a master-toggle safety net (TKT-KG4E49 direct follow-up
   // request): turning this off instantly disables every real carrier submission app-wide
   // (routes/edi.js, routes/system.js, routes/carrier-webhooks.js), falling back to the built-in
@@ -2327,6 +2368,7 @@ export default function AppSettingsPage() {
           {activeApiSub === "External APIs" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <DemoCarrierCard />
+              <ShipmentImportsCard />
               <CarrierIntegrationsCard />
               {settings && (
                 <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,

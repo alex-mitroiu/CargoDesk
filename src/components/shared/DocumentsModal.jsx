@@ -64,6 +64,8 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
   const [ediDoc,         setEdiDoc]         = useState(null);
   const [webhookDoc,     setWebhookDoc]     = useState(null);
   const [historyDoc,     setHistoryDoc]     = useState(null);
+  // The terms picked in the House B/L panel: an uploaded BL01 confirmed below is issued with them (C2, 2026-11-12).
+  const [houseTermsKey,  setHouseTermsKey]  = useState(null);
   const fileRef = useRef(null);
 
   // Best doc per type: confirmed+fresh > confirmed+stale > draft+fresh > draft+stale. A voided one
@@ -132,7 +134,8 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
 
   const handleConfirm = async id => {
     try {
-      const updated = await api.documents.patch(shipment.id, id, { status: "confirmed" });
+      const isHouseBl = docs.find(d => d.id === id)?.docType === "BL01";
+      const updated = await api.documents.patch(shipment.id, id, { status: "confirmed", ...(isHouseBl && houseTermsKey && { termsKey: houseTermsKey }) });
       setDocs(p => p.map(d => d.id === id ? updated : d));
       setPreviewDoc(p => p?.id === id ? updated : p);
       toast.success("Document confirmed");
@@ -202,7 +205,7 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
         {/* House B/L (Epic TKT-C7EBU3): readiness, issue, eBL and release, above the documents. */}
         {/* Keyed by shipment: moving to another shipment by hash keeps this page mounted, and the panel
             must not carry one shipment's choices (e.g. what the B/L says) into the next. */}
-        {standalone && <HouseBlPanel key={shipment.id} shipment={shipment} canEdit={canEdit} docs={docs} onChanged={loadDocs} />}
+        {standalone && <HouseBlPanel key={shipment.id} shipment={shipment} canEdit={canEdit} docs={docs} onChanged={loadDocs} onTermsChange={setHouseTermsKey} />}
 
         {/* The carrier's Master B/L as sent to you (2026-11-10): its print or PDF, its originals or eBL until released. */}
         {standalone && <CarrierMasterBlPanel key={`mbl-${shipment.id}`} shipment={shipment} canEdit={canEdit} onChanged={loadDocs} />}

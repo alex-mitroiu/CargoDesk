@@ -70,6 +70,8 @@ export const INV_CSS = `
   .inv-number{font-size:21px;font-weight:800;color:#111827;font-variant-numeric:tabular-nums;letter-spacing:-0.5px}
   .inv-date{font-size:12px;color:#374151;margin-top:5px}
   .parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+  .parties.three{grid-template-columns:1fr 1fr 1fr}
+  .party-role{font-size:10px;color:#6b7280;margin-top:2px}
   .party{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px}
   .party-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#9ca3af;margin-bottom:8px}
   .party-name{font-size:14px;font-weight:700;color:#111827;margin-bottom:4px}
@@ -125,6 +127,25 @@ ${body}
 // than one currency — the grand total is then converted (via each line's amountUsd) into
 // targetCurrency and shown as a single figure instead of one "Total X" row per currency.
 // Single-currency invoices are unaffected — same per-currency total as before.
+// Who an invoice (or its credit/debit note) is owed by: the shipment's principal, else its consignee — the same party
+// generateInvoices bills (responsibleParty), resolveInvoiceCurrency prices in and resolveInvoiceTaxInfo prints the VAT
+// number of. Until 2026-11-13 the party box said "Consignee / Bill To" with the consignee whoever the principal was, so a
+// CIF invoice owed by the shipper named the consignee as the one to pay (documentation/incoterms-principal-and-charges.html).
+export const invoiceBillTo = sh => (sh.principalId || sh.principalName
+  ? { name: sh.principalName || "—", role: "Principal" }
+  : { name: sh.consigneeName || "—", role: "Consignee" });
+
+// Bill To, then the shipper and the consignee.
+const partiesBlock = sh => {
+  const billTo = invoiceBillTo(sh);
+  return `<div class="parties three">
+      <div class="party" data-bill-to><div class="party-label">Bill To</div><div class="party-name">${_esc(billTo.name)}</div>
+        <div class="party-role">${billTo.role === "Principal" ? "the shipment's principal" : "the consignee (no principal set)"}</div></div>
+      <div class="party"><div class="party-label">Shipper / Exporter</div><div class="party-name">${_esc(sh.shipperName || "—")}</div></div>
+      <div class="party"><div class="party-label">Consignee</div><div class="party-name">${_esc(sh.consigneeName || "—")}</div></div>
+    </div>`;
+};
+
 export const buildFreightInvoiceHtml = ({ shipment: sh, invNumber, invDate, notes, costLines, container, targetCurrency, fxRates, taxInfo }) => {
   const scopedLines = container ? costLines.filter(cl => cl.containerId === container.id) : costLines;
   const distinctCurrencies = [...new Set(scopedLines.map(cl => cl.currency))];
@@ -187,10 +208,7 @@ export const buildFreightInvoiceHtml = ({ shipment: sh, invNumber, invDate, note
   ].map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${v}</div></div>`).join("");
 
   const body = `
-    <div class="parties">
-      <div class="party"><div class="party-label">Shipper / Exporter</div><div class="party-name">${sh.shipperName || "—"}</div></div>
-      <div class="party"><div class="party-label">Consignee / Bill To</div><div class="party-name">${sh.consigneeName || "—"}</div></div>
-    </div>
+    ${partiesBlock(sh)}
     ${taxDetailsBlock(taxInfo)}
     <div class="shp-block"><div class="block-label">Shipment Details</div><div class="details-grid">${detailItems}</div></div>
     <div class="section-label">Charges</div>
@@ -602,10 +620,7 @@ export const buildCreditDebitNoteHtml = ({ shipment: sh, invNumber, invDate, not
   ].map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${v}</div></div>`).join("");
 
   const body = `
-    <div class="parties">
-      <div class="party"><div class="party-label">Shipper / Exporter</div><div class="party-name">${sh.shipperName || "—"}</div></div>
-      <div class="party"><div class="party-label">Consignee / Bill To</div><div class="party-name">${sh.consigneeName || "—"}</div></div>
-    </div>
+    ${partiesBlock(sh)}
     <div class="shp-block"><div class="block-label">Shipment Details</div><div class="details-grid">${detailItems}</div></div>
     ${taxDetailsBlock(taxInfo)}
     <div class="section-label">Reversed Charges</div>

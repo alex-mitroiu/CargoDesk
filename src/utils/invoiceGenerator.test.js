@@ -129,3 +129,29 @@ describe("customer statement — VAT, Gross / VAT / Net", () => {
     expect(html).toContain("US-EIN 84-2917734");
   });
 });
+
+// Bill To (2026-11-13, documentation/incoterms-principal-and-charges.html): the invoice is owed by the shipment's principal,
+// else its consignee — the party generateInvoices bills, prices in and prints the VAT number of. The box used to say
+// "Consignee / Bill To" with the consignee whoever the principal was.
+describe("freight invoice and credit note — who it is billed to", () => {
+  const cif = { ...shipment, shipperName: "Van Leeuwen Meubelen BV", consigneeName: "Hudson Home Imports Inc",
+    principalId: "CUS-VLM", principalName: "Van Leeuwen Meubelen BV", incoterm: "CIF" };
+  const billToOf = html => (html.match(/data-bill-to><div class="party-label">Bill To<\/div><div class="party-name">([^<]*)<\/div>\s*<div class="party-role">([^<]*)</) || []).slice(1);
+
+  it("CIF: billed to the principal (the shipper), the consignee shown as the consignee", () => {
+    const html = build([line()], { shipment: cif });
+    expect(billToOf(html)).toEqual(["Van Leeuwen Meubelen BV", "the shipment's principal"]);
+    expect(html).toContain('<div class="party-label">Consignee</div><div class="party-name">Hudson Home Imports Inc</div>');
+    expect(html).not.toContain("Consignee / Bill To");
+  });
+
+  it("no principal: billed to the consignee, and says so", () => {
+    const html = build([line()]);
+    expect(billToOf(html)).toEqual(["Consignee Co", "the consignee (no principal set)"]);
+  });
+
+  it("the credit note names the same party", () => {
+    const html = buildCreditDebitNoteHtml({ shipment: cif, invNumber: "INV-1-CN", invDate: "2026-11-13", notes: "", costLines: [line({ amount: -300 })], originalDoc: { filename: "FR01.pdf" }, taxInfo });
+    expect(billToOf(html)).toEqual(["Van Leeuwen Meubelen BV", "the shipment's principal"]);
+  });
+});

@@ -1456,8 +1456,10 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       }
       const now = new Date().toISOString();
       // Issuing a House B/L (TKT-C7EBU3): readiness (gap G4) and the House transport document first.
+      // termsKey: the terms an UPLOADED House B/L is issued with (the House B/L panel's pick; none = the export office's
+      // default) — a generated draft already carries its own (the pre-release audit, C2, 2026-11-12).
       const issue = doc.doc_type === HOUSE_BL && status === "confirmed" && doc.status !== "confirmed"
-        ? await ctx.houseBl.prepareIssue(doc, req.user) : null;
+        ? await ctx.houseBl.prepareIssue(doc, req.user, { termsKey: typeof req.body.termsKey === "string" ? req.body.termsKey : "" }) : null;
       if (issue?.error) return err(res, issue.error, 409);
       if (status === "confirmed") {
         try {
@@ -1495,6 +1497,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       }
       if (status === "voided" && doc.status !== "voided") {
         if (doc.doc_type === HOUSE_BL) await ctx.houseBl.onVoided(doc, voidReason, req.user);
+        // The carrier's Master B/L panel lets go of a PDF or printed copy voided here (the pre-release audit, C5).
+        if (doc.doc_type === "MB01") await ctx.carrierMbl.onDocumentGone(doc.id, req.user, "voided");
         await logEntityEvent('document', req.params.docId, 'VOIDED', null, null, null,
           JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '',
             ...(String(voidReason).trim() && { reason: String(voidReason).trim() }) }));
@@ -1782,6 +1786,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.stored_name)); } catch {}
     await query("DELETE FROM shipment_documents WHERE id = $1", [req.params.docId]);
     if (doc.doc_type === HOUSE_BL) await ctx.houseBl.onDraftDocumentGone(doc.id);
+    // …and so does the carrier's Master B/L panel, for its PDF or printed copy (the pre-release audit, C5).
+    if (doc.doc_type === "MB01") await ctx.carrierMbl.onDocumentGone(doc.id, req.user, "deleted");
     await logEntityEvent('document', req.params.docId, 'DELETED', null, null, null,
       JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
     ok(res, { ok: true });

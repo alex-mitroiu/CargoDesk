@@ -15,6 +15,7 @@
 // those lines become the new shipment's SELL cost lines (source 'quote'); the BUY side still
 // comes from the real matched contract via the existing importContractRates path, unchanged.
 const { applyColumnFilters, filterOptions, applySearch, applySort, paginate, blanksLast } = require("../lib/tableQuery");
+const { impliedPrincipal } = require("../lib/incoterm-principal");
 
 module.exports = function quotesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, isUniqueViolation, mapQuote, mapQuoteLine, mapShipment,
@@ -398,6 +399,12 @@ module.exports = function quotesRoutes(app, ctx) {
     // conversion. source_quote_id is the reverse pointer completing the chain alongside
     // quotes.converted_shipment_id (and, when this quote itself came from an Opportunity,
     // source_opportunity_id on the quote — see routes/opportunities.js).
+    // A quote's principal is optional: without one the shipment takes the one its incoterm implies (lib/incoterm-
+    // principal.js, 2026-11-13), as the New Shipment form would; the quote's customer is the shipper.
+    const qImplied = q.principal_id ? null : impliedPrincipal(q.incoterm, { shipperId: q.customer_id, shipperName: q.customer_name,
+      consigneeId: q.consignee_id, consigneeName: q.consignee_name });
+    q.principal_id = q.principal_id || qImplied?.id || null;
+    q.principal_name = q.principal_id ? (q.principal_name || qImplied?.name || "") : q.principal_name;
     await query(`INSERT INTO shipments
       (id, pol, pod, carrier_code, contract_type, status, created_at,
        contract_id, contract_ref, commodity_code, shipper_id, shipper_name,

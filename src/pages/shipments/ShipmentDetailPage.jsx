@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
+import { withFollowedPrincipal, principalHintText } from "../../utils/incotermPrincipal";
 import useSaving from "../../hooks/useSaving";
 import { presetChoices, takenCodes, summarizeChoices } from "../../utils/reconcileChoices";
 import { T, INCOTERMS_2020, teuOf,
@@ -747,7 +748,11 @@ export const FIELD_LABELS = {
   hs_code: "HS Code", cargo_description: "Cargo Description",
   gross_weight_kg: "Gross Weight (kg)", volume_cbm: "Volume (CBM)",
   is_dg: "Dangerous Goods", dg_class: "DG Class",
+  shipper_name: "Shipper", consignee_name: "Consignee", notify_name: "Notify Party", principal_name: "Principal",
 };
+
+// Why a field changed, when the server recorded it (a principal moved by the incoterm rule, 2026-11-13).
+const withReason = (s, ev) => ev.meta?.reason ? `${s}  ·  ${ev.meta.reason}` : s;
 
 // Booked against the Lane Steering (Epic TKT-KFGL81, Story 3): what it was, what it would have been, why.
 const steeringSummary = m => {
@@ -799,6 +804,7 @@ const EventRow = ({ ev }) => {
     summary = field ? `${field}: ` : "";
     summary += ev.oldValue ? `${ev.oldValue} → ` : "";
     summary += ev.newValue || "—";
+    summary = withReason(summary, ev);
   }
 
   return (
@@ -911,7 +917,7 @@ export const getEventSummary = ev => {
     const hits = Array.isArray(ev.meta?.hits) ? ev.meta.hits : [];
     return hits.map(h => `${h.field}: ${h.value}`).join(", ") || "Sanctioned party or embargoed route detected";
   }
-  return field ? `${field}: ${ev.oldValue ? `${ev.oldValue} → ` : ""}${ev.newValue || "—"}` : "";
+  return field ? withReason(`${field}: ${ev.oldValue ? `${ev.oldValue} → ` : ""}${ev.newValue || "—"}`, ev) : "";
 };
 
 // ─── Messages drawer ─────────────────────────────────────────────────────────
@@ -1501,17 +1507,22 @@ const PartiesEditForm = ({ shipment, onSave, onCancel }) => {
         <div data-testid="shipment-parties-form-shipper-field">
           <CustomerCombobox label="Shipper" required roleFilter="Shipper"
             value={{ id: f.shipperId, name: f.shipperName }}
-            onChange={v => setF(p => ({ ...p, shipperId: v.id, shipperName: v.name }))} />
+            onChange={v => setF(p => withFollowedPrincipal({ ...p, incoterm: shipment.incoterm }, { ...p, incoterm: shipment.incoterm, shipperId: v.id, shipperName: v.name }))} />
         </div>
         <div data-testid="shipment-parties-form-consignee-field">
           <CustomerCombobox label="Consignee" required roleFilter="Consignee"
             value={{ id: f.consigneeId, name: f.consigneeName }}
-            onChange={v => setF(p => ({ ...p, consigneeId: v.id, consigneeName: v.name }))} />
+            onChange={v => setF(p => withFollowedPrincipal({ ...p, incoterm: shipment.incoterm }, { ...p, incoterm: shipment.incoterm, consigneeId: v.id, consigneeName: v.name }))} />
         </div>
         <div data-testid="shipment-parties-form-principal-field">
           <CustomerCombobox label="Principal" required roleFilter="Principal"
             value={{ id: f.principalId, name: f.principalName }}
             onChange={v => setF(p => ({ ...p, principalId: v.id, principalName: v.name }))} />
+          {/* The principal follows the incoterm while it is the party it implies (src/utils/incotermPrincipal.js). */}
+          {principalHintText({ ...f, incoterm: shipment.incoterm }) && (
+            <div data-testid="principal-from-incoterm" style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginTop: 4 }}>
+              {principalHintText({ ...f, incoterm: shipment.incoterm })}</div>
+          )}
         </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

@@ -54,7 +54,7 @@ module.exports = function carrierTrackingRoutes(app, ctx) {
       JOIN carrier_bookings cb ON cb.shipment_id = s.id
       JOIN carrier_integrations ci ON ci.carrier_code = cb.carrier_code AND ci.is_active = TRUE
       WHERE cb.status <> 'Cancelled' AND COALESCE(cb.booking_ref, '') <> '' AND COALESCE(cb.carrier_booking_request_reference, '') <> ''
-        AND s.status <> 'Cancelled'
+        AND s.status <> 'Cancelled' AND COALESCE(s.imported_from,'') = ''
         AND (cb.events_synced_at IS NULL OR cb.events_synced_at <= $1)
         AND EXISTS (SELECT 1 FROM containers c WHERE c.shipment_id = s.id
           AND NOT EXISTS (SELECT 1 FROM container_events e WHERE e.container_id = c.id AND e.event_type = 'Empty Return'))`, [cutoff]);

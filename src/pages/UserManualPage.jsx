@@ -62,6 +62,7 @@ const UserManualPage = () => {
     { id: "ais-integration",  label: "AIS Vessel Tracking" },
     { id: "document-templates", label: "Document Templates" },
     { id: "concurrent-editing", label: "Concurrent Editing" },
+    { id: "qa-export",         label: "Reproducing an Issue" },
     { id: "incoterms",         label: "Incoterms" },
     { id: "dg-classes",        label: "DG Classes ⚠" },
   ];
@@ -958,7 +959,8 @@ const UserManualPage = () => {
         <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
           <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Before issue</strong> — what is still missing, each with a link to the page where you fix it. Choose what the B/L says: <em>Shipped on board</em> (dated by the last container's loading, or a date you type) or <em>Received for shipment</em>; how many originals and non-negotiable copies; whether the freight shows as <em>as arranged</em> or with the shipment's charges; and the <strong>terms and conditions</strong>, which start as the export office's default and can be any language its legal entity (or the organisation) has. <Tag>Generate draft</Tag> makes a copy to check or send for approval (it says the number is assigned at issue); <Tag>Issue House B/L</Tag> takes the number, prints it dated today and issues it.</li>
           <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>The B/L number</strong> — taken from the issuing office's series when you issue (e.g. RTMHBL2600123: the prefix, the year, a sequence). An admin sets the prefix under Organisation → Offices → Edit. A voided number is never used again. For a B/L already issued on paper, type its number on <Tag>Conditions</Tag> first.</li>
-          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Terms and conditions</strong> — printed after the B/L, from a new page (a 2-page B/L has them from page 3), every page numbered; the B/L's own wording says which pages and which terms. The face stays in English; the terms are in the language picked. An admin keeps them under Organisation → B/L Terms: for each legal entity and language, a PDF for print and the same terms as text, which an eBL carries (a language without a PDF prints its text). Every save is a new version, and an issued B/L keeps the one it was issued with; an amendment keeps the original's. Each export office picks its default next to its B/L number prefix (Organisation → Offices → Edit); without one, English. CargoDesk's starter text is an example, not your terms: a draft can show it, but no House B/L is issued on it.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Terms and conditions</strong> — printed after the B/L, from a new page (a 2-page B/L has them from page 3), every page numbered; the B/L's own wording says which pages and which terms. The face stays in English; the terms are in the language picked. An admin keeps them under Organisation → B/L Terms: for each legal entity and language, a PDF for print and the same terms as text, which an eBL carries (a language without a PDF prints its text). Every save is a new version, and an issued B/L keeps the one it was issued with; an amendment keeps the original's. Each export office picks its default next to its B/L number prefix (Organisation → Offices → Edit); without one, English. CargoDesk's starter text is an example, not your terms: a draft can show it, but no House B/L is issued on it. When an admin stops offering a language, the offices that started with it start with English instead; the B/L Terms page names them before you confirm.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>A House B/L you upload</strong> — if the B/L was made in another system and you upload its PDF instead of generating it here, CargoDesk can't read the terms printed in your file. When you confirm it in the documents list, it is issued with the terms chosen in the House B/L panel's <em>Terms and conditions</em> row: the export office's default unless you pick others. The panel says so next to the choice while an uploaded B/L waits. Those terms are what CargoDesk records for the B/L, and an eBL issued from it carries their text. CargoDesk adds no pages to an uploaded file, so make sure your file prints the same terms. The starter text can't be chosen here either.</li>
           <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>After issue, on paper</strong> — log who received the originals (<Tag>＋ Record handover</Tag>: to whom, in person, by courier with its tracking number, or by mail). Record them as presented at destination (an Original B/L, with who presented them) or surrendered at origin (a telex release, once every original handed over is back: the import office gets a task telling it to release without originals), then <Tag>Release cargo</Tag>. A live eBL is surrendered only on its platform. The release dialog shows its three checks; an admin or finance user can override with a reason.</li>
           <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Corrections</strong> — if the shipment changes after issue, the panel says what no longer matches. <Tag>Surrender for amendment</Tag> records the originals coming back, with the reason; then issue version 2, which keeps the same number and prints "VERSION 2 · AMENDED". An eBL is corrected by its holder asking on the platform.</li>
           <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Or electronic</strong> — <Tag>Issue as eBL</Tag> sends it to an eBL platform, issued to the shipper by its platform id (Customers → Identifiers, type WAVE, CARX…). The issuing legal entity needs a SCAC, a street address and a phone or email (Organisation → Branches). The holder endorses it on the platform; when the consignee asks to surrender it for delivery, CargoDesk checks payment and credit and releases the cargo.</li>
@@ -1086,9 +1088,14 @@ const UserManualPage = () => {
         </ul>
         <P>A sea waybill has nothing to surrender: only the carrier's release is recorded. The form is set from what
           the carrier issued (or the shipment's Master B/L release type) and can be changed until a step is recorded. Each
-          step has a date and goes on the shipment's History; a step recorded by mistake can be undone with a reason.
-          When you release the cargo against the House B/L before the carrier has released the Master, the release
-          dialog notes it; it doesn't stop you.</P>
+          step has a date (your own day; not one still to come) and goes on the shipment's History; a step recorded by
+          mistake can be undone with a reason. When you release the cargo against the House B/L before the carrier has
+          released the Master, the release dialog notes it; it doesn't stop you.</P>
+        <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Who does what</strong> — the export office prints the copy, uploads and checks the carrier's PDF, and records what happens at origin: the originals or the eBL received, sent or transferred to destination, a surrender at origin. Either office records the surrender at destination and the carrier's release. You can undo only a step your office could have recorded. The import office sees the rest, and the panel tells it which step the export office records next.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>After the shipment is closed</strong> — on a Completed or Cancelled shipment the panel stays open: you can still upload the carrier's PDF, print the copy and record or undo steps, so the file is complete for the record (in the US, for example, every document of a shipment must stay available). Only the form (paper, eBL or sea waybill) is fixed.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>A new PDF, or printing again</strong> — the earlier one stays in the documents list, marked Voided and "Replaced by" the new file. If you delete or void the carrier's PDF in the documents list, the panel lets go of it too; upload the right one again.</li>
+        </ul>
         <H3>VGM (Verified Gross Mass)</H3>
         <P>SOLAS requires a verified weight for every container before it can be loaded, declared
           one of two ways: <strong>Method 1</strong> — weighing the fully packed container — or{" "}
@@ -1281,7 +1288,7 @@ const UserManualPage = () => {
           up the layout by adding fields and arranging them wherever you want, like a simple
           poster or PDF design tool:</P>
         <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
-          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}>Pick a value from one of the <Tag>Shipment…</Tag> / <Tag>Shipper…</Tag> / <Tag>Consignee…</Tag> / <Tag>Document…</Tag> dropdowns to drop a field bound to real shipment data — B/L number, vessel, shipper's company name, and so on.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}>Pick a value from one of the <Tag>Shipment…</Tag> / <Tag>Shipper…</Tag> / <Tag>Consignee…</Tag> / <Tag>Document…</Tag> dropdowns to drop a field bound to real shipment data — B/L number, vessel, shipper's company name, and so on. <em>Document → Terms reference</em> prints the sentence that says where the House B/L's terms and conditions are ("…on page 3 of this Bill of Lading (English, Rotterdam Branch, version 2)…"): the terms always follow your layout from a new page, so place this field where your face mentions them.</li>
           <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><Tag>+ Free Text</Tag> adds a field with your own fixed wording instead — a heading like "BILL OF LADING," a label, boilerplate text — anything that doesn't come from the shipment.</li>
           <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><Tag>+ Table</Tag> adds a repeating region, one row per container on the shipment — pick which columns it shows and in what order from its own inspector.</li>
         </ul>
@@ -1349,6 +1356,43 @@ const UserManualPage = () => {
           reached to free it up.</P>
         <Callout type="note">A Viewer-role account is unaffected by any of this — it was already
           read-only regardless of who else has a shipment open.</Callout>
+      </div>
+    ),
+    "qa-export": (
+      <div>
+        <H2>Reproducing an Issue (Export for QA)</H2>
+        <P>When something goes wrong on a shipment in the live system, an admin can save that shipment as one file, and QA
+          can import it into a test system to see the same thing happen there. Both steps are for admins only.</P>
+        <H3>Export the shipment (live system)</H3>
+        <P>On the shipment, click the download icon at the right of the header (<Tag>Export for QA</Tag>). Write what went
+          wrong and the steps that show it, one step per line, then <Tag>Download the file</Tag>. The window lists what goes
+          in: the shipment and everything recorded on it (containers, route, booking, carrier messages, B/Ls, costs and charges,
+          milestones, history, messages), its customers in full, and its documents themselves. A Completed or Cancelled
+          shipment exports too.</P>
+        <Callout type="warn"><strong>The file holds real data</strong>, exactly as the live system has it: customer names,
+          addresses, contacts and tax numbers, buy and sell prices, and the documents. Keep it where you keep production data,
+          and delete it once the issue is closed. Every export is recorded in the admin log.</Callout>
+        <P>The file starts with a plain-language summary: the shipment, what went wrong and the steps. You can hand the file
+          as it is to the AI that helps with the investigation.</P>
+        <H3>Import it (test system)</H3>
+        <P>On the test system, open <Tag>Test Tools → Shipment Import</Tag> and choose the file. Before anything is saved, it
+          shows where the file came from, what went wrong, and how the records it points at are found on this system:</P>
+        <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Offices</strong> are found by their code. If the test system doesn't have the shipment's export or import office, choose one of its own; CargoDesk never creates an office for you.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Customers</strong> are found by their VAT, LEI or EORI number, else by the exact company name. One that isn't there is created from the file, with its identifiers and contacts, and its notes say it was imported.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Carriers, ports, vessels and commodities</strong> are only checked: one the test system lacks stays on the shipment as written.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>A contract or space configuration</strong> the test system doesn't have is left off; the shipment keeps the contract's reference.</li>
+        </ul>
+        <P><Tag>Import as a new shipment</Tag> creates it under a new number, marked <strong>IMPORTED</strong> on the
+          Shipments list and in its header. The header says which shipment it came from, what went wrong, and the steps.
+          Everything recorded on it, its history and its documents come along exactly as they were. The same file can be
+          imported again, as another shipment.</P>
+        <Callout type="note"><strong>An imported shipment sends nothing.</strong> Its contacts and carrier references are the
+          live ones, so it sends no emails, EDI messages, webhooks or carrier messages (booking, Shipping Instructions, VGM,
+          the Master B/L, eBLs), and the automatic reminders, collections and carrier syncs skip it. An action that would send
+          says so and does nothing. Everything else works as usual.</Callout>
+        <P>A test or staging server that runs in production mode refuses imports until an admin turns on <Tag>App Settings →
+          API Controls → External APIs → Shipment imports</Tag>. Never turn it on in the live system.</P>
       </div>
     ),
     incoterms: (

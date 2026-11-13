@@ -431,6 +431,12 @@ repository with test runs; an automated ops-sweep that opens real tickets for de
 gaps (e.g. a stale booking).
 **Roles**: admin, operator (write); all roles (read).
 **Primary data**: owned by the Kanban/Testing Service when `kanban_source=remote`.
+**Reproducing a production issue** (2026-11-13): an admin exports any shipment as one JSON file (Export for QA on the
+shipment's header), with what went wrong and the steps, and every record, customer and document as stored. On a test
+system an admin imports it (Test Tools → Shipment Import) as a new shipment marked IMPORTED: offices are matched by code
+(a missing export or import office is chosen, never created), customers by VAT/LEI/EORI or name (else created). An
+imported shipment sends nothing (no emails, EDI, webhooks or carrier messages) and the automatic sweeps skip it. A
+server in production mode imports only while an admin has App Settings → Shipment imports on.
 
 ### 5.8 Customer / Organization Management (P8 / P8a)
 **Purpose**: the counterparties CargoDesk transacts with, and their internal grouping.
@@ -466,7 +472,7 @@ containers with packages and HS codes, a confirmed booking, loading for a shippe
 destination waits for the originals, paid collect charges and no credit hold (a finance override with a reason);
 and the House B/L can be issued and surrendered as an eBL (DCSA eBL Issuance and Surrender 3.0). Its number comes
 from the issuing office's series (e.g. RTMHBL2600123), taken when it is issued and never reused, unless one was typed
-for a B/L already issued on paper. Its terms and conditions (2026-11-10) are the issuing legal entity's, per language (a PDF for print, the same terms as text for an eBL), else the organisation's English default: printed from a new page after the face, every page numbered, and kept with the B/L in the version it was issued with (an amendment keeps them). Each export office picks the terms its House B/Ls start with; the face stays in English; CargoDesk's starter text is never issued. A correction is a surrender for amendment followed by version 2 under the same
+for a B/L already issued on paper. Its terms and conditions (2026-11-10) are the issuing legal entity's, per language (a PDF for print, the same terms as text for an eBL), else the organisation's English default: printed from a new page after the face, every page numbered, and kept with the B/L in the version it was issued with (an amendment keeps them). Each export office picks the terms its House B/Ls start with (a language that stops being offered moves its offices to English); the face stays in English; CargoDesk's starter text is never issued. A House B/L uploaded from another system is issued with the terms picked on the House B/L panel (else the office's default), which its eBL carries; the uploaded file must print the same terms (2026-11-12). A correction is a surrender for amendment followed by version 2 under the same
 number. The B/L can be issued to order, in a chosen number of originals and copies, with the charges or "freight as
 arranged"; it prints every vessel and the on-carriage, a reefer's temperature and dangerous goods. The originals
 handed over are logged, and a telex release surrendered at origin sends the import office a task. All of it is run
@@ -567,7 +573,10 @@ terms); the carrier's PDF is read for its B/L number, containers and vessel (a s
 until the carrier releases the cargo is recorded step by step: paper originals received, sent to destination,
 surrendered, released (or surrendered at origin for a telex release); an eBL issued, transferred, surrendered, released,
 marked by hand from the platform; a sea waybill's release. CargoDesk no longer builds a Master B/L of its own. Releasing
-the House B/L at destination notes a Master the carrier hasn't released yet; it doesn't block.
+the House B/L at destination notes a Master the carrier hasn't released yet; it doesn't block. The export side prints,
+uploads and checks the document and records (and undoes) the steps at origin; either side records the surrender at
+destination and the release. All of it stays open on a Completed or Cancelled shipment, for the record (2026-11-12);
+only the form is fixed. A new PDF or copy voids the one it replaces.
 **Amending the issued Master B/L** (2026-10-28): after the carrier has issued it, a correction to the shipment
 (a seal replaced at an inspection, a changed notify party) goes to the carrier as an amendment of the issued
 B/L. The user first sees what differs; nothing is sent when nothing does. The carrier declines it (a task, with

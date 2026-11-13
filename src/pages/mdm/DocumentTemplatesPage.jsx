@@ -57,6 +57,8 @@ const FIELD_CATALOG = [
     { label: "Reference Number", path: "invNumber" },
     { label: "Date", path: "invDate" },
     { label: "Notes", path: "notes" },
+    // The House B/L's terms and conditions print from a new page after the layout; this sentence says where (C7).
+    { label: "Terms reference", path: "termsReference" },
   ]},
 ];
 
@@ -88,6 +90,7 @@ const SAMPLE_DATA = {
     { containerNumber: "MSKU7654321", sealNumber: "SL002", type: "40HC", cargoDescription: "General Cargo", grossWeightKg: 17500, volumeCbm: 64, hsCode: "8471.30" },
   ],
   invNumber: "BL01-SAMPLE-001", invDate: "2026-09-15", notes: "Sample preview data",
+  termsReference: "Carriage is subject to the terms and conditions on page 2 of this Bill of Lading (English, Rotterdam Branch, version 2), which form part of it.",
 };
 
 const newFieldId = () => `f-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;

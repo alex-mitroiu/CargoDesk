@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { followPrincipal, principalShape, payerOf } from "../../utils/incotermPrincipal";
 import { isShipmentLocked } from "../../utils/shipmentLock";
 import { INCOTERMS_2020, BL_RELEASE_TYPES, contractVariant } from "../../tokens";
 import { useAuth } from "../../AuthContext";
@@ -56,9 +57,14 @@ const ConditionsEditForm = ({ shipment, onSave, onCancel }) => {
     setF(p => ({ ...p, declaredValue: cleaned }));
   };
 
+  // A new incoterm moves a principal that follows it (empty, or the party the old incoterm implied); the server applies
+  // the same rule (lib/incoterm-principal.js), this shows it before saving (2026-11-13).
+  const principalAfter = followPrincipal(principalShape(shipment), { ...principalShape(shipment), incoterm: f.incoterm });
+
   // Full-record PUT (same as PartiesEditForm) — every other field rides along unchanged.
   const handleSave = () => withSaving(() => onSave({
     ...shipment, ...f,
+    ...(principalAfter.moved && { principalId: principalAfter.id, principalName: principalAfter.name }),
     blToOrder: f.blReleaseType === "Seaway Bill" ? "" : f.blToOrder,
     declaredValue: (f.declaredValue !== "" && Number(f.declaredValue) >= 0) ? Number(f.declaredValue) : null,
   }));
@@ -69,6 +75,11 @@ const ConditionsEditForm = ({ shipment, onSave, onCancel }) => {
         <div data-testid="shipment-conditions-form-incoterm-field">
           <Sel label="Incoterm" value={f.incoterm} onChange={v => setF(p => ({ ...p, incoterm: v }))}
             options={[{ value: "", label: "—" }, ...INCOTERMS_2020.map(t => ({ value: t.code, label: `${t.code} – ${t.name}` }))]} />
+          {principalAfter.moved && (
+            <div data-testid="conditions-principal-follows" style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted, marginTop: 5, lineHeight: 1.45 }}>
+              The principal becomes <b style={{ color: HZ.text }}>{principalAfter.name}</b>: under {f.incoterm} the {String(payerOf(f.incoterm) || "").toLowerCase()} pays the main carriage.
+            </div>
+          )}
         </div>
         <div data-testid="shipment-conditions-form-commodity-field">
           <Field label="Commodity">

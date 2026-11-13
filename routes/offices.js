@@ -85,8 +85,11 @@ module.exports = function officesRoutes(app, ctx) {
     const bid = branchId !== undefined ? (branchId || null) : existing.branch_id;
     // The default House B/L terms (2026-11-10): checked against the terms the office's legal entity (after this
     // save) and the organisation have; a key the entity no longer has (a changed entity) is dropped.
+    // Only a CHANGED value is refused: the form sends the stored one back with every save, and a stored key the office
+    // can no longer carry (its language stopped being offered) is dropped rather than blocking the save (the
+    // pre-release audit, C3, 2026-11-12).
     let termsDefault = req.body?.blTermsDefault !== undefined ? String(req.body.blTermsDefault || "").trim() : (existing.bl_terms_default || "");
-    if (req.body?.blTermsDefault !== undefined) {
+    if (termsDefault !== (existing.bl_terms_default || "")) {
       const bad = await ctx.blTerms.officeDefaultError(bid, termsDefault);
       if (bad) return err(res, bad);
     } else if (termsDefault && await ctx.blTerms.officeDefaultError(bid, termsDefault)) termsDefault = "";

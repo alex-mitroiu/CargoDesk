@@ -185,9 +185,35 @@ const NL_TEXT = "1. Definities\n“Vervoerder” is de vennootschap die op de vo
     const gone = await request("DELETE", `/api/bl-terms/${branchId}/nl`, null, token);
     const after = (await request("GET", `/api/bl-terms/options?officeId=${office.body.id}`, null, token)).body;
     assert("Dutch no longer offered: gone from the choices, the office falls back to English", gone.status === 200 && !after.options.some(o => o.key === "BRANCH:nl")
-      && after.defaultKey === "BRANCH:en" && after.officeDefaultValid === false, JSON.stringify({ gone: gone.body, def: after.defaultKey }));
+      && after.defaultKey === "BRANCH:en", JSON.stringify({ gone: gone.body, def: after.defaultKey }));
+    // The pre-release audit, C3 (2026-11-12): the office that started with Dutch is moved to English, so its form saves.
+    assert("…the office that started with Dutch is named and starts with English now", gone.body?.clearedOffices?.some(o => o.id === office.body.id)
+      && after.officeDefault === "" && after.officeDefaultValid === true, JSON.stringify({ cleared: gone.body?.clearedOffices, def: after.officeDefault }));
+    list = (await request("GET", "/api/bl-terms", null, token)).body;
+    assert("…and B/L Terms no longer lists it under Dutch", !list.sets.find(s => s.branchId === branchId)?.defaultFor.some(o => o.key === "BRANCH:nl"),
+      JSON.stringify(list.sets.find(s => s.branchId === branchId)?.defaultFor));
+    const officeRow = (await request("GET", "/api/offices", null, token)).body.find(o => o.id === office.body.id);
+    r = await request("PUT", `/api/offices/${office.body.id}`, { name: officeRow.name, blTermsDefault: officeRow.blTermsDefault }, token);
+    assert("…its form saves as it is (200)", r.status === 200, JSON.stringify(r.body));
     h = await house(a.shipment.id);
     assert("…while the issued B/L still shows its Dutch version 4", h.terms?.locked?.version === 4 || h.terms?.issued?.version === 4, JSON.stringify(h.terms?.locked));
+
+    // The pre-release audit, C2 (2026-11-12): an uploaded House B/L is issued with the terms picked (else the office's
+    // default), so its eBL carries them; never the starter text.
+    console.log("\nAn uploaded House B/L carries the terms picked in the panel");
+    const upload = (await request("POST", `/api/shipments/${b.shipment.id}/documents`, { filename: `BL01-${b.shipment.id}-own-system.pdf`, mimeType: "application/pdf",
+      docType: "BL01", data: await pdfBase64(2, `HOUSE BILL OF LADING ${b.shipment.blNumber}`) }, token)).body;
+    r = await request("PATCH", `/api/shipments/${b.shipment.id}/documents/${upload.id}`, { status: "confirmed", termsKey: "ORG:en" }, token);
+    assert("issuing it on the starter text is refused (409)", r.status === 409 && /starter text/.test(r.body?.error), JSON.stringify(r.body));
+    r = await request("PATCH", `/api/shipments/${b.shipment.id}/documents/${upload.id}`, { status: "confirmed" }, token);
+    assert("issued with the office's default: its entity's English", r.status === 200, JSON.stringify(r.body).slice(0, 300));
+    const hb = await house(b.shipment.id);
+    const entityEn = list.sets.find(s => s.branchId === branchId)?.docs.find(d => d.language === "en");
+    assert("…the issued B/L records them", !!hb.live && hb.live.termsId === entityEn?.id && hb.terms?.issued?.key === "BRANCH:en",
+      JSON.stringify({ t: hb.live?.termsId, want: entityEn?.id, issued: hb.terms?.issued?.key }));
+    const upDcsa = hb.live ? (await request("GET", `/api/shipments/${b.shipment.id}/house-bl/${hb.live.id}/dcsa`, null, token)).body : null;
+    assert("…and its eBL document carries their text, not the old one-sentence placeholder", upDcsa?.document?.termsAndConditions === entityEn?.text
+      && !/^Received by the carrier/.test(upDcsa?.document?.termsAndConditions || ""), String(upDcsa?.document?.termsAndConditions).slice(0, 80));
   } catch (e) {
     console.error("\nFatal:", e.message);
     failed++;

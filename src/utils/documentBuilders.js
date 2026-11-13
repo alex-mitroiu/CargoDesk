@@ -155,6 +155,12 @@ const COUNT_WORDS = ["ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVE
 // The face names the pages its terms are on (2026-11-10); the server fills this in once it knows how many pages
 // the face takes (lib/bl-terms.js FACE_TOKEN, the same string).
 export const BL_TERMS_PAGES_TOKEN = "__BL_TERMS_PAGES__";
+// The terms' place, in words: the built-in face's clause, and as a sentence the Document Template Editor's "Terms
+// reference" field prints (the pre-release audit, C7, 2026-11-12). terms = { languageName, ownerName, version } or null.
+export const blTermsClause = terms => (terms
+  ? `subject to the terms and conditions on ${BL_TERMS_PAGES_TOKEN} of this Bill of Lading (${terms.languageName}, ${terms.ownerName}, version ${terms.version}), which form part of it`
+  : "");
+export const blTermsReference = terms => (terms ? `Carriage is ${blTermsClause(terms)}.` : "");
 const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee, notify, parties, exportFilingItn, houseBl, issuer,
   routing = null, charges = [], version = 1, amendsIssueDate = null }) => {
   const { w: totalWeight, v: totalVolume } = _ctrTotals(containers);
@@ -292,7 +298,7 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
       ${onBoard ? "the above named vessel" : "for carriage on the above named vessel"} in apparent good order and condition unless otherwise noted,
       the total number of containers or packages stated above, weight, measure, marks, numbers, quality, contents and value unknown,
       ${houseBl?.terms
-        ? `for carriage subject to the terms and conditions on ${BL_TERMS_PAGES_TOKEN} of this Bill of Lading (${_esc(houseBl.terms.languageName)}, ${_esc(houseBl.terms.ownerName)}, version ${_esc(houseBl.terms.version)}), which form part of it.`
+        ? `for carriage ${_esc(blTermsClause(houseBl.terms))}.`
         : "for carriage subject to all the terms and conditions of the carrier's House Bill of Lading."} Freight and charges payable as indicated.
       ${sh.blReleaseType !== "Seaway Bill" ? "One of the original Bills of Lading being accomplished, the others to stand void." : ""}
       In accepting this Bill of Lading, the shipper, consignee and holder agree to be bound by all its stipulations, exceptions and conditions.

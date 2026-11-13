@@ -430,7 +430,8 @@ module.exports = function masterBlRoutes(app, ctx) {
     const cutoff = new Date(Date.now() - olderThanMinutes * 60000).toISOString();
     const rows = await query(`SELECT t.*, si.id AS si_id FROM transport_documents t JOIN shipping_instructions si ON si.shipment_id = t.shipment_id
       WHERE t.role='MASTER' AND t.status IN ('DRAFT','APPROVED','ISSUED','PENDING_SURRENDER_FOR_DELIVERY','PENDING_SURRENDER_FOR_AMENDMENT','SURRENDERED_FOR_AMENDMENT')
-        AND (t.carrier_state_at IS NULL OR t.carrier_state_at <= $1)`, [cutoff]);
+        AND (t.carrier_state_at IS NULL OR t.carrier_state_at <= $1)
+        AND NOT EXISTS (SELECT 1 FROM shipments s WHERE s.id = t.shipment_id AND COALESCE(s.imported_from,'') <> '')`, [cutoff]);
     const summary = { polled: 0, changed: 0, failed: 0 };
     for (const td of rows) {
       const integ = await carrierIntegrationFor(td.carrier_code, "shipping-instructions").catch(() => null);

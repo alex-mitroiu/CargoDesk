@@ -1619,6 +1619,72 @@ NLAMS → NLRTM (Carrier's Haulage, 16 Nov), as Save stored them before the fix 
 
 ---
 
+### TC-103: A production shipment exported for QA and imported into a test system
+**Feature:** Export for QA (shipment header, admins) and Test Tools → Shipment Import (lib/shipment-transfer.js, ARCHITECTURE.md §8.50)
+**Precondition:** A complete NLRTM → USNYC MAEU shipment: booked by the demo carrier, a 40' HC loaded, a House B/L issued, a charge, a message; an operator account
+**Steps:**
+1. As the operator: export, import, turn shipment imports on
+2. As an admin: open Export for QA; export with what went wrong and three steps
+3. Import a file that isn't an export, then one from a newer CargoDesk
+4. Import the file as if the test system lacked its export office and its consignee: without choosing an office, then choosing one
+5. Open the imported shipment: header, parties, containers, charges, booking, House B/L, documents, messages, history, the Shipments list
+6. On the imported shipment: send a booking request, check the booking, submit Shipping Instructions, sync vessel times, email a document, issue an eBL, submit a VGM; post a message
+7. Import the same file again; complete the original shipment and export it
+
+**Expected Result:**
+- 1: 403 each
+- 2: the window lists the parts with counts, the files and the records it points at, and warns the file holds real data; the download is named SHP-…-for-QA-<date>.json: format cargodesk-shipment-export/1, the report with its 3 steps, a summary naming the route, the parties, the problem and the steps; every record as stored, the customers with identifiers, the documents' bytes
+- 3: "isn't a CargoDesk shipment export"; 409 "newer than this system"
+- 4: the export office must be chosen (409 until it is); the shipper found by name, the consignee created (notes: imported); then 201 under a new id
+- 5: IMPORTED with where it came from and the report; the chosen export office; everything as it was, documents byte for byte under new ids; the history plus "Imported"; the list shows IMPORTED
+- 6: 409 IMPORTED_SHIPMENT for each send; the message 201
+- 7: another new id; the Completed shipment exports (200)
+
+**Status:** PASS (2026-11-13, automated: tests/shipment-transfer.test.js (38); src/components/shared/ShipmentQaExport.test.jsx; src/pages/ShipmentImportPanel.test.jsx)
+
+---
+
+### TC-102: An uploaded House B/L carries the terms picked; a language that stops being offered moves its offices to English
+**Feature:** The pre-release audit TKT-GC05AS, C2 + C3 + C7 (2026-11-12): PATCH …/documents/:docId `termsKey` for an uploaded BL01; DELETE /api/bl-terms/:owner/:language clearing offices' defaults; the office save; the template editor's Terms reference field
+**Precondition:** The TC-099 office: its entity's English (text) and Dutch terms, Dutch its default; a second ready House B/L shipment NLRTM → USNYC
+**Steps:**
+1. Stop offering Dutch; open B/L Terms and the office's options; save the office form as it is
+2. Upload a House B/L PDF made elsewhere (BL01) on the second shipment; confirm it with the organisation's starter text picked
+3. Confirm it with nothing picked; open its DCSA document
+4. In Master Data → Document Templates, add Document → Terms reference to a BL01 layout and preview
+
+**Expected Result:**
+- 1: the office is named in the answer (and on the page before the second click) and starts with English (default unset, valid); B/L Terms no longer lists it under Dutch; the form saves (200)
+- 2: 409 "starter text can't be issued"
+- 3: issued with the entity's English terms (the issued B/L records them; the panel had said so beside the pick); its termsAndConditions are their text, not the one-sentence placeholder
+- 4: the sentence "Carriage is subject to the terms and conditions on page 2 of this Bill of Lading (English, Rotterdam Branch, version 2), which form part of it."
+
+**Status:** PASS (2026-11-12, automated: tests/bl-terms.test.js (48); src/pages/org/BlTermsPage.test.jsx; src/components/shared/HouseBlPanel.test.jsx; src/utils/houseBlPrint.test.js)
+
+---
+
+### TC-101: The carrier's Master B/L: each side's steps, a closed shipment, a replaced or removed PDF
+**Feature:** The pre-release audit TKT-GC05AS, C1 + C4 + C5 + C6 + C8 (2026-11-12): routes/carrier-mbl.js side rules; server.js isOpenOnLockedShipment; onDocumentGone; voidReplaced
+**Precondition:** TC-100's shipments; an OCC/BK user of the shipments' import office (temporary)
+**Steps:**
+1. The export desk records Received; the import desk undoes it, checks the PDF by eye, records Sent
+2. The export desk records Sent; the import desk surrenders at destination, undoes it, surrenders again, records the release
+3. Upload the carrier's PDF twice; read both documents and the first one's history; delete the second from Documents; upload a third and void it there
+4. Complete the shipment printed in TC-100; print again; upload its PDF; record Received and undo it; change its form
+5. Record Received dated a day ahead of UTC
+
+**Expected Result:**
+- 1: 403 each (the export side's)
+- 2: 201, 200 (back to Sent), 201, 201 released; the events say which side they belong to (`atOrigin`)
+- 3: the first voided "Replaced by MAEU-scan-2.pdf" (history: GENERATED, VOIDED), the second confirmed; after the delete and the void the panel holds no PDF
+- 4: 201 and the earlier copy voided; 201; 201; 200; the form 409 SHIPMENT_LOCKED
+- 5: 201
+- The panel (Vitest): the import side sees the document and Download but no Print/Upload, the destination step, no undo of an export step, and "… are recorded by the export side"; a Completed shipment keeps Print, Upload and the steps but not the form; the date defaults to the user's own day
+
+**Status:** PASS (2026-11-12, automated: tests/carrier-mbl.test.js (59); src/components/shared/CarrierMasterBlPanel.test.jsx (10))
+
+---
+
 ### TC-100: The carrier's Master B/L: printed, its PDF read, its originals or eBL until released
 **Feature:** Documents → Carrier's Master B/L (lib/carrier-mbl.js); POST …/documents/generate refusing MB01; the House B/L's release note
 **Precondition:** A scratch export office with its legal entity; complete NLRTM → USNYC MAEU shipments (real parties, FOB, sealed 40' HCs on MAERSK KENSINGTON); one booked through the demo carrier

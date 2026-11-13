@@ -13,7 +13,10 @@
 //   POST /api/shipments/:id/master-bl/pdf/check         { byEye? } read it again / a scan checked by eye
 //   POST /api/shipments/:id/master-bl/print             the carrier's issued B/L printed from its data → MB01 (a copy)
 // /api/shipments/:id/* is scope-checked app-wide. The steps at origin (received, sent, issued, transferred, surrendered
-// at origin) are the export side's; surrendering at destination and the release either side's.
+// at origin) are the export side's, to record and to undo, and so are the PDF, its by-eye check and the print;
+// surrendering at destination and the release either side's (the pre-release audit, C1, 2026-11-12).
+// On a Completed or Cancelled shipment the PDF, the print, the steps and undo stay open (server.js
+// isOpenOnLockedShipment: the carrier's documents are kept for the record, e.g. US retention); the form doesn't.
 
 module.exports = function carrierMblRoutes(app, ctx) {
   const { query, ok, err, auth, requireRole, blockIfWrongSide, renderHtmlToPdf, getActiveSigningCert, signPdfBuffer } = ctx;
@@ -48,13 +51,16 @@ module.exports = function carrierMblRoutes(app, ctx) {
     const step = String(req.body?.step || "").toUpperCase();
     // At origin it is the export side's; at destination (and the release) either side's.
     const v = await m().view(req.params.id);
-    const atOrigin = ["RECEIVED", "SENT", "ISSUED", "TRANSFERRED"].includes(step) || (step === "SURRENDERED" && ["RECEIVED", "ISSUED"].includes(v.stage));
-    if (atOrigin && (await blockIfWrongSide(req, res, s, "export"))) return;
+    if (m().isOriginStep(step, { stage: v.stage }) && (await blockIfWrongSide(req, res, s, "export"))) return;
     send(res, await m().recordStep(req.params.id, req.body || {}, req.user), 201);
   });
 
+  // Undoing a step follows the side of the step it undoes.
   app.post("/api/shipments/:id/master-bl/custody/undo", write, async (req, res) => {
-    if (!(await shipmentOf(req, res))) return;
+    const s = await shipmentOf(req, res);
+    if (!s) return;
+    const last = (await m().view(req.params.id)).events.filter(e => !e.undone).slice(-1)[0];
+    if (last?.atOrigin && (await blockIfWrongSide(req, res, s, "export"))) return;
     send(res, await m().undoLast(req.params.id, req.body?.reason, req.user));
   });
 
@@ -64,7 +70,7 @@ module.exports = function carrierMblRoutes(app, ctx) {
   });
 
   app.post("/api/shipments/:id/master-bl/pdf/check", write, async (req, res) => {
-    if (!(await shipmentOf(req, res))) return;
+    if (!(await exportSide(req, res))) return;
     send(res, await m().recheckPdf(req.params.id, req.body || {}, req.user));
   });
 

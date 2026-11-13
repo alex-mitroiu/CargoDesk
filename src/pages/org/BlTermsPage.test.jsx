@@ -84,14 +84,16 @@ describe("Organisation → B/L Terms", () => {
     expect(api.blTerms.save).not.toHaveBeenCalled();
   });
 
-  it("stopping a language takes a second click", async () => {
-    api.blTerms.retire.mockResolvedValue({ retired: 2 });
+  it("stopping a language takes a second click, after naming the offices that start with it", async () => {
+    api.blTerms.retire.mockResolvedValue({ retired: 2, clearedOffices: [{ id: "OFF-1", code: "NL-NLRTM-SE", name: "Rotterdam Office" }] });
     renderPage();
     fireEvent.click(await screen.findByTestId("bl-terms-set-BRN-79E27Q"));
     fireEvent.click(screen.getByTestId("bl-terms-lang-nl"));
     fireEvent.click(screen.getByTestId("bl-terms-retire"));
     expect(api.blTerms.retire).not.toHaveBeenCalled();
     expect(screen.getByTestId("bl-terms-retire")).toHaveTextContent("Click again: stop offering Dutch");
+    // The pre-release audit, C3: the office that starts with Dutch is named before, moved to English after.
+    expect(screen.getByTestId("bl-terms-retire-note")).toHaveTextContent("NL-NLRTM-SE starts House B/Ls with these terms: once they're no longer offered, it starts with English.");
     fireEvent.click(screen.getByTestId("bl-terms-retire"));
     await waitFor(() => expect(api.blTerms.retire).toHaveBeenCalledWith("BRN-79E27Q", "nl"));
   });

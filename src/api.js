@@ -141,6 +141,31 @@ export const api = {
     listAll:          (params={})        => req("GET",   `/shipping-instructions?${new URLSearchParams(params)}`),
   },
   // The carrier's Master B/L, drafted from the Shipping Instructions (DCSA eBL 3.0 transport document).
+  // A shipment as one JSON file for QA, and imported into a test system (2026-11-13, routes/shipment-transfer.js). Admins.
+  qaExport: {
+    contents: (shipmentId) => req("GET", `/shipments/${shipmentId}/qa-export`),
+    // Saves the file; resolves to its name.
+    download: async (shipmentId, { whatWentWrong = "", steps = "" } = {}) => {
+      const token = localStorage.getItem(TOKEN_KEY);
+      const res = await fetch(`${BASE}/shipments/${shipmentId}/qa-export`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...(token && { Authorization: `Bearer ${token}` }) },
+        body: JSON.stringify({ whatWentWrong, steps }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "The export failed"); }
+      const filename = (res.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/)?.[1] || `${shipmentId}-for-QA.json`;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+      return filename;
+    },
+  },
+  shipmentImport: {
+    status:  ()                     => req("GET",  "/shipment-import/status"),
+    preview: (file, officeMap = {}) => req("POST", "/shipment-import/preview", { file, officeMap }),
+    run:     (file, officeMap = {}) => req("POST", "/shipment-import", { file, officeMap }),
+  },
   masterBl: {
     get:     (shipmentId) => req("GET",  `/shipments/${shipmentId}/master-bl`),
     approve: (shipmentId) => req("POST", `/shipments/${shipmentId}/master-bl/approve`, {}),

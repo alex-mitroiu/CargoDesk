@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { toast } from "../../toast";
 import useSaving from "../../hooks/useSaving";
 import { T, STATUSES, INCOTERMS_2020, IMDG_CLASSES, BL_RELEASE_TYPES, teuOf, buildTeuLookup } from "../../tokens";
+import { withFollowedPrincipal, principalHintText } from "../../utils/incotermPrincipal";
 import { api } from "../../api";
 import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
@@ -1688,6 +1689,12 @@ const CommodityHint = () => (
   <InfoHint>Maersk freight type — determines handling, documentation, and service eligibility.</InfoHint>
 );
 
+// Under the Principal field while the principal is the party the incoterm implies (2026-11-13).
+const PrincipalHint = ({ f }) => {
+  const text = principalHintText(f);
+  return text ? <div data-testid="principal-from-incoterm" style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 4 }}>{text}</div> : null;
+};
+
 const SectionDivider = ({ label, id }) => (
   <div id={id} data-testid={id ? `shipment-form-section-${id.replace(/^shpform-/, "")}` : undefined}
     style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 0" }}>
@@ -2047,17 +2054,18 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
         <div data-testid="shipment-form-shipper-field">
           <CustomerCombobox label="Shipper" required
             value={{ id: f.shipperId, name: f.shipperName }}
-            onChange={v => setF(p => ({ ...p, shipperId: v.id, shipperName: v.name }))} />
+            onChange={v => setF(p => withFollowedPrincipal(p, { ...p, shipperId: v.id, shipperName: v.name }))} />
         </div>
         <div data-testid="shipment-form-consignee-field">
           <CustomerCombobox label="Consignee" required
             value={{ id: f.consigneeId, name: f.consigneeName }}
-            onChange={v => setF(p => ({ ...p, consigneeId: v.id, consigneeName: v.name }))} />
+            onChange={v => setF(p => withFollowedPrincipal(p, { ...p, consigneeId: v.id, consigneeName: v.name }))} />
         </div>
         <div data-testid="shipment-form-principal-field">
           <CustomerCombobox label="Principal" required
             value={{ id: f.principalId, name: f.principalName }}
             onChange={v => setF(p => ({ ...p, principalId: v.id, principalName: v.name }))} />
+          <PrincipalHint f={f} />
         </div>
       </div>
       {touched.parties && (!f.shipperId || !f.consigneeId || !f.principalId) && (
@@ -2096,17 +2104,9 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
           <Sel label="Incoterm" value={f.incoterm}
             onChange={v => {
               touch("incoterm");
-              // C/D terms → seller pays → Shipper is principal; E/F terms → buyer arranges → Consignee is principal
-              const sellerPays = new Set(['CPT','CIP','CFR','CIF','DAP','DPU','DDP']);
-              setF(p => {
-                const next = { ...p, incoterm: v };
-                if (sellerPays.has(v) && p.shipperId) {
-                  next.principalId = p.shipperId; next.principalName = p.shipperName;
-                } else if (!sellerPays.has(v) && v && p.consigneeId) {
-                  next.principalId = p.consigneeId; next.principalName = p.consigneeName;
-                }
-                return next;
-              });
+              // C/D terms → the seller pays → the shipper is the principal; E/F terms → the buyer arranges → the consignee
+              // (src/utils/incotermPrincipal.js, the server's rule too). A principal someone chose isn't moved.
+              setF(p => withFollowedPrincipal(p, { ...p, incoterm: v }));
             }} required
             error={touched.incoterm && !f.incoterm}
             options={[

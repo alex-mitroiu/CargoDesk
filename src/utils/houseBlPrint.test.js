@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { dispatchDocBuilder, BL_TERMS_PAGES_TOKEN } from "./documentBuilders";
+import { dispatchDocBuilder, BL_TERMS_PAGES_TOKEN, blTermsReference } from "./documentBuilders";
+import { renderTemplateHtml } from "./templateRenderer";
 import { houseBlTermsOf } from "./houseBlDocument";
 
 // The printed House B/L (Epic TKT-C7EBU3, approved mockups https://claude.ai/artifact/Tr9cyqXe31HqYTxy63ap7Z and
@@ -123,5 +124,16 @@ describe("BL01, the remaining gaps", () => {
     expect(houseBlTermsOf(terms, "BRANCH:nl")).toBe(nl);
     expect(houseBlTermsOf({ ...terms, locked }, "BRANCH:en")).toBe(locked);
     expect(houseBlTermsOf({ options: [], defaultKey: null }, null)).toBeNull();
+  });
+
+  // The pre-release audit, C7 (2026-11-12): a Document Template Editor layout prints the same sentence where its
+  // "Terms reference" field sits; the server fills in the pages as on the built-in face.
+  it("a template layout's Terms reference field names the terms pages", () => {
+    const terms = { languageName: "Dutch", ownerName: "Rotterdam Branch", version: 2 };
+    expect(blTermsReference(terms)).toBe(`Carriage is subject to the terms and conditions on ${BL_TERMS_PAGES_TOKEN} of this Bill of Lading (Dutch, Rotterdam Branch, version 2), which form part of it.`);
+    expect(blTermsReference(null)).toBe("");
+    const html = renderTemplateHtml({ docType: "BL01", pageSize: "A4", fields: [{ x: 40, y: 900, width: 700, height: 40, path: "termsReference" }] },
+      { termsReference: blTermsReference(terms) });
+    expect(html).toContain(`on ${BL_TERMS_PAGES_TOKEN} of this Bill of Lading (Dutch, Rotterdam Branch, version 2)`);
   });
 });

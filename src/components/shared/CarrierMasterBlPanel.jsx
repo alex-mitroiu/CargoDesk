@@ -3,6 +3,9 @@ import { api } from "../../api";
 import { toast } from "../../toast";
 import Btn from "../primitives/Btn";
 import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "../../pages/shipments/shipmentDetailTheme";
+import { useAuth } from "../../AuthContext";
+import { canActOnShipmentSide } from "../../utils/officeSide";
+import { isShipmentLocked } from "../../utils/shipmentLock";
 
 // ─── The carrier's Master B/L, as sent to you (2026-11-10, mockup ceca35b0, ARCHITECTURE.md §8.49) ──────────────────
 // On the shipment's Documents page, under the House B/L. Reads GET /api/shipments/:id/master-bl/custody (lib/carrier-mbl.js):
@@ -10,8 +13,12 @@ import { HZ, HZ_MONO, HZ_BODY, useHorizonFonts } from "../../pages/shipments/shi
 // carrier releases the cargo: paper originals (received → sent to destination → surrendered → released, or surrendered at
 // origin), an eBL on a platform (tracked, each step marked by hand), or a sea waybill (the release only). Reviewing and
 // approving the carrier's draft stays on Shipping Instructions.
+// Who sees what (the pre-release audit, C1/C4, 2026-11-12): the document (print, upload, the by-eye check) and the steps
+// at origin (with their undo) are the export side's; the surrender at destination and the release either side's. All of
+// it stays open on a Completed or Cancelled shipment, for the record; choosing the form doesn't.
 
-const today = () => new Date().toISOString().slice(0, 10);
+// The user's own date (C8): the server accepts up to a day ahead of UTC.
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 const fmtDay = d => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }) : "");
 const fmtWhen = iso => (iso ? new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
 const card = () => ({ padding: "16px 18px", borderRadius: 10, background: HZ.surface, border: `1px solid ${HZ.border}`, display: "flex", flexDirection: "column", gap: 12 });
@@ -44,6 +51,10 @@ export const stepText = e => {
 
 export default function CarrierMasterBlPanel({ shipment, canEdit, onChanged }) {
   useHorizonFonts();
+  const auth = useAuth();
+  // canEdit is the role (and the edit lock); the side comes from the shipment (myOfficeSide), as on every side-gated page.
+  const exportOk = !!canEdit && canActOnShipmentSide({ ...auth, canEditShipments: true }, shipment, "export");
+  const formOk = exportOk && !isShipmentLocked(shipment);
   const [v, setV] = useState(null);
   const [busy, setBusy] = useState(null);
   const [nextStep, setNextStep] = useState(null);
@@ -59,9 +70,10 @@ export default function CarrierMasterBlPanel({ shipment, canEdit, onChanged }) {
   useEffect(() => { load(); }, [load]);
   // The next step's form starts from what's known (the originals, the carrier, the import office).
   const stage = v?.stage || "";
+  const stepOk = n => !!canEdit && (!n.atOrigin || exportOk);
   useEffect(() => {
     if (!v) return;
-    const step = v.next[0]?.step || null;
+    const step = v.next.find(stepOk)?.step || null;
     setNextStep(step);
     const received = v.events.filter(e => !e.undone && e.step === "RECEIVED").slice(-1)[0]?.detail?.count;
     setF({ on: today(), count: String(received || v.originalsTotal), from: shipment.carrierCode || "", to: "", courier: "", ref: "",
@@ -110,6 +122,9 @@ export default function CarrierMasterBlPanel({ shipment, canEdit, onChanged }) {
     if (file.type && file.type !== "application/pdf") return toast.error("Choose the carrier's PDF");
     await act("pdf", async () => api.masterBl.uploadPdf(shipment.id, { data: await fileToDataUrl(file), filename: file.name }), "The carrier's PDF is saved to Documents");
   };
+  const nextOk = v.next.filter(stepOk);
+  const lastLive = v.events.filter(e => !e.undone).slice(-1)[0] || null;
+  const undoOk = !!canEdit && !!lastLive && (!lastLive.atOrigin || exportOk);
   const checkItems = check && !check.readable
     ? [`blNumber:${check.blNumber.value}`, ...check.containers.map(c => `container:${c.number}`), ...(check.vessel.value ? [`vessel:${check.vessel.value}`] : [])] : [];
   const byEyeTicked = k => ticks[k] ?? (check?.byEye?.ticked || []).includes(k);
@@ -149,7 +164,7 @@ export default function CarrierMasterBlPanel({ shipment, canEdit, onChanged }) {
       <div style={box()}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <b style={{ fontSize: 13 }}>The document</b>
-          {canEdit && (
+          {exportOk && (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {v.canPrint && <Btn data-testid="carrier-mbl-print" disabled={!!busy} onClick={() => act("print", () => api.masterBl.printCopy(shipment.id), "The carrier's B/L is printed to Documents (MB01)")}>
                 {busy === "print" ? "Printing…" : v.print ? "Print again" : "Print the carrier's B/L"}</Btn>}
@@ -175,7 +190,7 @@ export default function CarrierMasterBlPanel({ shipment, canEdit, onChanged }) {
               <span data-testid="carrier-mbl-pdf-doc" style={{ fontFamily: HZ_MONO, fontSize: 12 }}>{v.pdf.filename}</span>
               <span style={{ color: HZ.textMuted, fontSize: 12 }}>saved {fmtWhen(v.pdf.createdAt)}{v.pdf.by ? ` by ${v.pdf.by}` : ""}</span>
               <Btn variant="secondary" onClick={() => api.documents.download(shipment.id, v.pdf.documentId, v.pdf.filename).catch(e => toast.error(e.message))}>Download</Btn>
-              {canEdit && <Btn variant="secondary" disabled={!!busy} onClick={() => act("check", () => api.masterBl.checkPdf(shipment.id), "Checked again")}>Check again</Btn>}
+              {exportOk && <Btn variant="secondary" disabled={!!busy} onClick={() => act("check", () => api.masterBl.checkPdf(shipment.id), "Checked again")}>Check again</Btn>}
             </div>
             {check?.readable && (
               <div data-testid="carrier-mbl-checks" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -193,11 +208,11 @@ export default function CarrierMasterBlPanel({ shipment, canEdit, onChanged }) {
                 <div style={note("warn")}><b>!</b><span><b>No text in this PDF</b> (a scan or a photo): CargoDesk can't read it. Check it by eye{check.byEye?.complete ? `: all checked by ${check.byEye.by}` : ":"}</span></div>
                 {checkItems.map(k => (
                   <label key={k} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
-                    <input type="checkbox" data-testid={`carrier-mbl-tick-${k}`} disabled={!canEdit} checked={byEyeTicked(k)} onChange={e => setTicks(t => ({ ...t, [k]: e.target.checked }))} />
+                    <input type="checkbox" data-testid={`carrier-mbl-tick-${k}`} disabled={!exportOk} checked={byEyeTicked(k)} onChange={e => setTicks(t => ({ ...t, [k]: e.target.checked }))} />
                     {k.startsWith("blNumber:") ? `B/L number ${k.slice(9) || "(none on the shipment)"}` : k.startsWith("container:") ? `Container ${k.slice(10)}` : `Vessel ${k.slice(7)}`}
                   </label>
                 ))}
-                {canEdit && <div><Btn variant="secondary" disabled={!!busy} onClick={() => act("ticks", () => api.masterBl.checkPdf(shipment.id, { byEye: Object.fromEntries(checkItems.map(k => [k, byEyeTicked(k)])) }), "Saved")}>Save what I checked</Btn></div>}
+                {exportOk && <div><Btn variant="secondary" disabled={!!busy} onClick={() => act("ticks", () => api.masterBl.checkPdf(shipment.id, { byEye: Object.fromEntries(checkItems.map(k => [k, byEyeTicked(k)])) }), "Saved")}>Save what I checked</Btn></div>}
               </div>
             )}
           </div>
@@ -205,7 +220,7 @@ export default function CarrierMasterBlPanel({ shipment, canEdit, onChanged }) {
       </div>
 
       {/* The form, before any step */}
-      {canEdit && !v.locked && (
+      {formOk && !v.locked && (
         <div style={box()} data-testid="carrier-mbl-setup">
           <b style={{ fontSize: 13 }}>How the carrier issued it</b>
           <div role="radiogroup" aria-label="Form" style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
@@ -245,14 +260,14 @@ export default function CarrierMasterBlPanel({ shipment, canEdit, onChanged }) {
             );
           })}
         </ol>
-        {canEdit && v.next.length > 0 && (
+        {nextOk.length > 0 && (
           <div data-testid="carrier-mbl-next" style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", padding: "10px 12px", borderRadius: 8, border: `1px solid ${HZ.border}` }}>
-            {v.next.length > 1 ? (
+            {nextOk.length > 1 ? (
               <label style={fieldLabel()}>Next
                 <select data-testid="carrier-mbl-next-select" value={nextStep || ""} onChange={e => setNextStep(e.target.value)} style={inputStyle()}>
-                  {v.next.map(n => <option key={n.step} value={n.step}>{n.label}</option>)}
+                  {nextOk.map(n => <option key={n.step} value={n.step}>{n.label}</option>)}
                 </select></label>
-            ) : <b style={{ fontSize: 13, alignSelf: "center" }}>{v.next[0].label}</b>}
+            ) : <b style={{ fontSize: 13, alignSelf: "center" }}>{nextOk[0].label}</b>}
             {fieldsFor(nextStep)}
             {field("on", "On", { type: "date", max: today() })}
             <datalist id="carrier-mbl-to-options">
@@ -262,9 +277,14 @@ export default function CarrierMasterBlPanel({ shipment, canEdit, onChanged }) {
             <Btn data-testid="carrier-mbl-record" disabled={!!busy || !f.on} onClick={record}>{busy === "step" ? "Recording…" : `Record: ${(v.next.find(n => n.step === nextStep)?.label || "").toLowerCase()}`}</Btn>
           </div>
         )}
+        {canEdit && !exportOk && nextOk.length < v.next.length && (
+          <span data-testid="carrier-mbl-export-side" style={{ fontSize: 12, color: HZ.textMuted }}>
+            {v.next.filter(n => !stepOk(n)).map(n => `"${n.label}"`).join(" and ")} {v.next.filter(n => !stepOk(n)).length === 1 ? "is" : "are"} recorded by the export side.
+          </span>
+        )}
         {v.released && <div style={note("ok")}><b>✓</b><span>Released by the carrier. The House B/L's release at destination no longer notes the Master.</span></div>}
         {v.form === "EBL" && !v.released && <span style={{ fontSize: 12, color: HZ.textMuted }}>CargoDesk doesn't connect to the platform: mark each step here after doing it there.</span>}
-        {canEdit && v.locked && (
+        {undoOk && (
           undoOpen ? (
             <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
               <label style={{ ...fieldLabel(), flex: 1, minWidth: 240 }}>Why undo the last step?

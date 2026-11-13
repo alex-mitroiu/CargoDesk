@@ -339,7 +339,8 @@ module.exports = function shippingInstructionsRoutes(app, ctx) {
     // Submitted, and Confirmed ones the carrier hasn't finished with (a lost COMPLETED after the surrender).
     const rows = await query(`SELECT * FROM shipping_instructions WHERE status IN ('Submitted','Confirmed') AND COALESCE(si_reference,'') <> ''
       AND COALESCE(carrier_code,'') <> '' AND COALESCE(carrier_state,'') NOT IN ('COMPLETED','CANCELLED','DECLINED')
-      AND (carrier_state_at IS NULL OR carrier_state_at <= $1)`, [cutoff]);
+      AND (carrier_state_at IS NULL OR carrier_state_at <= $1)
+      AND NOT EXISTS (SELECT 1 FROM shipments s WHERE s.id = shipping_instructions.shipment_id AND COALESCE(s.imported_from,'') <> '')`, [cutoff]);
     const summary = { polled: 0, changed: 0, failed: 0 };
     for (const si of rows) {
       const integ = await carrierIntegrationFor(si.carrier_code, "shipping-instructions").catch(() => null);

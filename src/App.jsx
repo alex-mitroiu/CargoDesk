@@ -2406,7 +2406,8 @@ function App() {
         {page === "test-plans"  && isEnabled("kanban")    && <TestPlansPage />}
         {page === "test-runs"   && isEnabled("kanban")    && <TestRunsPage />}
         {page === "test-cases"  && isEnabled("kanban")    && <TestCasesPage />}
-        {page === "test-tools"  && isEnabled("kanban")    && <TestToolsPage navigate={navigate} />}
+        {page === "test-tools"  && isEnabled("kanban")    && <TestToolsPage navigate={navigate}
+          onShipmentCreated={shp => setShipments(p => [shp, ...p.filter(x => x.id !== shp.id)])} />}
 
         {page === "dashboard-archive" && (
           <DashboardArchive

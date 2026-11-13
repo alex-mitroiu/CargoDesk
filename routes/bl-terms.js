@@ -6,7 +6,8 @@
 //   POST   /api/bl-terms                              admin: { branchId|null, language, title?, text, pdfBase64?,
 //                                                     pdfFilename?, keepPdf? } a new version → 201 { doc }
 //   DELETE /api/bl-terms/:owner/:language             admin: no longer offer a language (owner = "org" or a branch id);
-//                                                     its versions stay for the B/Ls issued on them
+//                                                     its versions stay for the B/Ls issued on them; offices that
+//                                                     started with it start with English → { retired, clearedOffices }
 //   GET    /api/bl-terms/options?officeId=            the terms an office's House B/Ls can carry, and its default
 //   GET    /api/bl-terms/:id/pdf                      a version's PDF (terms are public: every B/L prints them)
 
@@ -37,7 +38,7 @@ module.exports = function blTermsRoutes(app, ctx) {
 
   app.delete("/api/bl-terms/:owner/:language", adminOnly, async (req, res) => {
     const owner = req.params.owner === "org" ? null : req.params.owner;
-    const r = await t().retire(owner, req.params.language);
+    const r = await t().retire(owner, req.params.language, req.user);
     if (r.error) return err(res, r.error, r.status || 400);
     ok(res, r);
   });

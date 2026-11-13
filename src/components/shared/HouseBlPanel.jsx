@@ -171,7 +171,9 @@ const VoidModal = ({ onVoid, onClose }) => {
 };
 
 // ─── The panel ────────────────────────────────────────────────────────────────
-const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
+// onTermsChange(key|null): the terms picked here, for the Documents list, which issues an UPLOADED BL01 with them
+// (the pre-release audit, C2, 2026-11-12); null = the export office's default, or an amendment's own.
+const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged, onTermsChange }) => {
   useHorizonFonts();
   const { user, isAdmin } = useAuth();
   const [summary, setSummary] = useState(null);
@@ -213,6 +215,8 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
     setCounts({ originals: basis?.originals ?? (shipment.blReleaseType === "Seaway Bill" ? 0 : 3), copies: basis?.copies ?? 0, withCharges: !!basis?.withCharges });
     setTermsKey(summary?.terms?.draft?.key || null);
   }, [basisKey]);
+  const sharedTermsKey = summary?.terms?.locked ? null : termsKey;
+  useEffect(() => { onTermsChange?.(sharedTermsKey); }, [sharedTermsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const live = summary?.live || null, draft = summary?.draft || null, amends = summary?.amends || null;
   const td = live || draft;
@@ -231,6 +235,8 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
   const facts = summary.onBoard || {};
   const swb = shipment.blReleaseType === "Seaway Bill";
   const terms = summary.terms || null;
+  // An uploaded BL01 waiting to be confirmed: a draft document with no draft record of its own (C2).
+  const uploadedDraft = docs.find(d => d.docType === "BL01" && d.status === "draft" && d.id !== draft?.documentId) || null;
   const termsOpt = houseBlTermsOf(terms, termsKey);
   const statement = houseBlStatement(choice, facts, typed, { ...counts, originals: swb ? 0 : counts.originals, ...(termsKey && !terms?.locked && { termsKey }) });
   const statementOk = choice === "received" || !!typed || !!facts.shippedOnBoard;
@@ -488,6 +494,12 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged }) => {
                       {termsOpt.isStarter
                         ? "CargoDesk's starter text, not your terms: drafts print it marked as such, and it can't be issued."
                         : `${termsOpt.ownerName}, version ${termsOpt.version} · ${termsOpt.hasPdf ? `${termsOpt.pdfFilename}, ${termsOpt.pdfPages} page${termsOpt.pdfPages === 1 ? "" : "s"}` : "printed from its text"} · from a new page after the B/L; an eBL carries the text.`}
+                    </span>
+                  )}
+                  {termsOpt && !terms?.locked && uploadedDraft && (
+                    <span data-testid="house-bl-terms-uploaded" style={{ fontSize: 12, color: HZ.textMuted }}>
+                      Your uploaded House B/L ({uploadedDraft.filename}) is issued with these terms too, when you confirm it in the documents below: its eBL carries this text.
+                      CargoDesk doesn't add pages to an uploaded file, so the file must print the same terms.
                     </span>
                   )}
                 </div>

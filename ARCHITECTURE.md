@@ -4523,21 +4523,31 @@ text but no PDF prints the text; the terms have their own page.
   and can't be removed.
 - **Which terms a House B/L prints.** An office picks the terms its House B/Ls start with (`offices.bl_terms_default`:
   `BRANCH:<lang>` its own entity's, `ORG:<lang>` the organisation's; checked on save; Organisation → Offices, next to
-  the B/L number prefix). Unset, or no longer on file: English, the entity's, else the organisation's. The panel offers
+  the B/L number prefix). Unset: English, the entity's, else the organisation's. Stopping a language (DELETE) clears it
+  from the offices that started with it (they start with English; the B/L Terms page names them before the second
+  click; the admin log records it), and the office save checks only a CHANGED default, dropping a stored one the office
+  can no longer carry instead of refusing the save (the pre-release audit, C3). The panel offers
   the entity's and the organisation's current terms and sends the pick as `houseBl.termsKey`; `draftStatement`
   resolves it and `onDraftGenerated` stores `transport_documents.terms_id`, which issue keeps. An amendment keeps
   the terms the B/L it replaces was issued with.
 - **Readiness.** CargoDesk's starter text is never issued: a draft on it can be made, its readiness says so, and the
-  confirm is refused (409). With no draft yet, the office's default is judged; an uploaded BL01 isn't (it prints what
-  its file says).
+  confirm is refused (409). With no draft yet, the office's default is judged.
+- **An uploaded BL01 (the pre-release audit, C2, 2026-11-12; the user: "document this in the manual").** It has no
+  draft record, and CargoDesk can't read the terms printed in the file, so it is issued with the terms picked in the
+  House B/L panel (PATCH …/documents/:docId `termsKey`, sent by the Documents list from the panel's pick; none = the
+  office's default; an amendment keeps the original's). `prepareIssue` judges them like any draft's (never the starter
+  text) and stores `terms_id`, so the eBL carries their text. The file itself is kept as uploaded: it must print the
+  same terms, which the panel says next to the pick while an uploaded BL01 waits.
 - **The print (`printWithTerms`, POST …/documents/generate for BL01, before signing).** The face first: the client
   prints `__BL_TERMS_PAGES__` in its sentence ("…subject to the terms and conditions on pages 2–3 of this Bill of Lading
   (Dutch, Rotterdam Branch, version 2), which form part of it."); the server fills it in and renders again if that
   changes the face's page count. Then the terms from a new page: the PDF, or for a language without one the text set as
   two columns (`termsHtml`). Every page is stamped "Page n of N · B/L <number>", a starter-text draft is stamped as
-  such, and the whole is signed. A Document Template Editor layout gets the terms pages too (its face has no sentence).
-- **The eBL.** `buildDcsaDocument` sends the terms' text as `termsAndConditions`; a B/L issued before them keeps the
-  one-sentence statement.
+  such, and the whole is signed. A Document Template Editor layout gets the terms pages too; its "Terms reference" field
+  (data path `termsReference`, `blTermsReference` in src/utils/documentBuilders.js, the built-in face's own clause) prints
+  the sentence with the same token (the pre-release audit, C7).
+- **The eBL.** `buildDcsaDocument` sends the terms' text as `termsAndConditions`; a B/L issued before 2026-11-10
+  keeps the one-sentence statement.
 - **API.** GET and POST /api/bl-terms, DELETE /api/bl-terms/:owner/:language (admin); GET /api/bl-terms/options?officeId=
   and GET /api/bl-terms/:id/pdf (any user: the terms print on every B/L); GET …/house-bl `terms` { options, defaultKey,
   officeDefault, officeCode, entityName, draft, issued, locked }; PUT /api/offices/:id `blTermsDefault`.
@@ -4566,12 +4576,24 @@ the P&I-approved platforms they work with; DCSA doesn't standardise the holder's
   RELEASED (ref), or RECEIVED → SURRENDERED (origin, a telex release) → RELEASED. eBL: ISSUED (platform from a fixed
   list: WAVE BL, CargoX, essDOCS, Bolero, edoxOnline, IQAX eBL, Other; its reference) → TRANSFERRED → SURRENDERED →
   RELEASED, every step marked by hand. Sea waybill: RELEASED only. Each step in order (409 with what comes next), dated
-  (not in the future, not before the step before), on the shipment's History (`MASTER_BL_<STEP>`); the last one can be
-  undone with a reason. Steps at origin are the export side's; at destination either side's.
+  (at most a day ahead of UTC, since the request doesn't carry the user's time zone and the panel defaults to the user's
+  own date; not before the step before), on the shipment's History (`MASTER_BL_<STEP>`); the last one can be undone
+  with a reason. Steps at origin (RECEIVED, SENT, ISSUED, TRANSFERRED, a surrender at origin: `isOriginStep`, each
+  `next` and event carries `atOrigin`) are the export side's to record AND to undo, and so are the PDF, its by-eye check
+  and the print; the surrender at destination and the release either side's (the pre-release audit, C1).
+- **Open on a Completed or Cancelled shipment (the user, 2026-11-12: "for historical purposes we need to allow access,
+  especially in the US where all the documents need to be accessed").** server.js `isOpenOnLockedShipment` lets
+  …/master-bl/custody/steps, …/custody/undo, …/master-bl/pdf, …/pdf/check and …/master-bl/print through; the form
+  (PUT …/custody) and the carrier's draft review (routes/master-bl.js) stay locked. The panel hides what the user's side
+  can't do (`canActOnShipmentSide`, src/utils/officeSide.js: the side rule without the lock) and the form on a closed
+  shipment (C4).
 - **The carrier's PDF.** POST …/master-bl/pdf stores it as MB01 (status confirmed) and reads its text with pdf.js
   (`pdfjs-dist` 4.10.38, legacy build, loaded on first use): the Master B/L number, every container (spaces and dashes
   ignored) and the vessel, found or not, and any container number (ISO 6346) it names that isn't on the shipment. A
-  PDF with no text (a scan) is checked by eye: `byEye` ticks per item, complete = checked.
+  PDF with no text (a scan) is checked by eye: `byEye` ticks per item, complete = checked. A new PDF (or printed copy)
+  voids the one it replaces ("Replaced by <file>" in the document's history; a carrier booking linked to it follows to the
+  new one), and both writes start the document's history like any upload (C6). Deleting or voiding the panel's MB01 on
+  the Documents list clears the panel's link and check (`onDocumentGone`, called by routes/shipment-ops.js; C5).
 - **The print.** POST …/master-bl/print builds the copy on the server from the issued transport document's DCSA
   payload (`printHtml`): the carrier's parties, transport, cargo and equipment with seals, clauses, the on-board
   statement, originals, place and date of issue, and the carrier's `termsAndConditions` from a new page, every page
@@ -4586,8 +4608,63 @@ the P&I-approved platforms they work with; DCSA doesn't standardise the holder's
   POST …/master-bl/pdf/check, POST …/master-bl/print (routes/carrier-mbl.js); GET …/house-bl `release.warnings`.
 - **Screens.** `src/components/shared/CarrierMasterBlPanel.jsx` under the House B/L panel on Documents; the release
   dialog's NOTE line.
-- **Tests.** `tests/carrier-mbl.test.js`; carrier-booking and receivables-gross upload their MB01 instead of
-  generating it; Vitest `CarrierMasterBlPanel.test.jsx`.
+- **Tests.** `tests/carrier-mbl.test.js` (with the audit's fixes: an import-office user, a Completed shipment, a
+  replaced, deleted and voided PDF, a date a day ahead of UTC); carrier-booking and receivables-gross upload their MB01
+  instead of generating it; Vitest `CarrierMasterBlPanel.test.jsx`.
+
+### 8.50 A shipment as one JSON file for QA, imported into a test system (2026-11-13)
+
+The user's idea: export any production shipment to a JSON file that a test system imports, so QA can reproduce an issue
+found in production. Mockup https://claude.ai/code/artifact/0fb62029-c8b5-4932-ba6f-5ab1c7113c15, approved ("love it").
+The user's answers: real values exactly as stored (no anonymising; I had recommended pseudonyms), admins only, a new id
+with an IMPORTED label, the files inside the file, and the steps carried in the file so it can be handed to Claude. The
+recommendations A–G as approved: import in Test Tools; a production-mode server imports only while App Settings →
+Shipment imports is on; a missing export/import office is chosen by the importer (never created: offices decide other
+shipments' offices); customers matched by VAT/LEI/EORI, else exact name, else created; an imported shipment sends nothing.
+
+- **The file (`lib/shipment-transfer.js` = `ctx.shipmentTransfer`).** Format `cargodesk-shipment-export/1`: `cargodeskVersion`,
+  `source` (system, host, shipment id, exported at/by), `report` { whatWentWrong, stepsToReproduce }, `summary` (plain
+  language: the shipment, parties, offices, booking, contract, the problem and the steps, and where each part sits in the
+  file), `shipment` (the row as stored), `sections` (raw rows of every table that hangs off the shipment, `PARTS`: 42
+  tables found by `shipment_id` or through a parent's ids, e.g. container packages, schedule legs, carrier invoice lines,
+  spot offer lines, eBL surrender requests, invoice status overrides), `entityEvents` (the audit rows of those records),
+  `context` (read-only: Kanban tickets, test items, statement lines), `references` (customers in full with identifiers
+  and contacts, offices with roles, carriers, ports, vessels, commodity, container types, contract, space configuration,
+  lane steering, quote, terms versions, people in the history) and `files` (each document's bytes, base64).
+- **Export.** GET /api/shipments/:id/qa-export lists what it will hold (counts, files, references, an estimated size);
+  POST …/qa-export { whatWentWrong, steps } returns the file as an attachment and writes SHIPMENT_EXPORTED to the admin
+  log. `qa-export` is in LOCK_OPEN_SECTIONS: a closed shipment exports too. Admins only.
+- **Import.** POST /api/shipment-import/preview { file, officeMap } → { problems, plan } (nothing saved): the format and
+  version (a file from a newer CargoDesk is refused), offices by code + department (a required export/import office this
+  system lacks is a problem until `officeMap.export|import` names one of its own; an additional or controlling office it
+  lacks is left off), customers (`findCustomer`: VAT/LEI/EORI, then exact name; remote Customer Service: name, then its
+  identifiers), reference data (reported only), the contract, space configuration, lane steering and quote kept only when
+  this system has the same id. POST /api/shipment-import { file, officeMap } → 201 { shipmentId, from, createdCustomers,
+  dropped, warnings }: customers created first (a copy whose notes say "Imported from … with shipment …"), then a new id for
+  the shipment and every row (same prefix), every reference rewritten (exact values and ids inside text/JSON), the files
+  written under new stored names, all rows inserted in one transaction in `PARTS` order, columns this system lacks left
+  off, a foreign key to a record that is neither imported nor here emptied (or the row left off when it can't be), then
+  SHIPMENT_IMPORTED on the shipment's history and the admin log. `shipments.imported_from` (the source id) and
+  `imported_meta` (JSON: source, exported/imported at/by, the report, the summary). /api/shipment-import has its own body
+  limit (300 MB, server.js, before the global 25 MB parser). Admins only; GET /api/shipment-import/status { production,
+  allowed }; `importAllowed()`: not production, or `shipment_import_enabled` = 'true' (admin-only in PUT /api/settings).
+- **An imported shipment sends nothing.** Three layers: (1) `shipmentImportGuard` (server.js, `app.param` after the status
+  lock) answers 409 `IMPORTED_SHIPMENT` for the sending routes (`IMPORTED_SENDING_PATHS`: documents send-email/edi/webhook,
+  the booking request, carrier-booking send-update/accept-changes/check-status/cancel, Shipping Instructions
+  submit/send-update/cancel/reset, Master B/L approve/refresh/amend/amendment cancel, House B/L issue-ebl and approval
+  send, Arrival Notice refresh, vessel-times sync, carrier-events sync); (2) every other request about it runs in
+  `importedShipmentContext` (lib/imported-shipment-context.js, AsyncLocalStorage), where `carrierIntegrationFor` returns no
+  connection and `sendViaOffice` (lib/mailer.js) refuses; (3) `sendBookingRequest` (routes/edi.js, also an escalation's
+  rebook) and `sendVgm` (routes/shipments.js) refuse it themselves. Every sweep leaves imported shipments out in its own
+  query: dunning, invoice collections, the ops automation sweep (stale bookings, overdue milestones, compliance hits,
+  import handoffs), carrier booking poll, Shipping Instructions poll, Master B/L poll, Track & Trace, vessel times, the
+  no-answer escalation, AIS tracked legs.
+- **Screens.** The shipment header: a download icon "Export for QA" (admins) → `ShipmentQaExportModal`; the IMPORTED chip
+  beside the id and `ImportedShipmentBanner` under row 1 (where it came from, the report, the steps, sending off)
+  (src/components/shared/ShipmentQaExport.jsx); the chip on the Shipments list; Test Tools → Shipment Import
+  (`src/pages/ShipmentImportPanel.jsx`, admins): the file, its source and report, the references table with the office
+  pickers, warnings, Import, the result with a link; App Settings → API Controls → External APIs → Shipment imports.
+- **Tests.** `tests/shipment-transfer.test.js` (38); Vitest `ShipmentQaExport.test.jsx`, `ShipmentImportPanel.test.jsx`.
 
 ## 9. Data Flow Diagrams
 
@@ -4854,6 +4931,7 @@ continues; don't rewrite history once an item's checked.
 | 2026-10-29 | **0.91.12 release audit (TKT-KT4QIC)**: everything 0.91.12 adds apart from the House B/L, which had its own audit the same morning (TKT-J0SDVB): the DCSA message review, the Master B/L and its amendment, VGM declarations, carrier events and vessel times, equipment and seals, the Arrival Notice, Port Call, DG in the booking and the shipper's DG contact. Method: a read by risk class (scope and roles on every new route, endpoints outside the login guard, carrier pushes, delete paths, retired paths, unused exports, one rule in two places), live probes. Report https://claude.ai/code/artifact/a08cf4f7-710e-4b5d-93e7-95d92dba25b0. | **7 findings (1 high, 4 medium, 2 low); R1–R5 fixed before the release by the user's call, R6–R7 open.** | **Sound:** every new per-shipment route behind the scope guard and a role; carrier pushes signed (no secret, refused); the eBL endpoints' per-process secret; Track & Trace scoped to the carrier and open shipments; the print and the record agree on shipped on board; the DG contact's rules the same in both services. **Fixed (§8.44):** R1 TKT-Z9GE5C a shipment with an issued House B/L could be deleted, taking the B/L with it (confirmed live: an operator, 3 originals out) → refused; R2 TKT-NFHNIK `/dcsa-sim` answered with no credentials (confirmed live: a transport document with parties) → a per-process token; R3 TKT-H1H7RN an Arrival Notice matched by B/L number alone, any carrier → the pushing carrier's shipments only; R4 TKT-EV4W5Y Arrival Notices and Port Call changed Completed/Cancelled shipments → skipped; R5 TKT-A794HR the retired VGM Simulator still answered any VGM → removed. **Open:** R6 TKT-58E1KT Test Tools' demo lists unscoped; R7 TKT-1ZMR6N two unused exports. |
 | 2026-11-07 | **0.91.13 release audit (TKT-YZ2EON)**: everything 0.91.13 adds since v0.91.12 (local commit ddd9f70): Contracts & Schedules next, the route rules and the whole-route save, the route dialogs and the contract drop on Save, EMO/IMO auto-resolution, typed contract legs (normalizer, migration, matcher in both copies, list filters, every reader of contract legs). Method: a read by risk class (scope, lock and foreign ids on the new route, every other writer of shipment legs, what the new defaults do to who sees a shipment, what a carrier already holds, inputs the editor never sends), live probes (scratchpad audit-batch-verify.mjs). | **4 findings (2 medium, 2 low); all fixed before the release** | A1 TKT-ZX70NT Save took the contract off a shipment whose booking the carrier had confirmed (SHP-1BEFC3) → refused, client and server (409 BOOKING_WITH_CARRIER); A2 TKT-72U6CG an office-scoped creator couldn't open a shipment whose ports resolved to other offices (SHP-O7EANW, 404) → the creator's office becomes the controlling office; A3 TKT-19CS91 a contract Pick-up leg with no To was saved as a line with no SEA leg → refused; A4 TKT-01L0RE the Dashboard listed a Pick-up leg as a route ("→ NLRTM") → PKU/DEL chips. Checked clean: the whole-route save's scope (app.param), status lock and foreign leg ids; the booking-escalation rebook keeps the route's order. |
 | 2026-11-09 | **Shipment messages** (found while writing the User Manual's Messages step for the AI Assistant's test set): POST /api/shipments/:id/messages. | **1 finding (medium); fixed** | The author and role were stored as the request named them, so any signed-in user (a Viewer included) could post under someone else's name → the server signs a message with the signed-in user's name and the role they work in (`deriveEffectiveRole`, labelled like the role switcher); a body that isn't text is a 400, not a 500; the Messages drawer sends only the body. Older messages keep the names they were posted with. Test: tests/shipment-messages.test.js. |
+| 2026-11-12 | **Pre-release audit of the terms + carrier's Master B/L batch (TKT-GC05AS)**: everything since v0.91.13 (local commits 4979350 + b9b01d9, not pushed): House B/L terms and conditions (§8.48), Messages signed by the user, the manual gaps and AI test set, the carrier's Master B/L (§8.49: custody, print, PDF, MB01 retired, release warning). Method: a read by risk class (scope, side, role and status lock on the new routes; every other writer and reader of MB01, BL01, offices and transport_documents; what the terms change for the eBL; what a deleted or replaced document leaves behind; inputs the screens never send), live probes (scratchpad audit-0914-probe.mjs). Report https://claude.ai/code/artifact/0d1815e1-7a00-4297-b9f1-ce18e4a1e542. | **8 findings (3 medium, 5 low); all fixed the same day ("fix all findings"; C2 and C4 as recommended, the user: C2 "document this in the manual", C4 "for historical purposes we need to allow access, especially in the US"), §8.48/§8.49** | C1 TKT-I5FX4A the import side can undo the export side's custody steps and save a by-eye check of its PDF (SHP-5RSTKS: 200 where recording is 403); C2 TKT-H5UFMT an eBL issued from an uploaded BL01 carries the one-sentence placeholder, not the entity's terms (SHP-7TFI1J vs SHP-RFVBG1); C3 TKT-NR3S73 stopping a language an office defaults to: no warning, the office still listed, and its form refused 400 until changed (NL-NLRTM-SE, restored); C4 TKT-8W3S3B the panel offers actions the server refuses (Completed: 409 SHIPMENT_LOCKED while a Documents MB01 upload works; the import side: 403); C5 TKT-C4D2E8 deleting the panel's MB01 leaves it pointing at nothing; C6 TKT-C7UJL7 Replace / Print again leave the earlier MB01 confirmed, no document history entry; C7 TKT-H55WTK a Document Template Editor BL01 face can't name the terms pages (read); C8 TKT-QC6PWN step dates default to and are checked against the UTC date (read). Checked clean: scope on every new route, the role set, cascades on shipment delete, pdf.js with eval off and its Docker install, Messages signing for every role, an amendment's terms, MB01 generate refused. **Fixed:** C1 undo and the by-eye check follow the step's side; C2 an uploaded BL01 is issued with the panel's terms (stored, carried by the eBL; manual explains); C3 stopping a language moves its offices to English, named first, and the office save checks only a changed default; C4 the panel's PDF, print, steps and undo stay open on closed shipments, the panel hides what the side can't do; C5 deleting/voiding the panel's MB01 clears its link; C6 a replaced PDF or copy is voided ("Replaced by"), history logged; C7 a "Terms reference" field in the template editor; C8 dates in the user's day (server: up to UTC + 1). Tests: carrier-mbl (59), bl-terms (48), Vitest CarrierMasterBlPanel, HouseBlPanel, BlTermsPage, houseBlPrint. |
 
 ### Low / Enhancement
 

@@ -13,7 +13,8 @@ vi.mock("../../api", async () => {
 import CarrierMasterBlPanel, { stepText } from "./CarrierMasterBlPanel";
 import { api } from "../../api";
 
-const shipment = { id: "SHP-AQ1FIM", carrierCode: "MAEU", imoOfficeCode: "US-USNYC-SI", imoOfficeName: "New York Harbor" };
+// myOfficeSide as GET /api/shipments computes it for the user (an admin: unrestricted).
+const shipment = { id: "SHP-AQ1FIM", status: "Active", myOfficeSide: "unrestricted", carrierCode: "MAEU", imoOfficeCode: "US-USNYC-SI", imoOfficeName: "New York Harbor" };
 const PATH = steps => steps.map(([step, label, done = false, on = null]) => ({ step, label, done, at: done ? "2026-10-30T09:12:00.000Z" : null, detail: done ? { on } : null }));
 // GET /api/shipments/:id/master-bl/custody, as lib/carrier-mbl.js view() returns it: Maersk's issued B/L, 3 paper originals.
 const view = (over = {}) => ({
@@ -24,7 +25,7 @@ const view = (over = {}) => ({
   pending: null, form: "PAPER", formSource: "carrier", originalsTotal: 3, ebl: { platform: "", reference: "", issuedTo: "" },
   print: null, canPrint: true, pdf: null, stage: "",
   path: PATH([["RECEIVED", "Received from the carrier"], ["SENT", "Sent to destination"], ["SURRENDERED", "Surrendered to the carrier"], ["RELEASED", "Released by the carrier"]]),
-  next: [{ step: "RECEIVED", label: "Received from the carrier" }], released: false, locked: false, events: [],
+  next: [{ step: "RECEIVED", label: "Received from the carrier", atOrigin: true }], released: false, locked: false, events: [],
   platforms: ["WAVE BL", "CargoX", "essDOCS", "Bolero", "edoxOnline", "IQAX eBL", "Other"],
   ...over,
 });
@@ -57,7 +58,9 @@ describe("The carrier's Master B/L panel", () => {
     await waitFor(() => expect(api.masterBl.recordStep).toHaveBeenCalled());
     const [, body] = api.masterBl.recordStep.mock.calls[0];
     expect(body).toMatchObject({ step: "RECEIVED", count: 3, from: "Maersk Rotterdam", courier: "DHL 4012 8833 21" });
-    expect(body.on).toBe(new Date().toISOString().slice(0, 10));
+    // The user's own date, not UTC's (the pre-release audit, C8).
+    const d = new Date();
+    expect(body.on).toBe(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
     // After receiving: sent to destination, or surrendered at origin.
     expect(await screen.findByTestId("carrier-mbl-next-select")).toHaveValue("SENT");
     expect(screen.getByRole("option", { name: "Surrendered at origin" })).toBeInTheDocument();
@@ -116,6 +119,42 @@ describe("The carrier's Master B/L panel", () => {
     fireEvent.change(screen.getByTestId("carrier-mbl-field-reference"), { target: { value: "WAVE-BL-7Q4M2K9" } });
     fireEvent.click(screen.getByTestId("carrier-mbl-record"));
     await waitFor(() => expect(api.masterBl.recordStep).toHaveBeenCalledWith("SHP-AQ1FIM", expect.objectContaining({ step: "ISSUED", platform: "WAVE BL", reference: "WAVE-BL-7Q4M2K9" })));
+  });
+
+  // The pre-release audit (TKT-GC05AS, 2026-11-12): C1 the export side's actions; C4 open on a Completed shipment.
+  it("the import side reads the document and records the destination steps, not the export side's", async () => {
+    const received = { id: "E1", step: "RECEIVED", label: "Received from the carrier", detail: { on: "2026-10-30", count: 3, of: 3 }, actor: "Dana", createdAt: "2026-10-30T09:12:00.000Z", undone: false, atOrigin: true };
+    const sent = { id: "E2", step: "SENT", label: "Sent to destination", detail: { on: "2026-10-31", to: "US-USNYC-SI New York Harbor" }, actor: "Dana", createdAt: "2026-10-31T09:12:00.000Z", undone: false, atOrigin: true };
+    api.masterBl.custody.mockResolvedValue(view({ stage: "SENT", locked: true, events: [received, sent],
+      print: { documentId: "DOC-P", filename: "MB01-MAEU412841377LS-copy.pdf", createdAt: "2026-11-10T10:00:00.000Z" },
+      next: [{ step: "SURRENDERED", label: "Surrendered to the carrier", atOrigin: false }] }));
+    render(<CarrierMasterBlPanel shipment={{ ...shipment, myOfficeSide: "import" }} canEdit />);
+    expect(await screen.findByTestId("carrier-mbl-print-doc")).toHaveTextContent("MB01-MAEU412841377LS-copy.pdf");
+    expect(screen.getByText("Download")).toBeInTheDocument();
+    expect(screen.queryByTestId("carrier-mbl-print")).toBeNull();
+    expect(screen.queryByTestId("carrier-mbl-pdf-input")).toBeNull();
+    expect(screen.getByTestId("carrier-mbl-next")).toHaveTextContent("Surrendered to the carrier");
+    // The last step was the export side's: not the import side's to undo.
+    expect(screen.queryByTestId("carrier-mbl-undo")).toBeNull();
+  });
+
+  it("before the originals leave origin, the import side is told the export side records them", async () => {
+    api.masterBl.custody.mockResolvedValue(view({ stage: "RECEIVED", locked: true,
+      events: [{ id: "E1", step: "RECEIVED", label: "Received from the carrier", detail: { on: "2026-10-30", count: 3, of: 3 }, actor: "Dana", createdAt: "2026-10-30T09:12:00.000Z", undone: false, atOrigin: true }],
+      next: [{ step: "SENT", label: "Sent to destination", atOrigin: true }, { step: "SURRENDERED", label: "Surrendered at origin", atOrigin: true }] }));
+    render(<CarrierMasterBlPanel shipment={{ ...shipment, myOfficeSide: "import" }} canEdit />);
+    expect(await screen.findByTestId("carrier-mbl-export-side")).toHaveTextContent('"Sent to destination" and "Surrendered at origin" are recorded by the export side.');
+    expect(screen.queryByTestId("carrier-mbl-next")).toBeNull();
+    expect(screen.queryByTestId("carrier-mbl-setup")).toBeNull();
+  });
+
+  it("a Completed shipment keeps the document and the steps open, for the record; the form is fixed", async () => {
+    api.masterBl.custody.mockResolvedValue(view());
+    render(<CarrierMasterBlPanel shipment={{ ...shipment, status: "Completed" }} canEdit />);
+    expect(await screen.findByTestId("carrier-mbl-print")).toBeInTheDocument();
+    expect(screen.getByTestId("carrier-mbl-pdf-input")).toBeInTheDocument();
+    expect(screen.getByTestId("carrier-mbl-next")).toHaveTextContent("Received from the carrier");
+    expect(screen.queryByTestId("carrier-mbl-setup")).toBeNull();
   });
 
   it("words each step", () => {

@@ -53,12 +53,12 @@ const issued = (over = {}) => ({ id: "TD-1", status: "ISSUED", reference: "RTMHB
   hasPayload: true, payloadErrors: "", releasedAt: null, eblIssuanceStatus: "", version: 1, numberSource: "SERIES", originals: 3, copies: 0, withCharges: false,
   toOrderMode: "", ...over });
 
-const renderPanel = (s, auth = {}, { events = [], ship = shipment } = {}) => {
+const renderPanel = (s, auth = {}, { events = [], ship = shipment, docs = [], onTermsChange } = {}) => {
   api.houseBl.get.mockResolvedValue(s);
   api.houseBl.events.mockResolvedValue(events);
   return render(
     <AuthContext.Provider value={{ isAdmin: true, user: { name: "Dana", canViewFinance: false }, ...auth }}>
-      <HouseBlPanel shipment={ship} canEdit docs={[]} onChanged={() => {}} />
+      <HouseBlPanel shipment={ship} canEdit docs={docs} onChanged={() => {}} onTermsChange={onTermsChange} />
     </AuthContext.Provider>,
   );
 };
@@ -162,6 +162,17 @@ describe("HouseBlPanel", () => {
     expect(screen.getByTestId("house-bl-readiness")).toHaveTextContent("CargoDesk's starter text can't be issued");
     expect(screen.getByTestId("house-bl-issue")).toBeDisabled();
     expect(screen.getByTestId("house-bl-generate-draft")).not.toBeDisabled();
+  });
+
+  // The pre-release audit, C2 (2026-11-12): an uploaded BL01 is issued (Documents → Confirm) with the terms picked here.
+  it("an uploaded House B/L is issued with the terms picked here, and the pick goes to the Documents list", async () => {
+    const onTermsChange = vi.fn();
+    renderPanel(summary(), {}, { onTermsChange, docs: [{ id: "DOC-UP", docType: "BL01", status: "draft", filename: "BL01-RTMHBL2600018-own-system.pdf" }] });
+    await screen.findByTestId("house-bl-ready");
+    expect(screen.getByTestId("house-bl-terms-uploaded")).toHaveTextContent("Your uploaded House B/L (BL01-RTMHBL2600018-own-system.pdf) is issued with these terms too");
+    expect(screen.getByTestId("house-bl-terms-uploaded")).toHaveTextContent("the file must print the same terms");
+    fireEvent.change(screen.getByTestId("house-bl-terms-select"), { target: { value: "BRANCH:nl" } });
+    await waitFor(() => expect(onTermsChange).toHaveBeenLastCalledWith("BRANCH:nl"));
   });
 
   it("an amendment keeps the terms the B/L it replaces was issued with", async () => {

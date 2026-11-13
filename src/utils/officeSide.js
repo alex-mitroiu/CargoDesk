@@ -15,11 +15,18 @@
 import { isShipmentLocked } from "./shipmentLock";
 
 export function canEditShipmentSide(auth, shipment, side) {
-  const { canEditShipments, isAdmin, activeRoles, allOffices } = auth || {};
-  if (!canEditShipments) return false;
   // A Completed or Cancelled shipment is locked on every side (TKT-SPXTGR) — all of this function's
   // consumers are locked sections, so the check lives here once rather than on each page.
   if (isShipmentLocked(shipment)) return false;
+  return canActOnShipmentSide(auth, shipment, side);
+}
+
+// The same side rule for what stays open on a Completed or Cancelled shipment (server.js
+// isOpenOnLockedShipment): the carrier's Master B/L panel's PDF, print and steps (the pre-release audit, C4,
+// 2026-11-12). Use canEditShipmentSide for everything else.
+export function canActOnShipmentSide(auth, shipment, side) {
+  const { canEditShipments, isAdmin, activeRoles, allOffices } = auth || {};
+  if (!canEditShipments) return false;
   if (isAdmin || (activeRoles || []).includes("operator") || allOffices) return true;
   const mySide = shipment?.myOfficeSide;
   return mySide === "unrestricted" || mySide === side;

@@ -171,6 +171,9 @@ module.exports = function systemRoutes(app, ctx) {
     // booked against the built-in simulator (DCSA everywhere, decided 2026-10-11: an admin turns it on).
     if ("dcsa_demo_carrier_enabled" in updates && !req.user.roles.includes("admin"))
       return err(res, "Only an admin can turn the Demo carrier on or off", 403);
+    // Shipment imports (QA export, 2026-11-13): in production mode, whether this server takes an imported shipment.
+    if ("shipment_import_enabled" in updates && !req.user.roles.includes("admin"))
+      return err(res, "Only an admin can turn shipment imports on or off", 403);
     // Booking escalations (App Settings → Bookings, Epic TKT-ASIYFL): company policy, so admin-only —
     // OCC/BK, who may use this route, is the one raising escalations. Each value is checked.
     const BOOKING_KEYS = ["booking_escalation_default_group", "booking_no_answer_hours", "booking_escalation_trade_level", "booking_change_rules"];
