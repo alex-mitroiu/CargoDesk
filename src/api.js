@@ -523,6 +523,11 @@ export const api = {
     override:       (id, data) => req("POST", `/shipments/${id}/screening/override`, data),
     complianceHits: ()         => req("GET",  "/shipments/compliance-hits"),
   },
+  // The office split (§8.52): payment terms (CPI) per charge category, each line's side and responsible office.
+  paymentTerms: {
+    get:  shipmentId      => req("GET", `/shipments/${shipmentId}/payment-terms`),
+    save: (shipmentId, d) => req("PUT", `/shipments/${shipmentId}/payment-terms`, d),
+  },
   costLines: {
     list:           (shipmentId)               => req("GET",    `/shipments/${shipmentId}/cost-lines`),
     create:         (shipmentId, d)            => req("POST",   `/shipments/${shipmentId}/cost-lines`, d),

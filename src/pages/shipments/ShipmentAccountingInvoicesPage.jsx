@@ -174,6 +174,10 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
   const ctrs = containers.filter(c => c.shipmentId === shipment.id);
 
   const [lines,     setLines]     = useState([]);
+  // The office split (§8.52): each charge's responsible office, shown beside it.
+  const [termsView, setTermsView] = useState(null);
+  useEffect(() => { api.paymentTerms.get(shipment.id).then(setTermsView).catch(() => setTermsView(null)); }, [shipment.id, lines.length]);
+  const officeOf = l => (l.split ? { key: l.split.officeKey, code: termsView?.offices?.find(o => o.key === l.split.officeKey)?.code || "" } : null);
   const [loading,   setLoading]   = useState(true);
   const [fxRates,   setFxRates]   = useState({});
   const [lineModal, setLineModal] = useState(null); // null | "add" | line object
@@ -441,7 +445,8 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       const invNumber = `${doc.filename.replace(/\.pdf$/i, "")}-CN`;
       // Owed by the party the invoice billed, whoever the principal is now (audit D2, 2026-11-13).
       const billed = shipmentBilledAs(shipment, doc.responsibleParty);
-      const taxInfo = await resolveInvoiceTaxInfo(billed);
+      // …and issued by the entity that issued the invoice (the office split, §8.52).
+      const taxInfo = await resolveInvoiceTaxInfo(billed, { issuerOfficeId: doc.issuingOfficeId || null });
       const html = buildCreditDebitNoteHtml({ shipment: billed, invNumber, invDate, notes: reason, costLines: reversalLines, container, originalDoc: doc, taxInfo });
       const filename = `CN01-${invNumber}-${invDate}.pdf`;
       // The CN01 records the reversal lines it's built from, like an invoice records its lines:
@@ -450,6 +455,8 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       const newDoc = await api.documents.generate(shipment.id, {
         html, filename, docType: "CN01", containerId: doc.containerId, responsibleParty: doc.responsibleParty,
         sourceCostLineIds: reversalLines.map(l => l.id),
+        // The server issues it from the invoice's office to the party the invoice billed (audit S1, TKT-2Y5Z8M).
+        relatedDocId: doc.id,
       });
       await api.documents.patch(shipment.id, newDoc.id, { status: "confirmed", relatedDocId: doc.id });
       await api.documents.patch(shipment.id, doc.id, { relatedDocId: newDoc.id });
@@ -536,7 +543,7 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
               </thead>
               <tbody>
                 {sellLines.map(l => (
-                  <CostLineRow key={l.id} line={l} containers={ctrs} showActions
+                  <CostLineRow key={l.id} line={l} containers={ctrs} showActions office={officeOf(l)}
                     onEdit={() => setLineModal(l)} onDelete={() => setConfirm(l.id)}
                     onActualize={() => setActualizeLine(l)} onPost={() => setConfirmPost(l)} />
                 ))}
@@ -645,7 +652,7 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
 
       {lineModal && (
         <Modal title={lineModal === "add" ? "Add Invoice Line" : "Edit Invoice Line"} onClose={() => setLineModal(null)}>
-          <CostLineForm init={lineModal === "add" ? {} : lineModal} fxRates={fxRates} containers={ctrs} lockType="SELL"
+          <CostLineForm init={lineModal === "add" ? {} : lineModal} fxRates={fxRates} containers={ctrs} lockType="SELL" shipment={shipment}
             onSave={data => handleSave(data, false)}
             onSaveAndMirror={data => handleSave(data, true)}
             onCancel={() => setLineModal(null)} />

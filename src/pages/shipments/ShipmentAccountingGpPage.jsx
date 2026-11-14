@@ -30,6 +30,16 @@ const ShipmentAccountingGpPage = ({ shipment, onBack }) => {
     return api.costLines.list(shipment.id).then(setLines).catch(() => setLines([])).finally(() => setLoading(false));
   };
   useEffect(() => { load(); }, [shipment.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The office split (§8.52): once the shipment is split, each responsible office's share (a management view; the
+  // invoices and the VAT are the issuing entity's).
+  const [termsView, setTermsView] = useState(null);
+  useEffect(() => { api.paymentTerms.get(shipment.id).then(setTermsView).catch(() => setTermsView(null)); }, [shipment.id]);
+  const byOffice = (() => {
+    const groups = new Map();
+    for (const l of lines) if (l.split) groups.set(l.split.officeKey, [...(groups.get(l.split.officeKey) || []), l]);
+    return [...groups.entries()].map(([key, rows]) => ({ key, rows, office: termsView?.offices?.find(o => o.key === key) || null, t: gpTotals(rows) }));
+  })();
+  const officeColor = key => (key === "export" ? HZ.cyan : key === "import" ? HZ.violet : key === "billing" ? HZ.amber : HZ.textMuted);
 
   const { estBuy, estSell, actBuy, actSell, estGp, actGp, varGp, estPct, actPct, vatTotal, actualizedCount } = gpTotals(lines);
   const tone = v => v > 0 ? HZ.good : v < 0 ? HZ.crit : HZ.textMuted;
@@ -104,6 +114,33 @@ const ShipmentAccountingGpPage = ({ shipment, onBack }) => {
           </div>
         )}
       </div>
+      {!loading && byOffice.length > 0 && (
+        <div id="shpacct-gp-by-office" data-testid="gp-by-office" style={{ background: HZ.surface, backdropFilter: "blur(20px)",
+          border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, padding: "14px 18px", marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+            <span style={{ fontFamily: HZ_BODY, fontSize: 11, fontWeight: 700, color: HZ.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>By office</span>
+            <span style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted }}>Each line's responsible office (Carrier Booking → Payment terms). No settlement between offices.</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10 }}>
+            {byOffice.map(({ key, office, rows, t }) => (
+              <div key={key} data-testid={`gp-office-${key}`} style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8, padding: "10px 12px",
+                boxShadow: `inset 3px 0 0 ${officeColor(key)}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
+                  <span style={{ fontFamily: HZ_BODY, fontSize: 12.5, fontWeight: 700, color: officeColor(key) }}>{office?.label || "Office"}</span>
+                  <span style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted }}>{office?.code || ""}</span>
+                </div>
+                <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginBottom: 6 }}>{office?.entityName || "No legal entity"} · {rows.length} line{rows.length === 1 ? "" : "s"}</div>
+                {[["Sell", t.estSell], ["Buy", t.estBuy], ["GP", t.estGp]].map(([label, v]) => (
+                  <div key={label} style={{ display: "flex", justifyContent: "space-between", fontFamily: HZ_MONO, fontSize: 12,
+                    color: label === "GP" ? gpColor(v) : HZ.text, fontWeight: label === "GP" ? 700 : 400 }}>
+                    <span style={{ fontFamily: HZ_BODY, color: HZ.textMuted, fontWeight: 400 }}>{label}</span><span>{fmtUsd(v)}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <GpBreakdownPanel lines={lines} loading={loading} summaryAbove />
     </div>
   );

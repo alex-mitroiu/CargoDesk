@@ -419,6 +419,8 @@ module.exports = function quotesRoutes(app, ctx) {
            q.movement_type, q.service_type, q.incoterm, q.cargo_ready_date,
            q.declared_value, q.declared_value_currency, q.freight_terms, req.params.id,
            quoteEmoOfficeId, quoteImoOfficeId, quoteControllingOfficeId]);
+    // The billing office (the office split, §8.52): its export office's.
+    { const billing = await ctx.officeSplit.billingOfficeFor(quoteEmoOfficeId); if (billing) await query("UPDATE shipments SET billing_office_id=$1 WHERE id=$2", [billing, id]); }
     await logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: q.pol, pod: q.pod, carrier: q.carrier_code, status: 'Active', contractType, source: 'quote', quoteId: req.params.id }), req.user?.name || req.user?.email || "");
     await maybeAssignLineAgents(id, q.carrier_code, q.pol, q.pod, req.user?.name || req.user?.email || "");

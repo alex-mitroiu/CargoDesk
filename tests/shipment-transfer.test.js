@@ -20,6 +20,7 @@
  *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  */
 
+import crypto from "node:crypto";
 import { readyHouseBlShipment, generateHouseBl } from "./helpers/house-bl.mjs";
 
 const BASE = "http://localhost:3001";
@@ -171,6 +172,41 @@ const clone = o => JSON.parse(JSON.stringify(o));
     assert("a VGM that would go to the carrier: refused (409)", vgm.status === 409 && /imported shipment: it sends nothing/.test(vgm.body?.error), `${vgm.status} ${JSON.stringify(vgm.body).slice(0, 160)}`);
     const msg = await request("POST", `/api/shipments/${newId}/messages`, { body: "QA: reproducing the old-address issue here." }, token);
     assert("local work goes on: a message (201)", msg.status === 201, JSON.stringify(msg.body));
+
+    console.log("\nThe audit's findings (TKT-KL28KB)");
+    // Q1: a document without its bytes, naming a file outside uploads/: the import names the file itself.
+    const bad = clone(file);
+    const badDoc = bad.sections.shipment_documents.find(d => d.id === hbl.body.id);
+    badDoc.stored_name = "../../package.json";
+    bad.files = bad.files.map(f => (f.documentId === badDoc.id ? { ...f, base64: undefined, missing: true } : f));
+    r = await request("POST", "/api/shipment-import", { file: bad }, token);
+    const badDocs = r.body?.shipmentId ? list((await request("GET", `/api/shipments/${r.body.shipmentId}/documents`, null, token)).body) : [];
+    const planted = badDocs.find(d => d.docType === "BL01");
+    const dl = planted ? await fetch(`${BASE}/api/shipments/${r.body.shipmentId}/documents/${planted.id}/download`, { headers: { Authorization: `Bearer ${token}` } }) : null;
+    const dlText = dl ? await dl.text() : "";
+    assert("Q1: a document whose file isn't in the import reads nothing outside uploads (404, not the server's files)",
+      r.status === 201 && dl?.status === 404 && !/"name":\s*"cargodesk"/.test(dlText), `${r.status} ${dl?.status} ${dlText.slice(0, 80)}`);
+    // Q3: a surrendered eBL's request in the file: the same file imports twice, each with its own reference.
+    const sur = clone(file);
+    const td = sur.sections.transport_documents.find(t => t.role === "HOUSE");
+    const ref = crypto.randomUUID();
+    sur.sections.ebl_surrender_requests = [{ id: `ESR-QA${rand}01`, surrender_request_reference: ref, transport_document_id: td.id,
+      transport_document_reference: td.reference || "", request_code: "SREQ", request_json: JSON.stringify({ surrenderRequestReference: ref }), created_at: new Date().toISOString() }];
+    const s1 = await request("POST", "/api/shipment-import", { file: sur }, token);
+    const s2 = await request("POST", "/api/shipment-import", { file: sur }, token);
+    assert("Q3: a file carrying an eBL surrender request imports twice (201, 201)", s1.status === 201 && s2.status === 201,
+      `${s1.status} ${s2.status} ${String(s2.body?.error || "").slice(0, 160)}`);
+    // Q4: an import that fails after copying a customer leaves no copy behind.
+    const failing = clone(file);
+    const copyName = `Hudson Home Imports QA-FAIL ${rand} Inc`;
+    const fc = failing.references.customers.find(c => c.id === a.consignee.id);
+    fc.record.companyName = copyName; fc.name = copyName; fc.identifiers = [];
+    const ev0 = failing.sections.shipment_events[0];
+    failing.sections.shipment_events = [...failing.sections.shipment_events, { ...ev0 }];   // the same row twice: the insert fails
+    const f4 = await request("POST", "/api/shipment-import", { file: failing }, token);
+    const copies = list((await request("GET", `/api/customers?search=${encodeURIComponent(copyName)}`, null, token)).body).filter(c => c.companyName === copyName);
+    assert("Q4: a failed import (500, nothing saved) leaves no customer copy", f4.status === 500 && /nothing was saved/.test(f4.body?.error || "") && copies.length === 0,
+      `${f4.status} ${copies.length} ${String(f4.body?.error || "").slice(0, 120)}`);
 
     console.log("\nAgain, and from a closed shipment");
     r = await request("POST", "/api/shipment-import", { file, officeMap: {} }, token);

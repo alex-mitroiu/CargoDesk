@@ -19,6 +19,7 @@ import { countryCodeOf } from "../../utils/countryTag";
 import useResolvedPortName from "../../hooks/useResolvedPortName";
 import { dgPolicyConflict } from "../../utils/dgPolicy";
 import { isShipmentLocked } from "../../utils/shipmentLock";
+import { CATEGORIES as PAYMENT_CATEGORIES, categoryOf as paymentCategoryOf, termsOf as paymentTermsOf } from "../../utils/paymentTerms";
 import { onLegsScheduleChanged } from "../../legsScheduleBus";
 import Btn from "../../components/primitives/Btn";
 import Spinner from "../../components/primitives/Spinner";
@@ -717,6 +718,10 @@ export const EVENT_CONFIG = {
   SIDE_OFFICE_ADDED:   { icon: "＋",  label: "Office added",         color: () => HZ.good  },
   SIDE_OFFICE_REMOVED: { icon: IconClose,  label: "Office removed",       color: () => HZ.crit   },
   OFFICE_REASSIGNED:   { icon: IconPencil, label: "Office reassigned",    color: () => HZ.info     },
+  // The office split (§8.52).
+  PAYMENT_TERMS_SET:       { icon: IconPencil, label: "Payment terms set",     color: () => HZ.amber },
+  PAYMENT_TERMS_CHANGED:   { icon: IconPencil, label: "Payment terms changed", color: () => HZ.amber },
+  COST_LINE_OFFICE_CHANGED: { icon: IconPencil, label: "Line office changed",  color: () => HZ.amber },
   LINE_AGENT_AUTO_ASSIGNED: { icon: "＋", label: "Line Agent auto-assigned", color: () => HZ.good },
   CONTRACT_DROPPED:    { icon: IconWarning, label: "Contract dropped",    color: () => HZ.crit   },
   SPACE_SKIPPED:       { icon: IconWarning, label: "Space match skipped", color: () => HZ.warn  },
@@ -749,6 +754,16 @@ export const FIELD_LABELS = {
   gross_weight_kg: "Gross Weight (kg)", volume_cbm: "Volume (CBM)",
   is_dg: "Dangerous Goods", dg_class: "DG Class",
   shipper_name: "Shipper", consignee_name: "Consignee", notify_name: "Notify Party", principal_name: "Principal",
+  // The office split (§8.52): the payment terms per category, Freight Terms following the freight's, the billing office.
+  payment_terms: "Payment terms", freight_terms: "Freight Terms", billingOfficeId: "Billing Office", responsible_office: "Office",
+  originHaulage: "Origin haulage", originPort: "Origin port charges", originOther: "Other origin charges", freight: "Ocean freight",
+  destinationPort: "Destination port charges", destinationHaulage: "Destination haulage", destinationOther: "Other destination charges",
+};
+
+// A cost line moved to another office or side (the office split, §8.52).
+const lineOfficeSummary = ev => {
+  const m = ev.meta || {};
+  return `${[m.type, m.chargeCode].filter(Boolean).join(" ")}: ${ev.oldValue || "—"} → ${ev.newValue || "—"}`;
 };
 
 // Why a field changed, when the server recorded it (a principal moved by the incoterm rule, 2026-11-13).
@@ -800,6 +815,8 @@ const EventRow = ({ ev }) => {
     summary = [m.side, m.serviceType, m.vendorName].filter(Boolean).join("  ·  ");
   } else if (ev.eventType === "BOOKED_OUT_OF_ORDER" || ev.eventType === "BOOKED_OFF_STEERING") {
     summary = steeringSummary(ev.meta || {});
+  } else if (ev.eventType === "COST_LINE_OFFICE_CHANGED") {
+    summary = lineOfficeSummary(ev);
   } else {
     summary = field ? `${field}: ` : "";
     summary += ev.oldValue ? `${ev.oldValue} → ` : "";
@@ -909,6 +926,7 @@ export const getEventSummary = ev => {
     return s;
   }
   if (ev.eventType === "BOOKED_OUT_OF_ORDER" || ev.eventType === "BOOKED_OFF_STEERING") return steeringSummary(ev.meta || {});
+  if (ev.eventType === "COST_LINE_OFFICE_CHANGED") return lineOfficeSummary(ev);
   if (ev.eventType === "SERVICE_ORDERED" || ev.eventType === "SERVICE_REMOVED") {
     const m = ev.meta || {};
     return [m.side, m.serviceType, m.vendorName].filter(Boolean).join("  ·  ");
@@ -2116,6 +2134,43 @@ const InactiveOfficesSection = ({ offices, isAdmin, onReactivate }) => {
   );
 };
 
+// The billing office (the office split, 2026-11-14, ARCHITECTURE.md §8.52): the office that issues every invoice on the
+// shipment, copied from its export office's at creation; the OCC/BK of the export side changes it (the server checks).
+const BillingOfficeStrip = ({ shipment, offices, canEdit, onUpdate }) => {
+  const [busy, setBusy] = useState(false);
+  const current = offices.find(o => o.id === shipment.billingOfficeId);
+  const choices = offices.filter(o => o.isActive || o.id === shipment.billingOfficeId).sort((a, b) => String(a.code).localeCompare(String(b.code)));
+  const change = async value => {
+    setBusy(true);
+    try { await onUpdate(shipment.id, { ...shipment, billingOfficeId: value || null }); }
+    catch { /* the caller toasts */ }
+    finally { setBusy(false); }
+  };
+  return (
+    <div id="shpparties-billing-office" data-testid="parties-billing-office" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+      background: `${HZ.amber}1a`, border: `1px solid ${HZ.amber}55`, borderRadius: 12, padding: "12px 18px", marginBottom: 16 }}>
+      <div style={{ flex: 1, minWidth: 220 }}>
+        <div style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".08em", color: HZ.amber, marginBottom: 2 }}>Billing Office</div>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 13.5, fontWeight: 700, color: HZ.text }}>
+          {current ? `${current.code} — ${current.name}` : "None"}
+        </div>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted, marginTop: 2 }}>
+          {current ? "Issues every invoice on this shipment; each charge still counts for its responsible office (Carrier Booking → Payment terms)."
+            : "Each responsible office invoices its own charges (Carrier Booking → Payment terms)."}
+        </div>
+      </div>
+      {canEdit && (
+        <select id="shpparties-billing-office-select" data-testid="parties-billing-office-select" value={shipment.billingOfficeId || ""} disabled={busy}
+          onChange={e => change(e.target.value)}
+          style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, background: HZ.surfaceSolid, border: `1px solid ${HZ.borderStrong}`, borderRadius: 8, padding: "5px 8px", maxWidth: 320 }}>
+          <option value="">None: each office invoices its own</option>
+          {choices.map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
+        </select>
+      )}
+    </div>
+  );
+};
+
 export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched, parties }) => {
   const { canEditShipments: roleCanEdit, activeOffice, allOffices, isAdmin, activeRoles } = useAuth();
   const canEdit = roleCanEdit && !isShipmentLocked(shipment); // Completed / Cancelled: parties and offices locked (TKT-SPXTGR)
@@ -2251,6 +2306,9 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched, par
                 textStyle={{ fontFamily: HZ_BODY, fontSize: 13.5, fontWeight: 700, color: HZ.text }} />
             </div>
           </div>
+        )}
+        {(shipment.billingOfficeId || (canEditExport && onUpdate)) && (
+          <BillingOfficeStrip shipment={shipment} offices={offices} canEdit={canEditExport && !!onUpdate} onUpdate={onUpdate} />
         )}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
           <OfficeColumn side="Export" shipment={shipment} offices={offices} services={exportServices}
@@ -2685,7 +2743,7 @@ const marginVariant = pct => pct == null ? "default" : pct >= 20 ? "success" : p
 
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockType = null, onSave, onSaveAndMirror, onCancel }) => {
+export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockType = null, shipment = null, onSave, onSaveAndMirror, onCancel }) => {
   const [type,         setType]         = useState(lockType || init.type || "BUY");
   const [chargeCode,   setChargeCode]   = useState(init.chargeCode   || "Ocean Freight");
   const [currency,     setCurrency]     = useState(init.currency     || "USD");
@@ -2696,6 +2754,12 @@ export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockTyp
   const [notes,        setNotes]        = useState(init.notes        || "");
   const [containerId,  setContainerId]  = useState(init.containerId  || "");
   const [paymentIndicator, setPaymentIndicator] = useState(init.paymentIndicator || "Prepaid");
+  // Once the shipment is split (§8.52) a line's Prepaid/Collect is its category's payment term; the server sets it the
+  // same way, so the field only shows it.
+  const splitTerms = shipment?.paymentTerms ? paymentTermsOf(shipment) : null;
+  const splitCategory = splitTerms ? paymentCategoryOf({ chargeCode, chargeSide: init.chargeSide || "", source: init.source || "manual" }) : null;
+  const splitMark = splitCategory ? (splitTerms.categories[splitCategory].term === "COL" ? "Collect" : "Prepaid") : null;
+  const cpi = splitMark || paymentIndicator;
   const [saving, setSaving] = useState(false);
   const isEdit = !!init.id;
 
@@ -2825,20 +2889,26 @@ export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockTyp
       </div>
       <div>
         <div style={lbl}>Carrier Payment Indicator (CPI)</div>
-        <select value={paymentIndicator} onChange={e => setPaymentIndicator(e.target.value)} style={inp}>
+        <select value={cpi} onChange={e => setPaymentIndicator(e.target.value)} style={{ ...inp, ...(splitMark ? { opacity: 0.7, cursor: "not-allowed" } : {}) }}
+          disabled={!!splitMark} data-testid="costline-cpi">
           <option value="Prepaid">Prepaid — paid at origin</option>
           <option value="Collect">Collect — paid at destination</option>
         </select>
+        {splitMark && (
+          <div data-testid="costline-cpi-follows" style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, marginTop: 4 }}>
+            Set by the payment terms on Carrier Booking ({PAYMENT_CATEGORIES.find(c => c.id === splitCategory)?.label}: {splitMark}).
+          </div>
+        )}
       </div>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
         <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
         <Btn variant="secondary"
-          onClick={() => submit(() => onSaveAndMirror({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, vatTreatment, notes, containerId, paymentIndicator }))}
+          onClick={() => submit(() => onSaveAndMirror({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, vatTreatment, notes, containerId, paymentIndicator: cpi }))}
           disabled={!valid || saving}
           title={`Save this line and create a mirrored ${type === "BUY" ? "SELL" : "BUY"} line with the same values`}>
           {saving ? "Saving…" : `⇄ Mirror as ${type === "BUY" ? "SELL" : "BUY"}`}
         </Btn>
-        <Btn onClick={() => submit(() => onSave({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, vatTreatment, notes, containerId, paymentIndicator }))} disabled={!valid || saving}>
+        <Btn onClick={() => submit(() => onSave({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, vatTreatment, notes, containerId, paymentIndicator: cpi }))} disabled={!valid || saving}>
           {saving ? "Saving…" : (isEdit ? "Save Changes" : "Add Line")}
         </Btn>
       </div>
@@ -3052,7 +3122,8 @@ const costLineStatusStyle = status => ({
 }[status]);
 const costLineTypeColor = type => ({ SELL: HZ.cyan, BUY: HZ.violet }[type]);
 
-export const CostLineRow = ({ line: l, containers = [], showActions = false, onEdit, onDelete, onActualize, onPost, onAdjust }) => {
+// office: { key, code } — the line's responsible office once the shipment is split (the office split, §8.52).
+export const CostLineRow = ({ line: l, containers = [], showActions = false, onEdit, onDelete, onActualize, onPost, onAdjust, office = null }) => {
   const ctr = l.containerId ? containers.find(c => c.id === l.containerId) : null;
   const ctrLabel = ctr ? (ctr.containerNumber || `(${ctr.size || ""}${ctr.type || ""})`) : null;
   // Mirror direction is derived from the line's own type, not stored separately: a
@@ -3085,6 +3156,14 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
         <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
           <span style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.chargeCode}</span>
+          {office && (
+            <span data-testid={`cost-line-office-${l.id}`} title="The office this line belongs to (Carrier Booking → Payment terms)"
+              style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, whiteSpace: "nowrap", flexShrink: 0, borderRadius: 4, padding: "1px 5px",
+                color: office.key === "export" ? HZ.cyan : office.key === "import" ? HZ.violet : office.key === "billing" ? HZ.amber : HZ.textMuted,
+                background: `${office.key === "export" ? HZ.cyan : office.key === "import" ? HZ.violet : office.key === "billing" ? HZ.amber : HZ.textMuted}1f` }}>
+              {office.code || office.key}
+            </span>
+          )}
           {(l.vatRate > 0 || (l.vatTreatment && l.vatTreatment !== "standard")) && (
             <span title={l.type === "SELL" ? "Output VAT — charged to the customer" : "Input VAT — paid to the vendor"}
               style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, color: HZ.info,

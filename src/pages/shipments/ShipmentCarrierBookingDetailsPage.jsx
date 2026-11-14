@@ -11,6 +11,7 @@ import { IconSendPlane, IconAnchor, IconWarning } from "../../components/primiti
 import { resolveCreditGate } from "../../utils/invoiceGenerator";
 import { canEditShipmentSide } from "../../utils/officeSide";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
+import { PaymentTermsCard } from "../../components/shared/PaymentTerms";
 
 // ─── Carrier Booking — Details ────────────────────────────────────────────────
 // The outbound half of a booking: what we're asking the carrier for, and the Send
@@ -289,6 +290,10 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
           Parties &amp; Offices if this shipment needs a one-off exception.
         </div>
       </div>
+
+      {/* The office split (2026-11-14, mockup 1cb7bdf6 v2): the carrier payment terms per charge category, each with its
+          responsible office, and the Costs and charges pop-up — set here before the booking goes to the carrier. */}
+      <PaymentTermsCard shipment={shipment} onSaved={() => onRefresh?.()} />
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
         gap: 10, marginBottom: 24 }}>

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "built": "2026-11-09",
-  "knowledge": "data/assistant-knowledge.json (181 passages: User Manual + Functional Spec)",
+  "knowledge": "data/assistant-knowledge.json (182 passages: User Manual + Functional Spec)",
   "heldOut": "These are the TEST questions. Never use them, or close rewordings of them, as training examples: a model trained on its own test scores well without being any better.",
   "scoring": {
     "facts": "Case-insensitive substring match. A fact group counts when any one of its alternatives appears in the answer.",

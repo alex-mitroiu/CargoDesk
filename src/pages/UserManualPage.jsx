@@ -469,6 +469,19 @@ const UserManualPage = () => {
         </StepBody>
         <Step n={2}>Send the booking request</Step>
         <StepBody>
+          <P>Before you send it, check <Tag>Payment terms (CPI)</Tag>. For each group of charges (origin haulage, port
+            and other charges; the ocean freight; destination port, haulage and other charges) it says whether it is{" "}
+            <strong>Prepaid</strong> or <strong>Collect</strong>, which of the shipment's offices is responsible for it, and
+            who it is billed to. The Incoterm fills it in: under FOB the origin charges are Prepaid and billed to the shipper,
+            the freight and destination charges Collect and billed to the buyer. As OCC/BK you can change any row and
+            press <Tag>Save payment terms</Tag>; the box beside it shows what goes to the carrier.{" "}
+            <Tag>Costs and charges</Tag> lists every cost and charge with its office: pick a side (Origin or Destination)
+            for a charge such as Haulage or Customs, or move a single line to another office. From then on each line counts
+            for its office's legal entity, and invoices are made per issuing office and billed party (the shipment's billing
+            office, if it has one, issues them all). Each line's own Prepaid or Collect follows its group too: Cost Entry
+            shows it read-only. Charges already on a confirmed invoice keep their mark and office, and a draft invoice
+            made before a change has to be generated again. If nobody saved the terms, sending the booking saves them as
+            the Incoterm sets them.</P>
           <P>Once a schedule's attached, this page turns into a real form. Click{" "}
             <Tag>Send Booking Request</Tag> to transmit it to the carrier as a standard{" "}
             <strong>DCSA</strong> booking message, with its own outbound record you can review later.
@@ -536,8 +549,8 @@ const UserManualPage = () => {
             with the reason on the shipment's <Tag>History</Tag>. Pick someone else (a parent company, a third party who
             pays) and it stays put whatever the Incoterm does.</P>
           <P>The principal is who the shipment's invoices are billed to (the consignee when there is none); their name
-            is in the invoice's <Tag>Bill To</Tag> box. A credit note always goes to whoever its invoice billed, even
-            if the principal has changed since. If the new principal is on a contract or space configuration named for
+            is in the invoice's <Tag>Bill To</Tag> box. A credit note always goes to whoever its invoice billed, from the
+            office that issued it, even if the principal or the payment terms have changed since. If the new principal is on a contract or space configuration named for
             another customer, saving warns you: pick another contract on <Tag>Contracts &amp; Schedules</Tag>.</P>
         </StepBody>
         <Step n={2}>Everyone else</Step>
@@ -556,6 +569,10 @@ const UserManualPage = () => {
             <strong>Controlling Office</strong> that oversees the whole shipment regardless of side.
             An export-side user can only ever change the Export office and its services; the same
             wall applies to import.</P>
+          <P>The <strong>Billing Office</strong>, when there is one, issues every invoice on the shipment, to every party,
+            while each charge still counts for the office responsible for it. A new shipment takes it from its export
+            office's settings (Organisation → Offices → Billing office); the export side's OCC/BK can change it or remove
+            it here, and without one each office invoices its own charges.</P>
         </StepBody>
         <Step n={4}>Reassign an office — for example, if one location goes down</Step>
         <StepBody>

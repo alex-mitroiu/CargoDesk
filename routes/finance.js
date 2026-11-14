@@ -59,6 +59,12 @@ module.exports = function financeRoutes(app, ctx) {
       LEFT JOIN offices  imo_office ON imo_office.id = s.imo_office_id
       LEFT JOIN branches imo_branch ON imo_branch.id = imo_office.branch_id
     `);
+    // The office split (§8.52): a split shipment's lines count for their own office's entity (a charge its issuer's).
+    const splitEntities = await ctx.officeSplit.entityOfLines(lines);
+    for (const r of lines) {
+      const e = splitEntities.get(r.id);
+      if (e?.entityId) { r.entity_id = e.entityId; r.entity_name = e.entityName; r.entity_currency = e.currency; }
+    }
 
     const todayStr = new Date().toISOString().slice(0, 10);
     const weekBuckets = Array.from({ length: 6 }, (_, i) => {
@@ -191,9 +197,12 @@ module.exports = function financeRoutes(app, ctx) {
       ? (await query(`SELECT * FROM shipment_cost_lines WHERE id IN (${idList(sellIds)})`, sellIds)).map(l => [l.id, l])
       : []);
     // Per document, not per distinct line: a line billed on two issued invoices was genuinely
-    // charged VAT twice until a credit note says otherwise, so it's owed twice.
+    // charged VAT twice until a credit note says otherwise, so it's owed twice. Each carries the
+    // entity it was issued by (below): the document's issuing office once the shipment is split
+    // (the office split, §8.52), else the shipment's, as when it was issued.
     const outputLines = docs.flatMap(d =>
-      (d.source_cost_line_ids ? JSON.parse(d.source_cost_line_ids) : []).map(id => sellLinesById.get(id)).filter(Boolean));
+      (d.source_cost_line_ids ? JSON.parse(d.source_cost_line_ids) : []).map(id => sellLinesById.get(id)).filter(Boolean)
+        .map(l => ({ ...l, __issuerOfficeId: d.issuing_office_id || null })));
     // A confirmed consolidated statement is an issued billing document too (TKT-02776W): its lines
     // are output on the statement's confirmed_at, read from the cost lines it bills — the same
     // source an invoice's VAT comes from, so the two can't be reported differently.
@@ -202,7 +211,8 @@ module.exports = function financeRoutes(app, ctx) {
     if (statements.length) {
       const ids = statements.map(s => s.id);
       outputLines.push(...await query(
-        `SELECT scl.* FROM customer_statement_lines csl JOIN shipment_cost_lines scl ON scl.id = csl.cost_line_id
+        `SELECT scl.*, cs.entity_id AS __statement_entity_id FROM customer_statement_lines csl
+         JOIN shipment_cost_lines scl ON scl.id = csl.cost_line_id JOIN customer_statements cs ON cs.id = csl.statement_id
          WHERE csl.statement_id IN (${idList(ids)})`, ids));
     }
 
@@ -212,6 +222,14 @@ module.exports = function financeRoutes(app, ctx) {
 
     const shipmentIds = [...new Set([...outputLines, ...inputLines].map(l => l.shipment_id))];
     const entityMap = await entityByShipment(shipmentIds); // lib/legal-entities.js — one rule for every report
+    // The office split (§8.52): output VAT is the issuing entity's (the document's issuing office, or the statement's
+    // entity), input VAT the entity of the office responsible for the cost; anything from before the split the shipment's.
+    const issuerOffices = await ctx.officeSplit.officesById(outputLines.map(l => l.__issuerOfficeId));
+    const statementEntities = await ctx.officeSplit.entitiesById(outputLines.map(l => l.__statement_entity_id));
+    const inputEntities = await ctx.officeSplit.entityOfLines(inputLines);
+    const entityOfLine = (line, side) => (side === "input" ? inputEntities.get(line.id)
+      : (line.__issuerOfficeId && issuerOffices.get(line.__issuerOfficeId)?.entity) || (line.__statement_entity_id && statementEntities.get(line.__statement_entity_id)))
+      || entityMap.get(line.shipment_id);
 
     const emptySide = () => ({
       standard: { baseUsd: 0, vatUsd: 0 }, zero_rated: { baseUsd: 0 },
@@ -220,7 +238,7 @@ module.exports = function financeRoutes(app, ctx) {
     });
     const buckets = new Map();
     const add = (line, side) => {
-      const ent = entityMap.get(line.shipment_id);
+      const ent = entityOfLine(line, side);
       const key = ent?.entityId || null;
       if (!buckets.has(key)) buckets.set(key, {
         entityId: key, entityName: ent?.entityName || "Unassigned (no branch on either office)",

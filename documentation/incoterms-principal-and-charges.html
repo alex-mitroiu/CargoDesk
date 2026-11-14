@@ -90,7 +90,7 @@ footer{font-size:13px;color:var(--muted);border-top:1px solid var(--line);paddin
       <li><b>The incoterm sets the principal.</b> With an E or F term (EXW, FCA, FAS, FOB) the buyer arranges the main carriage, so the <b>consignee</b> is the principal. With a C or D term (CPT, CIP, CFR, CIF, DAP, DPU, DDP) the seller pays it, so the <b>shipper</b> is. The principal follows the incoterm, the shipper and the consignee until you choose someone else.</li>
       <li><b>The principal is the customer the shipment is billed to.</b> It sets the invoice currency, who is chased for payment and whose credit is checked. It also picks customer-specific contract space and charge defaults.</li>
       <li><b>Each cost or charge line is marked Prepaid or Collect, by hand.</b> The incoterm doesn't set this mark. It decides what the House B/L shows and what must be paid before the cargo is released at destination.</li>
-      <li><b>A shipment's costs and charges all belong to one legal entity</b>: the export office's, or the import office's if the export office has none. CargoDesk doesn't divide a shipment's money between the export and the import office.</li>
+      <li><b>The money is split between the shipment's offices</b> once its payment terms are set on the Carrier Booking: each charge category is Prepaid or Collect with a responsible office, every line counts for its office's legal entity, and each charge is billed to the party its term names. A billing office, when the shipment has one, issues every invoice. Before the terms are set, everything belongs to one legal entity, as before.</li>
     </ul>
   </section>
 
@@ -222,32 +222,34 @@ footer{font-size:13px;color:var(--muted);border-top:1px solid var(--line);paddin
       <li><b>Releasing the cargo</b> at destination needs every Collect charge on a paid invoice or statement first (an admin or finance user can override with a reason).</li>
       <li><b>GP Overview</b> splits the figures into prepaid and collect.</li>
     </ul>
-    <p>It does <b>not</b> send a line to the import office, or to a separate invoice. An invoice (FR01) takes every SELL line not yet billed, prepaid and collect together. You can also make one invoice per container.</p>
+    <p>This mark on the line does <b>not</b> decide its office or who it is billed to: the payment terms on the Carrier Booking do that, per charge category (section 5). Once those terms are set, the mark follows them: each line is Prepaid or Collect as its category is, and Cost Entry shows it read-only. A charge already on a confirmed invoice keeps its mark.</p>
   </section>
 
   <section>
     <div class="col">
       <h2>5. Which office and legal entity the money belongs to</h2>
-      <p>Every shipment has an <b>export managing office</b> and an <b>import managing office</b>, and sometimes a controlling office. Each office belongs to a legal entity (Organisation → Branches). This is how the money is assigned:</p>
+      <p>Every shipment has an <b>export managing office</b> and an <b>import managing office</b>, sometimes a controlling office, and a <b>billing office</b> when its export office names one (Organisation → Offices). Each office belongs to a legal entity (Organisation → Branches). On the Carrier Booking, the OCC/BK sets the <b>payment terms</b> per charge category (origin haulage, port and other charges; the ocean freight; destination port, haulage and other charges): Prepaid or Collect, and the office responsible. The Incoterm fills them in; Prepaid goes to the export office and Collect to the import office unless someone picks another. This is how the money is assigned once they are set:</p>
     </div>
     <div class="scroll"><table class="wide">
       <thead><tr><th>What</th><th>Belongs to</th></tr></thead>
       <tbody>
-        <tr><td>All of the shipment's costs and charges (margin, VAT, GL export, FX revaluation)</td><td>The <b>export office's legal entity</b>; if that office has none, the import office's. One entity for the whole shipment.</td></tr>
-        <tr><td>Sending invoices and documents by email</td><td>The export office's mail account.</td></tr>
-        <tr><td>Payment reminders, collections alerts and escalation</td><td>The export office's mail account, thresholds and branch manager. A shipment without an export office gets no automatic reminders.</td></tr>
-        <tr><td>A consolidated statement</td><td>One legal entity per statement. It is chased by the export office holding the largest share of its value.</td></tr>
+        <tr><td>A cost or charge line</td><td>Its category's office (the Costs and charges pop-up can move one line), and that office's <b>legal entity</b> for margin and VAT on costs.</td></tr>
+        <tr><td>Who a charge is billed to</td><td>Prepaid: the seller's side (the shipper); Collect: the buyer's (the consignee). The side that pays the main carriage is billed through the principal.</td></tr>
+        <tr><td>Invoices</td><td>The billing office issues them all; without one, each office invoices its own charges. One invoice per issuing legal entity and billed party, in that party's currency. A credit note goes to the party its invoice billed.</td></tr>
+        <tr><td>VAT, GL export, statements</td><td>The legal entity that issued the invoice; a statement holds one entity's charges.</td></tr>
+        <tr><td>Payment reminders, collections alerts and escalation</td><td>The office that issued the invoice (its mail account, thresholds and branch manager), to the party it bills.</td></tr>
         <tr><td>Entering cost and charge lines</td><td>Either office: anyone who can edit the shipment.</td></tr>
+        <tr><td>A shipment whose payment terms were never set</td><td>As before: everything belongs to the export office's legal entity (else the import office's), one invoice to the principal (else the consignee). Sending the booking request sets the terms as the Incoterm does.</td></tr>
       </tbody>
     </table></div>
     <div class="note col">
-      <h3>What CargoDesk doesn't do today</h3>
-      <p>It doesn't divide one shipment's costs and charges between the export and the import office. Destination charges entered by the import office still count for the export office's legal entity. There is also no billing between the two offices (agent invoices or a profit share), and no separate profit and loss for each side. Prepaid and Collect don't change this.</p>
+      <h3>Still not done</h3>
+      <p>There is no settlement between the offices (agent invoices or a profit share): each keeps what it bills and pays what it is charged, so one side can show a loss. GP Overview shows each office's share.</p>
     </div>
     <div class="flow" aria-label="Example: one shipment, two offices">
-      <div class="card"><span class="k">Export office</span><span class="v">NL-NLRTM-SE · Rotterdam Office</span><span class="s">Legal entity Rotterdam Branch. The shipment's costs, charges, VAT and margin all count here.</span></div>
-      <div class="card"><span class="k">Import office</span><span class="v">US-USNYC-SI · New York Harbor</span><span class="s">Enters the New York delivery and terminal charges, which also count for Rotterdam Branch.</span></div>
-      <div class="card"><span class="k">Customer (CIF)</span><span class="v">Van Leeuwen Meubelen BV</span><span class="s">Billed in its own currency; reminders come from the Rotterdam Office's mail account.</span></div>
+      <div class="card"><span class="k">Export office · FOB</span><span class="v">NL-NLRTM-SE · Rotterdam Office</span><span class="s">Origin charges (Prepaid): its costs and margin; billed to the shipper, Van Leeuwen Meubelen BV.</span></div>
+      <div class="card"><span class="k">Import office</span><span class="v">US-USNYC-SI · New York Harbor</span><span class="s">Ocean freight and New York charges (Collect): its costs and margin; billed to the buyer, Hudson Home Imports Inc.</span></div>
+      <div class="card"><span class="k">Billing office</span><span class="v">NL-NLAMS-SE · Amsterdam</span><span class="s">Issues both invoices, one to each party; they count for its legal entity's VAT.</span></div>
     </div>
   </section>
 
@@ -261,12 +263,14 @@ footer{font-size:13px;color:var(--muted);border-top:1px solid var(--line);paddin
         <tr><td>Contract rates as cost lines</td><td><span class="pill p-yes">Automatic</span> Once, for a Central contract.</td></tr>
         <tr><td>Charge Defaults</td><td><span class="pill p-yes">Automatic</span> Once, the first time Cost Entry opens.</td></tr>
         <tr><td>Prepaid or Collect on a line</td><td><span class="pill p-no">By hand</span> Starts as Prepaid. Arrival Notice lines follow the carrier.</td></tr>
-        <tr><td>Invoice currency and who owes it</td><td><span class="pill p-yes">Automatic</span> From the principal.</td></tr>
-        <tr><td>Legal entity of the shipment's money</td><td><span class="pill p-yes">Automatic</span> The export office's (else the import office's).</td></tr>
-        <tr><td>Splitting money between the export and import office</td><td><span class="pill p-no">Not available</span></td></tr>
+        <tr><td>Invoice currency and who owes it</td><td><span class="pill p-yes">Automatic</span> From the billed party (the principal on a shipment that isn't split).</td></tr>
+        <tr><td>Payment terms per charge category</td><td><span class="pill p-yes">Automatic</span> From the Incoterm; the OCC/BK changes them on the Carrier Booking.</td></tr>
+        <tr><td>A line's office</td><td><span class="pill p-yes">Automatic</span> Its category's; the OCC/BK can move one line.</td></tr>
+        <tr><td>Splitting money between the offices</td><td><span class="pill p-yes">Automatic</span> Once the payment terms are set (or the booking is sent).</td></tr>
+        <tr><td>Settlement between the offices</td><td><span class="pill p-no">Not available</span></td></tr>
       </tbody>
     </table></div>
   </section>
 
-  <footer class="col">Written for CargoDesk users from the application as of 13 November 2026 (v0.91.14). The User Manual in CargoDesk is the live reference; this page explains the rules behind the screens.</footer>
+  <footer class="col">Written for CargoDesk users from the application as of 14 November 2026 (v0.91.14, plus the office split, built but not released yet). The User Manual in CargoDesk is the live reference; this page explains the rules behind the screens.</footer>
 </div>

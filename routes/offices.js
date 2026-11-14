@@ -108,11 +108,19 @@ module.exports = function officesRoutes(app, ctx) {
     if (escalationDays != null && escalationDays < 1) return err(res, "invoiceEscalationBusinessDays must be at least 1");
     if (alertDays != null && escalationDays != null && escalationDays <= alertDays)
       return err(res, "invoiceEscalationBusinessDays must be greater than invoiceAlertBusinessDays");
+    // The office that issues this office's invoices (the office split, §8.52); a new shipment of this export office
+    // takes it as its billing office. Empty = this office issues its own. Checked only when it changes.
+    const billingOfficeId = req.body?.billingOfficeId !== undefined ? (String(req.body.billingOfficeId || "").trim() || null) : (existing.billing_office_id || null);
+    if (billingOfficeId !== (existing.billing_office_id || null) && billingOfficeId) {
+      if (billingOfficeId === existing.id) return err(res, "An office can't be its own billing office: leave it empty");
+      const [b] = await query("SELECT id FROM offices WHERE id=$1 AND is_active=TRUE", [billingOfficeId]);
+      if (!b) return err(res, "Billing office not found or inactive");
+    }
     await query(`UPDATE offices SET name=$1, is_active=$2, branch_id=$3, manager_user_id=$4,
-      invoice_alert_business_days=$5, invoice_escalation_business_days=$6, hbl_prefix=$7, bl_terms_default=$9 WHERE id=$8`,
-      [name, active, bid, mgr, alertDays, escalationDays, hblPrefix, req.params.id, termsDefault]);
+      invoice_alert_business_days=$5, invoice_escalation_business_days=$6, hbl_prefix=$7, bl_terms_default=$9, billing_office_id=$10 WHERE id=$8`,
+      [name, active, bid, mgr, alertDays, escalationDays, hblPrefix, req.params.id, termsDefault, billingOfficeId]);
     const [managerName] = mgr ? await query("SELECT name, email FROM users WHERE id=$1", [mgr]) : [null];
-    const row = { ...existing, name, is_active: active, branch_id: bid, manager_user_id: mgr, hbl_prefix: hblPrefix, bl_terms_default: termsDefault,
+    const row = { ...existing, name, is_active: active, branch_id: bid, manager_user_id: mgr, hbl_prefix: hblPrefix, bl_terms_default: termsDefault, billing_office_id: billingOfficeId,
       manager_name: managerName ? (managerName.name || managerName.email) : null,
       invoice_alert_business_days: alertDays, invoice_escalation_business_days: escalationDays };
     ok(res, await withSeries(row, mapOffice(row)));
@@ -122,7 +130,7 @@ module.exports = function officesRoutes(app, ctx) {
     const [existing] = await query("SELECT * FROM offices WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
     const [inUse] = await query(
-      "SELECT id FROM shipments WHERE emo_office_id=$1 OR imo_office_id=$1 OR controlling_office_id=$1 LIMIT 1", [req.params.id]
+      "SELECT id FROM shipments WHERE emo_office_id=$1 OR imo_office_id=$1 OR controlling_office_id=$1 OR billing_office_id=$1 LIMIT 1", [req.params.id]
     );
     if (inUse) return err(res, "Office is referenced by shipments — deactivate it instead of deleting");
     const [templateInUse] = await query("SELECT id FROM document_templates WHERE office_id=$1 LIMIT 1", [req.params.id]);
@@ -146,6 +154,8 @@ module.exports = function officesRoutes(app, ctx) {
     if (quoteInUse) return err(res, "Office is referenced by a quote — reassign or remove it first, or deactivate the office instead of deleting");
     const [oppInUse] = await query("SELECT id FROM opportunities WHERE office_id=$1 LIMIT 1", [req.params.id]);
     if (oppInUse) return err(res, "Office is referenced by an opportunity — reassign or remove it first, or deactivate the office instead of deleting");
+    // Offices that named it as their billing office issue their own invoices again (the office split, §8.52).
+    await query("UPDATE offices SET billing_office_id=NULL WHERE billing_office_id=$1", [req.params.id]);
     await query("DELETE FROM offices WHERE id=$1", [req.params.id]);
     ok(res, { deleted: req.params.id });
   });

@@ -1619,6 +1619,37 @@ NLAMS → NLRTM (Carrier's Haulage, 16 Nov), as Save stored them before the fix 
 
 ---
 
+### TC-105: The office split — payment terms per charge category, responsible offices, the billing office
+**Feature:** Carrier Booking → Payment terms (CPI) and Costs and charges; Parties & Offices → Billing Office; Organisation → Offices → Billing office; invoices, VAT, booking request (lib/payment-terms.js, lib/office-split.js, ARCHITECTURE.md §8.52)
+**Precondition:** Legal entities Rotterdam Forwarding BV (NL, EUR, VAT 21%) and New York Forwarding Inc (US, USD); offices NL-NLRTM-SE and NL-NLAMS-SE (Dutch entity), US-USNYC-SI (American); customers Van Leeuwen Meubelen BV (NL, EUR) and Hudson Home Imports Inc (US, USD); an OCC/BK user of NL-NLRTM-SE and a viewer
+**Steps:**
+1. Set NL-NLAMS-SE as NL-NLRTM-SE's billing office; create an FOB NLRTM → USNYC MAEU shipment (EMO NL-NLRTM-SE, IMO US-USNYC-SI) with a 40' HC and a sea leg
+2. Open Carrier Booking: read the payment terms; as the viewer try to change them
+3. Add charges (Origin THC EUR 245, B/L Fee EUR 75, Ocean Freight USD 2,450, Destination THC USD 380, Haulage USD 650) and costs (Origin THC EUR 210, Ocean Freight USD 1,900, Destination THC USD 340, Haulage USD 520); open Costs and charges, set the selling Haulage to Destination, save
+4. Generate invoices on Invoice Entry
+5. Remove the billing office on Parties & Offices; switch "Other origin charges" to Collect; add Customs USD 185 (Destination) and Other EUR 40; generate invoices
+6. Confirm the invoices; open Reports → VAT Liability for today
+7. Send the booking request on a CIF shipment whose terms were never saved; open its outbound message
+8. On the first shipment, open Cost Entry → Add Cost Line with Destination THC; then switch "Origin port charges" to Collect
+9. Try to confirm the buyer's draft invoice from step 4; reverse the shipper's confirmed invoice from step 6
+10. Export the shipment (QA export); deactivate NL-NLAMS-SE and create another shipment from NL-NLRTM-SE
+
+**Expected Result:**
+- 1: the shipment's billing office is NL-NLAMS-SE
+- 2: "Not saved yet · the FOB defaults": origin rows Prepaid / Export / the shipper, freight and destination rows Collect / Import / the principal; the DCSA box shows the three groups and invoicePayableAt USNYC; the viewer gets 403
+- 3: each line shows its category, office and billed party; saved ("Offices saved"); Freight Terms reads Collect; History has "Payment terms set" and "Line office changed"; Cost Entry shows an office chip per line; GP Overview shows By office (Export, Import)
+- 4: two invoices from NL-NLAMS-SE: Origin THC + B/L Fee to Van Leeuwen (EUR, Dutch VAT number), the rest to Hudson Home Imports (USD)
+- 5: the two new charges bill the same buyer but belong to two entities: two invoices (an API call with both on one document is refused 409); History "Payment terms changed" and the billing office removed
+- 6: the shipper's invoice counts for Rotterdam Forwarding BV, the customs charge for New York Forwarding Inc
+- 7: the message carries freightPaymentTermCode PRE, origin PRE, destination COL, invoicePayableAt NLRTM; the shipment's terms are saved from then on
+- 8: the CPI field is read-only, "Set by the payment terms on Carrier Booking (Destination port charges: Collect)"; every line's Prepaid/Collect matches its category; the Origin THC on the confirmed invoice stays Prepaid, a new one is Collect
+- 9: the draft is refused ("changed since this draft was made… generate the invoices again"); the credit note comes from NL-NLAMS-SE to Van Leeuwen; in Costs and charges the confirmed invoice's charges and posted costs show "issued" / "posted" with their office read-only
+- 10: the export lists NL-NLAMS-SE (billing, issuing); the new shipment has no billing office
+
+**Status:** PASS (2026-11-14, automated: tests/office-split.test.js (48); src/utils/paymentTerms.parity.test.js; src/utils/splitInvoices.test.js; src/components/shared/PaymentTerms.test.jsx; Edge pass on the CI replica)
+
+---
+
 ### TC-104: The principal follows the incoterm; the invoice and its credit note name who pays
 **Feature:** lib/incoterm-principal.js on create, on every save and on quote conversion; the parties on the History; the invoice's Bill To; the pre-release audit TKT-E1GOI6 (D1–D5) (ARCHITECTURE.md §8.51)
 **Precondition:** Customers Van Leeuwen Meubelen BV (NL, shipper), Hudson Home Imports Inc and Atlantic Living LLC (US, consignees), Van Leeuwen Holding NV (parent); an NLRTM → USNYC MAEU shipment template with offices, dates, commodity and a 40' HC; a MAEU contract named for the first consignee with its space and the consignee's own steering line

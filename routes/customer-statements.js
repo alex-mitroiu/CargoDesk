@@ -86,8 +86,10 @@ module.exports = function customerStatementsRoutes(app, ctx) {
     const { customerId, dateFrom, dateTo } = req.query;
     if (!customerId || !dateFrom || !dateTo) return err(res, "customerId, dateFrom and dateTo are required");
 
+    // Its shipments: where it is the principal or consignee, or a split shipment where it is the shipper (the office
+    // split, §8.52, can bill the shipper the origin charges); below, a split line only when it bills this customer.
     const shipmentRows = await query(
-      "SELECT id FROM shipments WHERE principal_id=$1 OR consignee_id=$1", [customerId]);
+      "SELECT id FROM shipments WHERE principal_id=$1 OR consignee_id=$1 OR (shipper_id=$1 AND payment_terms IS NOT NULL)", [customerId]);
     let shipmentIds = shipmentRows.map(r => r.id);
     if (!unrestricted(req)) {
       const visible = await visibleShipmentIds(req, shipmentIds);
@@ -95,20 +97,26 @@ module.exports = function customerStatementsRoutes(app, ctx) {
     }
     if (!shipmentIds.length) return ok(res, req.query.withHeld === "1" ? { lines: [], held: [] } : []);
 
-    const lines = await query(
+    let lines = await query(
       `SELECT * FROM shipment_cost_lines
        WHERE type='SELL' AND shipment_id IN (${ph(shipmentIds.length, 3)}) AND created_at >= $1 AND created_at <= $2
        ORDER BY created_at`,
       [dateFrom, `${dateTo}T23:59:59.999Z`, ...shipmentIds]);
+    if (!lines.length) return ok(res, req.query.withHeld === "1" ? { lines: [], held: [] } : []);
+    const splitOf = await ctx.officeSplit.splitOfLineRows(lines);
+    const legacyOwn = new Set((await query(`SELECT id FROM shipments WHERE (principal_id=$1 OR consignee_id=$1) AND id = ANY($2)`,
+      [customerId, [...new Set(lines.map(l => l.shipment_id))]])).map(r => r.id));
+    lines = lines.filter(l => (splitOf.get(l.id) ? splitOf.get(l.id).billTo.customerId === customerId : legacyOwn.has(l.shipment_id)));
     if (!lines.length) return ok(res, req.query.withHeld === "1" ? { lines: [], held: [] } : []);
 
     const holds = await billingHolds(lines.map(l => l.id));
     const eligible = lines.filter(l => !holds.has(l.id));
     // Each line's legal entity, so the page can offer one entity's charges at a time (a statement
     // is issued by one entity, TKT-1E55AR), and the VAT that will go onto the statement.
-    const entities = await entityByShipment(lines.map(l => l.shipment_id));
+    // The issuing entity (the office split, §8.52: a split line's issuer's; else the shipment's).
+    const lineEntities = await ctx.officeSplit.entityOfLines(lines);
     const eligibleOut = eligible.map(l => {
-      const ent = entities.get(l.shipment_id) || {};
+      const ent = lineEntities.get(l.id) || {};
       const v = lineVat(l);
       return {
         id: l.id, shipmentId: l.shipment_id, chargeCode: l.charge_code, notes: l.notes || '',
@@ -122,7 +130,7 @@ module.exports = function customerStatementsRoutes(app, ctx) {
     // bills them, so the page can say how many and where instead of silently offering fewer.
     const held = lines.filter(l => holds.has(l.id)).map(l => ({
       id: l.id, shipmentId: l.shipment_id, chargeCode: l.charge_code,
-      entityId: (entities.get(l.shipment_id) || {}).entityId || '', billedOn: holds.get(l.id),
+      entityId: (lineEntities.get(l.id) || {}).entityId || '', billedOn: holds.get(l.id),
     }));
     ok(res, { lines: eligibleOut, held });
   });
@@ -179,14 +187,17 @@ module.exports = function customerStatementsRoutes(app, ctx) {
     const own = new Set((await query(
       `SELECT id FROM shipments WHERE (principal_id=$1 OR consignee_id=$1) AND id IN (${ph(lineShipmentIds.length, 2)})`,
       [customerId, ...lineShipmentIds])).map(r => r.id));
-    const foreign = lines.filter(l => !own.has(l.shipment_id));
+    // A split shipment's charge is this customer's only when it bills this customer (the office split, §8.52).
+    const splitOf = await ctx.officeSplit.splitOfLineRows(lines);
+    const foreign = lines.filter(l => (splitOf.get(l.id) ? splitOf.get(l.id).billTo.customerId !== customerId : !own.has(l.shipment_id)));
     if (foreign.length)
       return err(res, `${foreign.map(l => `${l.charge_code} (${l.shipment_id})`).join(", ")} ${foreign.length === 1 ? "is" : "are"} not on ${customer.companyName}'s shipments`);
     const early = await billingHolds(lines.map(l => l.id));
     if (early.size) return err(res, `Cannot generate this statement — ${describeHolds(early, lines)}`, 409);
     // One legal entity per statement (decided 2026-09-30): a VAT invoice has exactly one supplier.
-    const entities = await entityByShipment(lineShipmentIds);
-    const entityOf = l => entities.get(l.shipment_id) || { entityId: null, entityName: "" };
+    // The issuing entity of each charge (the office split, §8.52: a split line's issuer's; else the shipment's).
+    const lineEntities = await ctx.officeSplit.entityOfLines(lines);
+    const entityOf = l => lineEntities.get(l.id) || { entityId: null, entityName: "" };
     const entityIds = new Set(lines.map(l => entityOf(l).entityId || ""));
     if (entityIds.size > 1) {
       const names = [...new Set(lines.map(l => entityOf(l).entityName || "no legal entity"))];

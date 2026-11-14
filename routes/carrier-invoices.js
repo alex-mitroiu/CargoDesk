@@ -436,6 +436,7 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
       await logEntityEvent("cost_line", costLineId, "IMPORTED", null, null, null,
         JSON.stringify({ shipmentId: inv.shipment_id, chargeCode, source: "carrier_invoice", carrierInvoiceLineId: line.id }));
       await query("UPDATE carrier_invoice_lines SET matched_cost_line_id=$1 WHERE id=$2", [costLineId, line.id]);
+      if (ctx.officeSplit) await ctx.officeSplit.syncLineMarks(inv.shipment_id); // Prepaid/Collect by category (§8.52)
     }
 
     await query("UPDATE carrier_invoice_lines SET status='approved', resolved_at=$1, resolved_by=$2 WHERE id=$3", [now, actor, line.id]);

@@ -7,6 +7,7 @@ import { api } from "../../api";
 import { toast } from "../../toast";
 import { IconClipboard, IconArrowDown, IconArrowUp, IconRefresh } from "../../components/primitives/Icon";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts, makeDashedBtn } from "./shipmentDetailTheme";
+import { CostsAndChargesModal } from "../../components/shared/PaymentTerms";
 
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -35,6 +36,11 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
   const [actualizeLine, setActualizeLine] = useState(null); // line pending actualization
   const [confirmPost,   setConfirmPost]   = useState(null); // line pending Post confirmation
   const [adjustLine,    setAdjustLine]    = useState(null); // posted line pending an Adjust entry
+  // The office split (§8.52): the shipment's offices (each line's chip) and the Costs and charges pop-up.
+  const [termsView,     setTermsView]     = useState(null);
+  const [officesOpen,   setOfficesOpen]   = useState(false);
+  useEffect(() => { api.paymentTerms.get(shipment.id).then(setTermsView).catch(() => setTermsView(null)); }, [shipment.id, lines.length]);
+  const officeOf = l => (l.split ? { key: l.split.officeKey, code: termsView?.offices?.find(o => o.key === l.split.officeKey)?.code || "" } : null);
 
   const isCentral = shipment.contractType === "Central" && !!shipment.contractId;
 
@@ -218,7 +224,7 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
               </thead>
               <tbody>
                 {buyLines.map(l => (
-                  <CostLineRow key={l.id} line={l} containers={ctrs} showActions
+                  <CostLineRow key={l.id} line={l} containers={ctrs} showActions office={officeOf(l)}
                     onEdit={() => setLineModal(l)} onDelete={() => setConfirm(l.id)}
                     onActualize={() => setActualizeLine(l)} onPost={() => setConfirmPost(l)}
                     onAdjust={() => setAdjustLine(l)} />
@@ -246,15 +252,26 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
                   </button>
                 </>
               )}
+              {termsView && (
+                <button id="shpacct-costs-offices-btn" data-testid="cost-entry-offices" type="button" onClick={() => setOfficesOpen(true)} style={dashedBtn(false)}>
+                  Offices
+                </button>
+              )}
               <button id="shpacct-costs-add-btn" type="button" onClick={() => setLineModal("add")} style={dashedBtn(true)}>＋ Add Line</button>
             </div>
           )}
         </div>
       )}
+      {officesOpen && termsView && (
+        <CostsAndChargesModal shipment={shipment} view={termsView} canEdit={!!termsView.canEdit}
+          categories={Object.fromEntries(termsView.categories.map(c => [c.id, { term: c.term, office: c.office }]))} categoriesDirty={false}
+          onClose={() => setOfficesOpen(false)}
+          onSaved={() => { setOfficesOpen(false); load(); api.paymentTerms.get(shipment.id).then(setTermsView).catch(() => {}); }} />
+      )}
 
       {lineModal && (
         <Modal title={lineModal === "add" ? "Add Cost Line" : "Edit Cost Line"} onClose={() => setLineModal(null)}>
-          <CostLineForm init={lineModal === "add" ? {} : lineModal} fxRates={fxRates} containers={ctrs} lockType="BUY"
+          <CostLineForm init={lineModal === "add" ? {} : lineModal} fxRates={fxRates} containers={ctrs} lockType="BUY" shipment={shipment}
             onSave={data => handleSave(data, false)}
             onSaveAndMirror={data => handleSave(data, true)}
             onCancel={() => setLineModal(null)} />

@@ -69,6 +69,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       confirmedAt: r.confirmed_at || null, confirmedBy: r.confirmed_by || '',
       isStale: Number(n) > 0,
       containerId: r.container_id || '', responsibleParty: r.responsible_party || '',
+      issuingOfficeId: r.issuing_office_id || null, billToCustomerId: r.bill_to_customer_id || null,
       vgmDeclarationId: r.vgm_declaration_id || '',
       relatedDocId: r.related_doc_id || null,
       sourceCostLineIds: r.source_cost_line_ids ? JSON.parse(r.source_cost_line_ids) : null,
@@ -330,9 +331,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // Invoice Entry labels those lines and leaves them out of a new invoice. null = unbilled.
   const withBilledOn = async rows => {
     const holds = await billingHolds(rows.filter(r => r.type === "SELL").map(r => r.id));
+    // Each line's office, issuer and billed party once the shipment is split (the office split, §8.52); null before.
+    const splits = ctx.officeSplit ? await ctx.officeSplit.splitOfLineRows(rows) : new Map();
     return rows.map(r => {
       const h = holds.get(r.id);
-      return { ...mapCostLine(r), billedOn: h ? { kind: h.kind, id: h.id, docType: h.docType, status: h.status, label: h.label } : null };
+      return { ...mapCostLine(r), billedOn: h ? { kind: h.kind, id: h.id, docType: h.docType, status: h.status, label: h.label } : null,
+        split: splits.get(r.id) ?? null };
     });
   };
 
@@ -340,6 +344,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     // Contract first: a CCD skips any charge the shipment already has, so the contract gets its say.
     await autoImportContractCosts(req.params.id);
     await applyChargeDefaults(req.params.id);
+    // A split shipment's lines take their category's Prepaid/Collect (§8.52), Charge Defaults' new ones included.
+    if (ctx.officeSplit) await ctx.officeSplit.syncLineMarks(req.params.id);
     const { limit, offset } = req.query;
     // Pagination is opt-in (TKT-UAJGR3) — every existing consumer (CostLineRow lists, GP Overview,
     // Freight Audit matching) wants the whole shipment's cost lines at once and omits these params,
@@ -380,7 +386,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (vatResolved.error) return err(res, vatResolved.error);
     if (await blockIfWrongSideForChargeCode(req, res, req.params.id, chargeCode)) return;
     const source = ['contract', 'mirror', 'automated'].includes(rawSource) ? rawSource : 'manual';
-    const paymentIndicator = rawPI === 'Collect' ? 'Collect' : 'Prepaid';
+    // Once the shipment is split (§8.52) the line's category's term is its mark, whatever was sent.
+    const splitMark = ctx.officeSplit ? await ctx.officeSplit.markFor(req.params.id, { chargeCode, source }) : null;
+    const paymentIndicator = splitMark || (rawPI === 'Collect' ? 'Collect' : 'Prepaid');
     const { vat, treatment } = vatResolved;
     const id  = `CL-${uid()}`;
     const now = new Date().toISOString();
@@ -403,7 +411,10 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const vatResolved = resolveVat(vatRate, vatTreatment ?? (existing.vat_treatment || 'standard'));
     if (vatResolved.error) return err(res, vatResolved.error);
     if (await blockIfWrongSideForChargeCode(req, res, req.params.shipmentId, existing.charge_code)) return;
-    const paymentIndicator = rawPI === 'Collect' ? 'Collect' : 'Prepaid';
+    const splitMark = ctx.officeSplit
+      ? await ctx.officeSplit.markFor(req.params.shipmentId, { chargeCode, chargeSide: existing.charge_side || '', source: existing.source })
+      : null;
+    const paymentIndicator = splitMark || (rawPI === 'Collect' ? 'Collect' : 'Prepaid');
     const { vat, treatment } = vatResolved;
     const now = new Date().toISOString();
     const fieldDiffs = [
@@ -533,11 +544,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     await query(`INSERT INTO shipment_cost_lines
       (id, shipment_id, type, charge_code, currency, amount, exchange_rate, notes, created_at,
        container_id, source, status, actual_amount, actual_exchange_rate, actualized_at, actualized_by,
-       posted_at, posted_by, adjusts_cost_line_id)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'adjustment','posted',$11,$12,$13,$14,$15,$16,$17)`,
+       posted_at, posted_by, adjusts_cost_line_id, charge_side, responsible_office, payment_indicator)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'adjustment','posted',$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
       [id, req.params.shipmentId, existing.type, existing.charge_code, existing.currency,
         amt, rate, note, now, existing.container_id || '',
-        amt, rate, now, actor, now, actor, existing.id]);
+        amt, rate, now, actor, now, actor, existing.id,
+        // The same side, office and Prepaid/Collect as the line it adjusts (the office split, §8.52).
+        existing.charge_side || '', existing.responsible_office || '', existing.payment_indicator || 'Prepaid']);
     await logEntityEvent('cost_line', id, 'ADJUSTED', null, null, null,
       JSON.stringify({ shipmentId: req.params.shipmentId, chargeCode: existing.charge_code, type: existing.type,
         adjustsCostLineId: existing.id, amount: amt, note }));
@@ -932,11 +945,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         } else {
           const clId = `CL-${uid()}`;
           await tx.query(`INSERT INTO shipment_cost_lines
-            (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,notes,container_id,created_at,source,payment_indicator)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,0,$8,$9,$10,$11,$12)`,
+            (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,notes,container_id,created_at,source,payment_indicator,charge_side)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,0,$8,$9,$10,$11,$12,$13)`,
             [clId, req.params.shipmentId, 'BUY', 'Haulage', currency.toUpperCase(), Number(amount), Number(exchangeRate),
               `Merchant's Haulage — ${container.container_number || req.params.containerId}`,
-              req.params.containerId, now, 'merchant_haulage', 'Prepaid']);
+              req.params.containerId, now, 'merchant_haulage', 'Prepaid',
+              // The haulage's side (the office split, §8.52): an import service's delivery is a destination cost.
+              service.side === 'Import' ? 'Destination' : 'Origin']);
           eventsToLog.push(['cost_line', clId, 'CREATED', null, null, null,
             JSON.stringify({ shipmentId: req.params.shipmentId, type: 'BUY', chargeCode: 'Haulage', amount: Number(amount), source: 'merchant_haulage' })]);
           await tx.query(`UPDATE shipment_haulage_records
@@ -949,6 +964,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     }
     // Audit-log writes deferred until after commit (same reasoning as mdm.js's insertLocationRow).
     for (const args of eventsToLog) await logEntityEvent(...args);
+    // A new haulage cost on a split shipment takes its category's Prepaid/Collect (§8.52).
+    if (ctx.officeSplit) await ctx.officeSplit.syncLineMarks(req.params.shipmentId);
 
     const [row] = await query(HAULAGE_RECORD_SELECT_BY_CONTAINER, [req.params.serviceId, req.params.containerId]);
     ok(res, mapHaulageRecord(row));
@@ -1242,8 +1259,25 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // warning; a real correctness bug now that it's a hard block (the very FIRST invoice for any
   // customer with a limit near their typical invoice size would have been wrongly refused).
   // Fixed by dropping the redundant term — see the matching fix in resolveCreditGate.
-  async function findOverLimitBlock(shipment) {
-    const respId = shipment.principal_id || shipment.consignee_id || null;
+  // The office split (§8.52): who issues a billing document and whom it bills, from its lines. One issuing legal entity
+  // and one billed party per document (Invoice Entry makes one per pair). null = the shipment isn't split yet.
+  async function billingSplitOf(lineIds) {
+    if (!ctx.officeSplit || !lineIds.length) return null;
+    const rows = await query("SELECT * FROM shipment_cost_lines WHERE id = ANY($1)", [lineIds]);
+    const splits = await ctx.officeSplit.splitOfLineRows(rows);
+    const list = rows.map(r => splits.get(r.id)).filter(Boolean);
+    if (!list.length) return null;
+    const offices = await ctx.officeSplit.officesById(list.map(s => s.issuerOfficeId));
+    const entities = new Set(list.map(s => offices.get(s.issuerOfficeId)?.entity?.entityId || ""));
+    const parties = new Set(list.map(s => s.billTo.customerId || s.billTo.name));
+    if (entities.size > 1 || parties.size > 1)
+      return { error: "These charges are issued by different legal entities or billed to different parties: make one document per issuing entity and billed party (Invoice Entry → Generate invoices does)" };
+    return { issuerOfficeId: list[0].issuerOfficeId, billTo: list[0].billTo };
+  }
+
+  // partyId: the party a split invoice bills (else the principal, else the consignee).
+  async function findOverLimitBlock(shipment, partyId = null) {
+    const respId = partyId || shipment.principal_id || shipment.consignee_id || null;
     if (!respId) return null;
     const c = await getCustomerRow(respId);
     if (!c || c.creditLimit == null) return null;
@@ -1278,11 +1312,24 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       if (live && !live.released_at) return err(res, `Release the cargo against House B/L ${live.reference} before issuing the Delivery Order`, 409);
     }
     let consumeOverrideId = null;
+    // A credit note (CN01) naming the invoice it reverses is issued by that invoice's office to the party it billed,
+    // whatever the payment terms say now (audit S1, TKT-2Y5Z8M); any other billing document by its lines' split.
+    let reversed = null;
+    if (docType === "CN01" && relatedDocId) {
+      [reversed] = await query("SELECT * FROM shipment_documents WHERE id=$1 AND shipment_id=$2 AND doc_type IN ('FR01','FR02')", [relatedDocId, req.params.id]);
+      if (!reversed) return err(res, "The invoice this credit note reverses isn't an invoice of this shipment", 400);
+    }
+    const billingSplit = reversed
+      ? (reversed.issuing_office_id || reversed.bill_to_customer_id
+        ? { issuerOfficeId: reversed.issuing_office_id || null, billTo: { customerId: reversed.bill_to_customer_id || "", name: reversed.responsible_party || "" } }
+        : null)
+      : ["FR01", "FR02", "CN01"].includes(docType) && Array.isArray(sourceCostLineIds) ? await billingSplitOf(sourceCostLineIds) : null;
+    if (billingSplit?.error) return err(res, billingSplit.error, 409);
     if (docType === 'FR01' || docType === 'FR02') {
       const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
       const hold = shipment && await findCreditHold(shipment);
       if (hold) return err(res, `Cannot generate this invoice — ${hold.companyName} is on credit hold${hold.reason ? ` (${hold.reason})` : ''}`, 409);
-      const overLimit = shipment && await findOverLimitBlock(shipment);
+      const overLimit = shipment && await findOverLimitBlock(shipment, billingSplit?.billTo.customerId || null);
       if (overLimit) {
         if (!overLimit.override)
           return err(res, `${overLimit.companyName} is over their credit limit — ask the trade lane's own trade manager to approve an override before generating`, 409);
@@ -1340,10 +1387,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           if (holds.size) throw Object.assign(new Error(`Cannot generate this ${docType} — ${describeHolds(holds, billedLines)}`), { status: 409 });
         }
         await tx.query(`INSERT INTO shipment_documents
-          (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party, source_cost_line_ids, related_doc_id, vgm_declaration_id)
-          VALUES ($1, $2, $3, $4, 'application/pdf', $5, $6, $7, $8, 'draft', $9, $10, $11, $12, $13)`,
-          [id, req.params.id, pdfFilename, storedName, signedPdf.length, docType || "OT", uploader, now, containerId, responsibleParty,
-               Array.isArray(sourceCostLineIds) ? JSON.stringify(sourceCostLineIds) : null, relatedDocId, vgmDecl]);
+          (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party, source_cost_line_ids, related_doc_id, vgm_declaration_id, issuing_office_id, bill_to_customer_id)
+          VALUES ($1, $2, $3, $4, 'application/pdf', $5, $6, $7, $8, 'draft', $9, $10, $11, $12, $13, $14, $15)`,
+          [id, req.params.id, pdfFilename, storedName, signedPdf.length, docType || "OT", uploader, now, containerId,
+               // A split shipment's billing document records who issued it and whom it bills (the office split, §8.52).
+               billingSplit ? billingSplit.billTo.name : responsibleParty,
+               Array.isArray(sourceCostLineIds) ? JSON.stringify(sourceCostLineIds) : null, relatedDocId, vgmDecl,
+               billingSplit?.issuerOfficeId || null, billingSplit ? (billingSplit.billTo.customerId || null) : null]);
         // A regenerated House B/L draft replaces the earlier drafts instead of piling up (one
         // shipment had 37). A carrier booking pointing at one of them follows to the new draft.
         if (docType === HOUSE_BL) {
@@ -1453,6 +1503,16 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           return err(res, `This ${doc.doc_type} is voided and stays voided — generate a new one if the charges need billing again`, 409);
         if (doc.status === "confirmed" && status === "draft")
           return err(res, `A confirmed ${doc.doc_type} can't go back to draft — reverse it with a credit note instead`, 409);
+        // The office split (§8.52, audit S2, TKT-T7NJS5): an invoice draft is confirmed only while its charges still go
+        // to the office and party it names; the payment terms or offices may have changed since it was made.
+        if (status === "confirmed" && ["FR01", "FR02"].includes(doc.doc_type) && doc.source_cost_line_ids) {
+          const now = await billingSplitOf(JSON.parse(doc.source_cost_line_ids));
+          const party = x => x ? String(x.customerId || x.name || "") : "";
+          const was = doc.issuing_office_id || doc.bill_to_customer_id ? { issuer: doc.issuing_office_id || null, party: doc.bill_to_customer_id || doc.responsible_party || "" } : null;
+          const changed = now?.error || (now && (!was || now.issuerOfficeId !== was.issuer || party(now.billTo) !== was.party)) || (!now && was);
+          if (changed)
+            return err(res, `The payment terms or offices changed since this draft was made: its charges ${now?.error ? "now go to more than one office or party" : now ? `now go to ${now.billTo.name || "another party"}` : "are no longer split"}. Generate the invoices again`, 409);
+        }
       }
       const now = new Date().toISOString();
       // Issuing a House B/L (TKT-C7EBU3): readiness (gap G4) and the House transport document first.
@@ -1620,13 +1680,15 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           const id = `CL-${uid()}`;
           const notes = `Reversal of invoice ${doc.filename}` + (reason ? ` — ${reason}` : "");
           await tx.query(`INSERT INTO shipment_cost_lines
-            (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,notes,container_id,created_at,source,payment_indicator,status,posted_at,posted_by,vat_treatment)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+            (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,notes,container_id,created_at,source,payment_indicator,status,posted_at,posted_by,vat_treatment,charge_side,responsible_office)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
             [id, req.params.shipmentId, line.type, line.charge_code, line.currency, -line.amount, line.exchange_rate,
                  line.vat_rate || 0, notes, line.container_id || '', now, 'reversal', line.payment_indicator || 'Prepaid', 'posted', now, actor,
                  // Same treatment as the line it reverses — otherwise a reversed reverse-charge line
                  // would land in the VAT report's standard-rated bucket and fail to net out.
-                 line.vat_treatment || 'standard']);
+                 line.vat_treatment || 'standard',
+                 // …and the same side and office (the office split, §8.52), so it lands with the same office and entity.
+                 line.charge_side || '', line.responsible_office || '']);
           eventsToLog.push(['cost_line', id, 'CREATED', null, null, null,
             JSON.stringify({ shipmentId: req.params.shipmentId, type: line.type, chargeCode: line.charge_code, currency: line.currency, amount: -line.amount, reversalOf: doc.id })]);
           reversalLineIds.push(id);

@@ -537,7 +537,17 @@ and `customer_identifiers`.
 a proper credit note (the original and its credit note both count and net to zero) — a bare manual
 void never counted; every revenue and tax figure uses this one definition. An invoice is billed to the
 shipment's principal, else its consignee, and its Bill To box names that party (with its VAT number); a credit or
-debit note goes to the party its invoice billed, even if the principal has changed since (ARCHITECTURE.md §8.51). Revenue is recognised
+debit note goes to the party its invoice billed, even if the principal has changed since (ARCHITECTURE.md §8.51).
+**Split between offices** (§8.52): once a shipment's payment terms are set on the Carrier Booking (§5.12), each cost and
+charge belongs to its responsible office and counts for that office's legal entity; a charge is billed to the party its
+payment term names (Prepaid: the seller's side; Collect: the buyer's; the side that pays the main carriage through the
+principal). The shipment's billing office, when it has one, issues every invoice; otherwise each office invoices its own
+charges. An invoice holds one issuing entity and one billed party, so Generate makes one per pair; VAT, GL Export,
+statements, reminders and receivables follow the issuing entity and the billed party. Each line's Prepaid/Collect mark
+(House B/L charges, cargo release) follows its category's term; charges already issued keep theirs, their office and
+side. A credit note goes from the office that issued its invoice to the party the invoice billed; an invoice draft whose
+charges have moved since is refused on confirm and made again. There is no settlement between offices. Shipments billed
+before their terms were set stay as they were. Revenue is recognised
 when a billing document is confirmed, cost when a vendor line is posted. A non-standard VAT
 treatment always means 0% on the line itself; the three kinds are kept apart because a VAT return
 reports them in different boxes. A charge line is billed once: a statement skips lines already on
@@ -550,6 +560,12 @@ ARCHITECTURE.md §8.28, §8.29, §11 M15.
 ### 5.12 Carrier Booking — DCSA, Escalations & the Carrier's Changes (P1 / P3)
 **Purpose**: get every booking to the carrier in the industry standard, and keep it moving when the
 carrier says no, says "yes, but", or says nothing.
+**Payment terms (CPI)** (ARCHITECTURE.md §8.52): before the booking goes, the OCC/BK sets, per charge category (origin
+haulage, port and other charges; ocean freight; destination port, haulage and other charges), Prepaid or Collect and the
+responsible office from the shipment's offices; the Incoterm sets the defaults. The Costs and charges pop-up shows every
+line with its side, category, office and billed party, and lets the OCC/BK move a line. The booking sends the terms and
+where the freight is payable; sending it saves the terms if nobody did. A shipment's billing office (from its export
+office's settings, changeable on Parties & Offices) issues its invoices.
 **Key functions**: Send Booking Request as a **DCSA Booking 2.0** message — to the carrier's own
 integration, or, where it has none, to CargoDesk's built-in **demo carrier** (always on outside
 production; in production only when an admin turns it on), which answers like a real carrier and is

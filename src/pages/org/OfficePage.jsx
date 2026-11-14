@@ -382,7 +382,7 @@ function OfficeWebhookSettingsModal({ officeId, onClose }) {
   );
 }
 
-function OfficeForm({ office, branches, onSave, onCancel }) {
+function OfficeForm({ office, branches, offices = [], onSave, onCancel }) {
   const isEdit = !!office;
   const [form, setForm] = useState({
     unlocode:   office?.unlocode   || "",
@@ -394,6 +394,7 @@ function OfficeForm({ office, branches, onSave, onCancel }) {
     invoiceEscalationBusinessDays: office?.invoiceEscalationBusinessDays != null ? String(office.invoiceEscalationBusinessDays) : "",
     hblPrefix: office?.hblPrefix || "",
     blTermsDefault: office?.blTermsDefault || "",
+    billingOfficeId: office?.billingOfficeId || "",
   });
   // The terms its House B/Ls start with (2026-11-10): its legal entity's or the organisation's (GET /api/bl-terms/options).
   const [termsOptions, setTermsOptions] = useState(null);
@@ -448,6 +449,7 @@ function OfficeForm({ office, branches, onSave, onCancel }) {
           hblPrefix,
           // A changed legal entity offers other terms: the server keeps the default only if the new entity has it.
           ...(!branchChanged && { blTermsDefault: form.blTermsDefault }),
+          billingOfficeId: form.billingOfficeId || null,
         });
         toast.success("Office updated");
       } else {
@@ -539,6 +541,28 @@ function OfficeForm({ office, branches, onSave, onCancel }) {
             Overrides the global default for shipments run through this office — useful where local
             invoicing-deadline law is stricter (e.g. Spain). Leave blank to inherit the country's own
             setting, or the global default if that's blank too.
+          </div>
+        </div>
+      )}
+      {isEdit && (
+        // The office split (2026-11-14, ARCHITECTURE.md §8.52): the office that issues this office's invoices; a new
+        // shipment of this export office takes it as its billing office.
+        <div data-testid="office-billing-office" style={{ marginBottom: 14, padding: "14px 16px", background: T.bg, borderRadius: 8, border: `1px solid ${T.border}` }}>
+          <label htmlFor="office-billing-office-select" style={{ display: "flex", flexDirection: "column", gap: 4, fontFamily: T.body, fontSize: 11, fontWeight: 700,
+            color: T.textMuted, textTransform: "uppercase", letterSpacing: ".05em" }}>
+            Billing office
+            <select id="office-billing-office-select" data-testid="office-billing-office-select" value={form.billingOfficeId}
+              onChange={e => setForm(p => ({ ...p, billingOfficeId: e.target.value }))}
+              style={{ ...inp, maxWidth: 380, cursor: "pointer", textTransform: "none", fontWeight: 400, letterSpacing: 0 }}>
+              <option value="">None: this office issues its own invoices</option>
+              {offices.filter(o => o.id !== office.id && (o.isActive || o.id === form.billingOfficeId))
+                .sort((a, b) => String(a.code).localeCompare(String(b.code)))
+                .map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
+            </select>
+          </label>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 8, lineHeight: 1.5 }}>
+            The office that issues every invoice on this office's shipments. A new shipment whose export office is this one takes it as
+            its billing office; the OCC/BK can change it on the shipment's Parties &amp; Offices.
           </div>
         </div>
       )}
@@ -720,7 +744,7 @@ export default function OfficePage() {
           marginBottom: 16, boxSizing: "border-box" }} />
 
       {formOpen && (
-        <OfficeForm office={editing} branches={branches}
+        <OfficeForm office={editing} branches={branches} offices={offices}
           onSave={() => { setFormOpen(false); setEditing(null); load(); }}
           onCancel={() => { setFormOpen(false); setEditing(null); }} />
       )}

@@ -104,7 +104,9 @@ const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
     assert("a B/L with no originals is refused (400)", none.status === 400 && /1 to 9 originals/.test(none.body?.error), JSON.stringify(none.body));
     const sw = await generateHouseBl(request, token, w.shipment.id, { houseBl: { shippedOnBoard: true, originals: 2 } });
     assert("originals on a Sea Waybill are refused (400)", sw.status === 400 && /Sea Waybill has no originals/.test(sw.body?.error), JSON.stringify(sw.body));
-    const ofr = await request("POST", `/api/shipments/${o.shipment.id}/cost-lines`, { type: "SELL", chargeCode: "OFR", currency: "USD", amount: 2450, paymentIndicator: "Prepaid" }, token);
+    // An FOB shipment booked with the carrier is split (ARCHITECTURE.md §8.52): each line's Prepaid/Collect is its
+    // category's term, so the origin THC is Prepaid and the destination THC Collect.
+    const ofr = await request("POST", `/api/shipments/${o.shipment.id}/cost-lines`, { type: "SELL", chargeCode: "OTHC", currency: "USD", amount: 260, paymentIndicator: "Prepaid" }, token);
     const thc = await request("POST", `/api/shipments/${o.shipment.id}/cost-lines`, { type: "SELL", chargeCode: "DTHC", currency: "USD", amount: 395, paymentIndicator: "Collect" }, token);
     assert("(setup) two selling charges", ofr.status === 201 && thc.status === 201, JSON.stringify([ofr.body, thc.body]).slice(0, 300));
     const oIssued = await issue(o.shipment.id, { originals: 3, copies: 2, withCharges: true });
@@ -115,7 +117,7 @@ const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
     assert("DCSA: 3 originals and 2 copies with charges", doc.document.numberOfOriginalsWithCharges === 3 && doc.document.numberOfOriginalsWithoutCharges === 0
       && doc.document.numberOfCopiesWithCharges === 2, JSON.stringify(doc.document));
     const charges = doc.document.charges || [];
-    assert("…the charges: OFR prepaid, DTHC collect, valid", charges.length === 2 && charges.some(x => x.currencyAmount === 2450 && x.paymentTermCode === "PRE")
+    assert("…the charges: OTHC prepaid, DTHC collect (FOB), valid", charges.length === 2 && charges.some(x => x.currencyAmount === 260 && x.paymentTermCode === "PRE")
       && charges.some(x => x.currencyAmount === 395 && x.paymentTermCode === "COL") && doc.errors === "", JSON.stringify({ charges, errors: doc.errors }));
     const p = await ready("OP");
     await request("POST", `/api/shipments/${p.shipment.id}/cost-lines`, { type: "SELL", chargeCode: "OFR", currency: "USD", amount: 2450, paymentIndicator: "Prepaid" }, token);

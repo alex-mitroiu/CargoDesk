@@ -668,6 +668,12 @@ module.exports = function shipmentsRoutes(app, ctx) {
     }
     if (spaceSelection && allocationId) await query("UPDATE shipments SET space_selection=$1 WHERE id=$2", [spaceSelection, id]);
     if (blToOrder || blNumber) await query("UPDATE shipments SET bl_to_order=$1, bl_number_source=$2 WHERE id=$3", [blToOrder, blNumber ? "TYPED" : "", id]);
+    // The billing office (the office split, §8.52): its export office's, when that office names one.
+    {
+      const [created] = await query("SELECT emo_office_id FROM shipments WHERE id=$1", [id]);
+      const billing = await ctx.officeSplit.billingOfficeFor(created?.emo_office_id);
+      if (billing) await query("UPDATE shipments SET billing_office_id=$1 WHERE id=$2", [billing, id]);
+    }
     await logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }), req.user?.name || req.user?.email || "");
     await maybeAssignLineAgents(id, carrierCode, polU, podU, req.user?.name || req.user?.email || "");
@@ -879,6 +885,16 @@ module.exports = function shipmentsRoutes(app, ctx) {
       }
       const [oldOffice] = oldVal ? await query("SELECT * FROM offices WHERE id=$1", [oldVal]) : [null];
       officeChanges.push({ field: key, oldOffice, newOffice });
+    }
+    // The billing office (the office split, §8.52): the OCC/BK of the export side changes it (decision 4), admins and
+    // operators too; any active office; empty = none (each responsible office invoices its own lines).
+    let billingOfficeChange = null;
+    if (reqBody.billingOfficeId !== undefined && (reqBody.billingOfficeId || null) !== (existing.billing_office_id || null)) {
+      if (!(await ctx.officeSplit.mayEdit(req.user, req, existing))) return err(res, "Only the shipment's OCC/BK (export side), an admin or an operator can change its billing office", 403);
+      const [newBilling] = reqBody.billingOfficeId ? await query("SELECT * FROM offices WHERE id=$1 AND is_active=TRUE", [reqBody.billingOfficeId]) : [null];
+      if (reqBody.billingOfficeId && !newBilling) return err(res, "Billing office not found or inactive");
+      const [oldBilling] = existing.billing_office_id ? await query("SELECT * FROM offices WHERE id=$1", [existing.billing_office_id]) : [null];
+      billingOfficeChange = { oldOffice: oldBilling, newOffice: newBilling };
     }
 
     // CRD-vs-ETD guard: cargo can't be ready after the vessel has already sailed, so a Cargo
@@ -1099,6 +1115,28 @@ module.exports = function shipmentsRoutes(app, ctx) {
         await ctx.cancelCarrierBooking(freshShipment, "Shipment cancelled", req.user?.name || req.user?.email || "");
         if (effAllocationId) await recomputeSpaceBadgesForAllocation(effAllocationId);
       }
+    }
+    // The office split (§8.52): the billing office, and Freight Terms in step with the ocean freight's payment term once
+    // the terms are saved — Freight Terms changed here moves the freight's term; an Incoterm the terms follow moves both.
+    if (billingOfficeChange) {
+      await query("UPDATE shipments SET billing_office_id=$1 WHERE id=$2", [billingOfficeChange.newOffice?.id || null, req.params.id]);
+      await logEvent(req.params.id, "OFFICE_REASSIGNED", "billingOfficeId", officeLabel(billingOfficeChange.oldOffice), officeLabel(billingOfficeChange.newOffice), '', req.user?.name || req.user?.email || "");
+    }
+    if (existing.payment_terms) {
+      const split = ctx.officeSplit, rules = split.rules, actor = req.user?.name || req.user?.email || "";
+      const fresh = await split.loadShipment(req.params.id);
+      const terms = rules.termsOf(fresh.shipment);
+      if ((freightTerms || '') !== (existing.freight_terms || '')) {
+        const want = /collect|payable at destination/i.test(freightTerms || '') ? "COL" : "PRE";
+        if (terms.categories.freight.term !== want) {
+          const categories = { ...terms.categories, freight: { term: want, office: want === "COL" ? "import" : "export" } };
+          await query("UPDATE shipments SET payment_terms=$1 WHERE id=$2", [JSON.stringify({ followsIncoterm: false, categories }), req.params.id]);
+          await logEvent(req.params.id, "PAYMENT_TERMS_CHANGED", "freight", terms.categories.freight.term === "PRE" ? "Prepaid" : "Collect", want === "PRE" ? "Prepaid" : "Collect",
+            JSON.stringify({ category: "Ocean freight", reason: "Follows Freight Terms" }), actor);
+        }
+      } else if ((incoterm || '') !== (existing.incoterm || '')) await split.syncFreightTerms(req.params.id, fresh.row, terms, actor);
+      // Each line's Prepaid/Collect mark follows its category's term.
+      await split.syncLineMarks(req.params.id);
     }
     const [updated] = await query(`
       SELECT s.*, p1.name AS pol_name, p2.name AS pod_name,

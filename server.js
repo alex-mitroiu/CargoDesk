@@ -1492,9 +1492,12 @@ const vatFactor = l => 1 + (((l.vat_treatment || "standard") === "standard" ? Nu
 // committedExposure are already USD-equivalent (each line's own amount * exchange_rate at
 // posting time), same convention as every other cost-line USD figure in this codebase.
 async function computeArExposure(customerId, creditTermsDays) {
-  const shipmentIds = (await query(
-    "SELECT id FROM shipments WHERE principal_id=$1 OR consignee_id=$1", [customerId]
-  )).map(r => r.id);
+  // Shipments where it is a party, and their documents that bill it: one issued after the office split names whom it
+  // bills (bill_to_customer_id, §8.52); one from before bills the shipment's principal or consignee, as before.
+  const shipmentRows = await query(
+    "SELECT * FROM shipments WHERE principal_id=$1 OR consignee_id=$1 OR shipper_id=$1", [customerId]);
+  const legacyShipmentIds = new Set(shipmentRows.filter(s => s.principal_id === customerId || s.consignee_id === customerId).map(s => s.id));
+  const shipmentIds = shipmentRows.filter(s => legacyShipmentIds.has(s.id) || s.payment_terms).map(r => r.id);
 
   let outstandingAr = 0;
   const coveredLineIds = new Set();
@@ -1506,7 +1509,8 @@ async function computeArExposure(customerId, creditTermsDays) {
     const docs = await query(
       `SELECT * FROM shipment_documents WHERE shipment_id IN (${placeholders}) AND doc_type IN ('FR01','FR02') AND status='confirmed'`,
       shipmentIds);
-    for (const doc of docs) {
+    const billsIt = d => (d.bill_to_customer_id ? d.bill_to_customer_id === customerId : legacyShipmentIds.has(d.shipment_id));
+    for (const doc of docs.filter(billsIt)) {
       const sourceIds = doc.source_cost_line_ids ? JSON.parse(doc.source_cost_line_ids) : null;
       const lines = sourceIds && sourceIds.length
         ? await query(`SELECT id, amount, exchange_rate, vat_rate, vat_treatment FROM shipment_cost_lines WHERE id IN (${sourceIds.map((_, i) => `$${i + 1}`).join(',')})`, sourceIds)
@@ -1560,7 +1564,7 @@ async function computeArExposure(customerId, creditTermsDays) {
   if (shipmentIds.length) {
     const placeholders = shipmentIds.map((_, i) => `$${i + 1}`).join(',');
     const sellLines = await query(
-      `SELECT id, amount, exchange_rate, actual_amount, actual_exchange_rate, vat_rate, vat_treatment FROM shipment_cost_lines WHERE shipment_id IN (${placeholders}) AND type='SELL'`,
+      `SELECT id, shipment_id, type, charge_code, charge_side, responsible_office, source, amount, exchange_rate, actual_amount, actual_exchange_rate, vat_rate, vat_treatment FROM shipment_cost_lines WHERE shipment_id IN (${placeholders}) AND type='SELL'`,
       shipmentIds);
     // Unlike docTotal above (correctly frozen at whatever a line's amount was when an invoice
     // already captured it), a still-uninvoiced SELL line has no reason to stay pinned to a stale
@@ -1569,7 +1573,14 @@ async function computeArExposure(customerId, creditTermsDays) {
     // should see it, not an outdated guess (2026-09-03 audit: this fed a real understated-
     // exposure gap — an $8,500 actualization correction never reached committedExposure).
     // Gross: the VAT is about to be billed along with the charge.
-    for (const l of sellLines) if (!coveredLineIds.has(l.id)) committedExposure += costLineEffectiveUsd(l) * vatFactor(l);
+    // A split shipment's unbilled charge counts only for the party it will bill (the office split, §8.52).
+    const splits = ctx.officeSplit ? await ctx.officeSplit.splitOfLineRows(sellLines) : new Map();
+    for (const l of sellLines) {
+      if (coveredLineIds.has(l.id)) continue;
+      const sp = splits.get(l.id);
+      if (sp ? sp.billTo.customerId !== customerId : !legacyShipmentIds.has(l.shipment_id)) continue;
+      committedExposure += costLineEffectiveUsd(l) * vatFactor(l);
+    }
   }
 
   return {
@@ -1602,13 +1613,14 @@ async function statementAmountUsd(st) {
 // Its mail account sends the reminder, its thresholds apply, its manager gets the escalation —
 // what the shipment's own export office does for an invoice.
 async function statementMainOffice(statementId) {
-  const [row] = await query(`SELECT s.emo_office_id, SUM(scl.amount * scl.exchange_rate) AS value
+  // A shipment's billing office issues its statements too (the office split, §8.52, decision D), else its export office.
+  const [row] = await query(`SELECT COALESCE(s.billing_office_id, s.emo_office_id) AS office_id, SUM(scl.amount * scl.exchange_rate) AS value
     FROM customer_statement_lines csl
     JOIN shipment_cost_lines scl ON scl.id = csl.cost_line_id
     JOIN shipments s ON s.id = csl.shipment_id
-    WHERE csl.statement_id=$1 AND COALESCE(s.emo_office_id, '') <> ''
-    GROUP BY s.emo_office_id ORDER BY value DESC, s.emo_office_id LIMIT 1`, [statementId]);
-  return row?.emo_office_id || null;
+    WHERE csl.statement_id=$1 AND COALESCE(s.billing_office_id, s.emo_office_id, '') <> ''
+    GROUP BY COALESCE(s.billing_office_id, s.emo_office_id) ORDER BY value DESC, office_id LIMIT 1`, [statementId]);
+  return row?.office_id || null;
 }
 
 // ─── Overdue-invoice reminder sweep (Story TKT-4TEYT1, Epic TKT-KR6ZBT) ───────
@@ -1622,10 +1634,18 @@ async function statementMainOffice(statementId) {
 // manual send-email route already uses — same clean-failure-per-recipient behavior, a customer
 // with no configured office mail settings or no email on file is skipped, not a hard error that
 // aborts the whole sweep.
+// Confirmed statements that reminders and collections chase: never one with a line from an imported shipment (QA export,
+// audit Q2 2026-11-13: a statement made in a test system from an imported shipment's charges would email the real customer).
+const STATEMENTS_TO_CHASE_SQL = `SELECT * FROM customer_statements cs WHERE cs.status='confirmed'
+  AND NOT EXISTS (SELECT 1 FROM customer_statement_lines l JOIN shipments s ON s.id = l.shipment_id
+                  WHERE l.statement_id = cs.id AND COALESCE(s.imported_from,'') <> '')`;
+
 async function runDunningSweep() {
   const sent = [];
   const rows = await query(`
-    SELECT d.*, s.principal_id, s.principal_name, s.consignee_id, s.consignee_name, s.emo_office_id
+    SELECT d.*, s.principal_id, s.principal_name, s.consignee_id, s.consignee_name,
+           -- The office that issued it (the office split, §8.52), else the export office as before.
+           COALESCE(d.issuing_office_id, s.emo_office_id) AS emo_office_id
     FROM shipment_documents d
     JOIN shipments s ON s.id = d.shipment_id
     WHERE d.doc_type IN ('FR01','FR02') AND d.status='confirmed'
@@ -1634,7 +1654,8 @@ async function runDunningSweep() {
 
   const nowMs = Date.now();
   for (const r of rows) {
-    const respId = r.principal_id || r.consignee_id || null;
+    // Whom the invoice bills (the office split, §8.52), else the principal, else the consignee as before.
+    const respId = r.bill_to_customer_id || r.principal_id || r.consignee_id || null;
     if (!respId) continue;
     const [cust] = await query("SELECT * FROM customers WHERE id=$1", [respId]);
     if (!cust || !cust.reminder_enabled) continue;
@@ -1685,7 +1706,7 @@ async function runDunningSweep() {
   // Confirmed consolidated statements are chased like invoices (decided 2026-10-09, TKT-IRH7WX):
   // the same customer opt-in and cadence and the same terms-based due date, sent through the
   // statement's main export office (statementMainOffice).
-  for (const st of await query("SELECT * FROM customer_statements WHERE status='confirmed'")) {
+  for (const st of await query(STATEMENTS_TO_CHASE_SQL)) {
     const [cust] = await query("SELECT * FROM customers WHERE id=$1", [st.customer_id]);
     if (!cust || !cust.reminder_enabled) continue;
     const outstandingUsd = Math.max(0, roundCents((await statementAmountUsd(st)) - (st.paid_amount || 0)));
@@ -1818,7 +1839,7 @@ async function resolveInvoiceThresholds(emoOfficeId) {
 async function runInvoiceCollectionsSweep() {
   const sent = [];
   const rows = await query(`
-    SELECT d.*, s.emo_office_id
+    SELECT d.*, COALESCE(d.issuing_office_id, s.emo_office_id) AS emo_office_id   -- the issuing office (§8.52), else the export office
     FROM shipment_documents d
     JOIN shipments s ON s.id = d.shipment_id
     WHERE d.doc_type IN ('FR01','FR02') AND d.status='confirmed'
@@ -1885,7 +1906,7 @@ async function runInvoiceCollectionsSweep() {
   // the alert goes to the statement's owner (whoever confirmed it), the escalation to the manager
   // of its main export office, with that office's thresholds and mail account. An override
   // (keyed by the statement id in invoice_status_overrides) suppresses both, as for an invoice.
-  for (const st of await query("SELECT * FROM customer_statements WHERE status='confirmed'")) {
+  for (const st of await query(STATEMENTS_TO_CHASE_SQL)) {
     const outstandingUsd = Math.max(0, roundCents((await statementAmountUsd(st)) - (st.paid_amount || 0)));
     if (outstandingUsd <= 0) continue;
     const [activeOverride] = await query(
@@ -2325,7 +2346,7 @@ const {
 // hoisted function declaration, safe to reference from anywhere in this module) — so this can't
 // sit up near applyChargeDefaults' own instantiation, which only needed query/uid.
 const { runGlExport } = require("./lib/gl-export")({ query, transaction, uid, costLineEffectiveUsd, getSettings,
-  entityByShipment: (...a) => entityByShipment(...a) });
+  entityByShipment: (...a) => entityByShipment(...a), entityOfLines: (...a) => ctx.officeSplit.entityOfLines(...a) });
 // One SELL line, one live billing document (TKT-2F19XD) — see lib/billing-holds.js.
 const { billingHolds, describeHolds } = require("./lib/billing-holds")({ query });
 // A shipment's legal entity (branch) — see lib/legal-entities.js.
@@ -4053,6 +4074,8 @@ async function generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerC
       if (includeSell) await insertLine('SELL', amount, baseNotes, '');
     }
   }
+  // On a split shipment the new lines take their category's Prepaid/Collect (§8.52).
+  if (created && ctx.officeSplit) await ctx.officeSplit.syncLineMarks(shipmentId);
   return created;
 }
 
@@ -4546,6 +4569,9 @@ ctx.isImportedShipment = isImportedShipment;
 ctx.importedSendError = importedSendError;
 ctx.shipmentTransfer = require('./lib/shipment-transfer')(ctx);
 require('./routes/shipment-transfer')(app, ctx);
+// The office split: payment terms (CPI) per charge category and each line's responsible office (§8.52).
+ctx.officeSplit = require('./lib/office-split')(ctx);
+require('./routes/payment-terms')(app, ctx);
 require('./routes/arrival-notices')(app, ctx);
 require('./routes/customers')(app, ctx);
 require('./routes/contracts')(app, ctx);

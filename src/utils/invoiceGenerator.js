@@ -358,10 +358,11 @@ export async function resolveInvoiceCurrency(shipment) {
 // existing customer_identifiers registry rather than a new field: a primary VAT identifier,
 // else any VAT identifier, else a "Tax ID" one. Every lookup degrades to "" rather than failing
 // generation — a missing number just leaves that line off the invoice.
-export async function resolveInvoiceTaxInfo(shipment) {
+// issuerOfficeId (the office split, §8.52): the office issuing the invoice — its legal entity is the supplier.
+export async function resolveInvoiceTaxInfo(shipment, { issuerOfficeId = null } = {}) {
   const info = { supplierName: "", supplierTaxNumber: "", customerName: "", customerTaxNumber: "" };
   try {
-    const officeIds = [shipment.emoOfficeId, shipment.imoOfficeId].filter(Boolean);
+    const officeIds = [issuerOfficeId, shipment.emoOfficeId, shipment.imoOfficeId].filter(Boolean);
     if (officeIds.length) {
       const res = await api.offices.list();
       const offices = Array.isArray(res) ? res : (res?.results ?? []);
@@ -556,6 +557,11 @@ export async function generateInvoices(shipment, { containers = [], costLines, s
     const existing = draftFor(containerId);
     if (existing) await api.documents.remove(shipment.id, existing.id).catch(() => {});
   };
+  // The office split (§8.52): once the payment terms are saved, every charge carries who issues it and whom it bills —
+  // one invoice per issuing legal entity and billed party (and per container when splitting per container).
+  if (sellLines.some(l => l.split)) {
+    return generateSplitInvoices(shipment, { containers, sellLines, splitPerContainer, targetCurrency, fxRates, existingDocs, baseNumber, invDate });
+  }
   const taxInfo = await resolveInvoiceTaxInfo(shipment);
 
   const upload = (html, filename, containerId, sourceCostLineIds) =>
@@ -588,6 +594,49 @@ export async function generateInvoices(shipment, { containers = [], costLines, s
     results.push(saved);
   }
   if (!results.length) throw new Error(`Every container's charges are already billed — ${alreadyBilledSummary(sellLines)}.`);
+  return results;
+}
+
+// The office split's invoices (§8.52): each group is one issuing legal entity (the billing office, else the line's
+// responsible office) and one billed party; issued from that entity, addressed to that party with its VAT number, in its
+// currency. A draft of the same container, party and entity is replaced, as for a whole-shipment invoice.
+async function generateSplitInvoices(shipment, { containers, sellLines, splitPerContainer, targetCurrency, fxRates, existingDocs, baseNumber, invDate }) {
+  const offices = await api.offices.list().then(r => (Array.isArray(r) ? r : (r?.results ?? []))).catch(() => []);
+  const entityOf = officeId => offices.find(o => o.id === officeId)?.branchId || officeId || "";
+  const groups = new Map();
+  for (const l of sellLines) {
+    if (!l.split) continue;
+    if (splitPerContainer && !(l.containerId && containers.some(c => c.id === l.containerId))) continue;
+    const containerId = splitPerContainer ? l.containerId : "";
+    const party = l.split.billTo;
+    const key = [containerId, entityOf(l.split.issuerOfficeId), party.customerId || party.name].join("|");
+    if (!groups.has(key)) groups.set(key, { containerId, issuerOfficeId: l.split.issuerOfficeId, party, lines: [] });
+    groups.get(key).lines.push(l);
+  }
+  if (!groups.size) throw new Error(splitPerContainer ? "No Invoice Entry lines are tagged to a container yet — tag at least one line first." : "No charges to invoice.");
+  const results = [];
+  let n = 0;
+  for (const g of groups.values()) {
+    const draft = existingDocs.find(d => d.status === "draft" && (d.containerId || "") === g.containerId
+      && (d.billToCustomerId ? d.billToCustomerId === g.party.customerId : d.responsibleParty === g.party.name)
+      && entityOf(d.issuingOfficeId) === entityOf(g.issuerOfficeId));
+    const billable = billableSellLines(g.lines, draft?.id);
+    if (!billable.length) continue;
+    if (draft) await api.documents.remove(shipment.id, draft.id).catch(() => {});
+    const billed = shipmentBilledAs(shipment, g.party.name);
+    const taxInfo = await resolveInvoiceTaxInfo(billed, { issuerOfficeId: g.issuerOfficeId });
+    const currency = g.party.customerId
+      ? await api.customers.get(g.party.customerId).then(c => c?.currency || targetCurrency).catch(() => targetCurrency) : targetCurrency;
+    const container = g.containerId ? containers.find(c => c.id === g.containerId) : null;
+    const invNumber = groups.size > 1 ? `${baseNumber}-${++n}` : baseNumber;
+    const html = buildFreightInvoiceHtml({ shipment: billed, invNumber, invDate, notes: "", costLines: billable, container, targetCurrency: currency, fxRates, taxInfo });
+    const label = container ? `-${container.containerNumber || container.id}` : "";
+    results.push(await api.documents.generate(shipment.id, {
+      html, filename: `FR01-${invNumber}${label}-${invDate}.pdf`, docType: "FR01",
+      containerId: g.containerId, responsibleParty: g.party.name, sourceCostLineIds: billable.map(l => l.id),
+    }));
+  }
+  if (!results.length) throw new Error(`Every charge on this shipment is already billed — ${alreadyBilledSummary(sellLines)}.`);
   return results;
 }
 

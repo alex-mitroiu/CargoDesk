@@ -373,7 +373,20 @@ module.exports = function ediRoutes(app, ctx) {
       ? `the shipper's dangerous goods emergency contact: add a name and a 24-hour phone to ${shipperRow.companyName}'s customer profile`
       : "a shipper with a dangerous goods emergency contact on its customer profile");
     const loop = await shipmentLoopCode(shipment.id).catch(() => "");
+    // The payment terms (CPI) once saved (the office split, §8.52): freight, origin and destination charges, and where
+    // the freight is payable (the location of the office responsible for it).
+    let paymentTerms = null;
+    if (ctx.officeSplit) {
+      const split = await ctx.officeSplit.loadShipment(shipment.id);
+      const terms = split && ctx.officeSplit.rules.termsOf(split.shipment);
+      if (terms?.saved) {
+        const freightOfficeId = ctx.officeSplit.rules.officeIdOf(split.shipment, terms.categories.freight.office);
+        const office = (await ctx.officeSplit.officesById([freightOfficeId])).get(freightOfficeId);
+        paymentTerms = ctx.officeSplit.rules.dcsaPaymentTerms(terms, { freightPayableAt: office?.unlocode || "" });
+      }
+    }
     return {
+      paymentTerms,
       serviceType: shipment.service_type || "Port-to-Port", movementType: shipment.movement_type || "FCL",
       freightTerms: shipment.freight_terms || "", incoterm: shipment.incoterm || "",
       declaredValue: shipment.declared_value, declaredValueCurrency: shipment.declared_value_currency || "USD",
@@ -474,6 +487,13 @@ module.exports = function ediRoutes(app, ctx) {
 
     const now = new Date().toISOString();
     const correlationId = `EDI-${uid()}`;
+
+    // The booking settles the payment terms with the carrier (the office split, §8.52): terms never saved are saved now,
+    // as the Incoterm sets them, and the shipment is split between its offices from here on.
+    if (ctx.officeSplit && !shipment.payment_terms) {
+      await ctx.officeSplit.activate(shipment.id, user?.name || user?.email || "CargoDesk");
+      Object.assign(shipment, (await query("SELECT * FROM shipments WHERE id=$1", [shipment.id]))[0]);
+    }
 
     const requestPayload = await bookingRequestPayload(shipment, body);
     // Built and checked against DCSA Booking 2.0 before anything is recorded: a request the carrier
