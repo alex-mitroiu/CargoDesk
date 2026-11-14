@@ -6,7 +6,7 @@ Full-stack freight management app. React 18 + Vite frontend, Express + dual-back
 `lib/db.js`) backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.91.14 "Telex"**
+- Version: **v0.91.15 "Collect"**
 - First-time setup: `npm run setup` (`scripts/setup.js`) — boots the server once to create its
   schema, shuts it down cleanly, then seeds MDM reference data, in the correct order. NOT
   zero-script — a genuinely fresh `pgdata/` has no ports/carriers/vessels/commodities until this
@@ -982,6 +982,18 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.91.15 "Collect")
+Release of 88af8e8 (pushed unversioned the same day) and this commit. Two audits ran (ARCHITECTURE.md §11): TKT-KL28KB on
+the QA export/import (4 findings) and TKT-E9ZOIR on the office split before its release (5 findings); all were fixed.
+- **The office split** (§8.52) — lib/payment-terms.js = src/utils/paymentTerms.js (parity test), lib/office-split.js
+  (`ctx.officeSplit`), routes/payment-terms.js, PaymentTermsCard + CostsAndChargesModal (Carrier Booking, Cost Entry),
+  `shipments.payment_terms` / `billing_office_id`, `offices.billing_office_id`, `shipment_cost_lines.charge_side` /
+  `responsible_office`, `shipment_documents.issuing_office_id` / `bill_to_customer_id`; the booking request sends the
+  DCSA payment terms; `generateSplitInvoices`, `billingSplitOf`, `entityOfLines` in VAT/GL/statements/margin.
+- **Each line's Prepaid/Collect follows its category** — `markFor` / `syncLineMarks`; Cost Entry's CPI read-only once split.
+- **Credit notes follow their invoice** — the CN01 passes `relatedDocId`; a stale invoice draft is refused on confirm.
+- Verified on 88af8e8 (the release commit only changes version files): CI replica on an empty database 136/136 backend files; Vitest 576/576; Cypress (CI's job on the replica, Edge) 302 passed + 1 skipped by design; Edge pass of the Carrier Booking card, the Costs and charges pop-up, Cost Entry (read-only CPI), Parties and GP Overview.
 
 ## Recent changes (v0.91.14 "Telex")
 Bundled release of everything built since v0.91.13 (local commits 4979350, b9b01d9, 85fbff4 and the release fixes). Two

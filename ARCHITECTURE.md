@@ -1,10 +1,14 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.91.14 "Telex" · **Date:** 2026-11-13
+**Version:** 0.91.15 "Collect" · **Date:** 2026-11-14
 **Audience:** Software architects, senior engineers, technical reviewers
 **See also:** [`DFS.md`](DFS.md) — the Design & Functional Specification (data flow diagrams,
 per-domain functional scope, roles) covers *what* the system does and *how data moves through it*;
 this document covers *how it's built*.
 
+> **2026-11-14 (v0.91.15 "Collect") — release.** §8.52 (the office split: payment terms per charge category,
+> responsible offices, the billing office; each line's Prepaid/Collect follows its category) was written as the work landed
+> and ships in v0.91.15, with the QA export/import audit's fixes (§8.50); the audits TKT-KL28KB and TKT-E9ZOIR are logged in §11.
+>
 > **2026-11-13 (v0.91.14 "Telex") — release.** §8.48 (House B/L terms), §8.49 (the carrier's Master B/L as sent to you),
 > §8.50 (the QA export and import) and §8.51 (the principal follows the incoterm; the invoice's Bill To) were written as the
 > work landed and ship in v0.91.14; the pre-release audits TKT-GC05AS and TKT-E1GOI6 and their fixes are logged in §11.

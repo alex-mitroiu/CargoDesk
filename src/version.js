@@ -2,12 +2,18 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.91.14";
-export const BUILD     = "2026-11-13";
-export const CODENAME  = "Telex";
-export const BUILD_FINGERPRINT = "18952d59";
+export const VERSION   = "0.91.15";
+export const BUILD     = "2026-11-14";
+export const CODENAME  = "Collect";
+export const BUILD_FINGERPRINT = "7e3b91c4";
 
 export const CHANGELOG = [
+  {
+    version:  "0.91.15",
+    date:     "2026-11-14",
+    codename: "Collect",
+    summary:  "The office split — on the Carrier Booking the OCC/BK sets the payment terms (CPI) per DCSA charge category, each Prepaid or Collect with its responsible office, defaulted from the Incoterm and sent with the booking request; every cost and charge belongs to its category's office (the Costs and charges pop-up moves one), is billed to the party its term names and counts for its office's legal entity; an office's billing office issues every invoice of its shipments; one invoice per issuing entity and billed party, with VAT, GL Export, statements, reminders, collections and receivables following them, and GP by office; each line's own Prepaid/Collect follows its category; plus the findings of the QA export/import audit (TKT-KL28KB) and of the office split's pre-release audit (TKT-E9ZOIR) fixed.",
+  },
   {
     version:  "0.91.14",
     date:     "2026-11-13",
