@@ -1,7 +1,5 @@
 import { useState } from "react";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, carrierBadgeColors } from "../shipmentDetailTheme";
-import Btn from "../../../components/primitives/Btn";
-import CustomerCombobox from "../../../components/shared/CustomerCombobox";
 import { LegRoleChip } from "../../../components/shared/LegRoles";
 import { mainLegIndex } from "../../../utils/mainLeg";
 import { steeringChipOf } from "../../../components/shared/WhereToBook";
@@ -71,7 +69,7 @@ export const stopsOf = legs => {
 
 // ── Pill nav: jump links to the page's sections, and its actions ─────────────────────────────────────
 const NAV = [["route", "Route", "shpsched-legs-section"], ["contract", "Contract", "shpsched-contract-section"],
-  ["agents", "Line agents", "shpsched-line-agents-section"], ["sailing", "Sailing", "shpsched-sailing-section"]];
+  ["agents", "Carrier offices", "shpsched-carrier-offices-section"], ["sailing", "Sailing", "shpsched-sailing-section"]];
 export const PillNav = ({ actions }) => {
   const [active, setActive] = useState("route");
   const jump = (key, id) => { setActive(key); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); };
@@ -620,51 +618,73 @@ export const SailingCard = ({ schedule, staged, hasPorts, legVessel }) => (
   </div>
 );
 
-// ── Line agents ──────────────────────────────────────────────────────────────────────────────────────
-// Export/Import Line Agent: assign, reassign or remove, each gated on its own office side (the page passes
-// canEdit). Same test ids as before the redesign.
-export const LineAgentTile = ({ label, role, party, canEdit, onAssign, onRemove }) => {
+// ── Carrier offices (§8.53) ──────────────────────────────────────────────────────────────────────────
+// The four offices of the shipment's carrier (booking, billing origin, import office, billing destination), each with
+// why it was picked. The export side changes the first two, the import side the other two (the page passes canEdit).
+// Booking = cyan, import office = violet, billing = amber, as in mockup 8a2ab3bd.
+const officeTone = role => (role === "booking" ? HZ.cyan : role === "import" ? HZ.violet : HZ.amber);
+const officeToneBg = role => (role === "booking" ? HZ.cyanBg : role === "import" ? HZ.violetBg : HZ.warnBg);
+const whyText = e => {
+  if (!e.office) return e.leftEmpty ? "Left empty on purpose" : e.candidates?.length ? `${e.candidates.length} offices match via linked ports: pick one` : "No coverage for this port";
+  if (e.fallback) return e.why;
+  if (e.source === "manual") return e.why || "Picked by hand";
+  if (e.source === "migrated") return "Kept from the Line Agent it had";
+  return e.why ? `Coverage: ${e.why}` : "From the carrier's coverage";
+};
+export const CarrierOfficeTile = ({ entry: e, offices = [], canEdit, onPick }) => {
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState({ id: "", name: "" });
+  const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
-  const tid = `shipment-schedules-line-agent-${role.toLowerCase().replace(/\s+/g, "-")}`;
-  const startEdit = () => { setValue(party ? { id: party.customerId, name: party.customerName } : { id: "", name: "" }); setEditing(true); };
-  const save = async () => {
-    if (!value.id) return;
-    setSaving(true); await onAssign(party?.id, value.id, value.name); setSaving(false); setEditing(false);
-  };
-  const initials = (party?.customerName || "").split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join("").toUpperCase();
+  const tid = `shipment-carrier-office-${e.role}`;
+  const tone = officeTone(e.role.startsWith("billing") ? "billing" : e.role);
+  const pick = async body => { setSaving(true); try { await onPick(e.role, body); setEditing(false); } finally { setSaving(false); } };
+  const warn = !e.office || e.fallback;
   return (
-    <div data-testid={tid} style={{ display: "flex", flexDirection: editing ? "column" : "row", alignItems: editing ? "stretch" : "center", gap: 12, padding: "12px 14px",
-      borderRadius: 12, background: HZ.tint, border: `1px ${party ? "solid" : "dashed"} ${party ? HZ.border : HZ.borderStrong}` }}>
-      {editing ? (
-        <>
-          <div style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: HZ.textMuted }}>{label}</div>
-          <CustomerCombobox label="Customer" value={value} onChange={setValue} roleFilter={role} />
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Btn size="sm" variant="secondary" onClick={() => setEditing(false)} data-testid={`${tid}-cancel-btn`}>Cancel</Btn>
-            <Btn size="sm" disabled={saving || !value.id} onClick={save} data-testid={`${tid}-save-btn`}>{saving ? "Saving…" : "Save"}</Btn>
+    <div data-testid={tid} style={{ display: "grid", gap: 6, padding: "12px 14px", borderRadius: 12, background: HZ.tint, alignContent: "start", minWidth: 0,
+      border: `1px ${e.office ? "solid" : "dashed"} ${e.office ? HZ.border : HZ.borderStrong}`, borderTop: `3px solid ${tone}` }}>
+      <div style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: HZ.textMuted }}>{e.label}</div>
+      <div data-testid={`${tid}-name`} style={{ fontFamily: HZ_BODY, fontSize: 13.5, fontWeight: e.office ? 700 : 600, fontStyle: e.office ? "normal" : "italic",
+        color: e.office ? HZ.text : HZ.textMuted, overflowWrap: "anywhere" }}>{e.office ? e.office.name : "None set"}</div>
+      {e.office && (
+        <div style={{ fontFamily: HZ_MONO, fontSize: 11, color: HZ.textMuted }}>{e.office.unlocode}{e.office.locationName ? ` · ${e.office.locationName}` : ""}</div>
+      )}
+      <span data-testid={`${tid}-why`} style={{ justifySelf: "start", fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600, borderRadius: 999, padding: "2px 9px",
+        color: warn ? HZ.warn : HZ.goodPillText, background: warn ? HZ.warnBg : HZ.goodBg, whiteSpace: "normal" }}>{whyText(e)}</span>
+      {e.candidates?.length > 0 && canEdit && !editing && (
+        <div style={{ display: "grid", gap: 4 }}>
+          {e.candidates.map(c => (
+            <button key={c.officeId} type="button" disabled={saving} onClick={() => pick({ officeId: c.officeId })} data-testid={`${tid}-candidate-${c.officeId}`}
+              style={{ ...pillBtnStyle({ accent: true }), justifyContent: "flex-start" }}>Pick {c.officeName} <span style={{ color: HZ.textMuted }}>via {c.via}</span></button>
+          ))}
+        </div>
+      )}
+      {canEdit && editing && (
+        <div style={{ display: "grid", gap: 6 }}>
+          <select value={value} onChange={ev => setValue(ev.target.value)} aria-label={`${e.label}: pick an office`} data-testid={`${tid}-select`}
+            style={{ fontFamily: HZ_BODY, fontSize: 12.5, padding: "6px 8px", borderRadius: 8, background: HZ.surfaceSolid, color: HZ.text, border: `1px solid ${HZ.border}`,
+              width: "100%", minWidth: 0, boxSizing: "border-box" }}>
+            <option value="">None</option>
+            {e.office?.id && !offices.some(o => o.id === e.office.id) && (
+              <option value={e.office.id}>{e.office.name} (inactive)</option>
+            )}
+            {offices.map(o => <option key={o.id} value={o.id}>{o.name} ({o.unlocode})</option>)}
+          </select>
+          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            <button type="button" onClick={() => setEditing(false)} style={pillBtnStyle()} data-testid={`${tid}-cancel-btn`}>Cancel</button>
+            <button type="button" disabled={saving} onClick={() => pick({ officeId: value || null })} style={pillBtnStyle({ accent: true, disabled: saving })}
+              data-testid={`${tid}-save-btn`}>{saving ? "Saving…" : "Save"}</button>
           </div>
-        </>
-      ) : (
-        <>
-          <div aria-hidden style={{ width: 36, height: 36, borderRadius: "50%", flexShrink: 0, display: "grid", placeItems: "center", fontFamily: HZ_DISPLAY, fontSize: 13, fontWeight: 800,
-            ...(party ? { background: HZ.gradCyan, color: HZ.chipText } : { background: HZ.neutralBg, color: HZ.textMuted }) }}>{party ? initials : "＋"}</div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: HZ.textMuted }}>{label}</div>
-            <div style={{ fontFamily: HZ_BODY, fontSize: 13.5, fontWeight: party ? 700 : 600, fontStyle: party ? "normal" : "italic", color: party ? HZ.text : HZ.textMuted,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{party ? party.customerName : "Not assigned"}</div>
-          </div>
-          {canEdit && (
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <button type="button" onClick={startEdit} data-testid={`${tid}-edit-btn`} title={party ? "Reassign" : "Assign"} style={pillBtnStyle()}>{party ? "Reassign" : "＋ Assign"}</button>
-              {party && (
-                <button type="button" onClick={() => onRemove(party.id)} data-testid={`${tid}-remove-btn`} title="Remove" aria-label={`Remove the ${label}`}
-                  style={{ ...pillBtnStyle(), padding: "4px 10px", color: HZ.textMuted }}>×</button>
-              )}
-            </div>
+        </div>
+      )}
+      {canEdit && !editing && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button type="button" onClick={() => { setValue(e.office?.id || ""); setEditing(true); }} style={pillBtnStyle()} data-testid={`${tid}-edit-btn`}
+            disabled={!offices.length} title={offices.length ? "Pick another office of this carrier" : "The carrier has no offices in Master Data → Carriers"}>Change</button>
+          {(e.source === "manual" || e.source === "migrated" || e.leftEmpty) && (
+            <button type="button" disabled={saving} onClick={() => pick({ fromCoverage: true })} style={pillBtnStyle()} data-testid={`${tid}-coverage-btn`}
+              title="Pick it again from the carrier's coverage">From coverage</button>
           )}
-        </>
+        </div>
       )}
     </div>
   );

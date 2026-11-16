@@ -86,7 +86,6 @@ import MdmCarriersPage        from "./pages/mdm/MdmCarriersPage";
 import MdmVesselsPage         from "./pages/mdm/MdmVesselsPage";
 import MdmPortLocationsPage   from "./pages/mdm/MdmPortLocationsPage";
 import MdmLinkedPortsPage     from "./pages/mdm/MdmLinkedPortsPage";
-import MdmCarrierAgentsPage   from "./pages/mdm/MdmCarrierAgentsPage";
 import MdmCarrierIntegrationsPage from "./pages/mdm/MdmCarrierIntegrationsPage";
 import MdmTradeLanesPage      from "./pages/mdm/MdmTradeLanesPage";
 import MdmRegionsPage         from "./pages/mdm/MdmRegionsPage";
@@ -199,7 +198,6 @@ function App() {
     "mdm-customers":              "api_customers_enabled",
     "mdm-sanctioned-customers":  "api_customers_enabled",
     "mdm-carriers":    "api_carriers_enabled",
-    "mdm-carrier-agents": "api_carriers_enabled",
     "mdm-vessels":     "api_vessels_enabled",
     "mdm-ports":       "api_ports_enabled",
     "mdm-linked":      "api_ports_enabled",
@@ -268,6 +266,8 @@ function App() {
     if (hash.startsWith("shipments/")) return { page: "detail", selectedId: hash.split("/")[1] || null };
     if (hash.startsWith("track/")) return { page: "track", selectedId: hash.slice(6) };
     if (hash.startsWith("reset-password/")) return { page: "reset-password", selectedId: hash.slice(15) };
+    // Carrier Agents became the carrier's offices on its own record (§8.53): the old link opens Carriers.
+    if (hash === "mdm-carrier-agents") return { page: "mdm-carriers", selectedId: null };
     return { page: hash, selectedId: null };
   };
 
@@ -735,7 +735,7 @@ function App() {
   }, [authLoading, user, page]);
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-carrier-integrations", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-loop-map-explorer", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "mdm-lane-steering", "mdm-margin-rules", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-charge-defaults", "mdm-gl-account-mappings", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-integrations", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-loop-map-explorer", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "mdm-lane-steering", "mdm-margin-rules", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-charge-defaults", "mdm-gl-account-mappings", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office", "org-bl-terms"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
@@ -829,7 +829,6 @@ function App() {
     about:              "About",
     settings:           "Application Settings",
     "mdm-carriers":     "Master Data — Carriers",
-    "mdm-carrier-agents": "Master Data — Carrier Agents",
     "mdm-carrier-integrations": "Master Data — Carrier Integrations",
     "mdm-vessels":      "Master Data — Vessels",
     "mdm-commodities":  "Master Data — Commodities",
@@ -2023,7 +2022,6 @@ function App() {
                     foldable open={carriersNavOpen} onToggleFold={() => setCarriersNavOpen(o => !o)} />
                   {carriersNavOpen && (
                     <>
-                      <NavBtn pageKey="mdm-carrier-agents" icon={IconLink} label="Carrier Agents" subIndent />
                       <NavBtn pageKey="mdm-carrier-integrations" icon={IconLink} label="Carrier Integrations" subIndent />
                     </>
                   )}
@@ -2501,7 +2499,6 @@ function App() {
             }} />
         )}
 
-        {page === "mdm-carrier-agents" && isEnabled("mdm-carrier-agents") && <MdmCarrierAgentsPage />}
         {page === "mdm-carrier-integrations" && <MdmCarrierIntegrationsPage />}
         {page === "mdm-vessels"    && isEnabled("mdm-vessels")    && <MdmVesselsPage />}
         {page === "mdm-ports"      && isEnabled("mdm-ports")      && <MdmPortLocationsPage />}

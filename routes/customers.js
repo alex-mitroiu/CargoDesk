@@ -654,15 +654,8 @@ module.exports = function customersRoutes(app, ctx) {
   });
 
   app.delete("/api/customers/:id", auth(), customerWrite, async (req, res) => {
-    // Carrier Line Agents — agent_customer_id has no ON DELETE clause (deliberately: neither
-    // CASCADE nor SET NULL fits a NOT NULL master-data pointer that IS the row's reason for
-    // existing), so this app-level guard is the actual enforcement, mirroring offices.js's own
-    // "referenced by shipments — deactivate it instead" pattern for the same class of problem.
-    // Kept unconditional, regardless of customer_source — carrier_agents itself moved to the MDM
-    // Service at v0.80.0, so this guard already only reflects reality when mdm_source='local';
-    // a named, pre-existing gap (ARCHITECTURE.md §8.1), not this cut's job to widen or fix.
-    const [inUse] = await query("SELECT id FROM carrier_agents WHERE agent_customer_id=$1 LIMIT 1", [req.params.id]);
-    if (inUse) return err(res, "Customer is assigned as a carrier line agent — remove that assignment first");
+    // No carrier-agent guard any more: the carrier's offices are their own records since 2026-11-16 (carrier
+    // offices, §8.53), so a customer that once was a Line Agent can be deleted like any other.
 
     if (await isRemote()) {
       try { await callCustomerService("DELETE", `/internal/customers/${req.params.id}`); }

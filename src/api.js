@@ -222,8 +222,11 @@ export const api = {
       acquire: (id) => req("POST",   `/shipments/${id}/edit-lock`),
       release: (id) => req("DELETE", `/shipments/${id}/edit-lock`),
     },
-    lineAgentCandidates: (id) => req("GET", `/shipments/${id}/line-agent-candidates`),
-    lineAgentCapabilityGaps: (id) => req("GET", `/shipments/${id}/line-agent-capability-gaps`),
+    // The shipment's carrier offices (§8.53): booking, billing origin, import office, billing destination.
+    carrierOffices: {
+      get:  (id)             => req("GET", `/shipments/${id}/carrier-offices`),
+      pick: (id, role, data) => req("PUT", `/shipments/${id}/carrier-offices/${role}`, data),
+    },
   },
   creditOverridesQueue: () => req("GET", "/credit-overrides/queue"),
   invoiceDeadlinesOverdue: () => req("GET", "/invoice-deadlines/overdue"),
@@ -275,17 +278,18 @@ export const api = {
     update: (id, data)   => req("PUT",    `/linked-ports/${id}`, data),
     remove: (id)         => req("DELETE", `/linked-ports/${id}`),
   },
-  carrierAgents: {
-    list:   (p = {})     => req("GET",    `/carrier-agents?${new URLSearchParams(p)}`),
-    create: (data)       => req("POST",   "/carrier-agents", data),
-    update: (id, data)   => req("PUT",    `/carrier-agents/${id}`, data),
-    remove: (id)         => req("DELETE", `/carrier-agents/${id}`),
-    addLocation:    (id, data) => req("POST",   `/carrier-agents/${id}/locations`, data),
-    removeLocation: (id)       => req("DELETE", `/carrier-agent-locations/${id}`),
-    schedule: {
-      get: (id)       => req("GET", `/carrier-agents/${id}/schedule`),
-      put: (id, rows) => req("PUT", `/carrier-agents/${id}/schedule`, { rows }),
-    },
+  // Carrier offices (§8.53): a carrier's profile — its offices, which office acts where, our account numbers.
+  carrierProfile: {
+    get:           (code)       => req("GET",    `/carriers/${encodeURIComponent(code)}/profile`),
+    check:         (code, p)    => req("GET",    `/carriers/${encodeURIComponent(code)}/coverage-check?${new URLSearchParams(p)}`),
+    offices:       (code, p = {}) => req("GET",  `/carrier-offices?${new URLSearchParams({ carrierCode: code, ...p })}`),
+    createOffice:  (code, data) => req("POST",   `/carriers/${encodeURIComponent(code)}/offices`, data),
+    updateOffice:  (id, data)   => req("PUT",    `/carrier-offices/${id}`, data),
+    removeOffice:  (id)         => req("DELETE", `/carrier-offices/${id}`),
+    addCoverage:   (code, data) => req("POST",   `/carriers/${encodeURIComponent(code)}/coverage`, data),
+    updateCoverage:(id, data)   => req("PUT",    `/carrier-coverage/${id}`, data),
+    removeCoverage:(id)         => req("DELETE", `/carrier-coverage/${id}`),
+    saveAccountNumbers: (code, data) => req("PUT", `/carriers/${encodeURIComponent(code)}/account-numbers`, data),
   },
   regions: {
     list:   ()           => req("GET",    "/regions"),
@@ -556,6 +560,9 @@ export const api = {
     create:    (d)         => req("POST",   "/carrier-invoices", d),
     remove:    (id)        => req("DELETE", `/carrier-invoices/${id}`),
     rematch:   (id)        => req("POST",   `/carrier-invoices/${id}/rematch`, {}),
+    // Who issued it (carrier offices, §8.53): the carrier's offices and the default for a shipment; change it.
+    issuerOptions: (p)     => req("GET",    `/carrier-invoices/issuer-options?${new URLSearchParams(p)}`),
+    setIssuer: (id, issuingOfficeId) => req("PATCH", `/carrier-invoices/${id}/issuer`, { issuingOfficeId }),
     approveLine: (lineId)  => req("POST",   `/carrier-invoice-lines/${lineId}/approve`, {}),
     disputeLine: (lineId, d) => req("POST", `/carrier-invoice-lines/${lineId}/dispute`, d),
   },

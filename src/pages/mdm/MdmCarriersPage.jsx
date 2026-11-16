@@ -10,7 +10,8 @@ import CarrierCombobox from "../../components/shared/CarrierCombobox";
 import { ContainerTypeField } from "../../components/shared/ContainerTypePickerModal";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import ActionMenu from "../../components/primitives/ActionMenu";
-import { IconPencil, IconClose, IconClipboard } from "../../components/primitives/Icon";
+import { IconPencil, IconClose, IconClipboard, IconBuilding } from "../../components/primitives/Icon";
+import CarrierProfileModal from "../../components/carriers/CarrierProfileModal";
 import EntityHistoryModal from "../../components/shared/EntityHistoryModal";
 import DatePicker from "../../components/primitives/DatePicker";
 import PortField from "../../components/shared/PortField";
@@ -299,6 +300,8 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
   const [confirm,        setConfirm]        = useState(null);
   const [historyCarrier, setHistoryCarrier] = useState(null);
   const [groupModal,     setGroupModal]     = useState(null);
+  // The carrier's profile (§8.53): its offices, coverage, our account numbers and connection.
+  const [profileCarrier, setProfileCarrier] = useState(null);
   const { template, startResize } = useResizableColumns("mdm-carriers-v2", [130, 200, 180, 160]);
   const headers = ["Code", "Name", "Group", "Actions"];
 
@@ -308,7 +311,7 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
         <div>
           <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Carrier Registry</h1>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-            {carriers.length} carrier{carriers.length !== 1 ? "s" : ""} · reference database for shipments &amp; allocations
+            {carriers.length} carrier{carriers.length !== 1 ? "s" : ""} · reference database for shipments &amp; allocations · open a carrier for its offices, coverage and our account numbers
           </p>
         </div>
         {canManageMdm && <Btn onClick={() => setModal("add")} size="lg">＋ Add Carrier</Btn>}
@@ -334,7 +337,10 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
             transition: "background .1s" }}
             onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
             onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-            <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>{c.code}</span>
+            <button type="button" onClick={() => setProfileCarrier(c)} title={`${c.code}: offices, coverage and account numbers`}
+              data-testid={`mdm-carrier-profile-${c.code}`}
+              style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700, background: "none", border: "none", padding: 0,
+                cursor: "pointer", textAlign: "left", justifySelf: "start" }}>{c.code}</button>
             <span style={{ fontFamily: T.body, fontSize: 14, color: T.text }}>{c.name}</span>
             <div>
               {CARRIER_GROUP_MAP[c.code] ? (
@@ -353,6 +359,7 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
+                { icon: IconBuilding, label: "Offices & Coverage", onClick: () => setProfileCarrier(c) },
                 ...(canManageMdm ? [{ icon: IconPencil, label: "Edit", onClick: () => setModal(c) }] : []),
                 { icon: IconClipboard, label: "History", onClick: () => setHistoryCarrier(c) },
                 ...(canManageMdm ? [{ icon: IconClose, label: "Remove", variant: "danger", onClick: () => setConfirm(c.code) }] : []),
@@ -394,6 +401,9 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
             </>
           }
           onClose={() => setHistoryCarrier(null)} />
+      )}
+      {profileCarrier && (
+        <CarrierProfileModal carrier={profileCarrier} canEdit={canManageMdm} onClose={() => setProfileCarrier(null)} />
       )}
       {groupModal && (
         <GroupMembersModal

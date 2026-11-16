@@ -18,13 +18,14 @@ import { deriveLoopCode } from "../../utils/scheduleLoop";
 import { legChainProblems, journeyOrder, ORDER_HELP } from "../../utils/legChain";
 import useContractLineHubs from "../../hooks/useContractLineHubs";
 import { canEditShipmentSide } from "../../utils/officeSide";
+import { isShipmentLocked } from "../../utils/shipmentLock";
 import { emitLegsScheduleChanged } from "../../legsScheduleBus";
 import useSaving from "../../hooks/useSaving";
 import { setNavigationGuard, clearNavigationGuard } from "../../navigationGuard";
 import { HZ, HZ_MONO, HZ_BODY, HZ_LEGACY_THEME, useHorizonFonts } from "./shipmentDetailTheme";
 import { SpotOfferCard, AddSpotOfferModal, useShipmentSpotOffer, equipmentOfContainers, removeSpotOffer } from "../../components/shared/SpotOffers";
 import usePorts from "./schedules/usePorts";
-import { PillNav, RouteHero, EmptyRouteHero, RouteRail, RouteCard, ContractCard, SailingCard, LineAgentTile,
+import { PillNav, RouteHero, EmptyRouteHero, RouteRail, RouteCard, ContractCard, SailingCard, CarrierOfficeTile,
   sectionLabelStyle, pillBtnStyle, ctaStyle } from "./schedules/SchedulesParts";
 
 // ─── Shipment Schedules Page ──────────────────────────────────────────────
@@ -190,27 +191,22 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
     return () => { live = false; };
   }, [shipment.id, shipment.contractType, shipment.contractId]);
 
-  // Export/Import Line Agent — surfaced here (not just on Parties & Offices) since schedule and
-  // contract selection are also an export-side-only action on this page; keeping both under the
-  // same office-side permission model in one place matches how the operator actually works.
-  // null (not []) until the fetch resolves, same "don't render a false empty state" convention
-  // this page already uses for `schedules` above.
-  const [parties, setParties] = useState(null);
-  const loadParties = () => api.shipmentParties.list(shipment.id).then(setParties).catch(() => setParties([]));
-  useEffect(() => { loadParties(); }, [shipment.id]);
-  const exportLineAgent = (parties || []).find(p => p.role === "Line Agent (Export)") || null;
-  const importLineAgent = (parties || []).find(p => p.role === "Line Agent (Import)") || null;
+  // The carrier's offices on this shipment (§8.53): booking and origin billing (export side), import office and
+  // destination billing (import side), picked from the carrier's coverage; null until loaded. Reloaded when the
+  // carrier or ports change (a saved route picks them again on the server).
+  const [carrierOffices, setCarrierOffices] = useState(null);
+  const loadCarrierOffices = () => api.shipments.carrierOffices.get(shipment.id).then(setCarrierOffices).catch(() => setCarrierOffices(null));
+  useEffect(() => { loadCarrierOffices(); }, [shipment.id, shipment.carrierCode, shipment.pol, shipment.pod]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Client-side mirror of the server's canEditOfficeSide (routes/shipments.js) — same pattern
   // PartiesOfficesPanel (ShipmentDetailPage.jsx) already established for EMO/IMO office editing.
   // The server re-checks this on every write; this only decides what to render as editable.
   const roleBypass = isAdmin || (activeRoles || []).includes("operator");
   const canEditSideDept = dept => canEdit && (roleBypass || allOffices || activeOffice?.department === dept);
-  const canEditExportLineAgent = canEditSideDept("SE");
-  const canEditImportLineAgent = canEditSideDept("SI");
+  const canEditCarrierOffice = side => canEditSideDept(side === "Export" ? "SE" : "SI");
   // Contracts & Schedules is export-edit per the Office-Side Permissions Epic (TKT-Z0LB0W) —
   // per-shipment-relative (shipment.myOfficeSide), NOT the department-wide check just above
-  // (that one's scope is narrower: only who may reassign the Line Agent fields specifically).
+  // (that one's scope is narrower: only who may change the carrier office tiles specifically).
   const canEditExportSide = canEditShipmentSide(auth, shipment, "export");
   // SPOT rates (2026-10-21): the carrier's spot offer this SPOT shipment is priced on.
   const spot = useShipmentSpotOffer(shipment);
@@ -219,18 +215,10 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
   // "Sailing + offer" in the picker: the carrier's offer for that departure, taken when the route is saved.
   const [pendingSpotOffer, setPendingSpotOffer] = useState(null);
 
-  const handleAssignLineAgent = async (role, existingId, customerId, customerName) => {
+  const handlePickCarrierOffice = async (role, body) => {
     try {
-      if (existingId) await api.shipmentParties.update(shipment.id, existingId, { customerId, customerName });
-      else await api.shipmentParties.create(shipment.id, { role, customerId, customerName });
-      await loadParties();
-      toast.success(`${role} ${existingId ? "reassigned" : "assigned"}`);
-    } catch (e) { toast.error(e.message); }
-  };
-  const handleRemoveLineAgent = async id => {
-    try {
-      await api.shipmentParties.remove(shipment.id, id);
-      setParties(list => list.filter(p => p.id !== id));
+      setCarrierOffices(await api.shipments.carrierOffices.pick(shipment.id, role, body));
+      toast.success(body.fromCoverage ? "Picked again from the carrier's coverage" : body.officeId ? "Carrier office changed" : "Carrier office left empty");
     } catch (e) { toast.error(e.message); }
   };
 
@@ -695,7 +683,7 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
 
   // Every hook above has already run this render regardless of this branch — only what gets
   // returned/rendered is gated, so this doesn't violate the Rules of Hooks.
-  if (schedules === null || parties === null || draftLegs === null) {
+  if (schedules === null || draftLegs === null) {
     return (
       <div id="shpsched-page" data-testid="shipment-schedules-page" style={{ display: "flex", alignItems: "center", gap: 10, padding: "24px 0",
         fontFamily: HZ_BODY, fontSize: 13, color: HZ.textMuted }}>
@@ -787,16 +775,16 @@ const ShipmentSchedulesPage = ({ shipment, shipmentTEU = 0, containers = [], onB
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-            <div id="shpsched-line-agents-section" data-testid="shipment-schedules-line-agents-section" style={{ scrollMarginTop: 90 }}>
-              <div style={{ ...sectionLabelStyle(), marginBottom: 8 }}>Line agents</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <LineAgentTile label="Export Line Agent" role="Line Agent (Export)" party={exportLineAgent}
-                  canEdit={canEditExportLineAgent} onAssign={(id, cid, cname) => handleAssignLineAgent("Line Agent (Export)", id, cid, cname)}
-                  onRemove={handleRemoveLineAgent} />
-                <LineAgentTile label="Import Line Agent" role="Line Agent (Import)" party={importLineAgent}
-                  canEdit={canEditImportLineAgent} onAssign={(id, cid, cname) => handleAssignLineAgent("Line Agent (Import)", id, cid, cname)}
-                  onRemove={handleRemoveLineAgent} />
-              </div>
+            <div id="shpsched-carrier-offices-section" data-testid="shipment-schedules-carrier-offices-section" style={{ scrollMarginTop: 90 }}>
+              <div style={{ ...sectionLabelStyle(), marginBottom: 8 }}>Carrier offices{shipment.carrierCode ? ` · ${shipment.carrierCode}` : ""}</div>
+              {carrierOffices ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                  {["booking", "billing_origin", "import", "billing_destination"].map(role => carrierOffices.roles[role] && (
+                    <CarrierOfficeTile key={role} entry={carrierOffices.roles[role]} offices={carrierOffices.offices}
+                      canEdit={!isShipmentLocked(shipment) && canEditCarrierOffice(carrierOffices.roles[role].side)} onPick={handlePickCarrierOffice} />
+                  ))}
+                </div>
+              ) : <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted }}>Loading…</div>}
             </div>
             <SailingCard schedule={schedForCard} staged={!!draftSailing} hasPorts={!!(pol && pod)}
               legVessel={legsNow.find(l => l.legType === "SEA" && (l.vessel || l.voyage)) || null} />

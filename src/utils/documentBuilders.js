@@ -187,7 +187,7 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
   const onBoard = houseBl ? houseBl.shippedOnBoard !== false : true;
   const statementDate = onBoard ? houseBl?.onBoardDate : (houseBl?.receivedDate || invDate);
   // Freight is payable where it is earned: prepaid at the port of loading, collect at discharge.
-  const payableAt = sh.freightTerms === "Collect" ? (sh.podName || sh.pod) : (sh.polName || sh.pol);
+  const payableAt = /^(collect|payable at destination)$/i.test(String(sh.freightTerms || "").trim()) ? (sh.podName || sh.pod) : (sh.polName || sh.pol);
   const fcl = (sh.movementType || "FCL") !== "LCL";
   // The carriage (gap G16): the first sea-going vessel, any transshipment onto later vessels, and the
   // pre-/on-carriage when the carrier does it. Without routing, the shipment's own vessel.

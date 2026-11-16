@@ -47,8 +47,8 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
   const [packDgContainerIds, setPackDgContainerIds] = useState(new Set());
   const [contract,   setContract]   = useState(null);
   const [namedAccountParent, setNamedAccountParent] = useState(null); // Organization Model Enhancement Epic 4
-  const [parties,    setParties]    = useState(null); // Carrier Line Agents
-  const [capabilityGaps, setCapabilityGaps] = useState([]); // TKT-FQFE33 — Line Agent Capabilities cross-check
+  const [carrierOffices, setCarrierOffices] = useState(null); // the carrier's offices on this shipment (§8.53)
+  const [capabilityGaps, setCapabilityGaps] = useState([]); // TKT-FQFE33 — the carrier offices' capabilities cross-check
   const [loading,    setLoading]    = useState(true);
   const [sending,    setSending]    = useState(false);
   const [savingFreightTerms, setSavingFreightTerms] = useState(false);
@@ -112,10 +112,9 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
       api.carrierBooking.get(shipment.id).catch(() => null),
       api.ediMessages.list(shipment.id).catch(() => []),
       api.containers.list({ shipmentId: shipment.id }).catch(() => []),
-      api.shipmentParties.list(shipment.id).catch(() => []),
-      api.shipments.lineAgentCapabilityGaps(shipment.id).catch(() => []),
-    ]).then(([b, m, c, p, gaps]) => {
-      setBooking(b); setMessages(m); setContainers(c); setParties(p); setCapabilityGaps(gaps);
+      api.shipments.carrierOffices.get(shipment.id).catch(() => null),
+    ]).then(([b, m, c, co]) => {
+      setBooking(b); setMessages(m); setContainers(c); setCarrierOffices(co); setCapabilityGaps(co?.capabilityGaps || []);
       // Pack-level DG flags (a pallet/carton can be flagged DG even when its container isn't)
       // also feed the outbound booking-request declaration (routes/edi.js) — fetched here too
       // so this awareness chip matches what's actually transmitted on Send.
@@ -126,12 +125,11 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
     }).finally(() => setLoading(false));
   }, [shipment.id]);
 
-  // Carrier Line Agents — read-only here, same as Carrier/Route/Vessel above: this page
-  // displays, it doesn't edit. Reassignment happens on Parties & Offices (AdditionalPartiesPanel)
-  // like any other additional party — these are ordinary shipment_parties rows, not a separate
-  // concept, so whatever's actually assigned (auto-resolved or manually overridden) is what shows.
-  const exportAgent = (parties || []).find(p => p.role === "Line Agent (Export)");
-  const importAgent = (parties || []).find(p => p.role === "Line Agent (Import)");
+  // The carrier's offices (§8.53) — read-only here, same as Carrier/Route/Vessel above: the booking goes to the booking
+  // office, located at its own UN/LOCODE, and "payable at" is the billing office of the side paying the freight. They're
+  // changed on Contracts & Schedules' carrier office tiles.
+  const officeTiles = [["booking", "Booking office", HZ.cyan, HZ.cyanBg], ["billing_origin", "Billing · origin", HZ.amber, HZ.warnBg],
+    ["import", "Import office", HZ.violet, HZ.violetBg], ["billing_destination", "Billing · destination", HZ.amber, HZ.warnBg]];
 
   // Same size+type grouping the backend applies to the outbound booking-request payload
   // (routes/edi.js, TKT-0H9TSP) — shown here so what's on screen matches what gets sent.
@@ -263,31 +261,26 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
         gap: 14, marginBottom: 24, background: HZ.surface, backdropFilter: "blur(20px)",
         border: `1.5px solid ${HZ.cyan}55`, borderRadius: 10, padding: "16px 20px" }}>
-        <div>
-          <div style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, letterSpacing: ".06em",
-            textTransform: "uppercase", color: HZ.cyan, background: HZ.cyanBg, borderRadius: 4,
-            padding: "1px 6px", width: "fit-content", marginBottom: 6 }}>Line Agent · Export</div>
-          <div style={{ fontFamily: HZ_BODY, fontSize: 14, color: HZ.text, fontWeight: 600 }}>
-            {exportAgent?.customerName || "Not registered"}
-          </div>
-          <div style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted, marginTop: 2 }}>
-            at {shipment.pol || "—"}
-          </div>
-        </div>
-        <div>
-          <div style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, letterSpacing: ".06em",
-            textTransform: "uppercase", color: HZ.violet, background: HZ.violetBg, borderRadius: 4,
-            padding: "1px 6px", width: "fit-content", marginBottom: 6 }}>Line Agent · Import</div>
-          <div style={{ fontFamily: HZ_BODY, fontSize: 14, color: HZ.text, fontWeight: 600 }}>
-            {importAgent?.customerName || "Not registered"}
-          </div>
-          <div style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted, marginTop: 2 }}>
-            at {shipment.pod || "—"}
-          </div>
-        </div>
+        {officeTiles.map(([role, label, color, bg]) => {
+          const e = carrierOffices?.roles?.[role];
+          return (
+            <div key={role} data-testid={`carrier-booking-office-${role}`}>
+              <div style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, letterSpacing: ".06em",
+                textTransform: "uppercase", color, background: bg, borderRadius: 4,
+                padding: "1px 6px", width: "fit-content", marginBottom: 6 }}>{label}</div>
+              <div style={{ fontFamily: HZ_BODY, fontSize: 14, color: e?.office ? HZ.text : HZ.textMuted, fontWeight: 600, fontStyle: e?.office ? "normal" : "italic" }}>
+                {e?.office?.name || "None set"}
+              </div>
+              <div style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted, marginTop: 2 }}>
+                {e?.office ? `${e.office.unlocode || "—"}${e.fallback ? " · no billing row: " + (role === "billing_origin" ? "the booking office bills" : "the import office bills") : ""}`
+                  : `for ${e?.port || (role.endsWith("origin") || role === "booking" ? shipment.pol : shipment.pod) || "—"}`}
+              </div>
+            </div>
+          );
+        })}
         <div style={{ gridColumn: "1 / -1", fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted }}>
-          Resolved from Carrier Agents master data when Carrier/Route were set — reassign via
-          Parties &amp; Offices if this shipment needs a one-off exception.
+          Picked from the carrier's coverage (Master Data → Carriers) when the shipment's carrier or ports were set; change them on
+          Contracts &amp; Schedules. The booking goes to the booking office; the freight is payable at the billing office of the side that pays it.
         </div>
       </div>
 
@@ -417,7 +410,7 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
           {capabilityGaps.map((g, i) => (
             <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <IconWarning size={13} color={HZ.warn} />
-              <span>{g.side} Line Agent <strong>{g.agentName}</strong> has no <strong>{g.capabilityLabel}</strong> capability
+              <span>{g.side === "Export" ? "The booking office" : "The import office"} <strong>{g.officeName || g.agentName}</strong> has no <strong>{g.capabilityLabel}</strong> capability
                 on file, but this shipment has a {g.reason.toLowerCase()}.</span>
             </div>
           ))}

@@ -723,6 +723,10 @@ export const EVENT_CONFIG = {
   PAYMENT_TERMS_CHANGED:   { icon: IconPencil, label: "Payment terms changed", color: () => HZ.amber },
   COST_LINE_OFFICE_CHANGED: { icon: IconPencil, label: "Line office changed",  color: () => HZ.amber },
   LINE_AGENT_AUTO_ASSIGNED: { icon: "＋", label: "Line Agent auto-assigned", color: () => HZ.good },
+  // Carrier offices (§8.53): picked from the carrier's coverage, changed by hand, or emptied by a new carrier or port.
+  CARRIER_OFFICE_ASSIGNED: { icon: "＋", label: "Carrier office picked", color: () => HZ.good },
+  CARRIER_OFFICE_CHANGED:  { icon: IconPencil, label: "Carrier office changed", color: () => HZ.info },
+  CARRIER_OFFICE_CLEARED:  { icon: IconClose, label: "Carrier office cleared", color: () => HZ.warn },
   CONTRACT_DROPPED:    { icon: IconWarning, label: "Contract dropped",    color: () => HZ.crit   },
   SPACE_SKIPPED:       { icon: IconWarning, label: "Space match skipped", color: () => HZ.warn  },
   SPACE_OVERAGE:       { icon: IconWarning, label: "Space overage",       color: () => HZ.warn  },
@@ -1180,6 +1184,17 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
       .catch(() => setServiceVendors([]));
   }, [shipment.id]);
 
+  // The carrier's offices on the shipment (§8.53) are screened by name like the parties (they were the Line Agent
+  // parties until 2026-11-16): shown as their own phase, so a hit on one says which (audit F7). Only the offices the
+  // shipment holds are screened — a billing office worked out from the booking/import office is that office.
+  const [carrierOfficeChecks, setCarrierOfficeChecks] = useState(null);
+  useEffect(() => {
+    api.shipments.carrierOffices.get(shipment.id)
+      .then(v => setCarrierOfficeChecks(Object.values(v?.roles || {}).filter(r => r.office?.name && !r.fallback)
+        .map(r => ({ field: r.label, label: r.label, value: r.office.name, desc: r.office.unlocode || null }))))
+      .catch(() => setCarrierOfficeChecks([]));
+  }, [shipment.id]);
+
   // Phase-based check definitions
   const PHASES = [
     {
@@ -1201,6 +1216,9 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
         const field = `${sv.side} ${sv.serviceType} Vendor`;
         return { field, label: `${sv.side} ${sv.serviceType}`, value: sv.vendorName, desc: null };
       }),
+    }] : []),
+    ...(carrierOfficeChecks && carrierOfficeChecks.length > 0 ? [{
+      id: "carrier-offices", label: "Phase 1d", title: "Carrier Offices", checks: carrierOfficeChecks,
     }] : []),
     {
       id: "routing", label: "Phase 2", title: "Routing",
@@ -1824,10 +1842,10 @@ const ServiceBranch = ({ service, offices, shipmentOfficeIds, canEdit, onUpdated
 // `onRemove` (only ever passed for an additional/side-tagged office, never the home field or a
 // cross-assigned office like Controlling) renders a × next to the header, no confirmation step —
 // same immediate-remove precedent AdditionalPartiesPanel already uses.
-// Manager/Line Agent mini-grid label — same small-caps convention as PartiesOfficesCard's
+// Manager/carrier office mini-grid label — same small-caps convention as PartiesOfficesCard's
 // own label, reused here for the "New Style" redesign (approved mockup:
 // https://claude.ai/artifact/KmxNCy2HYyu192jg2NBBGE) so an office card surfaces who's actually
-// running it without leaving this tab. `manager`/`lineAgent` are undefined when not
+// running it without leaving this tab. `manager`/`carrierOffice` are undefined when not
 // applicable to this card (no grid rendered at all), null when applicable but unset (renders
 // an italic empty state), or a value when set.
 // A function, not a plain object — HZ.textMuted is a live-mutated value (App.jsx's theme
@@ -1838,8 +1856,8 @@ const officeMiniLabel = () => ({ fontFamily: HZ_BODY, fontSize: 9.5, color: HZ.t
 
 const OfficeGroupCard = ({ icon, field, officeName, officeCode, pills, services, offices,
   shipmentOfficeIds, canEditOffice, canEditService, onReassigned, shipment, onUpdatedService, emptyLabel, onRemove,
-  manager, lineAgent }) => {
-  const showMiniGrid = manager !== undefined || lineAgent !== undefined;
+  manager, carrierOffice }) => {
+  const showMiniGrid = manager !== undefined || carrierOffice !== undefined;
   return (
     <div style={{ marginBottom: 12, background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow,
       borderRadius: 10, padding: "14px 16px" }}>
@@ -1876,7 +1894,7 @@ const OfficeGroupCard = ({ icon, field, officeName, officeCode, pills, services,
         </div>
       </div>
       {showMiniGrid && (
-        <div style={{ display: "grid", gridTemplateColumns: lineAgent !== undefined ? "1fr 1fr" : "1fr", gap: 12,
+        <div style={{ display: "grid", gridTemplateColumns: carrierOffice !== undefined ? "1fr 1fr" : "1fr", gap: 12,
           marginTop: 12, paddingTop: 12, borderTop: `1px solid ${HZ.border}` }}>
           {manager !== undefined && (
             <div data-testid="shipment-parties-office-manager">
@@ -1885,11 +1903,11 @@ const OfficeGroupCard = ({ icon, field, officeName, officeCode, pills, services,
                 fontStyle: manager ? "normal" : "italic" }}>{manager || "Not set"}</div>
             </div>
           )}
-          {lineAgent !== undefined && (
-            <div data-testid="shipment-parties-office-line-agent">
-              <div style={officeMiniLabel()}>Line Agent</div>
-              <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: lineAgent ? HZ.text : HZ.textFaint,
-                fontStyle: lineAgent ? "normal" : "italic" }}>{lineAgent ? lineAgent.customerName : "Not assigned"}</div>
+          {carrierOffice !== undefined && (
+            <div data-testid="shipment-parties-office-carrier-office">
+              <div style={officeMiniLabel()}>Carrier office</div>
+              <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: carrierOffice ? HZ.text : HZ.textFaint,
+                fontStyle: carrierOffice ? "normal" : "italic" }}>{carrierOffice ? `${carrierOffice.name}${carrierOffice.unlocode ? ` · ${carrierOffice.unlocode}` : ""}` : "None set"}</div>
             </div>
           )}
         </div>
@@ -1963,7 +1981,7 @@ const AddSideOfficeControl = ({ side, dept, offices, excludeIds, onAdd }) => {
 // service with no office set at all falls into a final "No Office Assigned" group rather than
 // silently vanishing.
 const OfficeColumn = ({ side, shipment, offices, services, shipmentOfficeIds, sideOfficeEntries,
-  canEditOffice, canEditService, isMySide, lineAgent, onReassigned, onUpdatedService, onAddOffice, onRemoveOffice }) => {
+  canEditOffice, canEditService, isMySide, carrierOffice, onReassigned, onUpdatedService, onAddOffice, onRemoveOffice }) => {
   const homeField = side === "Export" ? OFFICE_FIELDS[0] : OFFICE_FIELDS[1];
   const homeOfficeId = shipment[homeField.key];
   const homeOffice = offices.find(o => o.id === homeOfficeId) || null;
@@ -2022,7 +2040,7 @@ const OfficeColumn = ({ side, shipment, offices, services, shipmentOfficeIds, si
           onReassigned={onReassigned} onUpdatedService={onUpdatedService} shipment={shipment}
           emptyLabel={homeOfficeId ? "No services assigned to this office yet" : null}
           manager={homeOfficeId ? (homeOffice?.managerName || null) : undefined}
-          lineAgent={homeOfficeId ? lineAgent : undefined} />
+          carrierOffice={homeOfficeId ? carrierOffice : undefined} />
         {sideOfficeEntries.map(so => (
           <OfficeGroupCard key={so.id}
             icon="🏢" field={null}
@@ -2192,14 +2210,17 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched, par
   const exportSideOffices = (sideOfficesList || []).filter(so => so.side === "Export");
   const importSideOffices = (sideOfficesList || []).filter(so => so.side === "Import");
 
-  // Line Agents (Export/Import) — surfaced directly on each side's home office card (New
-  // Style redesign, approved mockup: https://claude.ai/artifact/KmxNCy2HYyu192jg2NBBGE) so a
-  // filled-in relationship is visible without leaving this tab. Same two roles
-  // ShipmentSchedulesPage.jsx's own Line Agent fields already assign/reassign — this only reads.
-  // Fetched once by the parent ShipmentPartiesPage and shared with AdditionalPartiesPanel
-  // (2026-09-25 audit finding) — this panel only ever reads it, never mutates it.
-  const exportLineAgent = (parties || []).find(p => p.role === "Line Agent (Export)") || null;
-  const importLineAgent = (parties || []).find(p => p.role === "Line Agent (Import)") || null;
+  // The carrier's offices (§8.53) — its booking office on the export card, its import office on the import card, so
+  // the carrier relationship is visible without leaving this tab (they replaced the Line Agents). Changed on Contracts
+  // & Schedules' carrier office tiles; this only reads.
+  const [carrierOffices, setCarrierOffices] = useState(null);
+  useEffect(() => {
+    let live = true;
+    api.shipments.carrierOffices.get(shipment.id).then(r => { if (live) setCarrierOffices(r); }).catch(() => { if (live) setCarrierOffices(null); });
+    return () => { live = false; };
+  }, [shipment.id, shipment.carrierCode, shipment.pol, shipment.pod]);
+  const exportCarrierOffice = carrierOffices?.roles?.booking?.office || null;
+  const importCarrierOffice = carrierOffices?.roles?.import?.office || null;
 
   const shipmentOfficeIds = new Set([
     shipment.emoOfficeId, shipment.imoOfficeId, shipment.controllingOfficeId,
@@ -2314,14 +2335,14 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched, par
           <OfficeColumn side="Export" shipment={shipment} offices={offices} services={exportServices}
             shipmentOfficeIds={shipmentOfficeIds} sideOfficeEntries={exportSideOffices}
             canEditOffice={canEditExport} canEditService={canEditExport}
-            isMySide={isMySideExport} lineAgent={exportLineAgent}
+            isMySide={isMySideExport} carrierOffice={exportCarrierOffice}
             onReassigned={handleReassigned} onUpdatedService={updateServiceInList}
             onAddOffice={officeId => handleAddSideOffice("Export", officeId)}
             onRemoveOffice={handleRemoveSideOffice} />
           <OfficeColumn side="Import" shipment={shipment} offices={offices} services={importServices}
             shipmentOfficeIds={shipmentOfficeIds} sideOfficeEntries={importSideOffices}
             canEditOffice={canEditImport} canEditService={canEditImport}
-            isMySide={isMySideImport} lineAgent={importLineAgent}
+            isMySide={isMySideImport} carrierOffice={importCarrierOffice}
             onReassigned={handleReassigned} onUpdatedService={updateServiceInList}
             onAddOffice={officeId => handleAddSideOffice("Import", officeId)}
             onRemoveOffice={handleRemoveSideOffice} />

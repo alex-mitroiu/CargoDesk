@@ -9,7 +9,6 @@
  *                               scoped-access still enforced first
  *   GET /api/linked-ports    — new opt-in limit/offset/search pagination (previously fully
  *                               unbounded, mislabeled client-side "pagination" over the whole set)
- *   GET /api/carrier-agents  — same as above
  *   GET /api/carrier-invoices/exceptions — now capped (LIMIT 200), previously unbounded
  *
  * Usage:
@@ -113,19 +112,7 @@ function assert(label, condition, detail = "") {
     const lpSearch = await request("GET", `/api/linked-ports?limit=5&offset=0&search=${rand}`, null, token);
     assert("search filter finds our scratch link by note", lpSearch.body.results.some(l => l.id === lpId));
 
-    console.log("\nGET /api/carrier-agents — new opt-in pagination (was fully unbounded)");
-    const custRes = await request("POST", "/api/customers", { companyName: `PagTest Agent Co ${rand}`, countryIso2: "NL" }, token);
-    assert("scratch customer created (for carrier agent)", custRes.status === 201, JSON.stringify(custRes.body));
-    const custId = custRes.body.id;
-    const caBare = await request("GET", "/api/carrier-agents", null, token);
-    assert("no limit/offset -> still a bare array", Array.isArray(caBare.body));
-    const caCreate = await request("POST", "/api/carrier-agents", { carrierCode: "MAEU", agentCustomerId: custId, note: `pagtest-${rand}`, locationType: "unlocode", unlocode: "NLRTM" }, token);
-    assert("scratch carrier agent created", caCreate.status === 201, JSON.stringify(caCreate.body));
-    const caId = caCreate.body.id;
-    const caPaged = await request("GET", "/api/carrier-agents?limit=5&offset=0", null, token);
-    assert("limit/offset -> paginated shape", caPaged.status === 200 && Array.isArray(caPaged.body.results) && typeof caPaged.body.total === "number");
-    const caSearch = await request("GET", `/api/carrier-agents?limit=5&offset=0&search=${rand}`, null, token);
-    assert("search filter finds our scratch agent by note", caSearch.body.results.some(a => a.id === caId));
+    // The Carrier Agents list is gone (carrier offices since 2026-11-16, §8.53: a carrier's few offices, on its profile).
 
     console.log("\nGET /api/carrier-invoices/exceptions — now capped (was fully unbounded)");
     const exc = await request("GET", "/api/carrier-invoices/exceptions", null, token);
@@ -142,8 +129,6 @@ function assert(label, condition, detail = "") {
     console.log("\nCleanup");
     await request("DELETE", `/api/shipments/${shipAId}`, null, token);
     await request("DELETE", `/api/linked-ports/${lpId}`, null, token);
-    await request("DELETE", `/api/carrier-agents/${caId}`, null, token);
-    await request("DELETE", `/api/customers/${custId}`, null, token);
 
     console.log(`\n${"─".repeat(50)}`);
     console.log(`Results: ${passed} passed, ${failed} failed`);

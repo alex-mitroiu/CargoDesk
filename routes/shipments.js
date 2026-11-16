@@ -15,8 +15,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
           mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice, canEditOfficeSide,
           officeSideOf, blockIfWrongSide, PARTY_ROLE_SIDE, resolveOfficeSideAccess, sideFromAccess,
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates, autoImportContractCosts,
-          broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, recomputeSpaceBadgesForAllocation, recomputeSpacePool, TEU_EXPR, screenShipmentById, resolveCarrierAgent, resolveCarrierAgentCandidates,
-          checkLineAgentCapabilityGaps,
+          broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, recomputeSpaceBadgesForAllocation, recomputeSpacePool, TEU_EXPR, screenShipmentById,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
           sanctionsMap, autoCompleteMilestone, ensureBookingCreated, toUsd,
           validCoord, GPS_LOC_TYPE, getSettings, callContractService, callMdmService, getCustomerRow,
@@ -141,35 +140,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!isOverridden) await screenShipmentById(shipmentId);
   };
 
-  // Carrier Line Agents — resolves the carrier's registered agent at POL/POD (carrier_agents,
-  // via resolveCarrierAgentCandidates) and, for each side with EXACTLY ONE candidate, adds it as
-  // an ordinary "Line Agent (Export/Import)" additional party. The UNIQUE(shipment_id, role)
-  // constraint on shipment_parties IS the "only fill an empty slot, never overwrite" mechanism —
-  // same idiom POST /api/shipments/:id/parties below already relies on — so this never clobbers a
-  // party that's already there, whether CargoDesk set it earlier or a person did. No transaction:
-  // the two sides are independent single-row writes on two different role strings, so one
-  // resolving and the other not is a normal, non-corrupting result. A side with 2+ candidates
-  // (only possible via the linked-ports fallback — see resolveCarrierAgentCandidates) is
-  // deliberately left unassigned rather than guessing which one — GET .../line-agent-candidates
-  // below surfaces it for the operator to pick instead.
-  const maybeAssignLineAgents = async (shipmentId, carrierCode, pol, pod, actorId = null) => {
-    for (const [port, role] of [[pol, "Line Agent (Export)"], [pod, "Line Agent (Import)"]]) {
-      const candidates = await resolveCarrierAgentCandidates(carrierCode, port);
-      if (candidates.length !== 1) continue;
-      const match = candidates[0];
-      try {
-        await query(`INSERT INTO shipment_parties (id, shipment_id, role, customer_id, customer_name, created_at)
-          VALUES ($1,$2,$3,$4,$5,$6)`,
-          [`PTY-${uid()}`, shipmentId, role, match.agent_customer_id, match.agent_customer_name, new Date().toISOString()]);
-        // Silent until now — a resolved Line Agent slot filled itself in with no trace in the
-        // shipment's own History tab, distinct from LOGGED PARTY_ASSIGNED (which only ever fired
-        // for the manual assign route). Own event type so the History tab reads "auto-resolved",
-        // not "someone assigned this" for a change nobody actually clicked.
-        await logEvent(shipmentId, 'LINE_AGENT_AUTO_ASSIGNED', role, null, match.agent_customer_name,
-          JSON.stringify({ carrierCode, port, matchedVia: match.matched_via || null }), actorId);
-      } catch (e) { if (!isUniqueViolation(e)) throw e; }
-    }
-  };
+  // The carrier's offices (booking, import office, billing per side) are picked by ctx.carrierOffices (§8.53) when a
+  // shipment is created and again when its carrier or a port changes — they replaced the Line Agent parties.
 
   const checkDgPolicy = async (shipmentId, isDg, dgClass) => {
     if (!isDg || !dgClass) return null;
@@ -676,7 +648,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     }
     await logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }), req.user?.name || req.user?.email || "");
-    await maybeAssignLineAgents(id, carrierCode, polU, podU, req.user?.name || req.user?.email || "");
+    await ctx.carrierOffices.determine(id, { actor: req.user?.name || req.user?.email || "" });
     if (contractType === 'Central' && contractId) await importContractRates(id);
     // The steering verdict for the contract it was created on (Epic TKT-KFGL81, Story 3).
     await recordSteering(id, req);
@@ -986,11 +958,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
       await query("UPDATE shipments SET space_selection=$1 WHERE id=$2", [finalSpaceSelection, req.params.id]);
       await logEvent(req.params.id, 'FIELD_UPDATED', 'space_selection', existing.space_selection || null, finalSpaceSelection || null, '', req.user?.name || req.user?.email || "");
     }
-    // Only re-attempt Line Agent resolution when carrier/route actually changed — the existing
-    // partyOrRouteChanged flag (further below) doesn't check carrier_code, so this needs its
-    // own condition rather than reusing that one.
+    // The carrier offices whose carrier or port changed are picked again (nothing else is touched, §8.53).
     if (carrierCode !== existing.carrier_code || polU !== existing.pol || podU !== existing.pod)
-      await maybeAssignLineAgents(req.params.id, carrierCode, polU, podU, req.user?.name || req.user?.email || "");
+      await ctx.carrierOffices.refresh(req.params.id, req.user?.name || req.user?.email || "");
     // Contract assignment is one of the two triggers for auto-creating a carrier booking
     // (the other is a schedule save/link, in routes/shipment-ops.js) — only worth checking
     // when the contract fields actually changed, since ensureBookingCreated no-ops otherwise.
@@ -2100,58 +2070,13 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, rows.map(mapShipmentParty));
   });
 
-  // Read-only: surfaces a Line Agent side that maybeAssignLineAgents (above) deliberately left
-  // unassigned because resolveCarrierAgentCandidates found 2+ equally-valid candidates (only
-  // possible via the linked-ports fallback) rather than guess which one. A side already filled —
-  // whether by that auto-assign, or manually — has nothing to resolve and is omitted entirely, not
-  // just because it'd be redundant: re-showing it would let a "pick" here silently overwrite an
-  // operator's own deliberate manual choice. Picking a candidate is done via the existing
-  // POST /api/shipments/:id/parties — this route only ever reads.
-  app.get("/api/shipments/:id/line-agent-candidates", auth(), async (req, res) => {
-    const [shipment] = await query("SELECT carrier_code, pol, pod FROM shipments WHERE id=$1", [req.params.id]);
-    if (!shipment) return err(res, "Not found", 404);
-    const filled = new Set(
-      (await query("SELECT role FROM shipment_parties WHERE shipment_id=$1 AND role IN ($2,$3)",
-        [req.params.id, "Line Agent (Export)", "Line Agent (Import)"])).map(r => r.role)
-    );
-    const result = {};
-    const sides = [
-      ["export", "Line Agent (Export)", shipment.pol],
-      ["import", "Line Agent (Import)", shipment.pod],
-    ];
-    for (const [key, role, port] of sides) {
-      if (filled.has(role) || !shipment.carrier_code || !port) continue;
-      const candidates = await resolveCarrierAgentCandidates(shipment.carrier_code, port);
-      if (candidates.length > 1) {
-        result[key] = candidates.map(c => ({
-          agentCustomerId: c.agent_customer_id, agentCustomerName: c.agent_customer_name, matchedVia: c.matched_via,
-        }));
-      }
-    }
-    ok(res, result);
-  });
-
-  // Capabilities cross-check (TKT-FQFE33, 2026-09-03 audit fix) — read-only awareness endpoint,
-  // same non-blocking shape as line-agent-candidates above: nothing here forces a fix, it just
-  // surfaces "the assigned Line Agent on this side doesn't offer something this shipment
-  // actually needs" before a booking is sent, rather than after a carrier rejection.
-  app.get("/api/shipments/:id/line-agent-capability-gaps", auth(), async (req, res) => {
-    ok(res, await checkLineAgentCapabilityGaps(req.params.id));
-  });
-
-  // Line Agent (Export)/(Import) are the one pair of ADDITIONAL_PARTY_ROLES tied to a specific
-  // office side rather than open to any shipmentWrite user — the export side owns the carrier
-  // relationship at the load port, the import side owns it at the discharge port, and neither
-  // should be able to reassign the other's contact. Every other role stays gated by shipmentWrite
-  // alone, unchanged.
-  const LINE_AGENT_SIDE = { "Line Agent (Export)": "Export", "Line Agent (Import)": "Import" };
+  // The Line Agent candidates and capability gaps moved to GET /api/shipments/:id/carrier-offices
+  // (routes/carrier-offices.js): an office with two candidates is shown there for a person to pick.
 
   app.post("/api/shipments/:id/parties", shipmentWrite, async (req, res) => {
     const { role, customerId, customerName } = req.body || {};
     if (!role || !ADDITIONAL_PARTY_ROLES.includes(role)) return err(res, "Invalid role");
     if (!customerId || !customerName) return err(res, "customerId and customerName required");
-    if (LINE_AGENT_SIDE[role] && !(await canEditOfficeSide(req, LINE_AGENT_SIDE[role])))
-      return err(res, `Only ${LINE_AGENT_SIDE[role].toLowerCase()}-side users can assign the ${role}`, 403);
     const [sh] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!sh) return err(res, "Shipment not found", 404);
     if (PARTY_ROLE_SIDE[role] && (await blockIfWrongSide(req, res, sh, PARTY_ROLE_SIDE[role]))) return;
@@ -2163,7 +2088,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     } catch (e) {
       return err(res, isUniqueViolation(e) ? "This role is already assigned on this shipment — edit or remove it instead." : e.message);
     }
-    // Real gap found live: assigning/reassigning/removing a party (Line Agent included) never
+    // Real gap found live: assigning/reassigning/removing a party never
     // showed up on the shipment's own History tab at all — every fixed shipment field logs
     // through the TRACKED_FIELDS loop above, but this variable-length sibling table never wrote
     // to shipment_events. Mirrors that same mechanism rather than inventing a second one.
@@ -2178,9 +2103,6 @@ module.exports = function shipmentsRoutes(app, ctx) {
   app.put("/api/shipments/:shipmentId/parties/:id", shipmentWrite, async (req, res) => {
     const [existing] = await query("SELECT * FROM shipment_parties WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
-    const side = LINE_AGENT_SIDE[existing.role];
-    if (side && !(await canEditOfficeSide(req, side)))
-      return err(res, `Only ${side.toLowerCase()}-side users can reassign the ${existing.role}`, 403);
     if (PARTY_ROLE_SIDE[existing.role]) {
       const [sh] = await query("SELECT * FROM shipments WHERE id=$1", [existing.shipment_id]);
       if (await blockIfWrongSide(req, res, sh, PARTY_ROLE_SIDE[existing.role])) return;
@@ -2196,9 +2118,6 @@ module.exports = function shipmentsRoutes(app, ctx) {
   app.delete("/api/shipments/:shipmentId/parties/:id", shipmentWrite, async (req, res) => {
     const [existing] = await query("SELECT * FROM shipment_parties WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
-    const side = LINE_AGENT_SIDE[existing.role];
-    if (side && !(await canEditOfficeSide(req, side)))
-      return err(res, `Only ${side.toLowerCase()}-side users can remove the ${existing.role}`, 403);
     if (PARTY_ROLE_SIDE[existing.role]) {
       const [sh] = await query("SELECT * FROM shipments WHERE id=$1", [existing.shipment_id]);
       if (await blockIfWrongSide(req, res, sh, PARTY_ROLE_SIDE[existing.role])) return;

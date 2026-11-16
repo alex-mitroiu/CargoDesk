@@ -585,6 +585,9 @@ async function insertLocation(headerId, carrierCode, locationType, unlocode, cou
   return id;
 }
 
+// Legacy since 2026-11-16: the monolith keeps a carrier's offices itself (carrier offices, lib/carrier-offices.js,
+// ARCHITECTURE.md §8.53) and reads these carrier agents once, to move them over (migrateFromCarrierAgents). Nothing
+// else calls these routes; they stay so that move can read a database that kept its agents here.
 app.get("/internal/carrier-agents", async (req, res) => {
   const headerRows = await query(`${CARRIER_AGENT_JOIN} ORDER BY ca.carrier_code, ca.agent_customer_id`);
   let mapped = await mapHeadersWithLocations(headerRows);

@@ -112,6 +112,20 @@ const NewInvoiceModal = ({ shipments, onClose, onCreated }) => {
   const [aiEnabled, setAiEnabled] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const extractFileRef = useRef(null);
+  // Who issued it (carrier offices, §8.53): the carrier's offices, filled from the shipment's billing office for the side
+  // of the first charge until the clerk picks one.
+  const [issuerOpts, setIssuerOpts] = useState({ offices: [], defaultOfficeId: "", why: "" });
+  const [issuerId, setIssuerId] = useState("");
+  const [issuerTouched, setIssuerTouched] = useState(false);
+  useEffect(() => {
+    if (!carrierCode) { setIssuerOpts({ offices: [], defaultOfficeId: "", why: "" }); if (!issuerTouched) setIssuerId(""); return; }
+    let live = true;
+    api.carrierInvoices.issuerOptions({ carrierCode, ...(shipmentId ? { shipmentId } : {}),
+      serviceCode: lines[0]?.serviceCode || "", freeTimeSide: lines[0]?.freeTimeSide || "" })
+      .then(r => { if (!live) return; setIssuerOpts(r); if (!issuerTouched) setIssuerId(r.defaultOfficeId || ""); })
+      .catch(() => { if (live) setIssuerOpts({ offices: [], defaultOfficeId: "", why: "" }); });
+    return () => { live = false; };
+  }, [carrierCode, shipmentId, lines[0]?.serviceCode, lines[0]?.freeTimeSide]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!shipmentId) { setContainers([]); return; }
@@ -167,6 +181,8 @@ const NewInvoiceModal = ({ shipments, onClose, onCreated }) => {
     try {
       const created = await api.carrierInvoices.create({
         shipmentId, carrierCode, invoiceNumber, invoiceDate, currency, notes,
+        // A picked issuer, or "Not recorded" picked on purpose (null); untouched, the server fills it from the shipment.
+        ...(issuerId ? { issuingOfficeId: issuerId } : issuerTouched ? { issuingOfficeId: null } : {}),
         lines: lines.map(l => ({ ...l, amount: Number(l.amount) })),
       });
       toast.success(`Carrier invoice created — ${created.lines.length} line(s)`);
@@ -203,6 +219,14 @@ const NewInvoiceModal = ({ shipments, onClose, onCreated }) => {
           <Field label="Invoice Date"><DatePicker value={invoiceDate} onChange={setInvoiceDate} /></Field>
           <Sel label="Currency" value={currency} onChange={setCurrency} options={CURRENCIES.map(c => ({ value: c, label: c }))} />
         </div>
+        {carrierCode && (
+          <div data-testid="freight-audit-issued-by">
+            <Sel id="fa-issued-by" label="Issued by (the carrier office that bills us)" value={issuerId} onChange={v => { setIssuerTouched(true); setIssuerId(v); }}
+              options={[{ value: "", label: issuerOpts.offices.length ? "Not recorded" : `No offices of ${carrierCode} in Master Data → Carriers` },
+                ...issuerOpts.offices.map(o => ({ value: o.id, label: `${o.name} (${o.unlocode})${o.creditorCode ? ` · creditor ${o.creditorCode}` : ""}` }))]}
+              hint={issuerOpts.defaultOfficeId && issuerId === issuerOpts.defaultOfficeId && issuerOpts.why ? `From the shipment: ${issuerOpts.why}` : undefined} />
+          </div>
+        )}
 
         <div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -295,6 +319,18 @@ const InvoiceDetailModal = ({ invoiceId, shipments, navigate, onClose, onChanged
   };
 
   const shipment = invoice ? shipments.find(s => s.id === invoice.shipmentId) : null;
+  // Who issued it (§8.53): changeable until a line is approved.
+  const [issuerOffices, setIssuerOffices] = useState([]);
+  const [issuerEditing, setIssuerEditing] = useState(false);
+  const issuerLocked = !!invoice?.lines?.some(l => l.status === "approved");
+  useEffect(() => {
+    if (!issuerEditing || !invoice?.carrierCode) return;
+    api.carrierProfile.offices(invoice.carrierCode, { active: "1" }).then(setIssuerOffices).catch(() => setIssuerOffices([]));
+  }, [issuerEditing, invoice?.carrierCode]);
+  const changeIssuer = async id => {
+    try { await api.carrierInvoices.setIssuer(invoiceId, id || null); toast.success("Issuer changed"); setIssuerEditing(false); load(); onChanged?.(); }
+    catch (e) { toast.error(e.message); }
+  };
 
   return (
     <Modal title={invoice ? `Carrier Invoice — ${invoice.invoiceNumber || invoice.id}` : "Carrier Invoice"} onClose={onClose} width={860}>
@@ -310,6 +346,24 @@ const InvoiceDetailModal = ({ invoiceId, shipments, navigate, onClose, onChanged
               </button>
             </div>
             <Btn size="sm" variant="secondary" onClick={rematch}>↻ Re-match</Btn>
+          </div>
+          <div data-testid="freight-audit-detail-issuer" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontFamily: T.body, fontSize: 12.5, color: T.text }}>
+            <span style={{ fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>Issued by</span>
+            {issuerEditing ? (
+              <select defaultValue={invoice.issuingOfficeId || ""} onChange={e => changeIssuer(e.target.value)} aria-label="Issued by"
+                style={{ fontFamily: T.body, fontSize: 12.5, padding: "4px 8px", background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 6 }}>
+                <option value="">Not recorded</option>
+                {issuerOffices.map(o => <option key={o.id} value={o.id}>{o.name} ({o.unlocode})</option>)}
+              </select>
+            ) : (
+              <b>{invoice.issuingOfficeName || <span style={{ fontWeight: 400, color: T.textMuted }}>Not recorded</span>}</b>
+            )}
+            {invoice.issuingOfficeName && !issuerEditing && (
+              <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textMuted }}>
+                {invoice.issuingOfficeUnlocode || ""}{invoice.issuingCreditorCode ? ` · creditor ${invoice.issuingCreditorCode}` : " · no creditor code yet"}</span>
+            )}
+            {!issuerLocked && !issuerEditing && <Btn size="sm" variant="secondary" onClick={() => setIssuerEditing(true)} data-testid="freight-audit-issuer-change">Change</Btn>}
+            {issuerLocked && <span style={{ fontSize: 11.5, color: T.textMuted }}>fixed: a line is approved</span>}
           </div>
 
           <div style={{ overflowX: "auto" }}>

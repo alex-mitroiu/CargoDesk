@@ -20,7 +20,7 @@ const { impliedPrincipal } = require("../lib/incoterm-principal");
 module.exports = function quotesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, isUniqueViolation, mapQuote, mapQuoteLine, mapShipment,
           logEvent, logEntityEvent, toUsd, SERVICE_CODE_MAP, importContractRates,
-          resolveCarrierAgentCandidates, screenShipmentById, schemaReady, getCustomerRow,
+          screenShipmentById, schemaReady, getCustomerRow,
           recomputeSpaceBadge, recomputeSpacePool, applyOfficeScopedAccessFilter , commodityCodeError } = ctx;
 
   // sales (User Management redesign, 2026-09-12) owns the quoting pipeline — deliberately not
@@ -51,26 +51,6 @@ module.exports = function quotesRoutes(app, ctx) {
   schemaReady.then(() => expireStaleQuotes()).catch(e => console.error("expireStaleQuotes failed:", e.message));
   const expireSweep = setInterval(() => expireStaleQuotes().catch(e => console.error("expireStaleQuotes failed:", e.message)), 60 * 60 * 1000);
   expireSweep.unref?.();
-
-  // Carrier Line Agents — duplicated from routes/shipments.js's own maybeAssignLineAgents (small,
-  // pure, self-contained) so a quote-converted shipment gets the exact same auto-assignment a
-  // directly-created one would, without new cross-file ctx plumbing for a 10-line helper. A side
-  // with 2+ candidates (only possible via the linked-ports fallback) is left unassigned rather
-  // than guessing — same rule as the shipments.js copy, see its own comment for the full rationale.
-  async function maybeAssignLineAgents(shipmentId, carrierCode, pol, pod, actorId = null) {
-    for (const [port, role] of [[pol, "Line Agent (Export)"], [pod, "Line Agent (Import)"]]) {
-      const candidates = await resolveCarrierAgentCandidates(carrierCode, port);
-      if (candidates.length !== 1) continue;
-      const match = candidates[0];
-      try {
-        await query(`INSERT INTO shipment_parties (id, shipment_id, role, customer_id, customer_name, created_at)
-          VALUES ($1,$2,$3,$4,$5,$6)`,
-          [`PTY-${uid()}`, shipmentId, role, match.agent_customer_id, match.agent_customer_name, new Date().toISOString()]);
-        await logEvent(shipmentId, 'LINE_AGENT_AUTO_ASSIGNED', role, null, match.agent_customer_name,
-          JSON.stringify({ carrierCode, port, matchedVia: match.matched_via || null }), actorId);
-      } catch (e) { if (!isUniqueViolation(e)) throw e; }
-    }
-  }
 
   async function recomputeQuoteTotal(quoteId) {
     const [{ n: total }] = await query("SELECT COALESCE(SUM(amount_usd),0) AS n FROM quote_lines WHERE quote_id=$1", [quoteId]);
@@ -423,7 +403,8 @@ module.exports = function quotesRoutes(app, ctx) {
     { const billing = await ctx.officeSplit.billingOfficeFor(quoteEmoOfficeId); if (billing) await query("UPDATE shipments SET billing_office_id=$1 WHERE id=$2", [billing, id]); }
     await logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: q.pol, pod: q.pod, carrier: q.carrier_code, status: 'Active', contractType, source: 'quote', quoteId: req.params.id }), req.user?.name || req.user?.email || "");
-    await maybeAssignLineAgents(id, q.carrier_code, q.pol, q.pod, req.user?.name || req.user?.email || "");
+    // Its carrier offices, picked from the carrier's coverage like a shipment created directly (§8.53).
+    await ctx.carrierOffices.determine(id, { actor: req.user?.name || req.user?.email || "" });
     if (contractType === 'Central' && q.contract_id) await importContractRates(id);
     // The steering verdict for the contract the quote was bought on (Epic TKT-KFGL81, Story 3).
     try { await ctx.whereToBook?.recordVerdict(id, { actor: req.user?.name || req.user?.email || "" }); }
@@ -449,8 +430,7 @@ module.exports = function quotesRoutes(app, ctx) {
     // since several cost lines (Ocean Freight, THC, ...) routinely describe the SAME physical
     // containers — summing their quantities would over-create; the max across the group is the
     // real container count. QUOTE_CONTAINER_SIZES mirrors routes/shipments.js's own
-    // CONTAINER_SIZES check (not threaded through ctx for one small local constant, same call
-    // maybeAssignLineAgents's own duplication comment above already made).
+    // CONTAINER_SIZES check (not threaded through ctx for one small local constant).
     const byType = new Map();
     for (const l of lines) {
       const t = (l.container_type || "").trim().toUpperCase();

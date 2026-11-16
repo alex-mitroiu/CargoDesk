@@ -295,7 +295,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
   const [screening, setScreening] = useState(null);
   const [complianceOpen, setComplianceOpen] = useState(false);
   const [pendingMatches, setPendingMatches] = useState(null);
-  const [lineAgentCandidates, setLineAgentCandidates] = useState(null);
+  const [officePicks, setOfficePicks] = useState(0);
   const [legs, setLegs] = useState([]);
 
   // ── Messages ──
@@ -435,17 +435,15 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
     return () => { live = false; };
   }, [shipment.id, shipment.contractType, shipment.contractRef]);
 
-  // Line Agent ambiguity: same badge-now/modal-later split as Pending Revalidation above, for the
-  // same reason (this component remounts on every sub-page nav — a dismissible modal here would
-  // re-interrupt the user right after they dismissed it a page ago). The actual picker lives on
-  // the Parties & Offices page instead, which independently re-checks on its own mount.
+  // A carrier office the coverage found twice via linked ports (§8.53): a badge here, the pick on the carrier office
+  // tiles (Contracts & Schedules) — the same badge-now/pick-there split as Pending Revalidation above.
   useEffect(() => {
     let live = true;
-    api.shipments.lineAgentCandidates(shipment.id)
-      .then(r => { if (live) setLineAgentCandidates((r?.export?.length || r?.import?.length) ? r : null); })
-      .catch(() => { if (live) setLineAgentCandidates(null); });
+    api.shipments.carrierOffices.get(shipment.id)
+      .then(r => { if (live) setOfficePicks(Object.values(r?.roles || {}).filter(x => x.candidates?.length > 1).length); })
+      .catch(() => { if (live) setOfficePicks(0); });
     return () => { live = false; };
-  }, [shipment.id]);
+  }, [shipment.id, shipment.carrierCode, shipment.pol, shipment.pod]);
 
   const ctrs = containers.filter(c => c.shipmentId === shipment.id);
   const teu = ctrs.reduce((n, c) => n + (c.size === "40" || c.size === "45" ? 2 : 1), 0);
@@ -651,19 +649,16 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
           </button>
         )}
 
-        {lineAgentCandidates && (() => {
-          const count = (lineAgentCandidates.export?.length || 0) + (lineAgentCandidates.import?.length || 0);
-          return (
-            <button id="shphdr-line-agent-candidates-badge" data-testid="shipment-detail-header-line-agent-candidates-badge" type="button" onClick={onNavigateToParties}
-              title={`${count} Line Agent candidate${count !== 1 ? "s" : ""} found — click to pick which one to assign`}
-              style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, letterSpacing: "0.03em",
-                padding: "3px 9px", borderRadius: 6, background: HZ.infoBg, color: HZ.infoPillText,
-                border: `1px solid ${HZ.info}44`, whiteSpace: "nowrap", cursor: onNavigateToParties ? "pointer" : "default",
-                display: "inline-flex", alignItems: "center", gap: 4 }}>
-              <IconGroup size={11} />Line Agent Picks Needed
-            </button>
-          );
-        })()}
+        {officePicks > 0 && (
+          <button id="shphdr-carrier-office-picks-badge" data-testid="shipment-detail-header-carrier-office-picks-badge" type="button" onClick={onNavigateToSchedules}
+            title={`${officePicks} carrier office${officePicks !== 1 ? "s" : ""} found twice via linked ports — pick one on Contracts & Schedules`}
+            style={{ fontFamily: HZ_MONO, fontSize: 10.8, fontWeight: 700, letterSpacing: "0.03em",
+              padding: "3px 9px", borderRadius: 6, background: HZ.infoBg, color: HZ.infoPillText,
+              border: `1px solid ${HZ.info}44`, whiteSpace: "nowrap", cursor: onNavigateToSchedules ? "pointer" : "default",
+              display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <IconGroup size={11} />Carrier Office Picks Needed
+          </button>
+        )}
 
         {isShipmentLocked(shipment) && (
           <span id="shphdr-status-lock-badge" data-testid="shipment-detail-header-status-lock-badge"

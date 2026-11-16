@@ -11,14 +11,14 @@ export const STATUSES         = ["Active", "Pending", "Completed", "Cancelled", 
 // shipper/consignee/notify/principal roles on a shipment. Backend keeps its own copy
 // (server.js, near BOOKABLE_CARRIERS) — frontend/backend don't share a module. Customs Broker
 // is split Export/Import since each shipment can only hold one party per role. "Agent" (bare) is
-// a generic, manually-picked catch-all — NOT the same concept as "Line Agent (Export/Import)",
-// a specific carrier's local representative at a specific port, auto-resolved from the Carrier
-// Agents master data (MdmCarrierAgentsPage.jsx) — easy to confuse since they sit side by side.
+// a generic, manually-picked catch-all. The carrier's own local offices (once "Line Agent (Export/Import)" here) are
+// carrier offices since 2026-11-16: on the carrier's profile (Master Data → Carriers) and the shipment's carrier office
+// tiles, not party roles.
 export const ADDITIONAL_PARTY_ROLES = [
   "Forwarder", "Customs Broker (Export)", "Customs Broker (Import)",
   "Trucker (Pre-carriage)", "Trucker (On-carriage)",
   "Also Notify Party", "Bank", "Insurance Provider", "Agent",
-  "Line Agent (Export)", "Line Agent (Import)", "NVOCC", "Co-Loading NVOCC",
+  "NVOCC", "Co-Loading NVOCC",
 ];
 // Organization Model Enhancement Epic 1 — the 4 hardcoded shipment roles plus
 // ADDITIONAL_PARTY_ROLES, combined into one vocabulary for customer role-tagging
@@ -33,7 +33,7 @@ export const CUSTOMER_ROLE_CATEGORIES = {
   "Service Providers": [
     "Forwarder", "Customs Broker (Export)", "Customs Broker (Import)",
     "Trucker (Pre-carriage)", "Trucker (On-carriage)", "Bank", "Insurance Provider", "Agent",
-    "Line Agent (Export)", "Line Agent (Import)", "NVOCC", "Co-Loading NVOCC",
+    "NVOCC", "Co-Loading NVOCC",
   ],
 };
 export const CONTACT_DEPARTMENTS  = ["Sales", "Operations", "Accounts", "Other"];

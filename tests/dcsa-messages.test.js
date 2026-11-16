@@ -2,8 +2,8 @@
  * Every message CargoDesk sends a carrier is valid DCSA, and nothing goes that isn't (2026-10-27 review).
  *
  *  - Booking 2.0: the body logged as sent validates against the spec and names no field the spec doesn't
- *    define; it carries the contract number as serviceContractReference and the shipment's Line Agent
- *    (Export) — the carrier's local office — as the carrier booking office; a booking with no contract
+ *    define; it carries the contract number as serviceContractReference and the shipment's carrier booking
+ *    office (§8.53) — the carrier's local office, at its own location; a booking with no contract
  *    or quote, or with neither an ETD nor a vessel and voyage, is refused before anything is recorded;
  *  - Shipping Instructions 3.0 through the built-in carrier: submit (202 + reference, RECEIVED), the
  *    carrier asks for an update (PENDING_UPDATE with its feedback), reopen, send the update under the
@@ -55,7 +55,7 @@ const parse = v => { try { return typeof v === "string" ? JSON.parse(v) : v; } c
 const checkOutbound = (method, apiPath, key, body) => { const v = validateOutbound(key, method, apiPath, body); return v.ok ? "" : errorsText(v.errors, 6); };
 
 (async () => {
-  const cleanup = { shipments: [], customers: [], office: null, branch: null };
+  const cleanup = { shipments: [], customers: [], office: null, branch: null, carrierOffice: null };
   let token;
   try {
     token = (await request("POST", "/api/auth/login", { email: "claudeagent@localhost", password: "TestFixture!2026Zq" })).body.token;
@@ -81,8 +81,12 @@ const checkOutbound = (method, apiPath, key, body) => { const v = validateOutbou
     const consignee = await customer(`Hudson Home Imports ${rand} Inc`, "250 Port Jersey Blvd", "07305", "Jersey City", "US");
     // The carrier's Master B/L names the consignee by an identifying code (DCSA eBL 3.0.3).
     await request("POST", `/api/customers/${consignee.id}/identifiers`, { idType: "LEI", idCode: `5493001KJTIIGC8Y1R${String(Date.now()).slice(-2)}`, countryIso2: "US" }, token);
-    const lineAgent = await customer(`Maersk Nederland ${rand} BV`, "Boompjes 40", "3011 XB", "Rotterdam", "NL",
-      { email: "nl.export@maersk.example", phone: "+31 10 712 3400" });
+    // The carrier's local office (a carrier office, §8.53), picked on the shipment by hand: no coverage is written, so no
+    // other MAEU shipment is given it.
+    const carrierOffice = (await request("POST", "/api/carriers/MAEU/offices", { name: `Maersk Nederland ${rand} BV`, unlocode: "NLRTM",
+      address1: "Boompjes 40", postalCode: "3011 XB", city: "Rotterdam", countryIso2: "NL", contactName: "Export bookings",
+      contactEmail: "nl.export@maersk.example", contactPhone: "+31 10 712 3400" }, token)).body;
+    cleanup.carrierOffice = carrierOffice?.id;
 
     const newShipment = async ({ contractType = "Central", contractRef = "MAEU-SC-2026-0418", etd = "2026-11-02", leg = true } = {}) => {
       const s = await request("POST", "/api/shipments", { pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType, contractRef,
@@ -108,8 +112,8 @@ const checkOutbound = (method, apiPath, key, body) => { const v = validateOutbou
     const A = await newShipment();
     const ctr = await addContainer(A, 1);
     assert("(setup) a container with its seal", !!ctr?.id && !!ctr.sealNumber, JSON.stringify(ctr).slice(0, 200));
-    const agent = await request("POST", `/api/shipments/${A}/parties`, { role: "Line Agent (Export)", customerId: lineAgent.id, customerName: lineAgent.companyName }, token);
-    assert("(setup) the carrier's local office is the shipment's Line Agent (Export)", agent.status === 201 || agent.status === 200, JSON.stringify(agent.body));
+    const agent = await request("PUT", `/api/shipments/${A}/carrier-offices/booking`, { officeId: carrierOffice?.id }, token);
+    assert("(setup) the carrier's local office is the shipment's carrier booking office", agent.status === 200, JSON.stringify(agent.body).slice(0, 200));
 
     const sent = await sendBooking(A);
     assert("the booking request is sent (201)", sent.status === 201, JSON.stringify(sent.body));
@@ -122,8 +126,8 @@ const checkOutbound = (method, apiPath, key, body) => { const v = validateOutbou
     assert("the contract number goes as serviceContractReference, no quotation reference",
       body?.serviceContractReference === "MAEU-SC-2026-0418" && body?.contractQuotationReference === undefined, JSON.stringify({ sc: body?.serviceContractReference, q: body?.contractQuotationReference }));
     const cbo = body?.documentParties?.carrierBookingOffice;
-    assert("the carrier booking office is the Line Agent (Export), at the port of loading",
-      cbo?.partyName === lineAgent.companyName && cbo?.UNLocationCode === "NLRTM", JSON.stringify(cbo));
+    assert("the carrier booking office is the shipment's booking office, at its own location (NLRTM)",
+      cbo?.partyName === carrierOffice?.name && cbo?.UNLocationCode === "NLRTM", JSON.stringify(cbo));
     assert("…with its address and contact", cbo?.address?.city === "Rotterdam" && cbo?.address?.street && cbo?.partyContactDetails?.[0]?.email === "nl.export@maersk.example",
       JSON.stringify(cbo));
     assert("the booking agent is CargoDesk's legal entity, with its contact", body?.documentParties?.bookingAgent?.partyName === branch.name
@@ -249,6 +253,10 @@ const checkOutbound = (method, apiPath, key, body) => { const v = validateOutbou
     console.log("\nCleanup");
     for (const id of cleanup.shipments) await request("DELETE", `/api/shipments/${id}`, null, token);
     for (const id of cleanup.customers) await request("DELETE", `/api/customers/${id}`, null, token);
+    if (cleanup.carrierOffice) {
+      const del = await request("DELETE", `/api/carrier-offices/${cleanup.carrierOffice}`, null, token);
+      if (del.status !== 200) await request("PUT", `/api/carrier-offices/${cleanup.carrierOffice}`, { isActive: false }, token);
+    }
     if (cleanup.office) console.log(`  office: ${await retireOffice(token, cleanup.office)}`);
     if (cleanup.branch) console.log(`  branch: ${await retireBranch(token, cleanup.branch)}`);
     console.log(`\n${passed} passed, ${failed} failed`);

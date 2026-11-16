@@ -4,7 +4,7 @@
  * Covers Carriers, Vessels (+search), Port Locations (+links/lanes), Linked Ports, Trade
  * Lanes (+country assignment, +transit-suggestion), Country Trade Lanes, Regions, Countries
  * (+locations), UN Locodes, and Commodities (+search) — the CRUD surface behind every Master
- * Data page. Carrier Agents already has its own dedicated suite (tests/carrier-agents.test.js)
+ * Data page. Carrier offices have their own dedicated suite (tests/carrier-offices.test.js)
  * and is not duplicated here. Previously only incidentally exercised (a test elsewhere reading
  * seeded MDM rows), never a direct CRUD pass of its own.
  *
@@ -280,20 +280,19 @@ async function login() {
     const cUpdate404 = await request("PUT", "/api/countries/XX", { name: "X" }, token);
     assert("country update 404 for unknown code", cUpdate404.status === 404);
 
-    // 2026-09-05 audit regression — DELETE /api/countries/:iso2 had no app-level guard for
-    // carrier_agent_locations.country_iso2 (a real RESTRICT FK, no ON DELETE clause), so deleting
-    // a still-referenced country surfaced as a raw {"error":"Internal server error"} 500 instead
-    // of a clean, specific message — the same bug class already fixed for offices/branches/
-    // port_locations elsewhere in this suite.
-    const guardCust = await request("POST", "/api/customers", { companyName: "Country Delete Guard Test Agent" }, token);
-    const guardAgent = await request("POST", "/api/carrier-agents",
-      { carrierCode: "TSTZ", agentCustomerId: guardCust.body.id, locationType: "country", countryIso2: countryCode }, token);
-    assert("scratch carrier-agent location created against our scratch country", guardAgent.status === 201, JSON.stringify(guardAgent.body));
+    // 2026-09-05 audit regression — DELETE /api/countries/:iso2 must refuse a country still named by a
+    // carrier's coverage with a clean, specific message (it was a raw 500 when the Carrier Agents held a
+    // RESTRICT FK). Since 2026-11-16 the coverage is a carrier office's (§8.53), with no FK: the guard is
+    // all that keeps a coverage row from pointing at a country that's gone.
+    const guardOffice = await request("POST", "/api/carriers/TSTZ/offices", { name: "Country Delete Guard Test Office", unlocode: "NLRTM" }, token);
+    const guardCoverage = await request("POST", "/api/carriers/TSTZ/coverage",
+      { placeType: "country", countryIso2: countryCode, direction: "export", role: "booking", officeId: guardOffice.body.id }, token);
+    assert("scratch carrier-office coverage created against our scratch country", guardCoverage.status === 201, JSON.stringify(guardCoverage.body));
     const cDeleteBlocked = await request("DELETE", `/api/countries/${countryCode}`, null, token);
     assert("country delete blocked with a clean 400 while referenced", cDeleteBlocked.status === 400, JSON.stringify(cDeleteBlocked.body));
-    assert("blocked message names the real cause", /carrier agent/i.test(cDeleteBlocked.body.error || ""), JSON.stringify(cDeleteBlocked.body));
-    await request("DELETE", `/api/carrier-agents/${guardAgent.body.id}`, null, token);
-    await request("DELETE", `/api/customers/${guardCust.body.id}`, null, token);
+    assert("blocked message names the real cause", /carrier office/i.test(cDeleteBlocked.body.error || ""), JSON.stringify(cDeleteBlocked.body));
+    await request("DELETE", `/api/carrier-coverage/${guardCoverage.body.id}`, null, token);
+    await request("DELETE", `/api/carrier-offices/${guardOffice.body.id}`, null, token);
 
     const cDelete = await request("DELETE", `/api/countries/${countryCode}`, null, token);
     assert("country delete returns 200", cDelete.status === 200);

@@ -268,7 +268,13 @@ const inDays = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
     assert("CIF: freight and origin charges Prepaid, destination charges Collect",
       body?.freightPaymentTermCode === "PRE" && body?.originChargesPaymentTerm?.portChargesPaymentTermCode === "PRE"
         && body?.destinationChargesPaymentTerm?.portChargesPaymentTermCode === "COL", JSON.stringify({ f: body?.freightPaymentTermCode, o: body?.originChargesPaymentTerm, d: body?.destinationChargesPaymentTerm }));
-    assert("…the freight payable where its office is", body?.invoicePayableAt?.UNLocationCode === exportOffice.unlocode, JSON.stringify(body?.invoicePayableAt));
+    // Where the freight is paid is the carrier's billing (creditor) office of the paying side since 2026-11-16 (carrier
+    // offices, §8.53; it was the location of our office responsible for the freight): Prepaid → the origin billing office,
+    // else the port of loading when the carrier has none there.
+    const offices = (await request("GET", `/api/shipments/${B.id}/carrier-offices`, null, token)).body;
+    const payAt = offices?.roles?.billing_origin?.office?.unlocode || "NLRTM";
+    assert("…the freight payable at the carrier's origin billing office (else the port of loading)", body?.invoicePayableAt?.UNLocationCode === payAt,
+      JSON.stringify({ sent: body?.invoicePayableAt, expected: payAt }));
     assert("…and the shipment is split from now on", (await request("GET", `/api/shipments/${B.id}/payment-terms`, null, token)).body?.saved === true);
   } catch (e) {
     console.error("\nFatal:", e.stack || e.message);

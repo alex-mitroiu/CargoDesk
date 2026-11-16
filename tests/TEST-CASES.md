@@ -1138,7 +1138,7 @@ remove the line and the configurations afterwards. ARCHITECTURE.md §8.39.
 
 ### TC-072: The booking request as DCSA Booking 2.0
 **Feature:** Send Booking Request — the body as sent, Booking 2.0's condition rules, the carrier's local office (ARCHITECTURE.md §8.41)
-**Precondition:** A scratch legal entity with email and phone on a scratch export office; a complete Central NLRTM → USNYC MAEU shipment with contract MAEU-SC-2026-0418, a SEA leg (MAERSK KENSINGTON 444W), a sealed 40' HC and a Line Agent (Export) party with an address and contact
+**Precondition:** A scratch legal entity with email and phone on a scratch export office; a complete Central NLRTM → USNYC MAEU shipment with contract MAEU-SC-2026-0418, a SEA leg (MAERSK KENSINGTON 444W), a sealed 40' HC and a carrier booking office (a carrier office picked on the shipment) with an address and contact
 **Steps:**
 1. Send the booking request; read the outbound message's raw and parsed payloads
 2. The carrier confirms (Test Tools → DCSA Carrier)
@@ -1147,7 +1147,7 @@ remove the line and the configurations afterwards. ARCHITECTURE.md §8.39.
 
 **Expected Result:**
 - 201. The raw payload validates against Booking 2.0 with no field the spec doesn't define; the parsed payload is CargoDesk's summary
-- `serviceContractReference` MAEU-SC-2026-0418 and no quotation reference; `carrierBookingOffice` = the Line Agent, UNLocationCode NLRTM, with its address and contact; `bookingAgent` = the legal entity with its email; the voyage with its vessel
+- `serviceContractReference` MAEU-SC-2026-0418 and no quotation reference; `carrierBookingOffice` = the shipment's carrier booking office, UNLocationCode NLRTM (its own location), with its address and contact; `bookingAgent` = the legal entity with its email; the voyage with its vessel
 - Confirmed by the carrier
 - 400 naming the service contract number, nothing recorded; then 201 with `contractQuotationReference` SPOT-Q-2026-0611 alone
 - 400: "the ETD, or the vessel and voyage"
@@ -1618,6 +1618,33 @@ NLAMS → NLRTM (Carrier's Haulage, 16 Nov), as Save stored them before the fix 
 **Status:** PASS (2026-11-07, automated: tests/contract-typed-legs.test.js, tests/routing-lines.test.js, src/utils/routingLines.test.js)
 
 ---
+
+### TC-106: Carrier offices — booking, import and billing office per carrier and place
+**Feature:** The carrier's profile on Master Data → Carriers and a shipment's four carrier offices (ARCHITECTURE.md §8.53)
+**Precondition:** A scratch carrier code; our Spanish legal entity with a Barcelona export office; a complete Central ESBCN → USNYC shipment (CIF, Prepaid, shipper and consignee with addresses, ETD/ETA, commodity, a SEA leg, a 40' HC)
+**Steps:**
+1. On the carrier's profile add Hapag-Lloyd Madrid (ESMAD, an inland location), Barcelona (ESBCN, creditor 400128) and the American office (USNYC, creditor 400311); try an office located "Madrid"
+2. Coverage: ES export booking → Madrid, ES export billing → Madrid, ESBCN export billing → Barcelona, US import office and billing → the American office; try a booking office for imports, a second ESBCN billing row, another carrier's office
+3. Check ESBCN → USNYC and ESVLC → USNYC; save our customer number ES00041207 for the Spanish entity with the code list name
+4. Create the shipment; open Contracts & Schedules; change its port of loading to ESVLC and back
+5. Pick Barcelona as the booking office, then From coverage; leave destination billing empty, then From coverage; as an import-side user, try the booking office and pick the import office
+6. A shipment ESVLC → SGSIN on a carrier whose NLRTM and USNYC offices are both linked to ESVLC
+7. Send the booking request
+8. Enter the carrier's ocean freight invoice without an issuer; change the issuer; approve the line; try to change it again
+9. Open the old link #mdm-carrier-agents; GET /api/carrier-agents; add a "Line Agent (Export)" party
+
+**Expected Result:**
+- Offices added; "Madrid" refused (400) — a location is a UN/LOCODE
+- Rows added; refused: 400, 409, 400
+- Booking Madrid (the row for ES), origin billing Barcelona (the port beats its country), import office and destination billing the American office; ESVLC: Madrid bills. The number and list name are on the profile
+- Four tiles, each with why; on ESVLC only the export roles are picked again (origin billing → Madrid), back on ESBCN Barcelona bills again; History has CARRIER_OFFICE_ASSIGNED
+- Manual pick kept (picked by …) until From coverage; an empty pick shows the import office billing (no billing row: the import office bills); the import-side user gets 403 on the booking office and can pick the import office
+- The booking office is left empty with both offices as candidates, the header shows Carrier Office Picks Needed; a pick settles it
+- Valid DCSA Booking 2.0: `carrierBookingOffice` Madrid at ESMAD with address and contact; `bookingAgent.identifyingCodes` ZZZ ES00041207 with the code list name; `invoicePayableAt` ESBCN (Prepaid → origin billing); Collect → the destination billing office
+- Issued by Barcelona (the freight is Prepaid → origin) with creditor code 400128 on the detail; changeable to Madrid; fixed once a line is approved (409); GL Export's AP row carries the creditor code
+- Carriers opens; 404; 400 — the Line Agents are gone
+
+**Status:** PASS (2026-11-17, automated: tests/carrier-offices.test.js (60, incl. GL Export's Counterparty); tests/mdm-service-toggle.test.js (carrier offices in remote Master Data mode); tests/dcsa-messages.test.js; tests/office-split.test.js; src/pages/shipments/schedules/SchedulesParts.test.jsx (CarrierOfficeTile, 5); cypress/e2e/carrier-offices.cy.js)
 
 ### TC-105: The office split — payment terms per charge category, responsible offices, the billing office
 **Feature:** Carrier Booking → Payment terms (CPI) and Costs and charges; Parties & Offices → Billing Office; Organisation → Offices → Billing office; invoices, VAT, booking request (lib/payment-terms.js, lib/office-split.js, ARCHITECTURE.md §8.52)

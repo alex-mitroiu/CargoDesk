@@ -180,22 +180,16 @@ async function login() {
     assert("fx rates returns 200", fxRates.status === 200);
     assert("shape has base/rates/ts", fxRates.body.base === "USD" && typeof fxRates.body.rates === "object" && "ts" in fxRates.body);
 
-    console.log("\nDelete — blocked while assigned as a carrier line agent, and cleans up a lingering document's file on disk");
-    const agentRand = Math.random().toString(36).slice(2, 5).toUpperCase();
-    const agentPort = await request("POST", "/api/port-locations", { unlocode: `Z${agentRand}A`, name: "Zed Agent Port", countryCode: "NL" }, token);
-    const agent = await request("POST", "/api/carrier-agents", { carrierCode: "MAEU", agentCustomerId: customerId, locationType: "unlocode", unlocode: `Z${agentRand}A` }, token);
-    assert("scratch carrier-agent assignment created", agent.status === 201, JSON.stringify(agent.body));
-    const deleteBlocked = await request("DELETE", `/api/customers/${customerId}`, null, token);
-    assert("delete blocked while assigned as a carrier line agent", deleteBlocked.status >= 400 && /carrier line agent/i.test(deleteBlocked.body.error || ""));
-    await request("DELETE", `/api/carrier-agents/${agent.body.id}`, null, token);
+    // A customer is never a carrier's office any more (carrier offices are their own records since 2026-11-16,
+    // §8.53), so nothing carrier-side blocks its delete; the delete still cleans up a lingering document's file.
+    console.log("\nDelete — cleans up a lingering document's file on disk");
     await request("POST", `/api/customers/${customerId}/documents`, {
       filename: "lingering.txt", mimeType: "text/plain", data: Buffer.from("still here at delete time").toString("base64"),
     }, token);
 
     console.log("\nCleanup");
     const finalDelete = await request("DELETE", `/api/customers/${customerId}`, null, token);
-    assert("delete succeeds once unblocked, cleaning up its lingering document", finalDelete.status === 200);
-    await request("DELETE", `/api/port-locations/Z${agentRand}A`, null, token);
+    assert("delete succeeds, cleaning up its lingering document", finalDelete.status === 200);
 
     console.log(`\n${"─".repeat(50)}`);
     console.log(`Results: ${passed} passed, ${failed} failed`);

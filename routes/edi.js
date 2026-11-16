@@ -7,7 +7,7 @@ module.exports = function ediRoutes(app, ctx) {
   const { query, ok, err, uid, auth, requireRole, shipmentSubs,
           mapEdiMessage, mapCarrierBooking, mapShipment, applyShipmentAccessFilter,
           autoCompleteMilestone, logEntityEvent, isEdiBookable, supersedeIfCarrierChanged,
-          getCustomerRow, checkLineAgentCapabilityGaps, getCarrierAdapter, getSettings,
+          getCustomerRow, getCarrierAdapter, getSettings,
           officeSideOf, blockIfWrongSide, recomputeSpacePool, carrierIntegrationFor, shipmentLoopCode, logEvent } = ctx;
 
   // occ_bk has canEditShipments:true on the frontend and already sees an enabled Send
@@ -341,11 +341,6 @@ module.exports = function ediRoutes(app, ctx) {
     const [agent] = shipment.emo_office_id ? await query(
       "SELECT o.name AS office_name, b.name AS branch_name, b.email AS branch_email, b.phone AS branch_phone FROM offices o LEFT JOIN branches b ON b.id = o.branch_id WHERE o.id=$1",
       [shipment.emo_office_id]) : [];
-    // The carrier's booking office: the shipment's Line Agent (Export), the carrier's local representative
-    // at the port of loading (shipment_parties, resolved from Carrier Agents). Without one, the carrier
-    // routes the booking itself.
-    const [lineAgent] = await query("SELECT customer_id, customer_name FROM shipment_parties WHERE shipment_id=$1 AND role='Line Agent (Export)'", [shipment.id]);
-    const agentRow = lineAgent?.customer_id ? await getCustomerRow(lineAgent.customer_id).catch(() => null) : null;
     const [commodity] = shipment.commodity_code ? await query("SELECT description FROM commodities WHERE code=$1", [shipment.commodity_code]) : [];
     const ctrs = await query("SELECT * FROM containers WHERE shipment_id=$1 ORDER BY container_number, id", [shipment.id]);
     // Dangerous goods (2026-10-29: the booking audit found the request carried none): each DG container —
@@ -373,30 +368,31 @@ module.exports = function ediRoutes(app, ctx) {
       ? `the shipper's dangerous goods emergency contact: add a name and a 24-hour phone to ${shipperRow.companyName}'s customer profile`
       : "a shipper with a dangerous goods emergency contact on its customer profile");
     const loop = await shipmentLoopCode(shipment.id).catch(() => "");
-    // The payment terms (CPI) once saved (the office split, §8.52): freight, origin and destination charges, and where
-    // the freight is payable (the location of the office responsible for it).
-    let paymentTerms = null;
+    // The payment terms (CPI) once saved (the office split, §8.52): freight, origin and destination charges. The freight
+    // term is theirs once saved, else the shipment's Freight Terms.
+    let paymentTerms = null, freightTerm = /^(collect|payable at destination)$/i.test(String(shipment.freight_terms || "").trim()) ? "COL" : shipment.freight_terms ? "PRE" : "";
+    let terms = null;
     if (ctx.officeSplit) {
       const split = await ctx.officeSplit.loadShipment(shipment.id);
-      const terms = split && ctx.officeSplit.rules.termsOf(split.shipment);
-      if (terms?.saved) {
-        const freightOfficeId = ctx.officeSplit.rules.officeIdOf(split.shipment, terms.categories.freight.office);
-        const office = (await ctx.officeSplit.officesById([freightOfficeId])).get(freightOfficeId);
-        paymentTerms = ctx.officeSplit.rules.dcsaPaymentTerms(terms, { freightPayableAt: office?.unlocode || "" });
-      }
+      terms = split && ctx.officeSplit.rules.termsOf(split.shipment);
+      if (terms?.saved && terms.categories.freight?.term) freightTerm = terms.categories.freight.term;
     }
+    // The carrier's offices (§8.53): the booking office at its own location, our customer number at the carrier for the
+    // legal entity behind the export office, and where the freight is payable: the carrier's billing (creditor) office
+    // of the side that pays it (the user, 2026-11-16), else the port of loading or discharge.
+    const carrier = ctx.carrierOffices ? await ctx.carrierOffices.forBooking(shipment, { freightTerm })
+      : { bookingOffice: null, identifyingCodes: [], payableAt: "" };
+    if (terms?.saved) paymentTerms = ctx.officeSplit.rules.dcsaPaymentTerms(terms, { freightPayableAt: carrier.payableAt || "" });
     return {
       paymentTerms,
       serviceType: shipment.service_type || "Port-to-Port", movementType: shipment.movement_type || "FCL",
       freightTerms: shipment.freight_terms || "", incoterm: shipment.incoterm || "",
       declaredValue: shipment.declared_value, declaredValueCurrency: shipment.declared_value_currency || "USD",
       bookingAgent: (agent?.branch_name || agent?.office_name) ? { name: agent.branch_name || agent.office_name,
-        contact: { name: agent.office_name || agent.branch_name, email: agent.branch_email || "", phone: agent.branch_phone || "" } } : null,
-      carrierBookingOffice: lineAgent ? {
-        name: lineAgent.customer_name || agentRow?.companyName || "", UNLocationCode: String(shipment.pol || "").toUpperCase(),
-        address: agentRow ? { street: agentRow.address1, postCode: agentRow.postalCode, city: agentRow.city, countryCode: agentRow.countryIso2 } : null,
-        contact: agentRow && (agentRow.email || agentRow.phone) ? { name: agentRow.companyName, email: agentRow.email, phone: agentRow.phone } : null,
-      } : null,
+        contact: { name: agent.office_name || agent.branch_name, email: agent.branch_email || "", phone: agent.branch_phone || "" },
+        identifyingCodes: carrier.identifyingCodes } : null,
+      carrierBookingOffice: carrier.bookingOffice,
+      invoicePayableAt: carrier.payableAt || "",
       commodityDescription: commodity?.description || ctrs.map(c => c.cargo_description).find(Boolean) || "",
       hsCodes: [...new Set(ctrs.map(c => c.hs_code).filter(Boolean))],
       ...(loop ? { service: loop } : {}),
@@ -552,12 +548,11 @@ module.exports = function ediRoutes(app, ctx) {
 
     broadcast(shipment.id, { type: "booking_status_changed", booking: mapCarrierBooking(booking) });
 
-    // Capabilities cross-check (TKT-FQFE33) — surfaced here too, not just the pre-send GET
-    // endpoint (routes/shipments.js's line-agent-capability-gaps), matching the credit-hold
-    // check's own dual client+server visibility: the frontend already shows this before Send is
-    // even clicked, but the request itself carries it too so nothing is lost if this route is
-    // ever called directly. Non-blocking either way.
-    const capabilityGaps = await checkLineAgentCapabilityGaps(shipment.id);
+    // Capabilities cross-check (TKT-FQFE33) — surfaced here too, not just on the shipment's carrier offices
+    // (GET .../carrier-offices), matching the credit-hold check's own dual client+server visibility: the
+    // frontend already shows this before Send is even clicked, but the request itself carries it too so
+    // nothing is lost if this route is ever called directly. Non-blocking either way.
+    const capabilityGaps = ctx.carrierOffices ? await ctx.carrierOffices.capabilityGaps(shipment.id) : [];
 
     // Always pending — the carrier (a real one, or the built-in DCSA simulator) confirms
     // asynchronously, by notification (routes/carrier-webhooks.js) or when polled.

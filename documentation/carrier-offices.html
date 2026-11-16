@@ -1,0 +1,503 @@
+<title>Carrier Offices</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: one column. Part 1 is a Master Data screen in CargoDesk's classic theme (the carrier profile with four tabs);
+   part 2 the shipment in Trade Horizon (carrier office tiles, what goes to the carrier); part 3 Freight Audit and GL;
+   then what moves and the open points. Booking = cyan, import office = violet, billing = amber. */
+:root{
+  /* page + Trade Horizon (shipment pages) */
+  --bg:#f4f6fb; --surface:rgba(255,255,255,.78); --surface2:rgba(255,255,255,.92); --solid:#ffffff; --border:rgba(15,20,40,.12); --borderStrong:rgba(15,20,40,.22);
+  --text:#10142a; --muted:#5b6178; --faint:#6f7590; --cyan:#006970; --cyanBg:rgba(0,105,112,.10); --violet:#7a3aa0; --violetBg:rgba(141,69,179,.10);
+  --amber:#8a5a00; --amberBg:rgba(196,132,0,.13); --good:#087736; --goodBg:rgba(8,119,54,.10); --warn:#9a4504; --warnBg:rgba(175,78,5,.10);
+  --crit:#ad0e3a; --critBg:rgba(173,14,58,.09); --shadow:0 1px 2px rgba(16,20,40,.05),0 14px 32px -16px rgba(16,20,40,.20); --codeBg:#eef1f7;
+  /* classic theme (Master Data pages), light = CargoDesk LIGHT_THEME */
+  --c-bg:#F5F5F7; --c-surface:#FFFFFF; --c-hover:#F0F0F4; --c-border:#D2D2D7; --c-text:#1D1D1F; --c-muted:#6E6E73; --c-accent:#0071E3; --c-accentBg:rgba(0,113,227,.07);
+  --c-head:-apple-system,'SF Pro Display','Helvetica Neue',Arial,sans-serif; --c-body:-apple-system,'SF Pro Text','Helvetica Neue',Arial,sans-serif;
+  --display:'Sora',ui-sans-serif,system-ui,sans-serif; --body:'Plus Jakarta Sans',ui-sans-serif,system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){color-scheme:dark;
+  --bg:#080b15; --surface:rgba(255,255,255,.045); --surface2:rgba(255,255,255,.075); --solid:#0c1120; --border:rgba(255,255,255,.10); --borderStrong:rgba(255,255,255,.18);
+  --text:#f3f5fc; --muted:#8c93b5; --faint:#7a81a6; --cyan:#38d4e8; --cyanBg:rgba(56,212,232,.12); --violet:#a99ef0; --violetBg:rgba(144,133,233,.15);
+  --amber:#f2b84b; --amberBg:rgba(242,184,75,.14); --good:#22c55e; --goodBg:rgba(34,197,94,.13); --warn:#fab219; --warnBg:rgba(250,178,25,.13);
+  --crit:#f0526b; --critBg:rgba(240,82,107,.13); --shadow:none; --codeBg:#0e1426;
+  --c-bg:#080f1a; --c-surface:#0e1c2f; --c-hover:#122338; --c-border:#1a3354; --c-text:#dde8f5; --c-muted:#8aa6c4; --c-accent:#e8a217; --c-accentBg:rgba(232,162,23,.12);
+  --c-head:'Sora','DM Sans',sans-serif; --c-body:'DM Sans',sans-serif;}}
+:root[data-theme="dark"]{color-scheme:dark;
+  --bg:#080b15; --surface:rgba(255,255,255,.045); --surface2:rgba(255,255,255,.075); --solid:#0c1120; --border:rgba(255,255,255,.10); --borderStrong:rgba(255,255,255,.18);
+  --text:#f3f5fc; --muted:#8c93b5; --faint:#7a81a6; --cyan:#38d4e8; --cyanBg:rgba(56,212,232,.12); --violet:#a99ef0; --violetBg:rgba(144,133,233,.15);
+  --amber:#f2b84b; --amberBg:rgba(242,184,75,.14); --good:#22c55e; --goodBg:rgba(34,197,94,.13); --warn:#fab219; --warnBg:rgba(250,178,25,.13);
+  --crit:#f0526b; --critBg:rgba(240,82,107,.13); --shadow:none; --codeBg:#0e1426;
+  --c-bg:#080f1a; --c-surface:#0e1c2f; --c-hover:#122338; --c-border:#1a3354; --c-text:#dde8f5; --c-muted:#8aa6c4; --c-accent:#e8a217; --c-accentBg:rgba(232,162,23,.12);
+  --c-head:'Sora','DM Sans',sans-serif; --c-body:'DM Sans',sans-serif;}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--text);font-family:var(--body);font-size:14px;line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 56px}
+.wrap{max-width:1140px;margin:0 auto;display:grid;gap:22px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0}
+h1{font-size:26px;letter-spacing:-.01em} h2{font-size:17px} h3{font-size:14px}
+p{margin:0}
+.prose{max-width:76ch;color:var(--muted)}
+.eyebrow{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+.mono{font-family:var(--mono)}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.between{justify-content:space-between}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);backdrop-filter:blur(18px)}
+.pad{padding:18px 20px}
+.chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 10px;font-size:11.5px;font-weight:600;border:1px solid var(--border);background:var(--surface2);white-space:nowrap}
+.r-book{color:var(--cyan);background:var(--cyanBg);border-color:transparent}
+.r-imp{color:var(--violet);background:var(--violetBg);border-color:transparent}
+.r-bill{color:var(--amber);background:var(--amberBg);border-color:transparent}
+.goodc{color:var(--good);background:var(--goodBg);border-color:transparent}
+.warnc{color:var(--warn);background:var(--warnBg);border-color:transparent}
+.critc{color:var(--crit);background:var(--critBg);border-color:transparent}
+.ex{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--warn);background:var(--warnBg);border-radius:4px;padding:1px 6px;white-space:nowrap}
+.real{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--good);background:var(--goodBg);border-radius:4px;padding:1px 6px;white-space:nowrap}
+.decided{display:flex;flex-wrap:wrap;gap:8px}
+.decided .chip{font-weight:500;white-space:normal;text-align:left}
+.note{font-size:12.5px;color:var(--muted)}
+.frame-label{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-bottom:8px}
+.frame-label::after{content:"";flex:1;height:1px;background:var(--border)}
+.scroll{overflow-x:auto}
+
+/* Classic theme frame (Master Data) */
+.classic{background:var(--c-bg);border:1px solid var(--c-border);border-radius:12px;padding:18px;font-family:var(--c-body);color:var(--c-text)}
+.classic h2{font-family:var(--c-head);font-size:18px}
+.classic .cmodal{background:var(--c-surface);border:1px solid var(--c-border);border-radius:10px}
+.classic .chead{display:flex;flex-wrap:wrap;gap:8px 16px;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--c-border)}
+.classic .cmuted{color:var(--c-muted)}
+.tabs{display:flex;flex-wrap:wrap;gap:2px;padding:0 12px;border-bottom:1px solid var(--c-border)}
+.tabs button{font:600 13px/1.2 var(--c-body);color:var(--c-muted);background:none;border:0;border-bottom:2px solid transparent;padding:11px 12px 10px;cursor:pointer}
+.tabs button[aria-selected="true"]{color:var(--c-accent);border-bottom-color:var(--c-accent)}
+.tabs button:focus-visible{outline:2px solid var(--c-accent);outline-offset:-2px}
+.tabpanel{padding:16px 18px;display:grid;gap:12px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+.classic th{font:600 11px/1.3 var(--c-body);text-transform:uppercase;letter-spacing:.05em;color:var(--c-muted);text-align:left;padding:8px 10px;border-bottom:1px solid var(--c-border);white-space:nowrap}
+.classic td{padding:9px 10px;border-bottom:1px solid var(--c-border);vertical-align:top;font-size:13px}
+.classic tr:hover td{background:var(--c-hover)}
+.classic input[type="text"],.classic select{font:13px var(--c-body);color:var(--c-text);background:var(--c-surface);border:1px solid var(--c-border);border-radius:7px;padding:6px 9px;min-width:0}
+.classic input:focus-visible,.classic select:focus-visible{outline:2px solid var(--c-accent);outline-offset:1px}
+.cbtn{font:600 12.5px var(--c-body);border-radius:7px;padding:6px 12px;border:1px solid var(--c-border);background:var(--c-surface);color:var(--c-text);cursor:pointer}
+.cbtn.primary{background:var(--c-accent);border-color:var(--c-accent);color:#fff}
+:root[data-theme="dark"] .cbtn.primary{color:#07111e}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .cbtn.primary{color:#07111e}}
+.cinfo{background:var(--c-accentBg);border-radius:8px;padding:10px 12px;font-size:12.5px}
+.off-tag{font-family:var(--mono);font-size:12px;font-weight:600}
+td .sub{display:block;font-size:11.5px;color:var(--c-muted)}
+.cov-off td{opacity:.45}
+.check{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.res{border:1px solid var(--c-border);border-radius:9px;padding:10px 12px;display:grid;gap:4px;background:var(--c-surface)}
+.res .k{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--c-muted)}
+
+/* Trade Horizon (shipment) */
+.hz th{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+.hz td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top;font-size:13px}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:2px;gap:2px;background:var(--surface2)}
+.seg button{font:600 12px var(--body);border:0;border-radius:999px;padding:5px 12px;background:transparent;color:var(--muted);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--cyan);color:var(--solid)}
+.seg button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.tile{border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--surface2);display:grid;gap:6px;align-content:start}
+.tile .k{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.tile .v{font-family:var(--display);font-size:15px;font-weight:600}
+.tile.book{border-top:3px solid var(--cyan)} .tile.book .k{color:var(--cyan)}
+.tile.imp{border-top:3px solid var(--violet)} .tile.imp .k{color:var(--violet)}
+.tile.bill{border-top:3px solid var(--amber)} .tile.bill .k{color:var(--amber)}
+.strip{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center;font-size:13px}
+.strip b{font-family:var(--mono)}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+pre{margin:0;background:var(--codeBg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font:12px/1.55 var(--mono);overflow-x:auto;white-space:pre}
+.diffbad{color:var(--crit)} .diffgood{color:var(--good)}
+.open{display:grid;gap:10px}
+.open .item{display:grid;grid-template-columns:28px 1fr;gap:10px;align-items:start}
+.open .n{font-family:var(--mono);font-weight:600;color:var(--good);background:var(--goodBg);border-radius:6px;text-align:center;padding:2px 0}
+.open .who{display:block;margin-top:4px;font-size:12.5px;color:var(--muted)}
+.srcs{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted)}
+.srcs a{color:var(--cyan)}
+ul.tight{margin:6px 0 0;padding-left:18px;display:grid;gap:4px}
+@media (max-width:560px){h1{font-size:22px}.pad{padding:14px}.classic{padding:12px}.tabpanel{padding:12px}}
+@media (prefers-reduced-motion:no-preference){.tile,.res{transition:background-color .15s}}
+</style>
+
+<div class="wrap">
+
+  <header class="card pad" style="display:grid;gap:12px">
+    <div class="eyebrow">Mockup · the five points settled 16 November 2026 · being built</div>
+    <h1>Carrier Offices</h1>
+    <p class="prose">Each carrier gets a profile with its own offices, and the port or country each office covers per role: who takes our
+      booking, who handles the arrival, and who bills us. A shipment picks its carrier offices from its port of loading and
+      port of discharge. Rows marked <span class="real">Real</span> come from your database; rows marked <span class="ex">Example</span> are your
+      Spain case, typed in to show the rules (your database has no Spanish office, entity or shipment).</p>
+    <div class="decided" aria-label="Settled with you">
+      <span class="chip goodc">The booking office follows the port of loading only, never our own office</span>
+      <span class="chip goodc">The billing office is the carrier company that sends us its invoice</span>
+      <span class="chip goodc">The booking's "payable at" is that billing (creditor) office's location</span>
+      <span class="chip goodc">Our account number per legal entity of ours, as CargoWise keeps it</span>
+      <span class="chip goodc">A carrier invoice records the office that issued it</span>
+      <span class="chip goodc">A creditor code per carrier office for GL Export</span>
+      <span class="chip goodc">One API connection per carrier</span>
+    </div>
+  </header>
+
+  <!-- ───────────── Part 1: Master Data (classic theme) ───────────── -->
+  <section aria-labelledby="p1">
+    <div class="frame-label" id="p1">1 · Master Data → Carriers → Hapag Lloyd Container Line (classic theme). The Carrier Agents menu item goes; its old link opens Carriers.</div>
+    <div class="classic">
+      <div class="cmodal">
+        <div class="chead">
+          <div style="display:grid;gap:2px">
+            <h2>Hapag Lloyd Container Line</h2>
+            <span class="cmuted" style="font-size:12.5px">Carrier code <span class="mono">HLCU</span></span>
+          </div>
+          <div class="row"><button class="cbtn" type="button">Close</button><button class="cbtn primary" type="button">Save</button></div>
+        </div>
+        <div class="tabs" role="tablist" aria-label="Carrier profile">
+          <button role="tab" id="t-off" aria-selected="true" aria-controls="p-off">Offices</button>
+          <button role="tab" id="t-cov" aria-selected="false" aria-controls="p-cov">Coverage</button>
+          <button role="tab" id="t-acc" aria-selected="false" aria-controls="p-acc">Our account numbers</button>
+          <button role="tab" id="t-con" aria-selected="false" aria-controls="p-con">Connection</button>
+        </div>
+
+        <div class="tabpanel" role="tabpanel" id="p-off" aria-labelledby="t-off">
+          <p class="cmuted" style="font-size:12.5px">The carrier's own offices and subsidiaries, kept here (not in Customers). Location is any UN/LOCODE,
+            checked for its format: Madrid (ESMAD) isn't in Master Data's location list, which holds ports.</p>
+          <div class="scroll"><table style="min-width:760px">
+            <thead><tr><th>Office</th><th>Location</th><th>Contact</th><th>Creditor code</th><th>Capabilities</th><th></th></tr></thead>
+            <tbody id="offices-body"></tbody>
+          </table></div>
+          <div class="row"><button class="cbtn" type="button">＋ Add Office</button></div>
+        </div>
+
+        <div class="tabpanel" role="tabpanel" id="p-cov" aria-labelledby="t-cov" hidden>
+          <p class="cmuted" style="font-size:12.5px">Which office acts where. A port beats its country, for each role. Booking is export only; the import office is
+            import only; billing exists on both sides. Untick a row to see what happens without it.</p>
+          <div class="scroll"><table style="min-width:720px">
+            <thead><tr><th>On</th><th>Port or country</th><th>Direction</th><th>Role</th><th>Office</th></tr></thead>
+            <tbody id="coverage-body"></tbody>
+          </table></div>
+          <div class="row"><button class="cbtn" type="button">＋ Add Coverage</button></div>
+          <div style="display:grid;gap:8px">
+            <div class="row" style="gap:12px">
+              <label for="chk-pol" style="font-size:12px;font-weight:600">Check · port of loading</label>
+              <select id="chk-pol"></select>
+              <label for="chk-pod" style="font-size:12px;font-weight:600">port of discharge</label>
+              <select id="chk-pod"></select>
+            </div>
+            <div class="check" id="chk-out" aria-live="polite"></div>
+          </div>
+        </div>
+
+        <div class="tabpanel" role="tabpanel" id="p-acc" aria-labelledby="t-acc" hidden>
+          <p class="cmuted" style="font-size:12.5px">Our customer number at Hapag-Lloyd, per legal entity of ours. A booking carries the number of the legal entity
+            behind the shipment's export office, on the booking agent (DCSA <span class="mono">identifyingCodes</span>, provider <span class="mono">ZZZ</span>, as Maersk
+            requires since Booking v2).</p>
+          <div class="row" style="gap:10px">
+            <label for="code-list" style="font-size:12px;font-weight:600">Code list name, as the carrier names it</label>
+            <input type="text" id="code-list" placeholder="e.g. maerskCustomerCode (Maersk's)" style="width:300px">
+          </div>
+          <div class="scroll"><table style="min-width:560px">
+            <thead><tr><th>Our legal entity</th><th>Country</th><th>Our customer number at HLCU</th></tr></thead>
+            <tbody>
+              <tr><td>Rotterdam Branch <span class="real">Real</span><span class="sub">RTM · Rotterdam Office (NL-NLRTM-SE)</span></td><td>NL</td>
+                <td><input type="text" id="acc-rtm" aria-label="Rotterdam Branch customer number at HLCU" placeholder="Not set"></td></tr>
+              <tr><td>New York Branch <span class="real">Real</span><span class="sub">NYC · New York Harbor (US-USNYC-SI)</span></td><td>US</td>
+                <td><input type="text" id="acc-nyc" aria-label="New York Branch customer number at HLCU" placeholder="Not set"></td></tr>
+              <tr><td>Our Spanish entity <span class="ex">Example</span><span class="sub">its Barcelona export office</span></td><td>ES</td>
+                <td><input type="text" id="acc-es" aria-label="Spanish entity customer number at HLCU" value="ES00041207"></td></tr>
+            </tbody>
+          </table></div>
+          <p class="cmuted" style="font-size:12px">Only legal entities that book with Hapag-Lloyd need a number; the mockup shows your two real ones and the example.</p>
+        </div>
+
+        <div class="tabpanel" role="tabpanel" id="p-con" aria-labelledby="t-con" hidden>
+          <div class="cinfo">One connection per carrier, as today (Master Data → Carrier Integrations). DCSA leaves authentication to each carrier and asks
+            for one base URL per standard; Maersk ties its credentials to our customer codes and checks the code in the booking; Hapag-Lloyd
+            issues a Client ID and Secret per application. What differs by country or entity is the account number above, not the connection.</div>
+          <table>
+            <thead><tr><th>Carrier</th><th>Standard</th><th>Status</th></tr></thead>
+            <tbody><tr><td>HLCU</td><td>DCSA Booking 2.0, SI 3.0, VGM 1.0, T&amp;T 3.0</td><td>No connection of its own: the demo carrier stands in <span class="real">Real</span></td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────── Part 2: the shipment (Trade Horizon) ───────────── -->
+  <section aria-labelledby="p2" style="display:grid;gap:12px">
+    <div class="frame-label" id="p2">2 · The shipment · Contracts &amp; Schedules, where today's Line Agent tiles sit (Trade Horizon)</div>
+    <div class="card pad" style="display:grid;gap:14px">
+      <div class="row between">
+        <div class="seg" role="group" aria-label="Shipment">
+          <button type="button" data-scn="real" aria-pressed="true">SHP-S5P9YC · NLRTM → USNYC</button>
+          <button type="button" data-scn="es" aria-pressed="false">Your example · ESBCN → USNYC</button>
+        </div>
+        <div class="seg" role="group" aria-label="Ocean freight">
+          <button type="button" data-ft="PRE" aria-pressed="true">Freight Prepaid</button>
+          <button type="button" data-ft="COL" aria-pressed="false">Freight Collect</button>
+        </div>
+      </div>
+      <div class="strip" id="ship-strip"></div>
+      <div class="tiles" id="tiles"></div>
+      <p class="note">Picked when the shipment is created and again only when its carrier or a port changes (a change in Master Data never rewrites a shipment).
+        The export side picks another office of the same carrier for the booking and origin billing tiles, the import side for the other two; History records it.</p>
+    </div>
+
+    <div class="card pad" style="display:grid;gap:12px">
+      <h2>What goes to Hapag-Lloyd</h2>
+      <p class="prose">The booking request's parties and payment place, today and after the change.</p>
+      <div class="cols">
+        <div style="display:grid;gap:6px"><span class="eyebrow">Today</span><pre id="json-today"></pre></div>
+        <div style="display:grid;gap:6px"><span class="eyebrow">After</span><pre id="json-after"></pre></div>
+      </div>
+      <div id="json-notes" class="note"></div>
+    </div>
+  </section>
+
+  <!-- ───────────── Part 3: Freight Audit and GL ───────────── -->
+  <section aria-labelledby="p3" style="display:grid;gap:12px">
+    <div class="frame-label" id="p3">3 · The carrier's invoice · Financials → Freight Audit, and GL Export</div>
+    <div class="card pad hz" style="display:grid;gap:12px">
+      <h2>New carrier invoice for <span id="fa-ship" class="mono"></span></h2>
+      <div class="row" style="gap:16px">
+        <label for="fa-side" style="font-size:12px;font-weight:600;color:var(--muted)">Charges on it</label>
+        <select id="fa-side" style="font:13px var(--body);padding:6px 9px;border-radius:8px;border:1px solid var(--border);background:var(--solid);color:var(--text)">
+          <option value="origin">Ocean freight and origin charges</option>
+          <option value="dest">Destination charges</option>
+        </select>
+        <span style="font-size:12px;font-weight:600;color:var(--muted)">Issued by</span>
+        <span id="fa-issuer" class="chip r-bill"></span>
+      </div>
+      <p class="note" id="fa-why"></p>
+      <div class="scroll"><table style="min-width:640px">
+        <thead><tr><th>GL Export row (posted cost)</th><th>Account</th><th>Supplier (creditor code)</th><th style="text-align:right">Amount</th></tr></thead>
+        <tbody id="gl-body"></tbody>
+      </table></div>
+      <div class="scroll"><table style="min-width:640px">
+        <thead><tr><th>Carrier invoices today</th><th>Carrier</th><th>Shipment</th><th>Status</th><th>Issued by (new)</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">ZZFA180491-2</td><td>HLCU</td><td class="mono">SHP-KIQSV2</td><td>Approved</td><td class="note">Recorded before this change: left empty <span class="real">Real</span></td></tr>
+          <tr><td class="mono">MAEU-INV-40021</td><td>MAEU</td><td class="mono">SHP-N02KYB</td><td>Approved</td><td class="note">Recorded before this change: left empty <span class="real">Real</span></td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- ───────────── What moves, open points ───────────── -->
+  <section class="card pad" style="display:grid;gap:10px" aria-labelledby="p4">
+    <h2 id="p4">What moves</h2>
+    <ul class="tight prose" style="margin:0">
+      <li><b>Carrier Agents become carrier offices,</b> kept on the carrier's record; the Carrier Agents menu item goes. Your one agent, Rotterdam Cargo Services B.V. (HLCU, NLRTM), moves over with its name, address
+        and contact as a Booking row for NLRTM (and an Import office row where an agent covered a POD). Its customer record stays as it is.
+        This is the August decision: carrier offices are their own records, not customers.</li>
+      <li><b>The Line Agent (Export) and (Import) party roles</b> give way to the shipment's carrier offices. Their names are still screened against the
+        sanctions lists, like every other party.</li>
+      <li><b>The booking office's location</b> becomes the office's own UN/LOCODE. Today the booking sends the port of loading there.</li>
+      <li><b>Payable at</b> becomes the billing office's location (the one paying the freight: origin when Prepaid, destination when Collect), not our office's.</li>
+      <li><b>The booking agent</b> carries our customer number at the carrier, for the legal entity behind the export office.</li>
+      <li><b>Freight Audit</b> records the carrier office that issued each invoice, defaulting from the shipment and changeable until a line is approved;
+        GL Export gives each posted cost the issuing office's creditor code (new Counterparty columns).</li>
+    </ul>
+  </section>
+
+  <section class="card pad" style="display:grid;gap:12px" aria-labelledby="p5">
+    <h2 id="p5">The five points, settled on what DCSA, CargoWise and other systems have in common</h2>
+    <p class="prose">You asked me to check each point against the DCSA standard, CargoWise and other systems, and to go with what they have in common.
+      A to D held. C and E changed slightly: no separate agents list, and offices are picked again only when the carrier or a port changes.</p>
+    <div class="open">
+      <div class="item"><span class="n">A</span><div><b>No billing office covers the port.</b> The booking office bills on the export side and the import office on the import side.
+        This is worked out each time it's read, so a billing row added later takes over.
+        <span class="who">SAP: no invoicing party means the order's vendor. Oracle: no alternate pay site means the order's site. CargoWise: no payable related party
+        means the organisation itself. DCSA: "payable at" is optional on a booking and there is no billing party.</span></div></div>
+      <div class="item"><span class="n">B</span><div><b>Who issued a carrier invoice.</b> One "Issued by" per invoice, filled from the shipment's billing office for the side of its
+        first charge. The clerk can change it until a line is approved; after that it's fixed.
+        <span class="who">CargoWise: the creditor is on the AP invoice header. SAP: one invoicing party per invoice, fixed once posted. Oracle: one supplier site
+        per invoice, defaulted from the order and changeable. Magaya: the vendor is picked per bill, its address filled in and changeable for that bill. DCSA has no
+        invoice standard.</span></div></div>
+      <div class="item"><span class="n">C</span><div><b>Where the profile lives.</b> On the carrier's own record: Master Data → Carriers → the carrier. The separate Carrier Agents
+        list goes, and its old link opens Carriers.
+        <span class="who">CargoWise keeps the addresses and appointed-agent ports on the carrier's organisation, SAP the partner functions on the vendor, Oracle the
+        sites on the supplier, and Magaya the carrier entity. None has a separate agents list.</span></div></div>
+      <div class="item"><span class="n">D</span><div><b>The creditor code.</b> One per carrier office.
+        <span class="who">In all four, the creditor is the company that bills: the CargoWise organisation, the SAP vendor, the Oracle supplier and pay site, the
+        Magaya vendor. Only CargoWise adds an outside code per company of ours, so it's left out.</span></div></div>
+      <div class="item"><span class="n">E</span><div><b>Shipments that already exist.</b> Each shipment keeps a copy of its offices, and a change in Master Data never rewrites it.
+        The offices are picked again only when the shipment's carrier or one of its ports changes. Today's Line Agents move over as the shipment's booking and
+        import offices, with their names kept. Nothing is resent to the carrier.
+        <span class="who">SAP: orders made before an invoicing party was added don't get it. Oracle: a site change affects new documents only. CargoWise: a
+        port's agent is filled in when the port is entered. DCSA: changing a booking already sent is an amendment, never automatic.</span></div></div>
+    </div>
+    <div class="srcs" aria-label="Sources">
+      <span>Sources:</span>
+      <a href="https://github.com/dcsaorg/Conformance-Gateway">DCSA Booking 2.0 (Conformance Gateway)</a>
+      <a href="https://github.com/shippool/CargoWiseOne-Schema">CargoWise One schema</a>
+      <a href="https://community.sap.com/t5/enterprise-resource-planning-q-a/default-invoicing-party-in-miro/qaq-p/5900958">SAP: default invoicing party</a>
+      <a href="https://docs.oracle.com/cd/E18727_01/doc.121/e12797/T295436T485719.htm">Oracle Payables: supplier sites</a>
+      <a href="https://help.magaya.com/s/document-item?language=en_US&amp;bundleId=supply-chain-accounting-manual&amp;topicId=accounts_payable.html&amp;_LANG=enus">Magaya: bills and vendors</a>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var OFFICES = {
+    rcs: { name: "Rotterdam Cargo Services B.V.", loc: "NLRTM", locName: "Rotterdam", contact: "From its customer record", creditor: "", caps: "—", tag: "real", sub: "Today's Line Agent at NLRTM" },
+    mad: { name: "Hapag-Lloyd Madrid", loc: "ESMAD", locName: "Madrid", contact: "Bookings desk", creditor: "", caps: "Documentation", tag: "ex", sub: "Books for Spain" },
+    bcn: { name: "Hapag-Lloyd Barcelona", loc: "ESBCN", locName: "Port of Barcelona", contact: "Accounts", creditor: "400128", caps: "Port agency", tag: "ex", sub: "Bills Barcelona's exports" },
+    usa: { name: "Hapag-Lloyd USA", loc: "USNYC", locName: "New York", contact: "Import desk", creditor: "", caps: "Port agency, Documentation", tag: "ex", sub: "Arrivals and destination charges, US" }
+  };
+  var COVERAGE = [
+    { id: 1, where: "NLRTM", dir: "Export", role: "Booking", office: "rcs", tag: "real", on: true },
+    { id: 2, where: "ES", dir: "Export", role: "Booking", office: "mad", tag: "ex", on: true },
+    { id: 3, where: "ES", dir: "Export", role: "Billing", office: "mad", tag: "ex", on: true },
+    { id: 4, where: "ESBCN", dir: "Export", role: "Billing", office: "bcn", tag: "ex", on: true },
+    { id: 5, where: "US", dir: "Import", role: "Import office", office: "usa", tag: "ex", on: true },
+    { id: 6, where: "US", dir: "Import", role: "Billing", office: "usa", tag: "ex", on: true }
+  ];
+  var PORTS = { ESBCN: ["Port of Barcelona", "ES"], ESVLC: ["Port of Valencia", "ES"], ESALG: ["Port of Algeciras", "ES"], NLRTM: ["Rotterdam", "NL"],
+    DEHAM: ["Hamburg", "DE"], USNYC: ["New York", "US"], USSAV: ["Port of Savannah", "US"] };
+  var SCN = {
+    real: { id: "SHP-S5P9YC", pol: "NLRTM", pod: "USNYC", incoterm: "FOB", shipper: "Acme Freight B.V.", consignee: "Empire Logistics Partners (Brooklyn) Inc",
+      exportOffice: "Rotterdam Office (NL-NLRTM-SE)", entity: "Rotterdam Branch", accId: "acc-rtm", ourOfficeLoc: "NLRTM", tag: "real" },
+    es: { id: "SHP-EXAMPLE", pol: "ESBCN", pod: "USNYC", incoterm: "CIF", shipper: "A Barcelona exporter", consignee: "A New York importer",
+      exportOffice: "Our Barcelona export office", entity: "Our Spanish entity", accId: "acc-es", ourOfficeLoc: "ESBCN", tag: "ex" }
+  };
+  var state = { scn: "real", ft: "PRE" };
+  var $ = function (id) { return document.getElementById(id); };
+  var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); };
+  var tag = function (t) { return t === "real" ? '<span class="real">Real</span>' : '<span class="ex">Example</span>'; };
+  var countryOf = function (p) { return (PORTS[p] || [null, p.slice(0, 2)])[1]; };
+
+  // The rule: for a role and direction, a row for the port beats a row for its country.
+  function resolve(role, dir, port) {
+    var live = COVERAGE.filter(function (c) { return c.on && c.role === role && c.dir === dir; });
+    var byPort = live.filter(function (c) { return c.where === port; })[0];
+    if (byPort) return { office: byPort.office, why: "row for " + port };
+    var byCountry = live.filter(function (c) { return c.where === countryOf(port); })[0];
+    if (byCountry) return { office: byCountry.office, why: "row for " + countryOf(port) };
+    return null;
+  }
+  function offices(pol, pod) {
+    var book = resolve("Booking", "Export", pol);
+    var imp = resolve("Import office", "Import", pod);
+    var billO = resolve("Billing", "Export", pol);
+    var billD = resolve("Billing", "Import", pod);
+    if (!billO && book) billO = { office: book.office, why: "no billing row: the booking office bills (A)", fallback: true };
+    if (!billD && imp) billD = { office: imp.office, why: "no billing row: the import office bills (A)", fallback: true };
+    return { book: book, imp: imp, billO: billO, billD: billD };
+  }
+
+  // Part 1 tables
+  function drawOffices() {
+    $("offices-body").innerHTML = Object.keys(OFFICES).map(function (k) {
+      var o = OFFICES[k];
+      return "<tr><td><b>" + esc(o.name) + "</b> " + tag(o.tag) + '<span class="sub">' + esc(o.sub) + "</span></td>" +
+        '<td><span class="off-tag">' + o.loc + '</span><span class="sub">' + esc(o.locName) + "</span></td>" +
+        "<td>" + esc(o.contact) + "</td><td class=\"mono\">" + (o.creditor ? esc(o.creditor) : '<span class="cmuted">Not set</span>') + "</td>" +
+        "<td>" + esc(o.caps) + '</td><td><button class="cbtn" type="button">Edit</button></td></tr>';
+    }).join("");
+  }
+  function roleChip(r) { return '<span class="chip ' + (r === "Booking" ? "r-book" : r === "Billing" ? "r-bill" : "r-imp") + '">' + r + "</span>"; }
+  function drawCoverage() {
+    $("coverage-body").innerHTML = COVERAGE.map(function (c) {
+      var where = c.where.length === 2 ? c.where + " (country)" : c.where + " · " + (PORTS[c.where] ? PORTS[c.where][0] : "");
+      return '<tr class="' + (c.on ? "" : "cov-off") + '"><td><input type="checkbox" data-cov="' + c.id + '"' + (c.on ? " checked" : "") +
+        ' aria-label="Use this row"></td><td><span class="off-tag">' + esc(where) + "</span> " + tag(c.tag) + "</td><td>" + c.dir + "</td><td>" +
+        roleChip(c.role) + "</td><td>" + esc(OFFICES[c.office].name) + "</td></tr>";
+    }).join("");
+  }
+  function fillPorts() {
+    var opts = function (sel) { return Object.keys(PORTS).map(function (p) { return '<option value="' + p + '"' + (p === sel ? " selected" : "") + ">" + p + " · " + esc(PORTS[p][0]) + "</option>"; }).join(""); };
+    $("chk-pol").innerHTML = opts("ESBCN"); $("chk-pod").innerHTML = opts("USNYC");
+  }
+  function resBox(label, cls, r) {
+    var o = r ? OFFICES[r.office] : null;
+    return '<div class="res"><span class="k">' + label + "</span>" + (o ? "<b>" + esc(o.name) + '</b><span class="cmuted" style="font-size:12px">' + o.loc + " · " + esc(r.why) + "</span>"
+      : '<span class="cmuted">None set</span>') + "</div>";
+  }
+  function drawCheck() {
+    var r = offices($("chk-pol").value, $("chk-pod").value);
+    $("chk-out").innerHTML = resBox("Booking office", "", r.book) + resBox("Billing · origin", "", r.billO) + resBox("Import office", "", r.imp) + resBox("Billing · destination", "", r.billD);
+  }
+
+  // Part 2
+  function tile(cls, label, r) {
+    var o = r ? OFFICES[r.office] : null;
+    return '<div class="tile ' + cls + '"><span class="k">' + label + "</span>" +
+      (o ? '<span class="v">' + esc(o.name) + " " + tag(o.tag) + '</span><span class="note mono">' + o.loc + " · " + esc(o.locName) + "</span>" +
+        '<span class="chip ' + (r.fallback ? "warnc" : "goodc") + '" style="justify-self:start;white-space:normal">' + esc(r.why) + "</span>"
+        : '<span class="v" style="color:var(--muted)">None set</span><span class="chip critc" style="justify-self:start">No coverage for this port</span>') + "</div>";
+  }
+  function json(obj) { return JSON.stringify(obj, null, 2); }
+  function drawShipment() {
+    var s = SCN[state.scn], r = offices(s.pol, s.pod);
+    $("ship-strip").innerHTML = "<span><b>" + s.id + "</b> " + tag(s.tag) + "</span><span>HLCU</span><span><b>" + s.pol + "</b> → <b>" + s.pod + "</b></span><span>" + s.incoterm +
+      "</span><span>" + esc(s.shipper) + " → " + esc(s.consignee) + "</span><span>Export office: " + esc(s.exportOffice) + "</span>";
+    $("tiles").innerHTML = tile("book", "Carrier booking office", r.book) + tile("bill", "Carrier billing · origin", r.billO) +
+      tile("imp", "Carrier import office", r.imp) + tile("bill", "Carrier billing · destination", r.billD);
+    var book = r.book ? OFFICES[r.book.office] : null;
+    var payer = state.ft === "PRE" ? r.billO : r.billD;
+    var payOffice = payer ? OFFICES[payer.office] : null;
+    var acc = ($(s.accId).value || "").trim(), codeList = ($("code-list").value || "").trim();
+    var today = { documentParties: { bookingAgent: { partyName: s.entity }, carrierBookingOffice: book ? { partyName: book.name, UNLocationCode: s.pol } : undefined },
+      invoicePayableAt: { UNLocationCode: s.ourOfficeLoc } };
+    var ident = acc ? [Object.assign({ codeListProvider: "ZZZ", partyCode: acc }, codeList ? { codeListName: codeList } : {})] : undefined;
+    var after = { documentParties: { bookingAgent: Object.assign({ partyName: s.entity }, ident ? { identifyingCodes: ident } : {}),
+        carrierBookingOffice: book ? { partyName: book.name, UNLocationCode: book.loc } : undefined },
+      invoicePayableAt: payOffice ? { UNLocationCode: payOffice.loc } : undefined };
+    $("json-today").textContent = json(today);
+    $("json-after").textContent = json(after);
+    var notes = [];
+    if (book && book.loc !== s.pol) notes.push('<span class="diffbad">Today the booking office goes out located at ' + s.pol + "</span>; after, at its own " + book.loc + ".");
+    else if (book) notes.push("The booking office sits at the port of loading here, so its location doesn't change.");
+    notes.push("Payable at: today our office's location (" + s.ourOfficeLoc + "); after, the " + (state.ft === "PRE" ? "origin" : "destination") + " billing office's" +
+      (payOffice ? " (" + payOffice.loc + ")." : ", and none is set."));
+    notes.push(acc ? '<span class="diffgood">Our customer number ' + esc(acc) + " travels on the booking agent.</span>" : "No customer number set for " + esc(s.entity) + ": the booking goes without one (Our account numbers tab).");
+    $("json-notes").innerHTML = notes.map(function (n) { return "<div>" + n + "</div>"; }).join("");
+    drawAudit(r, s);
+  }
+
+  // Part 3
+  function drawAudit(r, s) {
+    var side = $("fa-side").value, pick = side === "origin" ? r.billO : r.billD;
+    var o = pick ? OFFICES[pick.office] : null;
+    $("fa-ship").textContent = s.id;
+    $("fa-issuer").textContent = o ? o.name + " · " + o.loc : "Not set";
+    $("fa-why").textContent = o ? "Defaults to the shipment's " + (side === "origin" ? "origin" : "destination") + " billing office (" + pick.why + "); the clerk can pick another office of the carrier until a line is approved." : "No billing office for this side: the clerk picks one of the carrier's offices.";
+    var rows = side === "origin" ? [["Ocean freight", "5100 Freight costs", 2450, "USD"], ["Origin THC", "5110 Terminal costs", 210, "EUR"]] : [["Destination THC", "5110 Terminal costs", 340, "USD"]];
+    $("gl-body").innerHTML = rows.map(function (x) {
+      return "<tr><td>" + x[0] + ' <span class="ex">Example</span></td><td class="mono">' + x[1] + "</td><td>" + (o ? esc(o.name) + ' · <span class="mono">' + (o.creditor || "no code yet") + "</span>" : "—") +
+        '</td><td class="mono" style="text-align:right">' + x[3] + " " + x[2].toLocaleString("en-US") + "</td></tr>";
+    }).join("");
+  }
+
+  // Wiring
+  document.querySelector(".tabs").addEventListener("click", function (e) {
+    var b = e.target.closest("[role=tab]"); if (!b) return;
+    document.querySelectorAll("[role=tab]").forEach(function (t) { t.setAttribute("aria-selected", String(t === b)); $(t.getAttribute("aria-controls")).hidden = t !== b; });
+  });
+  $("coverage-body").addEventListener("change", function (e) {
+    var id = Number(e.target.getAttribute("data-cov")); if (!id) return;
+    COVERAGE.forEach(function (c) { if (c.id === id) c.on = e.target.checked; });
+    drawCoverage(); drawCheck(); drawShipment();
+  });
+  ["chk-pol", "chk-pod"].forEach(function (id) { $(id).addEventListener("change", drawCheck); });
+  ["acc-rtm", "acc-nyc", "acc-es", "code-list"].forEach(function (id) { $(id).addEventListener("input", drawShipment); });
+  $("fa-side").addEventListener("change", drawShipment);
+  document.querySelectorAll("[data-scn]").forEach(function (b) { b.addEventListener("click", function () {
+    state.scn = b.getAttribute("data-scn");
+    document.querySelectorAll("[data-scn]").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+    drawShipment();
+  }); });
+  document.querySelectorAll("[data-ft]").forEach(function (b) { b.addEventListener("click", function () {
+    state.ft = b.getAttribute("data-ft");
+    document.querySelectorAll("[data-ft]").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+    drawShipment();
+  }); });
+
+  drawOffices(); drawCoverage(); fillPorts(); drawCheck(); drawShipment();
+})();
+</script>

@@ -396,11 +396,11 @@ const BACKEND_DOMAINS = [
 
 const DB_DOMAINS = [
   { name: "Shipment Core", color: "#e8a217", tables: "shipments · shipment_legs · containers · shipment_events · status_log · container_events" },
-  { name: "Shipment Ops", color: "#e8a217", tables: "shipment_cost_lines · shipment_milestones · shipment_documents · shipment_services · shipment_schedules · shipment_rate_snapshots(_lines) · shipment_screenings · shipment_messages" },
+  { name: "Shipment Ops", color: "#e8a217", tables: "shipment_cost_lines · shipment_milestones · shipment_documents · shipment_services · shipment_schedules · shipment_rate_snapshots(_lines) · shipment_screenings · shipment_messages · shipment_carrier_offices" },
   { name: "Contracts & Rates", color: "#2dcc8f", tables: "contracts · contract_legs · contract_rates · entity_events" },
   { name: "Allocations", color: "#2dcc8f", tables: "allocations" },
   { name: "Customers & Compliance", color: "#a855f7", tables: "customers · customer_documents · customer_identifiers · customer_screenings · sanctions_entries · sanctions_syncs" },
-  { name: "MDM Reference Data", color: "#a855f7", tables: "carriers · vessels · port_locations · linked_ports · trade_lanes · country_trade_lanes · regions · countries · commodities · loop_codes · loop_code_ports · hs_codes" },
+  { name: "MDM Reference Data", color: "#a855f7", tables: "carriers · vessels · port_locations · linked_ports · trade_lanes · country_trade_lanes · regions · countries · commodities · loop_codes · loop_code_ports · hs_codes · carrier_offices · carrier_office_coverage · carrier_office_hours · carrier_account_numbers" },
   { name: "Kanban & Testing", color: "#4db3e8", tables: "tickets · ticket_links · test_items · test_case_links · kb_projects · kb_columns · kb_versions" },
   { name: "EDI Messaging", color: "#4db3e8", tables: "edi_messages" },
   { name: "Booking & Spot Rates", color: "#4db3e8", tables: "carrier_bookings · booking_escalations · booking_escalation_steps · lane_steerings · lane_steering_options · spot_offers · spot_offer_lines · margin_rules · dcsa_sim_bookings · dcsa_sim_spot_offers" },

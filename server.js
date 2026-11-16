@@ -1416,7 +1416,10 @@ async function screenShipmentById(shipmentId) {
   const serviceVendors = (await query(
     "SELECT side, service_type, vendor_name, vendor_id FROM shipment_services WHERE shipment_id=$1 AND status != 'Cancelled'", [shipmentId]
   )).map(r => [`${r.side} ${r.service_type} Vendor`, r.vendor_name, r.vendor_id]);
-  for (const [field, name, customerId] of [...fixedParties, ...additionalParties, ...serviceVendors]) {
+  // The carrier's offices on the shipment (booking, import, billing; §8.53), by name: they were screened as the Line
+  // Agent parties before and must stay screened (the user, 2026-08-31).
+  const carrierOffices = ctx.carrierOffices ? await ctx.carrierOffices.screeningNames(shipmentId) : [];
+  for (const [field, name, customerId] of [...fixedParties, ...additionalParties, ...serviceVendors, ...carrierOffices]) {
     if (!name || !name.trim()) continue;
     const nameMatch = sanctionsMap.get(normSanctionName(name));
     if (nameMatch) {
@@ -2167,15 +2170,14 @@ async function isEdiBookable(carrierCode, officeId) { // eslint-disable-line no-
 // Customs Broker is split Export/Import (not a single role) since each shipment can only
 // hold one party per role and the two are routinely handled by different brokers — also a
 // deliberate setup for the later Customs & Regulatory Filing epic (TKT-XW6TQK). "Agent" (bare)
-// is a generic, manually-picked catch-all with no carrier/port linkage — NOT the same concept
-// as "Line Agent (Export/Import)" below, which is a specific carrier's local representative at
-// a specific port, auto-resolved from the carrier_agents table (see resolveCarrierAgent) — the
-// two are easy to confuse since they sit side by side in the same picker.
+// is a generic, manually-picked catch-all with no carrier/port linkage. The carrier's own local
+// offices (once "Line Agent (Export/Import)" here) are carrier offices since 2026-11-16, kept on
+// the carrier's profile and the shipment's own copy (lib/carrier-offices.js), not party roles.
 const ADDITIONAL_PARTY_ROLES = [
   "Forwarder", "Customs Broker (Export)", "Customs Broker (Import)",
   "Trucker (Pre-carriage)", "Trucker (On-carriage)",
   "Also Notify Party", "Bank", "Insurance Provider", "Agent",
-  "Line Agent (Export)", "Line Agent (Import)", "NVOCC", "Co-Loading NVOCC",
+  "NVOCC", "Co-Loading NVOCC",
 ];
 // Customs & Regulatory Filing (Epic TKT-XW6TQK) — the two filing types a shipment can
 // independently need, AES/EEI (export) and ISF/AMS (import). Simulated/mock only.
@@ -2208,6 +2210,7 @@ const syncShipmentFromLegs = async (shipmentId, actorId = null) => {
     // actively misleading everywhere they're read (the header, the routing pill, exports).
     // carrier_code is left untouched — the user's own report only asked for POL/POD to reset.
     await query(`UPDATE shipments SET pol='', pod='', etd='', eta='', vessel='', vessel_imo='', voyage='', routing_term=NULL WHERE id=$1`, [shipmentId]);
+    if (ctx.carrierOffices) await ctx.carrierOffices.refresh(shipmentId, actorId || "").catch(e => console.warn("carrier offices refresh:", e.message));
     return;
   }
   const first = legs[0], last = legs[legs.length - 1];
@@ -2316,6 +2319,8 @@ const syncShipmentFromLegs = async (shipmentId, actorId = null) => {
       await supersedeIfCarrierChanged(freshShipment, existingBooking);
     }
   }
+  // A new carrier, port of loading or port of discharge picks those carrier offices again (§8.53).
+  if (ctx.carrierOffices) await ctx.carrierOffices.refresh(shipmentId, actorId || "").catch(e => console.warn("carrier offices refresh:", e.message));
 };
 
 // Row-mapper functions (mapShipment, mapContainer, mapCustomer, etc.) live in lib/mappers.js —
@@ -2328,7 +2333,7 @@ const {
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapRateSnapshot, mapRateSnapshotLine,
   mapChargeCodeDefinition, mapContainer, mapContainerEvent, mapContainerPackage, mapShipmentParty, mapSideOffice,
   mapPackTypeDefinition, mapDutyRateChapter, mapHsCode, mapScheduledReport, mapContainerTypeDefinition, mapDocumentTemplate, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
-  mapCarrierAgent, mapCarrierAgentScheduleRow, mapTradeLane, mapScopeItem, mapOffice, mapOfficeMailSettings,
+  mapTradeLane, mapScopeItem, mapOffice, mapOfficeMailSettings,
   mapSystemEmailSettings,
   mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket, mapTestItem,
   mapTestCaseLink, mapEdiMessage, mapCarrierBooking, mapCarrierIntegration, mapCustomsFiling, mapShippingInstructions, mapKbProject, mapKbVersion,
@@ -2702,6 +2707,7 @@ async function blockIfWrongSide(req, res, shipmentRow, requiredSide) {
 // write it — gating the whole shared endpoint by one blanket side would have wrongly blocked an
 // import-side user from setting their own Customs Broker (Import) or Trucker (On-carriage).
 //
+// (The Line Agent (Export)/(Import) roles this once excluded are carrier offices since 2026-11-16, §8.53.)
 // Deliberately does NOT include Line Agent (Export)/(Import) — routes/shipments.js already gates
 // that pair via its own LINE_AGENT_SIDE + canEditOfficeSide, a different, pre-existing mechanism
 // (a company-wide department fact — "is my active office's department SE/SI" — built for the
@@ -3499,154 +3505,9 @@ const linkedPortCodes = async code => {
   `, [code])).map(r => r.code);
 };
 
-// Carrier Line Agents — resolves the registered Line Agent for a carrier at a port, falling
-// back to any linked port (same linked-port-aware matching findMatchingContractLeg already
-// uses below) so a carrier_agents row registered against a seaport still matches a shipment
-// routed via a linked inland ICD. Returns the matched row (with a live-joined agent name) or
-// null if nothing's registered for this carrier at this port (or any of its linked ports).
-// 'remote' mode calls the MDM Service's own /internal/carrier-agents/resolve, which does its own
-// linked-port fallback server-side (it owns both tables) — this function then does the one local
-// `customers` lookup the service can't do itself, so the returned shape (agent_customer_name
-// included) matches the local path exactly. NOTE (named, accepted gap): the LOCAL path's own
-// linked-port fallback (linkedPortCodes, below) always reads the local linked_ports table even
-// when mdm_source=remote — only affects the narrow case of contract_source=local combined with
-// mdm_source=remote; see ARCHITECTURE.md.
-// Resolves EVERY Line Agent candidate covering a given carrier+port — a location can match either
-// as a direct UNLOCODE row or via a country-level row (the port's own country), and if neither
-// matches directly, falls back through linked ports. A direct or country-level match is always
-// exclusivity-enforced at write time (only one carrier_agents header can claim a given port or
-// country per carrier), so those two tiers can only ever produce 0 or 1 result — genuine ambiguity
-// (2+ candidates) can only arise from the linked-ports fallback, when a port is linked to several
-// others and more than one of them has its own independent, valid agent for the same carrier.
-// Each returned row carries `matched_via` (the actual port that matched — the query port itself
-// for a direct/country hit, or whichever linked port produced it) so a caller can explain *why*
-// each candidate is plausible. resolveCarrierAgent (below) is the old single-result contract, kept
-// for its two existing callers that only ever want "the" match when unambiguous.
-async function resolveCarrierAgentCandidates(carrierCode, portUnlocode) {
-  if (((await getSettings()).mdm_source || "local") === "remote") {
-    let rows;
-    try { rows = await callMdmService("GET", `/internal/carrier-agents/resolve?carrierCode=${encodeURIComponent(carrierCode)}&port=${encodeURIComponent(portUnlocode)}&all=1`); }
-    catch { return []; }
-    rows = Array.isArray(rows) ? rows : (rows ? [rows] : []);
-    return Promise.all(rows.map(async row => {
-      const [cust] = await query("SELECT company_name FROM customers WHERE id=$1", [row.agentCustomerId]);
-      return { id: row.id, carrier_code: row.carrierCode,
-        agent_customer_id: row.agentCustomerId, agent_customer_name: cust?.company_name || '',
-        note: row.note, created_at: row.createdAt, matched_via: row.matchedVia || portUnlocode,
-        // Re-stringified to match the local branch's own raw-column shape below (ca.* — every
-        // existing consumer already expects a JSON string here, not a parsed array) — the
-        // service's own mapCarrierAgent() already parses it server-side. Previously dropped
-        // entirely in remote mode (2026-09-03 audit — this is what let the Capabilities
-        // cross-check below silently no-op under mdm_source=remote).
-        capabilities: JSON.stringify(row.capabilities || []) };
-    }));
-  }
-  const tryPort = async p => {
-    const [direct] = await query(`
-      SELECT ca.*, c.company_name AS agent_customer_name
-      FROM carrier_agents ca
-      JOIN carrier_agent_locations cal ON cal.carrier_agent_id = ca.id
-      JOIN customers c ON c.id = ca.agent_customer_id
-      WHERE ca.carrier_code=$1 AND cal.location_type='unlocode' AND cal.unlocode=$2
-    `, [carrierCode, p]);
-    if (direct) return direct;
-    const [port] = await query("SELECT country_code FROM port_locations WHERE unlocode=$1", [p]);
-    if (!port?.country_code) return null;
-    const [row] = await query(`
-      SELECT ca.*, c.company_name AS agent_customer_name
-      FROM carrier_agents ca
-      JOIN carrier_agent_locations cal ON cal.carrier_agent_id = ca.id
-      JOIN customers c ON c.id = ca.agent_customer_id
-      WHERE ca.carrier_code=$1 AND cal.location_type='country' AND cal.country_iso2=$2
-    `, [carrierCode, port.country_code]);
-    return row;
-  };
-  const direct = await tryPort(portUnlocode);
-  if (direct) return [{ ...direct, matched_via: portUnlocode }];
-  const linked = await linkedPortCodes(portUnlocode);
-  const candidates = await Promise.all(linked.map(async p => { const row = await tryPort(p); return row ? { ...row, matched_via: p } : null; }));
-  return candidates.filter(Boolean);
-}
-
-async function resolveCarrierAgent(carrierCode, portUnlocode) {
-  const candidates = await resolveCarrierAgentCandidates(carrierCode, portUnlocode);
-  return candidates[0] || null;
-}
-
-// Line/Carrier Agent Capabilities cross-check (TKT-FQFE33, 2026-09-03 audit fix) — the
-// Capabilities checklist (carrier_agents.capabilities, routes/mdm.js's AGENT_CAPABILITY_CODES)
-// was recorded on every agent but never actually read back anywhere; grepped every carrier-
-// booking file and confirmed the feature's own code comment ("used later to cross-check against
-// a leg's own haulage/service before a booking is sent") was never implemented. This closes that
-// gap. Compares what a shipment's own Merchant's Haulage legs and ordered Dedicated Services
-// actually need, per side, against the capabilities of whichever real carrier_agents
-// registration backs that side's assigned Line Agent party. Deliberately non-blocking — an
-// awareness gap, matching the DG-cargo-awareness-chip precedent's own tone (routes/edi.js's
-// booking-request payload) rather than the credit-hold pattern's hard 409; nothing in this
-// feature's own scoping ever called for a hard block.
-const HAULAGE_MODE_TO_CAPABILITY = { Truck: "road_haulage", Rail: "rail_haulage", Barge: "barge_haulage" };
-const SERVICE_TYPE_TO_CAPABILITY = {
-  "Customs Clearance": "customs_clearance", Warehousing: "warehousing",
-  "CY Storage": "cy_storage", Fumigation: "fumigation",
-};
-const AGENT_CAPABILITY_LABELS = {
-  port_agency: "Port Agency", documentation: "Documentation", customs_clearance: "Customs Clearance",
-  road_haulage: "Road Haulage", rail_haulage: "Rail Haulage", barge_haulage: "Barge Haulage",
-  warehousing: "Warehousing", cy_storage: "CY Storage", fumigation: "Fumigation", empty_equipment: "Empty Equipment",
-};
-
-async function checkLineAgentCapabilityGaps(shipmentId) {
-  const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
-  if (!shipment) return [];
-  const legs = await query("SELECT leg_type, movement_type, movement_by FROM shipment_legs WHERE shipment_id=$1", [shipmentId]);
-  const services = await query("SELECT side, service_type FROM shipment_services WHERE shipment_id=$1 AND status != 'Cancelled'", [shipmentId]);
-  const parties = await query(
-    "SELECT role, customer_id, customer_name FROM shipment_parties WHERE shipment_id=$1 AND role IN ('Line Agent (Export)','Line Agent (Import)')",
-    [shipmentId]);
-
-  // What does each side actually need, and why (for the message)? Pick-up legs are the export
-  // side's own haulage (matches LINE_AGENT_SIDE's Export/Import convention elsewhere), Delivery
-  // legs the import side's.
-  const neededBySide = { Export: new Map(), Import: new Map() };
-  for (const l of legs) {
-    if (l.movement_type !== "Merchant's Haulage") continue;
-    const cap = HAULAGE_MODE_TO_CAPABILITY[l.movement_by];
-    if (!cap) continue;
-    const side = l.leg_type === "Pick-up" ? "Export" : l.leg_type === "Delivery" ? "Import" : null;
-    if (!side) continue;
-    if (!neededBySide[side].has(cap)) neededBySide[side].set(cap, `Merchant's Haulage by ${l.movement_by}`);
-  }
-  for (const s of services) {
-    const cap = SERVICE_TYPE_TO_CAPABILITY[s.service_type];
-    if (!cap) continue;
-    const side = s.side === "Export" || s.side === "Import" ? s.side : null;
-    if (!side) continue;
-    if (!neededBySide[side].has(cap)) neededBySide[side].set(cap, `${s.service_type} service ordered`);
-  }
-
-  const gaps = [];
-  for (const side of ["Export", "Import"]) {
-    const needed = neededBySide[side];
-    if (!needed.size) continue;
-    const party = parties.find(p => p.role === `Line Agent (${side})`);
-    if (!party || !party.customer_id) continue; // no agent assigned on this side — nothing to compare against
-    const port = side === "Export" ? shipment.pol : shipment.pod;
-    if (!port) continue;
-    const agent = await resolveCarrierAgent(shipment.carrier_code, port);
-    // Only compare against a REAL, matching MDM registration — a manually-assigned party with no
-    // backing carrier_agents row (or one backing a DIFFERENT customer than what's assigned) has
-    // no capabilities data to check against, so this stays silent rather than guessing.
-    if (!agent || agent.agent_customer_id !== party.customer_id) continue;
-    const capabilities = new Set(JSON.parse(agent.capabilities || '[]'));
-    for (const [cap, reason] of needed) {
-      if (!capabilities.has(cap)) {
-        gaps.push({ side, agentName: party.customer_name, capability: cap,
-          capabilityLabel: AGENT_CAPABILITY_LABELS[cap] || cap, reason });
-      }
-    }
-  }
-  return gaps;
-}
+// The carrier's offices at a shipment's ports (booking, import office, billing per side) are lib/carrier-offices.js
+// (ctx.carrierOffices, §8.53): they replaced the Line Agents (resolveCarrierAgentCandidates, checkLineAgentCapabilityGaps)
+// on 2026-11-16.
 
 // Finds every distinct run of legs covering pol->pod as one connected journey, one match per
 // contract_routings group. Legs are grouped by routing_id FIRST — '' (the column default) is one
@@ -4456,7 +4317,7 @@ const ctx = {
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
   mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice,
   mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition, mapDutyRateChapter, mapHsCode, mapScheduledReport, mapContainerTypeDefinition, mapDocumentTemplate,
-  mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent, mapCarrierAgentScheduleRow,
+  mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
   mapScopeItem, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
   mapEdiMessage,
@@ -4488,8 +4349,7 @@ const ctx = {
   autoCompleteMilestone,
   ensureBookingCreated, supersedeIfCarrierChanged,
   runOpsAutomationSweep, ensureOpsTicket, resolveOpsTickets, onMilestoneCompleted,
-  linkedPortCodes, findMatchingContractLegs, resolveCarrierAgent, resolveCarrierAgentCandidates,
-  checkLineAgentCapabilityGaps,
+  linkedPortCodes, findMatchingContractLegs,
   screenShipmentById, rescreenActiveShipments, screenCustomer, rescreenShipmentsForCustomer, rescreenAllCustomers, resolveCustomerGroup,
   computeArExposure, docAmountUsd, statementAmountUsd, statementMainOffice, vatFactor, runDunningSweep, runScheduledReportsSweep, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
   canEditOfficeSide, resolveActiveOffice,
@@ -4510,6 +4370,11 @@ const ctx = {
 // Booking escalations (Epic TKT-ASIYFL): the rules, shared by their routes, the carrier-answer hook in
 // routes/edi.js, the Shipments list's Booking column and the no-answer sweep.
 ctx.bookingEscalations = require('./lib/booking-escalations')(ctx);
+// Carrier offices (2026-11-16, §8.53): the carrier's profile (offices, coverage per role, our account numbers) and the
+// offices a shipment was given; the Carrier Agents (Line Agents) move over once.
+ctx.carrierOffices = require('./lib/carrier-offices')(ctx);
+schemaReadyPromise = schemaReadyPromise.then(() => ctx.carrierOffices.migrateFromCarrierAgents())
+  .catch(e => console.error("Carrier offices migration failed:", e.message));
 // SPOT rates (agreed 2026-10-21): spot offers, shared by their routes, quote conversion and the booking request.
 ctx.spotOffers = require('./lib/spot-offers')(ctx);
 // Where to book (Epic TKT-KFGL81): the steered option with space for a shipment, shared by contract
@@ -4544,6 +4409,7 @@ require('./routes/auth')(app, ctx);
 require('./routes/shipments')(app, ctx);
 require('./routes/allocations')(app, ctx);
 require('./routes/mdm')(app, ctx);
+require('./routes/carrier-offices')(app, ctx);
 require('./routes/sanctions')(app, ctx);
 require('./routes/kanban')(app, ctx);
 require('./routes/testcases')(app, ctx);

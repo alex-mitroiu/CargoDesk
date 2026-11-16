@@ -1,6 +1,6 @@
 /**
  * MDM Service — the app_settings.mdm_source toggle and the monolith-side proxy layer
- * (routes/mdm.js, plus the shared portLanesMap/portCountryMap caches and resolveCarrierAgent)
+ * (routes/mdm.js, plus the shared portLanesMap/portCountryMap caches and the carrier offices' port checks)
  * that switches on it.
  *
  * With 'local' (the default every existing install keeps), every route behaves exactly as it
@@ -126,35 +126,27 @@ async function setSource(token, value) {
     const transit = await request("GET", `/api/trade-lanes/transit-suggestion?pol=${port1}&pod=${port2}`, null, token);
     assert("transit-suggestion resolves through the remote-backed portLanesMap cache", transit.body.days === 9, JSON.stringify(transit.body));
 
-    console.log("\nCarrier agent resolve — direct + linked-port fallback, name attached locally");
+    // Carrier offices (§8.53) are kept by the monolith whatever the Master Data source; in remote mode their coverage
+    // checks ports and countries against the MDM Service and follows its linked ports.
+    console.log("\nCarrier offices in remote mode — coverage on a remote port, found directly and through a remote linked port");
     const link = await request("POST", "/api/linked-ports", { primaryUnlocode: port1, linkedUnlocode: port2 }, token);
     assert("linked-ports create 201 in remote mode", link.status === 201, JSON.stringify(link.body));
-    const agentCreate = await request("POST", "/api/carrier-agents", { carrierCode: remoteCarrier, agentCustomerId: "CUST-TOGGLE-FAKE", locationType: "unlocode", unlocode: port1 }, token);
-    assert("carrier agent create 201 in remote mode", agentCreate.status === 201, JSON.stringify(agentCreate.body));
-    const agentsList = await request("GET", "/api/carrier-agents", null, token);
-    const found = (agentsList.body.results || agentsList.body).find(a => a.carrierCode === remoteCarrier);
-    assert("carrier agent list attaches agentCustomerName field locally (even if blank for a fake id)", found && "agentCustomerName" in found, JSON.stringify(found));
-
-    console.log("\nmdm_source=remote AND customer_source=remote together — the one place two extracted services interact");
-    const flipCustRemote = await request("PUT", "/api/settings/customer-source", { value: "remote" }, token);
-    assert("customer_source also flips to remote", flipCustRemote.status === 200 && flipCustRemote.body.customerSource === "remote", JSON.stringify(flipCustRemote.body));
-    const remoteCust = await request("POST", "/api/customers", { companyName: `Toggle MDM+Customer Agent Co ${stamp}` }, token);
-    assert("real remote customer created", remoteCust.status === 201, JSON.stringify(remoteCust.body));
-    const agentCreate2 = await request("POST", "/api/carrier-agents", { carrierCode: remoteCarrier, agentCustomerId: remoteCust.body.id, locationType: "unlocode", unlocode: port2 }, token);
-    assert("carrier agent create 201 with a real remote customer id", agentCreate2.status === 201, JSON.stringify(agentCreate2.body));
-    assert("attachAgentNames resolves the name through the remote Customer Service (create response)",
-      agentCreate2.body.agentCustomerName === remoteCust.body.companyName, JSON.stringify(agentCreate2.body));
-    const agentsList2 = await request("GET", "/api/carrier-agents", null, token);
-    const found2 = (agentsList2.body.results || agentsList2.body).find(a => a.id === agentCreate2.body.id);
-    assert("attachAgentNames resolves the name through the remote Customer Service (list response, batched)",
-      found2?.agentCustomerName === remoteCust.body.companyName, JSON.stringify(found2));
-    await request("DELETE", `/api/carrier-agents/${agentCreate2.body.id}`, null, token).catch(() => {});
-    await request("DELETE", `/api/customers/${remoteCust.body.id}`, null, token).catch(() => {});
-    const flipCustLocal = await request("PUT", "/api/settings/customer-source", { value: "local" }, token);
-    assert("customer_source flips back to local", flipCustLocal.status === 200 && flipCustLocal.body.customerSource === "local", JSON.stringify(flipCustLocal.body));
+    const remoteOffice = await request("POST", `/api/carriers/${remoteCarrier}/offices`, { name: "Toggle Test Carrier Office", unlocode: port1 }, token);
+    assert("carrier office create 201 in remote mode", remoteOffice.status === 201, JSON.stringify(remoteOffice.body));
+    const remoteCoverage = await request("POST", `/api/carriers/${remoteCarrier}/coverage`,
+      { placeType: "unlocode", unlocode: port1, direction: "export", role: "booking", officeId: remoteOffice.body.id }, token);
+    assert("coverage on a port only the MDM Service holds is accepted (201)", remoteCoverage.status === 201, JSON.stringify(remoteCoverage.body));
+    const direct = await request("GET", `/api/carriers/${remoteCarrier}/coverage-check?pol=${port1}&pod=${port2}`, null, token);
+    assert("the check finds it directly", direct.body?.booking?.officeId === remoteOffice.body.id, JSON.stringify(direct.body));
+    const viaLink = await request("GET", `/api/carriers/${remoteCarrier}/coverage-check?pol=${port2}&pod=${port1}`, null, token);
+    assert("…and through the remote linked port", viaLink.body?.booking?.officeId === remoteOffice.body.id && viaLink.body.booking.via === port1, JSON.stringify(viaLink.body));
+    const unknownPort = await request("POST", `/api/carriers/${remoteCarrier}/coverage`,
+      { placeType: "unlocode", unlocode: "QQZZZ", direction: "export", role: "billing", officeId: remoteOffice.body.id }, token);
+    assert("a port the MDM Service doesn't know is refused (400)", unknownPort.status === 400, JSON.stringify(unknownPort.body));
+    await request("DELETE", `/api/carrier-coverage/${remoteCoverage.body?.id}`, null, token).catch(() => {});
+    await request("DELETE", `/api/carrier-offices/${remoteOffice.body?.id}`, null, token).catch(() => {});
 
     console.log("\nProves two independent datastores, not a live sync");
-    await request("DELETE", `/api/carrier-agents/${agentCreate.body.id}`, null, token).catch(() => {});
     await request("DELETE", `/api/linked-ports/${link.body.id}`, null, token).catch(() => {});
     await request("DELETE", `/api/country-trade-lanes/${iso2}/${laneCode}`, null, token).catch(() => {});
     await request("DELETE", `/api/trade-lanes/${laneCode}`, null, token).catch(() => {});

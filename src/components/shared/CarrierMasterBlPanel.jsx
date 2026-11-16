@@ -272,7 +272,7 @@ export default function CarrierMasterBlPanel({ shipment, canEdit, onChanged }) {
             {field("on", "On", { type: "date", max: today() })}
             <datalist id="carrier-mbl-to-options">
               {shipment.imoOfficeName && <option value={`${shipment.imoOfficeCode} ${shipment.imoOfficeName}`} />}
-              <option value="Line Agent (Import)" />
+              <option value="The carrier's import office" />
             </datalist>
             <Btn data-testid="carrier-mbl-record" disabled={!!busy || !f.on} onClick={record}>{busy === "step" ? "Recording…" : `Record: ${(v.next.find(n => n.step === nextStep)?.label || "").toLowerCase()}`}</Btn>
           </div>

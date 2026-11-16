@@ -489,7 +489,9 @@ const UserManualPage = () => {
             <strong>demo carrier</strong> (marked DEMO CARRIER). A SPOT shipment's booking carries its
             spot offer's quotation number; an expired digital offer can't be sent — replace it first.</P>
           <P>The booking goes to the carrier's <strong>local office</strong>: the shipment's{" "}
-            <Tag>Line Agent (Export)</Tag> (Parties & Offices), not the carrier's head office. A booking
+            <Tag>Carrier booking office</Tag> (Contracts &amp; Schedules), named at its own location, not the carrier's
+            head office. It also carries your company's <strong>customer number</strong> at the carrier, and says where
+            the freight is paid: at the carrier office that bills it. A booking
             names exactly one <strong>contract number or carrier quote</strong>, and either an{" "}
             <strong>ETD</strong> or a <strong>vessel and voyage</strong>. If something the DCSA standard
             requires is missing, CargoDesk tells you what to add and sends nothing.</P>
@@ -768,6 +770,9 @@ const UserManualPage = () => {
             what was actually accrued or contracted, and independently computes what any detention
             or demurrage charge <em>should</em> be from the container's own free-time fields, before
             ever comparing it to what the carrier billed.</P>
+          <P><strong>Issued by</strong> records which of the carrier's offices sent the invoice (for example its
+            Barcelona company rather than its Madrid office). It fills in from the shipment's carrier billing office and
+            you can change it until a line is approved; GL Export then books the cost on that office's creditor code.</P>
           <P>From here you <Tag>Approve</Tag> a line — which posts it as the real, actualized cost —
             or <Tag>Dispute</Tag> one that's come in wrong: <Badge variant="success">matched</Badge> lines
             need no action, a flagged <Badge variant="danger">variance</Badge> does.</P>
@@ -1185,6 +1190,11 @@ const UserManualPage = () => {
         <P>MDM is the reference layer for all operational data. Changes here propagate automatically to shipment forms and the dashboard.</P>
         <H3>Carriers</H3>
         <P>Add, edit, or remove ocean carriers. Each carrier requires a SCAC code (e.g. <Tag>MAEU</Tag>) and a full name. Carriers listed here appear in the shipment carrier dropdown.</P>
+        <P>Click a carrier's code (or <strong>Offices &amp; Coverage</strong> in its menu) to open its profile, with four tabs:</P>
+        <P><strong>Offices</strong> — the carrier's own offices and companies: name, location (any UN/LOCODE, so an office in Madrid is <Tag>ESMAD</Tag> even though Madrid isn't a port), address, contact, working hours, what it can do, and its <strong>creditor code</strong> (how your finance system knows it when it bills you). An office that shipments or invoices already name can't be removed; set it inactive instead.</P>
+        <P><strong>Coverage</strong> — which office acts where. Each row is a port or a whole country, for exports or imports, and a role: <strong>Booking</strong> (takes your bookings, exports only), <strong>Import office</strong> (handles the arrival, imports only) or <strong>Billing</strong> (the company that invoices you). A row for a port beats a row for its country. For example: Spain, export, booking → Madrid; ESBCN, export, billing → Barcelona. With no billing row, the booking office bills the export side and the import office the import side. <strong>Check a route</strong> shows the four offices any port of loading and discharge would get.</P>
+        <P><strong>Our account numbers</strong> — your customer number at the carrier for each of your legal entities that books with it, and (if the carrier asks) the name it gives that code. A booking carries the number of the legal entity behind the shipment's export office.</P>
+        <P><strong>Connection</strong> — the carrier's DCSA connection (Carrier Integrations). There is one per carrier; what differs by country or entity is the account number.</P>
         <H3>Vessels</H3>
         <P>The IMO vessel registry — tens of thousands of real ships, each with its own IMO number, flag, build year, and tonnage. Search by name, IMO, or type. A vessel with no confirmed name yet shows <em>"Name pending — awaiting a clean AIS report"</em> rather than garbled data; it fills in automatically once a real position report comes through.</P>
         <Screenshot src={imgMdmVessels} alt="The Master Data Vessels list" caption="Master Data → Vessels — a searchable index of the IMO registry." />
@@ -1231,15 +1241,10 @@ const UserManualPage = () => {
           the lane and container, then the customer's for any lane, then everyone's on the lane, then
           everyone's default. A rule suggests and checks; it never stops a quote. Only admins and
           Trade Managers can change it.</P>
-        <H3>Carrier Agents</H3>
-        <P>Which local company represents a carrier, and where. A carrier's agent in Rotterdam usually isn't the same company as its agent in New York — this registry records that, and CargoDesk uses it to automatically fill in the "Line Agent" party on a new shipment once its carrier and route are known, so nobody has to remember or re-type it by hand.</P>
-        <P>Click <strong>+ Add Carrier Agent</strong>, pick the carrier and the agent company, and add at least one place they cover — either one specific port (search by UN/LOCODE) or an entire country. One agent can cover several places at once: for example, an agent based in Spain can also be set to cover Andorra, by adding both as separate rows. If you later add a whole country and some of the ports you'd already added are inside it, CargoDesk removes those specific ports automatically (they're now redundant) and tells you exactly which ones it removed — nothing disappears silently.</P>
-        <P>Click the <strong>⚙</strong> button on any row and choose <strong>Edit</strong> to open the full record, which has four tabs:</P>
-        <P><strong>Coverage</strong> — the list of places this agent covers (add or remove them here), and a <strong>Working Schedule</strong> — which days of the week they're reachable and during which hours, since an agent isn't necessarily open the same hours every day. Add a row for each group of days that shares the same hours (for example, Monday–Tuesday 9:00–18:00, then a separate row for Wednesday and Friday 9:00–13:00) — click a day to toggle it on or off for that row.</P>
-        <P><strong>Capabilities</strong> — a checklist of what this agent can actually do (road haulage, warehousing, customs clearance, and so on). This is recorded so a future check can flag a mismatch before a booking is sent — for example, if a shipment needs road haulage arranged on export but the assigned agent doesn't offer it — but that automatic check doesn't exist yet; today the checklist is just recorded on the agent's own record.</P>
-        <P><strong>Notes</strong> and <strong>Address &amp; Contact</strong> — a free-text notes box, and a read-only view of the agent company's own address and contact person (kept in sync with their Customer record — update it there, not here).</P>
-        <H3>Automatic assignment on a new shipment</H3>
-        <P>Whenever a shipment's carrier, origin, or destination is set, CargoDesk automatically checks whether a registered Line Agent covers each end and — if exactly one does — fills the "Line Agent (Export)"/"Line Agent (Import)" party for you, so nobody has to remember to do it by hand. The Line Agent (Export) is where the carrier booking goes: the booking names it as the carrier's booking office, with its address and contact from its Customer record. If a location resolves through more than one linked port and each has its own registered agent, CargoDesk won't guess: the shipment's header shows a <Tag>Line Agent Picks Needed</Tag> badge, and opening Parties &amp; Offices shows a "pick one" list naming every real candidate and which linked port it matched through. Dismissing that list without picking leaves the party unassigned exactly as it already is — you can always assign one manually later.</P>
+        <H3>Carrier offices on a shipment</H3>
+        <P>When a shipment is created, and again whenever its carrier, port of loading or port of discharge changes, CargoDesk picks the carrier's four offices for it from the carrier's coverage: the <strong>booking office</strong> and <strong>origin billing</strong> (from the port of loading), the <strong>import office</strong> and <strong>destination billing</strong> (from the port of discharge). They show as four tiles on <Tag>Contracts &amp; Schedules</Tag>, each saying why it was picked. A change in Master Data never rewrites a shipment that already has its offices.</P>
+        <P>The export side can pick another office of the carrier for the booking and origin billing tiles, the import side for the other two; <strong>From coverage</strong> picks it again from the carrier's coverage. If a port has no office of its own but is linked to two ports that each have one, CargoDesk won't guess: the tile lists both, and the shipment's header shows <Tag>Carrier Office Picks Needed</Tag> until someone picks one.</P>
+        <P>Carrier offices replaced the Carrier Agents list and the "Line Agent (Export/Import)" parties in November 2026; existing shipments kept their Line Agents as their booking and import offices.</P>
       </div>
     ),
     "ais-integration": (

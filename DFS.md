@@ -395,7 +395,9 @@ scoped by Principal/Movement Type/Region-Country-Location, so recurring charges 
 re-entering shipment by shipment.
 **Roles**: operator, admin, trade_manager (with `canViewFinance`).
 **Primary data**: `shipment_cost_lines`, `carrier_invoices`, `charge_default_setups`,
-`charge_default_lines`.
+`charge_default_lines`. A carrier invoice records the carrier office that **issued** it (filled from the shipment's
+carrier billing office, changeable until a line is approved); GL Export puts that office's creditor code on the cost's
+AP row (ARCHITECTURE.md §8.53).
 **Business rules**: a contract refresh may only ever replace an *accrued* contract or manual BUY
 line. Posted, actualized or invoiced lines, Charge Default lines (labelled **CCD**, "Charge Cost
 Default"), haulage, carrier-invoice and adjustment lines are never touched — a charge that has one
@@ -410,8 +412,9 @@ better-matching setup is created afterward. See ARCHITECTURE.md §8.27.
 ### 5.6 Master Data Management (P6a)
 **Purpose**: the shared reference data every other domain depends on.
 **Key functions**: carriers, vessels, ports (14,269 UN/LOCODEs) with linked-port equivalence, trade
-lanes, countries, commodities, charge codes, pack types, carrier line agents (per-port/country
-representative resolution), carrier service **loop codes** with a directional (Eastbound/Westbound)
+lanes, countries, commodities, charge codes, pack types, **carrier profiles** (a carrier's own offices at any
+UN/LOCODE, which office books, handles imports and bills per port or country, our customer number at the carrier per
+legal entity, the creditor code of each office; ARCHITECTURE.md §8.53), carrier service **loop codes** with a directional (Eastbound/Westbound)
 port rotation, and an **HS Codes** registry of real 6-digit Harmonized System codes that cargo
 forms pick from instead of typing free text.
 **Roles**: admin (write; HS Codes writes also allow operator); every domain (read, as a dependency,
@@ -566,6 +569,12 @@ responsible office from the shipment's offices; the Incoterm sets the defaults. 
 line with its side, category, office and billed party, and lets the OCC/BK move a line. The booking sends the terms and
 where the freight is payable; sending it saves the terms if nobody did. A shipment's billing office (from its export
 office's settings, changeable on Parties & Offices) issues its invoices.
+**Carrier offices** (ARCHITECTURE.md §8.53): a shipment gets the carrier's booking office and origin billing office from
+its port of loading, and its import office and destination billing office from its port of discharge (the carrier's
+coverage; a port beats its country; with no billing row the booking or import office bills), picked again only when its
+carrier or a port changes. The export side can pick another office for the first two, the import side for the other
+two. The booking goes to the booking office, named at its own location, with our customer number at the carrier for the
+export office's legal entity; the freight is payable at the billing office of the side that pays it.
 **Key functions**: Send Booking Request as a **DCSA Booking 2.0** message — to the carrier's own
 integration, or, where it has none, to CargoDesk's built-in **demo carrier** (always on outside
 production; in production only when an admin turns it on), which answers like a real carrier and is
@@ -716,7 +725,7 @@ ARCHITECTURE.md §§2–7 and is intentionally not duplicated here.
 |---|---|---|---|
 | D1 | Monolith DB | `server.js` + `routes/*.js` | `spot_offers`, `spot_offer_lines`, `margin_rules`, `booking_escalations`, `lane_steerings`, `dcsa_sim_bookings`, `shipments`, `containers`, `shipment_cost_lines`, `shipment_parties`, `shipment_milestones`, `carrier_bookings`, `quotes`, `allocations`, `shipment_documents`, `customer_statements`, `gl_export_batches`, `users`, `app_settings` |
 | D2 | Contract Service DB | `services/contract-management/` | `contracts`, `contract_legs`, `contract_rates`, `contract_routings` |
-| D3 | MDM Service DB | `services/mdm/` | `carriers`, `vessels`, `port_locations`, `linked_ports`, `trade_lanes`, `countries`, `commodities`, `carrier_agents` |
+| D3 | MDM Service DB | `services/mdm/` | `carriers`, `vessels`, `port_locations`, `linked_ports`, `trade_lanes`, `countries`, `commodities` (and the legacy `carrier_agents`, read once by the move to carrier offices) |
 | D4 | Screening Service DB | `services/screening/` | `sanctions_entries`, `sanctions_syncs` |
 | D5 | Kanban Service DB | `services/kanban/` | `tickets`, `ticket_links`, `test_items`, `kb_projects` |
 | D6 | Customer Service DB | `services/customers/` | `customers`, `customer_identifiers`, `customer_contacts`, `customer_screenings` |
@@ -724,9 +733,10 @@ ARCHITECTURE.md §§2–7 and is intentionally not duplicated here.
 
 PDF Render (P9a) is stateless and owns no data store.
 
-D1 also holds three master-data registries that are deliberately *not* mirrored into D3: `loop_codes`
-and `loop_code_ports` (carrier service loops and their directional rotations) and `hs_codes`
-(curated HS-6 classification codes).
+D1 also holds master-data registries that are deliberately *not* mirrored into D3: `loop_codes`
+and `loop_code_ports` (carrier service loops and their directional rotations), `hs_codes`
+(curated HS-6 classification codes) and the carrier profiles (`carrier_offices`, `carrier_office_coverage`,
+`carrier_account_numbers`: company-specific settings, like Carrier Integrations).
 
 ## 8. Glossary
 
@@ -738,7 +748,7 @@ and `loop_code_ports` (carrier service loops and their directional rotations) an
 | **DCSA** | Digital Container Shipping Association — the carriers' interface standards (Booking 2.0, eBL, Track & Trace…). Every CargoDesk booking goes out as DCSA Booking 2.0, Shipping Instructions as DCSA Shipping Instructions 3.0, and each container's VGM as DCSA VGM 1.0; carriers without an integration are played by the built-in demo carrier. |
 | **Master B/L** | The carrier's own bill of lading for the shipment, drafted from the Shipping Instructions; CargoDesk reviews and approves the draft, the carrier issues it, and CargoDesk keeps it (a copy from its data, or its PDF) and where its originals or eBL are until the carrier releases the cargo (§5.12). |
 | **VGM evidence / VG01** | What a VGM declaration rests on (weighbridge ticket, weight calculation) and the printable VGM Declaration CargoDesk generates for it. |
-| **Line Agent (Export / Import)** | The carrier's local representative at the port of loading (Export) or discharge (Import). A booking is placed with the Line Agent (Export), sent as the DCSA carrier booking office. |
+| **Carrier office** | One of a carrier's own offices or companies (e.g. Hapag-Lloyd's Madrid office, its Barcelona company). Per port or country it books (export), handles the arrival (import) or bills us; a shipment gets four: booking, origin billing, import office, destination billing. Replaced the "Line Agent (Export / Import)" parties in November 2026. |
 | **Booking escalation** | Handing a rejected, changed or unanswered booking to OCC/AY or CCL/CO (and on to Trade/AY) for an alternative, which OCC/BK then books as instructed (§5.12). |
 | **Lane steering** | The carrier order per trade lane (for everyone or one customer), shown as Where to book when a contract is assigned and tried first by escalations (§5.3, §5.12). |
 | **Where to book** | The Lane Steering line for a shipment with each option's status and free space, and the pick: the first option with space (§5.3). |

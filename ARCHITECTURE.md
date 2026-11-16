@@ -5,6 +5,9 @@
 per-domain functional scope, roles) covers *what* the system does and *how data moves through it*;
 this document covers *how it's built*.
 
+> **2026-11-17 (unreleased).** §8.53 (carrier offices: booking, import and billing office per carrier and place, replacing
+> the Carrier Agents and Line Agent parties) and its audit TKT-IFZANU (§11), committed without a version bump.
+>
 > **2026-11-14 (v0.91.15 "Collect") — release.** §8.52 (the office split: payment terms per charge category,
 > responsible offices, the billing office; each line's Prepaid/Collect follows its category) was written as the work landed
 > and ships in v0.91.15, with the QA export/import audit's fixes (§8.50); the audits TKT-KL28KB and TKT-E9ZOIR are logged in §11.
@@ -111,7 +114,8 @@ this document covers *how it's built*.
 ---
 
 ## Table of Contents
-_(§8.52 added 2026-11-14 (the office split: payment terms per category, responsible offices, the billing office; §14); §8.51 added 2026-11-13 (the principal follows the incoterm, the invoice's Bill To; §14 and the §11 audit row TKT-E1GOI6); §8.47 added 2026-11-06 (Trade Horizon next: Contracts & Schedules, the shipment header, the » pill; the §8.6 bucket split; no §6 or §14 change); §8.46 added 2026-11-06 (EMO/IMO fill themselves from the ports, with §14); §8.45 added 2026-11-02 (the » Advance bar on shipment pages; no §6 or §14 change); §8.44 added 2026-10-29 (the House B/L audit's fixes, dangerous goods in the DCSA booking and the shipper's DG emergency contact, with §6 and §14); §8.43 added 2026-10-28 (the remaining DCSA phases: Master B/L amendments, equipment, Arrival Notice, Port Call, with §6 and §14); §8.42 added 2026-10-28 (DCSA phases 4–6, with §6 and §14); §8.41 added 2026-10-27 (the DCSA message review, with §6 and §14); §8.40 added 2026-10-21 (House B/L, Story 1) and completed 2026-10-24 (the remaining gaps, with §6 and §14); §8.33–8.39 added 2026-09-30 → 2026-10-21, with the §6 table count and groupings and the §14
+_(§8.53 added 2026-11-16 (carrier offices: booking, import and billing office per carrier and place; with §6 and §14);
+§8.52 added 2026-11-14 (the office split: payment terms per category, responsible offices, the billing office; §14); §8.51 added 2026-11-13 (the principal follows the incoterm, the invoice's Bill To; §14 and the §11 audit row TKT-E1GOI6); §8.47 added 2026-11-06 (Trade Horizon next: Contracts & Schedules, the shipment header, the » pill; the §8.6 bucket split; no §6 or §14 change); §8.46 added 2026-11-06 (EMO/IMO fill themselves from the ports, with §14); §8.45 added 2026-11-02 (the » Advance bar on shipment pages; no §6 or §14 change); §8.44 added 2026-10-29 (the House B/L audit's fixes, dangerous goods in the DCSA booking and the shipper's DG emergency contact, with §6 and §14); §8.43 added 2026-10-28 (the remaining DCSA phases: Master B/L amendments, equipment, Arrival Notice, Port Call, with §6 and §14); §8.42 added 2026-10-28 (DCSA phases 4–6, with §6 and §14); §8.41 added 2026-10-27 (the DCSA message review, with §6 and §14); §8.40 added 2026-10-21 (House B/L, Story 1) and completed 2026-10-24 (the remaining gaps, with §6 and §14); §8.33–8.39 added 2026-09-30 → 2026-10-21, with the §6 table count and groupings and the §14
 write-triggered side effects brought up to date on 2026-10-21 (§8.39, Where to book); §8.28–8.32, the full §5 `routes/` re-measure and the §4/§6/§8.5/§8.6/§11/§14 updates added
 2026-09-29 (v0.91.9 + unreleased); §8.26–8.27 and the §4/§6/§11 updates added 2026-09-25 (v0.91.8); §8.25 added 2026-09-20 (v0.91.6);
 §8.23–8.24 added 2026-09-19 (v0.91.5); §8.15 extended 2026-08-29 (v0.87.0); §8.21 added 2026-08-29
@@ -697,9 +701,10 @@ shipments ──┬── shipment_legs               (multimodal leg records)
             ├── containers ──┬── container_events    (Empty Pickup → … → Empty Return)
             │                └── container_packages   (cargo manifest tree — pallets/boxes/crates)
             ├── shipment_parties             (Flexible Party Model — shipper/consignee/notify/
-            │                                 principal + 12 additional roles, e.g. Forwarder,
-            │                                 Customs Broker (Export/Import), Line Agent, NVOCC
-            │                                 — §8.15)
+            │                                 principal + 11 additional roles, e.g. Forwarder,
+            │                                 Customs Broker (Export/Import), NVOCC — §8.15)
+            ├── shipment_carrier_offices     (the carrier's booking, import and billing offices
+            │                                 picked for it, a copy — §8.53)
             ├── shipment_cost_lines          (BUY/SELL, accrued→actualized→posted state machine)
             ├── shipment_milestones          (per-step timeline, soft out-of-order warning)
             ├── shipment_documents           (generated + signed PDFs, readiness tracking)
@@ -718,7 +723,8 @@ shipments ──┬── shipment_legs               (multimodal leg records)
 FREIGHT AUDIT & PAYMENT
 ───────────────────────
 carrier_invoices ──── carrier_invoice_lines  (reconciled against accrued cost lines / contract
-                                               rates / an independent D&D pre-audit)
+                                               rates / an independent D&D pre-audit; the invoice
+                                               records the carrier office that issued it, §8.53)
 
 CUSTOMS
 ───────
@@ -746,14 +752,14 @@ MASTER DATA
 carriers · vessels · port_locations ── linked_ports
 regions ── countries ── country_trade_lanes · trade_lanes ── allocations
 commodities · charge_code_definitions · pack_type_definitions
-carrier_agents ──┬── carrier_agent_locations       (header = carrier x agent customer; each
-                  │                                 location row is EITHER a specific UN/LOCODE
-                  │                                 OR a whole country — restructured from an
-                  │                                 earlier one-row-per-port shape so one Line
-                  │                                 Agent can cover several locations at once)
-                  └── carrier_agent_schedule_rows   (working-hours rows, day-grouped)
-carrier_agents.capabilities                          (JSON array of service capability codes —
-                                                       see §8.1's Carrier Agents subsection)
+carrier_offices ──┬── carrier_office_coverage     (port or country × export/import ×
+                   │                                 booking / import office / billing; a port
+                   │                                 beats its country, per role — §8.53)
+                   └── carrier_office_hours         (working-hours rows, day-grouped)
+carrier_account_numbers · carrier_profile_settings  (our customer number at the carrier per legal
+                                                      entity, the code list name — §8.53)
+(carrier_agents / carrier_agent_locations / carrier_agent_schedule_rows: the Line Agents until
+ 2026-11-16, moved to carrier offices once and no longer created; kept as they were where present)
 
 CUSTOMERS / ORGANIZATION
 ────────────────────────
@@ -939,6 +945,10 @@ while a background bulk fetch repopulates the cache, rather than ever blocking t
 `GET /internal/carrier-agents/resolve` (which does its own linked-port fallback server-side, since
 it owns both `carrier_agents` and `linked_ports`) and then does one local
 `SELECT company_name FROM customers` to attach the name — the service owns no `customers` table.
+
+> **Superseded 2026-11-16 by carrier offices (§8.53).** Everything below about Carrier Agents and Line Agents is
+> history: the carrier's offices are their own records on the carrier's profile, and the Carrier Agents page, routes
+> and the Line Agent party roles are gone.
 
 **Carrier Agents restructured (header + locations, not one-row-per-port)**: `carrier_agents` was
 originally `UNIQUE(carrier_code, port_unlocode)` — exactly one port per row, so covering several
@@ -3918,7 +3928,8 @@ were recorded in home-made formats and sent nowhere, and Track & Trace was still
 - **The carrier's local office (decided by the user).** The Line Agents (Export and Import) are the
   carrier's local representatives, so a booking is placed with the local one, not the carrier's head
   office. The shipment's **Line Agent (Export)** party is sent as `documentParties.carrierBookingOffice`:
-  its name, `UNLocationCode` = the POL, its address and contact. Booking 2.0 has no field for the import
+  its name, `UNLocationCode` = the POL, its address and contact. *(Since 2026-11-16 (§8.53): the shipment's
+  carrier booking office, at its own UN/LOCODE.)* Booking 2.0 has no field for the import
   side's agent. `bookingAgent` is the export office's legal entity (branch) with its email and phone, and
   is left out when there is none.
 - **The message log.** For outbound messages `edi_messages.raw_payload` is the DCSA body exactly as sent,
@@ -4760,7 +4771,8 @@ every invoice to every party; no settlement between offices. Recommendations tak
   (GET/PUT /api/shipments/:id/payment-terms). GET …/cost-lines carries each line's `split`.
 - **The booking** (routes/edi.js `dcsaBookingExtras` → `dcsa-bkg-v2`): `freightPaymentTermCode`,
   `originChargesPaymentTerm` and `destinationChargesPaymentTerm` (haulage, port, other) and `invoicePayableAt` (the
-  location of the freight's office); before the terms are saved, Freight Terms alone as before.
+  location of the freight's office; since 2026-11-16 the carrier's billing office of the paying side, §8.53); before the
+  terms are saved, Freight Terms alone as before.
 - **Invoices** (`generateInvoices` → `generateSplitInvoices`, src/utils/invoiceGenerator.js): one FR01 per issuing legal
   entity and billed party (per container when splitting): issued from that entity (`resolveInvoiceTaxInfo(…,
   { issuerOfficeId })`), addressed to the party (`shipmentBilledAs`), in its currency. One legal entity → still one
@@ -4785,6 +4797,84 @@ every invoice to every party; no settlement between offices. Recommendations tak
 - **QA export** (§8.50): the billing office and every office that issued one of its documents are office references
   (roles `billing`, `issuing`), found in the test system by code or emptied (S3).
 - **Tests.** `tests/office-split.test.js` (48); Vitest `paymentTerms.parity`, `splitInvoices`, `PaymentTerms`.
+
+### 8.53 Carrier offices: booking, import and billing office per carrier and place (2026-11-16)
+
+The user's question (2026-11-16): does the DCSA carrier setup need changes, given that CargoWise keeps carrier addresses
+and organisations linked per location? Their example: a user in the Madrid organisation; every shipment from Spain is
+booked with Hapag-Lloyd's Madrid office, but one from ESBCN is **billed** by Hapag-Lloyd's Barcelona company. Found:
+one role only (the Line Agent), the booking office sent located at the port of loading (the spec says "where the
+carrier booking office is located"), nothing recording who bills us, `invoicePayableAt` = our own office, no place for
+our account number. Decisions (two rounds of questions, then mockup
+https://claude.ai/code/artifact/8a2ab3bd-ef7d-4787-932d-3e42a0a40b41): the booking office follows the **port of loading**
+only (never our office); the billing office is the carrier's **creditor subsidiary** that invoices us, and the booking's
+"payable at" is its location; **our account number per legal entity**, as CargoWise keeps it; a carrier invoice records
+the **office that issued it**, with a **creditor code per carrier office** for GL Export; the import side as CW1 does
+(coverage per direction); **one API connection per carrier** (DCSA leaves authentication to the carrier; Maersk ties
+credentials to customer codes checked in the payload). The five open points were settled by the user's rule "check
+DCSA, CargoWise and other TMS, then go with the common denominator" (sources on the mockup):
+
+| | Decided | Who does it |
+|---|---|---|
+| A | No billing row: the booking office bills the export side, the import office the import side, worked out when read | SAP (invoicing party → the order's vendor), Oracle (pay site → the order's site), CargoWise (the organisation itself); DCSA's `invoicePayableAt` is optional, no billing party |
+| B | One "Issued by" per carrier invoice, defaulted from the shipment's billing office for the side of the first charge, changeable until a line is approved | CargoWise (AP invoice header creditor), SAP (one invoicing party, fixed once posted), Oracle (one supplier site, defaulted from the order), Magaya (the bill's vendor) |
+| C | The profile lives on the carrier's record; the Carrier Agents list goes (`#mdm-carrier-agents` opens Carriers) | CargoWise (organisation's addresses and agent ports), SAP (vendor partner functions), Oracle (supplier sites) |
+| D | The creditor code is per carrier office | the billing entity is the creditor in all of them; only CargoWise adds a per-company outside code |
+| E | A shipment keeps a copy; Master Data changes never rewrite it; offices are picked again only when its carrier or a port changes; nothing is resent | SAP / Oracle (changes affect new documents only), CargoWise (filled when the port is entered); DCSA (a sent booking changes by amendment) |
+
+- **Profile** (`lib/carrier-offices.js` = `ctx.carrierOffices`, routes `routes/carrier-offices.js`, screen
+  `src/components/carriers/CarrierProfileModal.jsx` from Master Data → Carriers):
+  - `carrier_offices`: name, own UN/LOCODE (any well-formed one: Madrid ESMAD isn't a port), address, contact,
+    `creditor_code`, capabilities, `is_active`, working hours (`carrier_office_hours`); never customers (the August
+    decision, 2026-08-31).
+  - `carrier_office_coverage`: `place_type` unlocode|country, `direction` export|import, `role` booking (export only) |
+    import (import only) | billing (both); one row per carrier, direction, role and place (409 otherwise). Ports and
+    countries are checked against Master Data where it lives (the MDM service in remote mode).
+  - `carrier_account_numbers` (carrier × branch) and `carrier_profile_settings` (`account_code_list_name`).
+  - An office named by coverage, a shipment or a carrier invoice can't be deleted (409): it is set inactive.
+  - Routes: GET /api/carriers/:code/profile, …/coverage-check?pol&pod, POST …/offices, PUT/DELETE /api/carrier-offices/:id,
+    POST …/coverage, PUT/DELETE /api/carrier-coverage/:id, PUT …/account-numbers, GET /api/carrier-offices?carrierCode=
+    (writes: admin, operator). Kept by the monolith whatever `mdm_source` (like Carrier Integrations).
+- **The rule** (`candidatesFor`): for a role and port, a row for the port, else a row for its country, else the port's
+  linked ports; two offices found only through linked ports are left empty with both as candidates (a person picks).
+  The ports are the **first sea leg's POL and the last sea leg's POD** (`shipments.pol/pod` follow the first and last leg,
+  which can be a pick-up or delivery place), else the shipment's own.
+- **The shipment's copy** (`shipment_carrier_offices`, roles booking / billing_origin / import / billing_destination,
+  source auto | manual | migrated, `reason`): `determine` on create and quote conversion; `refresh` after a shipment
+  edit, a route save and a rebooking (`syncShipmentFromLegs`) picks again only the roles whose carrier or port changed
+  (`shipments.carrier_offices_for` = "carrier|pol|pod"); a role the coverage can't settle is emptied. A person's pick
+  (PUT /api/shipments/:id/carrier-offices/:role `{ officeId }`, null = left empty on purpose, `{ fromCoverage: true }`)
+  is gated by side (booking and origin billing: the export side; the other two: the import side; `canEditOfficeSide`).
+  History: `CARRIER_OFFICE_ASSIGNED`, `CARRIER_OFFICE_CHANGED`, `CARRIER_OFFICE_CLEARED`. The names are screened with the
+  parties (`screeningNames`). GET …/carrier-offices returns the four with why, the carrier's offices for the pick, and
+  the capability gaps (the old Line Agent check, now per office).
+- **The booking** (routes/edi.js `dcsaBookingExtras` → `forBooking`): `carrierBookingOffice` = the booking office at its
+  own UN/LOCODE with address and contact; `bookingAgent.identifyingCodes` = `{ codeListProvider: "ZZZ", partyCode: our
+  number for the export office's legal entity, codeListName }`; `invoicePayableAt` = the billing office of the side
+  paying the freight (Prepaid → origin, Collect → destination; the terms' freight term once saved, else Freight Terms),
+  else the port of loading / discharge. The Shipping Instructions take the same place (`payableAt`).
+- **Freight Audit** (routes/carrier-invoices.js): `carrier_invoices.issuing_office_id` / `issuing_office_name`;
+  GET /api/carrier-invoices/issuer-options (registered before `/:id`), PATCH …/:id/issuer (409 once a line is
+  approved); the detail carries the office's creditor code. **GL Export**: an AP row of a cost posted from an approved
+  carrier invoice line carries `Counterparty` (creditor code) and `Counterparty Name` (two new last CSV columns).
+- **Screens**: Contracts & Schedules shows four carrier office tiles (`CarrierOfficeTile`, SchedulesParts.jsx) in place
+  of the Line Agent tiles; Carrier Booking → Details the four offices; Parties & Offices the booking/import office on the
+  office cards; the header badge "Carrier Office Picks Needed"; Freight Audit "Issued by". The Carrier Agents page,
+  its routes (`/api/carrier-agents*`, `/api/shipments/:id/line-agent-*`) and the Line Agent party roles are gone.
+- **The one-time move** (`migrateFromCarrierAgents`, startup, flag `carrier_offices_migrated`): each carrier agent → an
+  office (its customer's name, address and primary contact copied, `legacy_agent_id`/`legacy_customer_id`), each location
+  → an export booking row and an import office row, its hours; each shipment's Line Agent party → its booking / import
+  office (source `migrated`, the customer id kept) and the party row removed; every shipment marked as picked for its
+  current carrier and ports (E). Remote MDM mode reads the agents from the MDM service (its legacy routes stay for this).
+  The old tables keep their rows, with their foreign keys dropped. On a copy of the user's database: 1 office, 2
+  coverage rows, 47 Line Agents moved; a second start moved nothing.
+- **QA export** (§8.50): `shipment_carrier_offices` is a part; carrier offices (and invoice issuers) are references found
+  in the test system by carrier and name, else emptied with the name kept.
+- **Audit** TKT-IFZANU (§11): 9 findings, all fixed (F1 "Payable at Destination" is Collect everywhere; F7 the Compliance panel's
+  Carrier Offices phase; F8 the tile layout; F9 remote Master Data checks; F2–F6 low).
+- **Tests**: `tests/carrier-offices.test.js` (60; replaces carrier-agents and line-agent-candidates), the remote-mode section of
+  `mdm-service-toggle`, `dcsa-messages` (booking office), `office-split` (payable at), Vitest `CarrierOfficeTile`, Cypress
+  `carrier-offices.cy.js`.
 
 ## 9. Data Flow Diagrams
 
@@ -5053,6 +5143,7 @@ continues; don't rewrite history once an item's checked.
 | 2026-11-09 | **Shipment messages** (found while writing the User Manual's Messages step for the AI Assistant's test set): POST /api/shipments/:id/messages. | **1 finding (medium); fixed** | The author and role were stored as the request named them, so any signed-in user (a Viewer included) could post under someone else's name → the server signs a message with the signed-in user's name and the role they work in (`deriveEffectiveRole`, labelled like the role switcher); a body that isn't text is a 400, not a 500; the Messages drawer sends only the body. Older messages keep the names they were posted with. Test: tests/shipment-messages.test.js. |
 | 2026-11-12 | **Pre-release audit of the terms + carrier's Master B/L batch (TKT-GC05AS)**: everything since v0.91.13 (local commits 4979350 + b9b01d9, not pushed): House B/L terms and conditions (§8.48), Messages signed by the user, the manual gaps and AI test set, the carrier's Master B/L (§8.49: custody, print, PDF, MB01 retired, release warning). Method: a read by risk class (scope, side, role and status lock on the new routes; every other writer and reader of MB01, BL01, offices and transport_documents; what the terms change for the eBL; what a deleted or replaced document leaves behind; inputs the screens never send), live probes (scratchpad audit-0914-probe.mjs). Report https://claude.ai/code/artifact/0d1815e1-7a00-4297-b9f1-ce18e4a1e542. | **8 findings (3 medium, 5 low); all fixed the same day ("fix all findings"; C2 and C4 as recommended, the user: C2 "document this in the manual", C4 "for historical purposes we need to allow access, especially in the US"), §8.48/§8.49** | C1 TKT-I5FX4A the import side can undo the export side's custody steps and save a by-eye check of its PDF (SHP-5RSTKS: 200 where recording is 403); C2 TKT-H5UFMT an eBL issued from an uploaded BL01 carries the one-sentence placeholder, not the entity's terms (SHP-7TFI1J vs SHP-RFVBG1); C3 TKT-NR3S73 stopping a language an office defaults to: no warning, the office still listed, and its form refused 400 until changed (NL-NLRTM-SE, restored); C4 TKT-8W3S3B the panel offers actions the server refuses (Completed: 409 SHIPMENT_LOCKED while a Documents MB01 upload works; the import side: 403); C5 TKT-C4D2E8 deleting the panel's MB01 leaves it pointing at nothing; C6 TKT-C7UJL7 Replace / Print again leave the earlier MB01 confirmed, no document history entry; C7 TKT-H55WTK a Document Template Editor BL01 face can't name the terms pages (read); C8 TKT-QC6PWN step dates default to and are checked against the UTC date (read). Checked clean: scope on every new route, the role set, cascades on shipment delete, pdf.js with eval off and its Docker install, Messages signing for every role, an amendment's terms, MB01 generate refused. **Fixed:** C1 undo and the by-eye check follow the step's side; C2 an uploaded BL01 is issued with the panel's terms (stored, carried by the eBL; manual explains); C3 stopping a language moves its offices to English, named first, and the office save checks only a changed default; C4 the panel's PDF, print, steps and undo stay open on closed shipments, the panel hides what the side can't do; C5 deleting/voiding the panel's MB01 clears its link; C6 a replaced PDF or copy is voided ("Replaced by"), history logged; C7 a "Terms reference" field in the template editor; C8 dates in the user's day (server: up to UTC + 1). Tests: carrier-mbl (59), bl-terms (48), Vitest CarrierMasterBlPanel, HouseBlPanel, BlTermsPage, houseBlPrint. |
 | 2026-11-13 | **Pre-release audit of the incoterm principal rule (TKT-E1GOI6)**: the latest addition in 85fbff4 (§8.51): the principal following the incoterm on create, save and quote conversion, the parties on the History, the invoice's Bill To. Method: every reader of the principal (screening, credit, Where to book and the steering verdict, space and contract matching, invoices and credit notes, statements, carrier messages), every path that writes it (form, Conditions, Parties, API, quote conversion, QA import), the History field list's other users; live probe (scratchpad audit-0914-incoterm-probe.mjs). The QA export/import in the same commit was verified, not audited. | **5 findings (2 medium, 3 low); all fixed the same day, §8.51** | D1 TKT-XXZSOF a principal moved by the incoterm kept the old principal's named-account contract and space, its steering verdict still on the old principal's line, no warning (SHP-ISA729: FOB → CIF on the Conditions page); D2 TKT-DV6AUG a credit/debit note addressed (Bill To and VAT number) to the principal now, not the party its invoice billed; D3 TKT-2LDA6I the History reason never written for edits made in the app (the screens send the moved principal, the server took it as chosen); D4 TKT-DWCMLA the Bill To box printed CargoDesk wording ("the shipment's principal") on the customer's document; D5 TKT-XH02PJ a principal given by name only replaced by the implied party (API only; none in the user's 1,856 shipments). Checked clean: only the shipment save walks `TRACKED_FIELDS`; screening re-runs on the moved principal; a locked shipment refuses the save before the rule runs; no carrier message carries the principal; quote conversion keeps the quote's customer as shipper (an FOB quote billed the consignee before too). **Fixed:** D1 the verdict is judged again on any principal change and the save returns `principalNotice` (a warning toast); D2 `shipmentBilledAs`; D3 the reason is recorded when the principal sent is the rule's; D4 the name only; D5 a name-only principal is the caller's (both copies of the rule). Tests: incoterm-principal (20), Vitest invoiceGenerator (21), incotermPrincipal parity (10). |
+| 2026-11-17 | **Audit of carrier offices (TKT-IFZANU)**, before their commit (§8.53). Method: the new code read again path by path (profile, coverage rule, the shipment's copy, the booking and SI payable-at, Freight Audit's issuer, GL Export, the QA export, the move from Carrier Agents, the screens); the remote Master Data mode; every path that changes a shipment's carrier or ports; History; screening; the Cypress spec and a real-browser pass on a copy of the user's database. | **9 findings (4 medium, 5 low); all fixed the same day ("perform the audit, fix any findings, then commit and push")** | F1 TKT-QVVNCJ "Payable at Destination" went out as Prepaid (SI builder, House B/L DCSA document, printed BL01, the booking fallback all tested `=== "Collect"` or /collect/); F7 TKT-FZCDNN a screening hit on a carrier office wasn't shown in the Compliance panel; F8 TKT-CS368M the tile's office picker overflowed onto the next tile (Cypress: "covered by another element"); F9 TKT-GP3TIZ in remote Master Data mode coverage refused ports and countries only the MDM service holds; F2 TKT-R6GRMW the move named an office "Agent <id>" when its customer couldn't be read; F3 TKT-AX74CD History logged "X → X" and "null → null"; F4 TKT-MNEV5C the tile's list dropped an office set inactive (Save would empty it); F5 TKT-FEYDOZ "Not recorded" picked as the issuer was replaced by the default; F6 TKT-2T22W6 dead Carrier Agent mappers. Checked clean: side gating (403), another carrier's or an inactive office refused, picked again only on a carrier or sea-port change, the booking valid DCSA 2.0 with the office at its own location and our account number, the move runs once (1 office, 2 coverage rows, 47 Line Agents, on the copy and then on the user's database, backed up first to backups/pgdata-2026-11-17-pre-carrier-offices), the QA export carries the copy, the section locks with a Completed/Cancelled shipment. **Fixed:** F1 one rule (Collect or Payable at Destination = Collect) in every reader; F7 a Carrier Offices phase; F8 tiles shrink, the select fills its tile, two equal columns; F9 the checks ask the MDM service in remote mode; F2 the party's name; F3 History only on a change; F4 the current office kept, marked inactive; F5 an explicit null kept; F6 removed. Tests: carrier-offices (60, incl. GL Export's Counterparty), mdm-service-toggle (remote coverage), Cypress carrier-offices 3/3. |
 | 2026-11-14 | **Audit of the office split (TKT-E9ZOIR)**, before its release (§8.52), with the change that each line's Prepaid/Collect follows its category's term. Method: who may change the terms and lines; every billing path (generate, confirm, reverse + credit note, statements) against a change of terms or offices after the fact; what follows the line's entity (VAT, GL, statements, reminders, AR); the QA export's references; the billing office's lifecycle. Live probe on the CI replica's scratch database, never the user's (scratchpad audit-split-probe.mjs). | **5 findings (1 high, 2 medium, 2 low); all fixed the same day ("audit, commit and push")** | S1 TKT-2Y5Z8M the CN01 was billed by the terms as they are now: after a terms change it was refused 409 'different parties' and left its invoice voided with no related document, a bare void GL and VAT treat as never issued (SHP-OGDG43 on the replica); after the billing office was taken off it was issued by the import office's entity (SHP-TLWES5); S2 TKT-T7NJS5 a draft made before a terms change confirmed to the shipper while its charge had moved to the consignee (SHP-ZR7ZBP); S3 TKT-PRA1PQ the QA export didn't list the billing office, so an imported shipment kept another system's office id; S4 TKT-JQ5L1M an issued charge and a posted cost could be moved to another office; S5 TKT-EO2AJT a deactivated billing office was still copied onto new shipments. Checked clean: only the export side's OCC/BK, admins and operators change the terms (viewer 403); the terms lock with a Completed/Cancelled shipment; mixed invoices refused; VAT, GL and statements per issuing entity; reminders and collections by issuing office and billed party; the booking carries the terms; an office a shipment names as billing office can't be deleted; issued charges keep their Prepaid/Collect. **Fixed:** S1 the CN01 names its invoice (`relatedDocId`) and takes its issuer and billed party; S2 confirming re-checks the draft's split (409, generate again); S3 billing and issuing offices are references; S4 `save` refuses (409), the pop-up shows those lines read-only; S5 `billingOfficeFor` takes an active billing office only. Tests: office-split (S1–S5). |
 | 2026-11-13 | **Audit of the shipment QA export/import (TKT-KL28KB)**, released in v0.91.14 (§8.50). Method: the routes' role gates and the production switch; what the import takes from the file as it is (table and column names, file names, ids, unique keys); every path that can send for an imported shipment (shipment-scoped routes, routes keyed by another id, every timer sweep, the distribution service); what the export carries; what a failed import leaves behind. Live probe on the CI replica's scratch database, never the user's (scratchpad audit-qa-probe.mjs). | **4 findings (1 high, 1 medium, 2 low); all fixed the same day ("go ahead")** | Q1 TKT-GSD31C a document without bytes keeps the file's stored_name, and every reader joins it to uploads/: '../../package.json' imported (SHP-82CSMH on the replica) downloaded the server's package.json; deleting the document or shipment would unlink the target; Q2 TKT-AZ7508 statement reminders and collections read every confirmed statement, so a statement made from an imported shipment's charges would email the customer (read); Q3 TKT-INMHA3 ebl_surrender_requests.surrender_request_reference is unique across the table: a second import of a file carrying one fails 500 (replica); Q4 TKT-E6W1X3 a failed import ("nothing was saved") leaves the customer copies it created (replica: 2). Checked clean: admins only on all five routes; column names checked against the schema; every timer sweep and shipment-scoped send skips an imported shipment, the distribution service's sends too; public document links are signed and minted only by a guarded send; no script runs from an imported document (CSP script-src 'self', bearer auth); every shipment table exported except schedule_shipment_links (legacy) and shipment_edit_locks (transient). **Fixed:** Q1 the import names every stored file itself (no bytes → a name with no file, download 404); Q2 `STATEMENTS_TO_CHASE_SQL` (server.js) leaves out a statement with any line from an imported shipment; Q3 a new surrender reference per import, rewritten in its JSON and events; Q4 the customer copies are removed when the import fails (also a failure while copying them). Tests: shipment-transfer (Q1, Q3, Q4). |
 
@@ -5455,6 +5546,19 @@ here:
   confirmation itself) are recorded first, then an open escalation is resolved or sent back.
 - **`backfillMainVessel()`** (server.js, §8.37). At startup, open shipments with a transshipment get
   the main sea leg's vessel/voyage/IMO. Idempotent: rows already right are untouched.
+
+**Added 2026-11-16 (carrier offices, §8.53).**
+
+- **A shipment's carrier offices picked** (`ctx.carrierOffices.determine`, lib/carrier-offices.js) on POST /api/shipments
+  and quote conversion: all four roles from the carrier's coverage (`CARRIER_OFFICE_ASSIGNED`).
+- **Picked again when the carrier or a port changes** (`refresh`): after PUT /api/shipments/:id (carrier, POL or POD
+  changed) and at the end of `syncShipmentFromLegs` (route saves, rebookings, the escalation's sailing change). It compares
+  `shipments.carrier_offices_for` ("carrier|pol|pod", the sea legs' ports) and picks again only the roles whose carrier
+  or port moved; a role the coverage can't settle is emptied (`CARRIER_OFFICE_CLEARED`). Deterministic: a repeat changes
+  nothing. A Master Data change never triggers it.
+- **The one-time move from Carrier Agents** (`migrateFromCarrierAgents`, startup, before listen): runs once
+  (`app_settings.carrier_offices_migrated`).
+- **Re-screening** after a hand pick (PUT …/carrier-offices/:role), keeping a compliance officer's override.
 
 **Added 2026-11-14 (the office split, §8.52).**
 

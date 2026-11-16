@@ -317,33 +317,113 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
     ok(res, filterOptions(await loadExceptionRows(req), EXCEPTION_COLUMNS));
   });
 
+  // ─── Who issued it (carrier offices, §8.53) ─────────────────────────────────
+  // One "Issued by" per invoice, as CargoWise (the AP invoice's creditor), SAP (the invoicing party), Oracle (the
+  // supplier site) and Magaya (the bill's vendor) keep it: filled from the shipment's carrier billing office for the side
+  // of the invoice's first charge, changeable by the clerk until a line is approved.
+  const freightTermOf = shipment => {
+    const terms = (() => { try { return shipment.payment_terms ? JSON.parse(shipment.payment_terms) : null; } catch { return null; } })();
+    const t = terms?.categories?.freight?.term;
+    return t === "COL" || t === "PRE" ? t : /^(collect|payable at destination)$/i.test(String(shipment.freight_terms || "").trim()) ? "COL" : "PRE";
+  };
+  async function sideOfInvoiceLine(shipment, line) {
+    if (line.freeTimeSide === "origin" || line.freeTimeSide === "destination") return line.freeTimeSide;
+    const rules = ctx.officeSplit?.rules;
+    let side = null;
+    if (line.matchedCostLineId) {
+      const [cl] = await query("SELECT charge_code, charge_side, source FROM shipment_cost_lines WHERE id=$1", [line.matchedCostLineId]);
+      if (cl && rules) side = rules.sideOfLine({ chargeCode: cl.charge_code, chargeSide: cl.charge_side, source: cl.source });
+    }
+    if (!side && rules) side = rules.sideOfCode(SERVICE_CODE_MAP?.[line.serviceCode] || line.serviceCode) || rules.sideOfCode(line.description);
+    if (side === "Main carriage") return freightTermOf(shipment) === "COL" ? "destination" : "origin";
+    return side === "Destination" ? "destination" : "origin";
+  }
+  async function issuerFor(invoice, shipment, firstLine) {
+    if (!ctx.carrierOffices || !firstLine) return null;
+    const side = await sideOfInvoiceLine(shipment, firstLine);
+    const d = await ctx.carrierOffices.issuerDefault(shipment.id, invoice.carrierCode, side);
+    return d ? { ...d, side } : null;
+  }
+  // The offices of the invoice's carrier and the default for a shipment (the New Carrier Invoice form). Registered
+  // before GET /:id, which would take "issuer-options" for an id.
+  app.get("/api/carrier-invoices/issuer-options", async (req, res) => {
+    const { shipmentId = "", carrierCode = "", serviceCode = "", freeTimeSide = "" } = req.query;
+    if (!carrierCode) return err(res, "carrierCode required");
+    const offices = ctx.carrierOffices ? await ctx.carrierOffices.officesOf(carrierCode, { activeOnly: true }) : [];
+    let def = null;
+    if (shipmentId) {
+      const shipment = await loadScopedShipment(shipmentId, req);
+      if (!shipment) return err(res, "Shipment not found", 404);
+      def = await issuerFor({ carrierCode }, shipment, { serviceCode, freeTimeSide });
+    }
+    ok(res, { offices: offices.map(o => ({ id: o.id, name: o.name, unlocode: o.unlocode, creditorCode: o.creditorCode })),
+      defaultOfficeId: def?.officeId || "", why: def?.why || "", side: def?.side || "" });
+  });
+
   app.get("/api/carrier-invoices/:id", async (req, res) => {
     const [inv] = await query("SELECT * FROM carrier_invoices WHERE id=$1", [req.params.id]);
     if (!inv) return err(res, "Not found", 404);
     if (!(await loadScopedShipment(inv.shipment_id, req))) return err(res, "Not found", 404);
     const lines = await query("SELECT * FROM carrier_invoice_lines WHERE invoice_id=$1 ORDER BY sort_order", [req.params.id]);
-    ok(res, { ...mapCarrierInvoice(inv), lines: lines.map(mapCarrierInvoiceLine) });
+    const [office] = inv.issuing_office_id ? await query("SELECT creditor_code, unlocode FROM carrier_offices WHERE id=$1", [inv.issuing_office_id]) : [];
+    ok(res, { ...mapCarrierInvoice(inv), issuingCreditorCode: office?.creditor_code || "", issuingOfficeUnlocode: office?.unlocode || "",
+      lines: lines.map(mapCarrierInvoiceLine) });
+  });
+
+  // Another office of the carrier as the issuer (null = none), until a line is approved: approving posts the line to
+  // the shipment's costs with this creditor, so after that it's fixed (as SAP and Oracle fix it once posted).
+  app.patch("/api/carrier-invoices/:id/issuer", invoiceWrite, async (req, res) => {
+    const [inv] = await query("SELECT * FROM carrier_invoices WHERE id=$1", [req.params.id]);
+    if (!inv) return err(res, "Not found", 404);
+    if (!(await loadScopedShipment(inv.shipment_id, req))) return err(res, "Not found", 404);
+    const [{ n }] = await query("SELECT COUNT(*)::int AS n FROM carrier_invoice_lines WHERE invoice_id=$1 AND status='approved'", [inv.id]);
+    if (Number(n) > 0) return err(res, "A line of this invoice is approved, so who issued it is fixed", 409);
+    const officeId = req.body?.issuingOfficeId || null;
+    let office = null;
+    if (officeId) {
+      office = ctx.carrierOffices ? await ctx.carrierOffices.officeById(officeId) : null;
+      if (!office || office.carrierCode !== String(inv.carrier_code || "").toUpperCase()) return err(res, `Pick an office of ${inv.carrier_code || "the invoice's carrier"}`);
+    }
+    await query("UPDATE carrier_invoices SET issuing_office_id=$1, issuing_office_name=$2 WHERE id=$3", [office?.id || null, office?.name || "", inv.id]);
+    await logEntityEvent("carrier_invoice", inv.id, "ISSUER_CHANGED", "issued_by", inv.issuing_office_name || null, office?.name || null,
+      JSON.stringify({ officeId: office?.id || null, by: req.user?.name || req.user?.email || "" }));
+    const [row] = await query("SELECT * FROM carrier_invoices WHERE id=$1", [inv.id]);
+    ok(res, mapCarrierInvoice(row));
   });
 
   app.post("/api/carrier-invoices", invoiceWrite, async (req, res) => {
-    const { shipmentId, carrierCode = "", invoiceNumber = "", invoiceDate = "", currency = "USD", notes = "", lines = [] } = req.body;
+    const { shipmentId, carrierCode = "", invoiceNumber = "", invoiceDate = "", currency = "USD", notes = "", lines = [], issuingOfficeId = null } = req.body;
     if (!shipmentId) return err(res, "shipmentId required");
     const shipment = await loadScopedShipment(shipmentId, req);
     if (!shipment) return err(res, "Shipment not found", 404);
     if (!lines.length) return err(res, "At least one invoice line is required");
+    // Who issued it: the office picked (one of the carrier's); null sent = not recorded (audit F5: it took the default);
+    // not sent = the shipment's billing office for its first charge.
+    let issuer = null;
+    const issuerChosen = Object.prototype.hasOwnProperty.call(req.body, "issuingOfficeId");
+    if (issuingOfficeId) {
+      const o = ctx.carrierOffices ? await ctx.carrierOffices.officeById(issuingOfficeId) : null;
+      if (!o || o.carrierCode !== String(carrierCode).trim().toUpperCase()) return err(res, `Pick an office of ${String(carrierCode).toUpperCase() || "the invoice's carrier"} as the issuer`);
+      issuer = { officeId: o.id, officeName: o.name };
+    }
     const id = `CINV-${uid()}`;
     const now = new Date().toISOString();
     const actor = req.user?.name || req.user?.email || "";
     await query(`INSERT INTO carrier_invoices (id, shipment_id, carrier_code, invoice_number, invoice_date, currency, status, notes, created_at, created_by)
       VALUES ($1,$2,$3,$4,$5,$6,'Pending',$7,$8,$9)`,
       [id, shipmentId, carrierCode.toUpperCase(), invoiceNumber, invoiceDate, currency.toUpperCase(), notes, now, actor]);
+    let firstComputed = null;
     for (let i = 0; i < lines.length; i++) {
       const computed = await computeLine(shipment, lines[i]);
+      if (i === 0) firstComputed = computed;
       await insertLine(id, i, lines[i], computed);
     }
+    if (!issuer && !issuerChosen) issuer = await issuerFor({ carrierCode: carrierCode.toUpperCase() }, shipment,
+      { ...lines[0], matchedCostLineId: firstComputed?.matchedCostLineId || firstComputed?.matched_cost_line_id || "" });
+    if (issuer) await query("UPDATE carrier_invoices SET issuing_office_id=$1, issuing_office_name=$2 WHERE id=$3", [issuer.officeId, issuer.officeName || "", id]);
     const status = await recomputeInvoiceStatus(id);
     await logEntityEvent("carrier_invoice", id, "CREATED", null, null, null,
-      JSON.stringify({ shipmentId, carrierCode, invoiceNumber, lineCount: lines.length }));
+      JSON.stringify({ shipmentId, carrierCode, invoiceNumber, lineCount: lines.length, issuedBy: issuer?.officeName || null }));
     const [inv] = await query("SELECT * FROM carrier_invoices WHERE id=$1", [id]);
     const savedLines = await query("SELECT * FROM carrier_invoice_lines WHERE invoice_id=$1 ORDER BY sort_order", [id]);
     ok(res, { ...mapCarrierInvoice({ ...inv, status }), lines: savedLines.map(mapCarrierInvoiceLine) }, 201);

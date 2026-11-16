@@ -91,8 +91,10 @@ module.exports = function shippingInstructionsRoutes(app, ctx) {
     // one there), so instructions without one would come back asking for it.
     if (parties.consignee && !parties.consignee.identifyingCodes?.length)
       missing.push(`an identifying code (LEI, DUNS, FMC or an eBL platform id) on the consignee ${parties.consignee.partyName} (Customers → Identifiers): the carrier's Master B/L names the consignee by one`);
+    // Where the freight is paid: the carrier's billing (creditor) office of the paying side (§8.53), as on the booking.
+    const payableAt = ctx.carrierOffices ? await ctx.carrierOffices.payableAt(shipment, /^(collect|payable at destination)$/i.test(String(shipment.freight_terms || "").trim()) ? "COL" : "PRE").catch(() => "") : "";
     const body = buildShippingInstructions({
-      shipment, containers, reference,
+      shipment, containers, reference, payableAt,
       parties,
       contact: { name: office?.office_name || office?.branch_name || "", email: office?.email || "", phone: office?.phone || "" },
       houseBillsOfLading,

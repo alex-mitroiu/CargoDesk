@@ -12,7 +12,7 @@ vi.mock("../../../api", async () => {
   return { ...actual, api: mockDeep(actual.api) };
 });
 
-import { ContractCard, SpacePanel } from "./SchedulesParts";
+import { ContractCard, SpacePanel, CarrierOfficeTile } from "./SchedulesParts";
 import { LegsTable } from "../ShipmentFormPage";
 import { HZ_LEGACY_THEME } from "../shipmentDetailTheme";
 
@@ -177,5 +177,53 @@ describe("LegsTable — pill look's live Save checks", () => {
   it("keeps the classic table free of the checks row", () => {
     render(<LegsTable shipmentId={null} draftLegs={[leg("a", "NLRTM", "USNYC")]} canEdit showContractCols={false} hideDraftBanner />);
     expect(screen.queryByTestId("shipment-form-leg-checks")).toBeNull();
+  });
+});
+
+// Carrier offices (2026-11-16, §8.53): the tile says which office and why, offers the carrier's offices to the side
+// that may change it, and lists the offices found twice via linked ports for a pick.
+describe("CarrierOfficeTile", () => {
+  const OFFICES = [{ id: "COF-MAD", name: "Hapag-Lloyd Spain Madrid", unlocode: "ESMAD" }, { id: "COF-BCN", name: "Hapag-Lloyd Spain Barcelona", unlocode: "ESBCN" }];
+  const entry = over => ({ role: "booking", label: "Carrier booking office", side: "Export", port: "ESBCN", source: "auto", why: "row for ES",
+    fallback: false, leftEmpty: false, candidates: [], office: { id: "COF-MAD", name: "Hapag-Lloyd Spain Madrid", unlocode: "ESMAD", locationName: "Madrid" }, ...over });
+
+  it("shows the office, its location and why it was picked", () => {
+    render(<CarrierOfficeTile entry={entry()} offices={OFFICES} canEdit={false} onPick={vi.fn()} />);
+    expect(screen.getByTestId("shipment-carrier-office-booking-name").textContent).toBe("Hapag-Lloyd Spain Madrid");
+    expect(screen.getByText("ESMAD · Madrid")).toBeTruthy();
+    expect(screen.getByTestId("shipment-carrier-office-booking-why").textContent).toBe("Coverage: row for ES");
+    expect(screen.queryByTestId("shipment-carrier-office-booking-edit-btn")).toBeNull();
+  });
+
+  it("says when the billing office falls back to the import office", () => {
+    render(<CarrierOfficeTile entry={entry({ role: "billing_destination", label: "Carrier billing · destination", source: "fallback", fallback: true,
+      why: "no billing row: the import office bills" })} offices={OFFICES} canEdit={false} onPick={vi.fn()} />);
+    expect(screen.getByTestId("shipment-carrier-office-billing_destination-why").textContent).toBe("no billing row: the import office bills");
+  });
+
+  it("lets the side that may change it pick another office of the carrier", async () => {
+    const onPick = vi.fn().mockResolvedValue();
+    render(<CarrierOfficeTile entry={entry()} offices={OFFICES} canEdit onPick={onPick} />);
+    fireEvent.click(screen.getByTestId("shipment-carrier-office-booking-edit-btn"));
+    fireEvent.change(screen.getByTestId("shipment-carrier-office-booking-select"), { target: { value: "COF-BCN" } });
+    fireEvent.click(screen.getByTestId("shipment-carrier-office-booking-save-btn"));
+    expect(onPick).toHaveBeenCalledWith("booking", { officeId: "COF-BCN" });
+  });
+
+  it("lists two offices found via linked ports, each to pick", () => {
+    const onPick = vi.fn().mockResolvedValue();
+    render(<CarrierOfficeTile entry={entry({ office: null, source: null, why: "", candidates: [
+      { officeId: "COF-A", officeName: "Rotterdam Line Office", via: "NLRTM" }, { officeId: "COF-B", officeName: "New York Line Office", via: "USNYC" }] })}
+      offices={OFFICES} canEdit onPick={onPick} />);
+    expect(screen.getByTestId("shipment-carrier-office-booking-why").textContent).toBe("2 offices match via linked ports: pick one");
+    fireEvent.click(screen.getByTestId("shipment-carrier-office-booking-candidate-COF-B"));
+    expect(onPick).toHaveBeenCalledWith("booking", { officeId: "COF-B" });
+  });
+
+  it("offers From coverage after a hand pick", () => {
+    const onPick = vi.fn().mockResolvedValue();
+    render(<CarrierOfficeTile entry={entry({ source: "manual", why: "picked by Alex" })} offices={OFFICES} canEdit onPick={onPick} />);
+    fireEvent.click(screen.getByTestId("shipment-carrier-office-booking-coverage-btn"));
+    expect(onPick).toHaveBeenCalledWith("booking", { fromCoverage: true });
   });
 });
