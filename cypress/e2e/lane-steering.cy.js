@@ -22,6 +22,11 @@ describe("Lane steering", () => {
   let emoOfficeId, imoOfficeId;
   const contracts = {};
   const stamp = Date.now();
+  // The shipment sails a day from now (local date): the steering line made below runs from today, and a fixed ETD
+  // fell before it once that day passed (CI #137, 2026-11-17: the escalation offered the contract search instead).
+  const dayFromToday = n => { const d = new Date(); d.setDate(d.getDate() + n);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+  const etd = dayFromToday(1), eta = dayFromToday(15);
 
   const api = (method, path, body) =>
     cy.request({
@@ -58,7 +63,7 @@ describe("Lane steering", () => {
       .then(() => api("POST", "/customers", { companyName: `Steering Consignee ${stamp} Inc` })).then(res => { consigneeId = res.body.id; })
       .then(() => api("POST", "/shipments", {
         pol: "NLRTM", pod: "USNYC", carrierCode: "CMDU", status: "Active", contractType: "SPOT", contractRef: `SPOT-LS-${stamp}`,
-        etd: "2026-11-16", eta: "2026-11-30", incoterm: "FOB", commodityCode: "9999",
+        etd, eta, incoterm: "FOB", commodityCode: "9999",
         shipperId, shipperName: `Steering Shipper ${stamp} BV`, consigneeId, consigneeName: `Steering Consignee ${stamp} Inc`,
         principalId: shipperId, principalName: `Steering Shipper ${stamp} BV`, emoOfficeId, imoOfficeId,
       }))
@@ -69,7 +74,7 @@ describe("Lane steering", () => {
           hsCode: "940360", cargoDescription: "Furniture", grossWeightKg: 9000, volumeCbm: 60 });
       })
       .then(() => api("POST", `/shipments/${shipmentId}/legs`, { legType: "SEA", movementType: "SEA", pol: "NLRTM", pod: "USNYC",
-        etd: "2026-11-16", eta: "2026-11-30", carrierCode: "CMDU", vessel: "CMA CGM STEERING", vesselImo: "9999995", voyage: "0LS2W" }))
+        etd, eta, carrierCode: "CMDU", vessel: "CMA CGM STEERING", vesselImo: "9999995", voyage: "0LS2W" }))
       .then(() => api("POST", `/shipments/${shipmentId}/edi-messages/booking-request`, {}))
       .then(res => expect(res.status, JSON.stringify(res.body)).to.eq(201));
     const reject = (tries = 40) => api("GET", `/shipments/${shipmentId}/carrier-booking`).then(res => {
