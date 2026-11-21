@@ -1,6 +1,7 @@
 "use strict";
 
 const { cleanMatchers } = require("../lib/milestone-events");
+const { sideProblem } = require("../lib/service-types");
 const { MILESTONE_DCSA } = require("../lib/dcsa/codes");
 
 module.exports = function shipmentOpsRoutes(app, ctx) {
@@ -625,6 +626,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   `;
 
   app.get("/api/shipments/:id/services", auth(), async (req, res) => {
+    // A deleted shipment's services (left behind before audit A4, 2026-11-21) aren't anyone's to read.
+    const [owner] = await query("SELECT 1 FROM shipments WHERE id=$1", [req.params.id]);
+    if (!owner) return err(res, "Shipment not found", 404);
     const rows = await query(`${SERVICE_SELECT} WHERE ss.shipment_id=$1 ORDER BY ss.side, ss.created_at ASC`, [req.params.id]);
     ok(res, rows.map(mapService));
   });
@@ -634,6 +638,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
             requestedDate = '', notes = '' } = req.body;
     if (!side || !serviceType) return err(res, "side, serviceType required");
     if (!['Export', 'Import'].includes(side)) return err(res, "side must be Export or Import");
+    // Pickup, Loading and VGM are Export only, Delivery and Unloading Import only (audit A6, lib/service-types.js).
+    const wrongSide = sideProblem(side, serviceType);
+    if (wrongSide) return err(res, wrongSide);
     const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipmentRow) return err(res, "Shipment not found", 404);
     if (await blockIfWrongSide(req, res, shipmentRow, side.toLowerCase())) return;
@@ -652,6 +659,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     // surfaced on this service's own detail view, never on the shipment's unified History tab.
     await logEvent(req.params.id, 'SERVICE_ORDERED', null, null, `${side} — ${serviceType}`,
       JSON.stringify({ side, serviceType, vendorName }), req.user?.name || req.user?.email || "");
+    // The trucker of a Pickup/Delivery service is its vendor; the Trucker party of its side follows (§8.56, decision C).
+    const [created] = await query("SELECT * FROM shipment_services WHERE id=$1", [id]);
+    if (ctx.haulage) await ctx.haulage.syncTruckerParty(created, req.user?.name || req.user?.email || "");
     const [row] = await query(`${SERVICE_SELECT} WHERE ss.id=$1`, [id]);
     ok(res, mapService(row), 201);
   });
@@ -688,6 +698,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const requestedDate     = req.body.requestedDate     !== undefined ? req.body.requestedDate     : existing.requested_date;
     const notes              = req.body.notes              !== undefined ? req.body.notes              : existing.notes;
 
+    // A side or type change must still be a pairing the screens offer (audit A6); a row that already isn't keeps its other edits.
+    if ((req.body.side !== undefined && req.body.side !== existing.side) || (req.body.serviceType !== undefined && req.body.serviceType !== existing.service_type)) {
+      if (!['Export', 'Import'].includes(side)) return err(res, "side must be Export or Import");
+      const wrongSide = sideProblem(side, serviceType);
+      if (wrongSide) return err(res, wrongSide);
+    }
+
     const today = new Date().toISOString().slice(0, 10);
     let confirmedDate = existing.confirmed_date;
     let completedDate = existing.completed_date;
@@ -699,6 +716,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       WHERE id=$11`,
       [side, serviceType, status, vendorId, vendorName, officeId, requestedDate,
            confirmedDate, completedDate, notes, req.params.id]);
+
+    if (ctx.haulage && (String(existing.vendor_id || '') !== String(vendorId || '') || String(existing.vendor_name || '') !== String(vendorName || '')
+        || existing.status !== status)) {
+      const [changed] = await query("SELECT * FROM shipment_services WHERE id=$1", [req.params.id]);
+      await ctx.haulage.syncTruckerParty(changed, req.user?.name || req.user?.email || "");
+    }
 
     for (const [field, oldV, newV] of [
       ['status',       existing.status,        status],
@@ -723,7 +746,14 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!existing) return err(res, "Not found", 404);
     const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
     if (await blockIfWrongSide(req, res, shipmentRow, existing.side.toLowerCase())) return;
-    await query("DELETE FROM shipment_services WHERE id=$1", [req.params.id]);
+    // Its trucker party goes with it (audit A2); its plan lines and haulage records too (audit A4: they have no key that
+    // takes them along; the stops and their times do). A haulage cost line it created stays: it's the shipment's money.
+    if (ctx.haulage) await ctx.haulage.releaseTruckerParty(existing, req.user?.name || req.user?.email || "", "removed");
+    await transaction(async tx => {
+      await tx.query("DELETE FROM shipment_loading_plan_lines WHERE service_id=$1", [req.params.id]);
+      await tx.query("DELETE FROM shipment_haulage_records WHERE service_id=$1", [req.params.id]);
+      await tx.query("DELETE FROM shipment_services WHERE id=$1", [req.params.id]);
+    });
     await logEntityEvent('service', req.params.id, 'DELETED', null, null, null,
       JSON.stringify({ shipmentId: existing.shipment_id, side: existing.side, serviceType: existing.service_type }));
     await logEvent(existing.shipment_id, 'SERVICE_REMOVED', null, `${existing.side} — ${existing.service_type}`, null,
@@ -809,6 +839,10 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // on Merchant's Haulage (vs. Carrier's Haulage/Customer Arranged) is a frontend-only concern —
   // these routes don't re-check movement_type themselves, matching how the loading-plan routes
   // above don't re-check serviceType either.
+  // Since 2026-11-20 (§8.56) the run's places and times are haulage stops (routes/haulage-stops.js): the old free-text
+  // waypoints and the one gate in/out pair moved onto them (decision G), so their routes are gone and a record keeps
+  // the driver, the truck's plate, the instructions and the cost. gateInAt/gateOutAt are still read (shown read-only
+  // where they couldn't move: a record with gate times and no waypoints).
 
   const mapHaulageRecord = r => ({
     containerId:      r.container_id,
@@ -817,8 +851,11 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     id:               r.hr_id || null,
     gateInAt:         r.gate_in_at || '',
     gateOutAt:        r.gate_out_at || '',
+    gateMoved:        !!r.gate_moved,
+    ownStops:         !!r.own_stops,
     driverName:       r.driver_name || '',
     driverIdNumber:   r.driver_id_number || '',
+    truckPlate:       r.truck_plate || '',
     instructions:     r.instructions || '',
     costAmount:       r.cost_amount ?? null,
     costCurrency:     r.cost_currency || 'USD',
@@ -827,16 +864,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     updatedAt:        r.updated_at || null,
   });
 
-  const mapHaulageWaypoint = r => ({
-    id: r.id, haulageRecordId: r.haulage_record_id, sequenceOrder: r.sequence_order ?? 1,
-    locType: r.loc_type || 'Door', location: r.location || '',
-    latitude: r.latitude ?? null, longitude: r.longitude ?? null,
-    notes: r.notes || '', createdAt: r.created_at,
-  });
-
   const HAULAGE_RECORD_SELECT = `
     SELECT c.id AS container_id, c.container_number, c.size, c.type,
-           hr.id AS hr_id, hr.gate_in_at, hr.gate_out_at, hr.driver_name, hr.driver_id_number,
+           hr.id AS hr_id, hr.gate_in_at, hr.gate_out_at, hr.gate_moved, hr.own_stops, hr.driver_name, hr.driver_id_number, hr.truck_plate,
            hr.instructions, hr.cost_amount, hr.cost_currency, hr.cost_exchange_rate, hr.cost_line_id,
            hr.updated_at
     FROM containers c
@@ -846,7 +876,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
 
   const HAULAGE_RECORD_SELECT_BY_CONTAINER = `
     SELECT c.id AS container_id, c.container_number, c.size, c.type,
-           hr.id AS hr_id, hr.gate_in_at, hr.gate_out_at, hr.driver_name, hr.driver_id_number,
+           hr.id AS hr_id, hr.gate_in_at, hr.gate_out_at, hr.gate_moved, hr.own_stops, hr.driver_name, hr.driver_id_number, hr.truck_plate,
            hr.instructions, hr.cost_amount, hr.cost_currency, hr.cost_exchange_rate, hr.cost_line_id,
            hr.updated_at
     FROM containers c
@@ -883,13 +913,16 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
     if (await blockIfWrongSide(req, res, shipmentRow, service.side.toLowerCase())) return;
 
-    const { gateInAt = '', gateOutAt = '', driverName = '', driverIdNumber = '', instructions = '' } = req.body || {};
+    // Only the fields sent change. The gate in/out are a stop's actual times now (§8.56); a body still carrying them
+    // changes nothing there.
     const record = await ensureHaulageRecord(req.params.serviceId, req.params.containerId);
+    const pick = (k, col) => (req.body?.[k] !== undefined ? String(req.body[k] ?? '').trim() : record[col] || '');
     const now = new Date().toISOString();
     await query(`UPDATE shipment_haulage_records
-      SET gate_in_at=$1, gate_out_at=$2, driver_name=$3, driver_id_number=$4, instructions=$5, updated_at=$6
-      WHERE id=$7`,
-      [gateInAt, gateOutAt, driverName, driverIdNumber, instructions, now, record.id]);
+      SET driver_name=$1, driver_id_number=$2, truck_plate=$3, instructions=$4, updated_at=$5
+      WHERE id=$6`,
+      [pick('driverName', 'driver_name'), pick('driverIdNumber', 'driver_id_number'), pick('truckPlate', 'truck_plate'),
+        pick('instructions', 'instructions'), now, record.id]);
     await logEntityEvent('haulage_record', record.id, 'UPDATED', null, null, null,
       JSON.stringify({ shipmentId: req.params.shipmentId, serviceId: req.params.serviceId, containerId: req.params.containerId }));
 
@@ -971,103 +1004,6 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapHaulageRecord(row));
   });
 
-  app.get("/api/shipments/:shipmentId/services/:serviceId/haulage/:containerId/waypoints", auth(), async (req, res) => {
-    const [service] = await query("SELECT * FROM shipment_services WHERE id=$1 AND shipment_id=$2", [req.params.serviceId, req.params.shipmentId]);
-    if (!service) return err(res, "Service not found", 404);
-    const [record] = await query("SELECT id FROM shipment_haulage_records WHERE service_id=$1 AND container_id=$2", [req.params.serviceId, req.params.containerId]);
-    if (!record) return ok(res, []);
-    const rows = await query("SELECT * FROM shipment_haulage_waypoints WHERE haulage_record_id=$1 ORDER BY sequence_order ASC", [record.id]);
-    ok(res, rows.map(mapHaulageWaypoint));
-  });
-
-  app.post("/api/shipments/:shipmentId/services/:serviceId/haulage/:containerId/waypoints", shipmentWrite, async (req, res) => {
-    const [service] = await query("SELECT * FROM shipment_services WHERE id=$1 AND shipment_id=$2", [req.params.serviceId, req.params.shipmentId]);
-    if (!service) return err(res, "Service not found", 404);
-    const [container] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.containerId, req.params.shipmentId]);
-    if (!container) return err(res, "Container not found", 404);
-    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
-    if (await blockIfWrongSide(req, res, shipmentRow, service.side.toLowerCase())) return;
-
-    const { locType = 'Door', location = '', latitude = null, longitude = null, notes = '', sequenceOrder } = req.body || {};
-    const isGps = locType === GPS_LOC_TYPE;
-    if (isGps) {
-      if (!validCoord(latitude, -90, 90)) return err(res, "latitude must be between -90 and 90");
-      if (!validCoord(longitude, -180, 180)) return err(res, "longitude must be between -180 and 180");
-    }
-    const record = await ensureHaulageRecord(req.params.serviceId, req.params.containerId);
-    let seq;
-    if (sequenceOrder != null) {
-      seq = Math.max(1, parseInt(sequenceOrder, 10) || 1);
-    } else {
-      const [{ n }] = await query("SELECT COALESCE(MAX(sequence_order),0)+1 AS n FROM shipment_haulage_waypoints WHERE haulage_record_id=$1", [record.id]);
-      seq = Number(n);
-    }
-    const id = `HWP-${uid()}`;
-    const now = new Date().toISOString();
-    await query(`INSERT INTO shipment_haulage_waypoints
-      (id, haulage_record_id, sequence_order, loc_type, location, latitude, longitude, notes, created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [id, record.id, seq, locType, isGps ? '' : location,
-        isGps && latitude != null && latitude !== '' ? Number(latitude) : null,
-        isGps && longitude != null && longitude !== '' ? Number(longitude) : null,
-        notes, now]);
-    await logEntityEvent('haulage_waypoint', id, 'CREATED', null, null, null,
-      JSON.stringify({ shipmentId: req.params.shipmentId, serviceId: req.params.serviceId, containerId: req.params.containerId, locType }));
-    const [row] = await query("SELECT * FROM shipment_haulage_waypoints WHERE id=$1", [id]);
-    ok(res, mapHaulageWaypoint(row), 201);
-  });
-
-  // shipment_haulage_waypoints carries no shipment_id column of its own — reaches one only via
-  // haulage_record_id -> shipment_haulage_records.container_id -> containers.shipment_id. Nested
-  // under /api/shipments/:shipmentId/... for the same reason the milestone routes above are
-  // (2026-09-05 audit, TKT-E25769) — this was a bare /api/haulage-waypoints/:id with zero
-  // shipment ownership check, invisible to the app-wide shipmentScopeParamCheck middleware since
-  // the waypoint's own id ("HWP-...") never matches its SHP- prefix check.
-  app.put("/api/shipments/:shipmentId/haulage-waypoints/:id", shipmentWrite, async (req, res) => {
-    const [existing] = await query(`
-      SELECT w.*, ss.side AS service_side FROM shipment_haulage_waypoints w
-      JOIN shipment_haulage_records hr ON hr.id = w.haulage_record_id
-      JOIN containers c ON c.id = hr.container_id
-      JOIN shipment_services ss ON ss.id = hr.service_id
-      WHERE w.id=$1 AND c.shipment_id=$2
-    `, [req.params.id, req.params.shipmentId]);
-    if (!existing) return err(res, "Not found", 404);
-    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
-    if (await blockIfWrongSide(req, res, shipmentRow, existing.service_side.toLowerCase())) return;
-    const { locType = 'Door', location = '', latitude = null, longitude = null, notes = '', sequenceOrder = 1 } = req.body || {};
-    const isGps = locType === GPS_LOC_TYPE;
-    if (isGps) {
-      if (!validCoord(latitude, -90, 90)) return err(res, "latitude must be between -90 and 90");
-      if (!validCoord(longitude, -180, 180)) return err(res, "longitude must be between -180 and 180");
-    }
-    const seq = Math.max(1, parseInt(sequenceOrder, 10) || 1);
-    await query(`UPDATE shipment_haulage_waypoints
-      SET sequence_order=$1, loc_type=$2, location=$3, latitude=$4, longitude=$5, notes=$6 WHERE id=$7`,
-      [seq, locType, isGps ? '' : location,
-        isGps && latitude != null && latitude !== '' ? Number(latitude) : null,
-        isGps && longitude != null && longitude !== '' ? Number(longitude) : null,
-        notes, req.params.id]);
-    await logEntityEvent('haulage_waypoint', req.params.id, 'UPDATED', null, null, null, JSON.stringify({ locType }));
-    const [row] = await query("SELECT * FROM shipment_haulage_waypoints WHERE id=$1", [req.params.id]);
-    ok(res, mapHaulageWaypoint(row));
-  });
-
-  // Same scope-bypass fix as the PUT above.
-  app.delete("/api/shipments/:shipmentId/haulage-waypoints/:id", shipmentWrite, async (req, res) => {
-    const [existing] = await query(`
-      SELECT w.*, ss.side AS service_side FROM shipment_haulage_waypoints w
-      JOIN shipment_haulage_records hr ON hr.id = w.haulage_record_id
-      JOIN containers c ON c.id = hr.container_id
-      JOIN shipment_services ss ON ss.id = hr.service_id
-      WHERE w.id=$1 AND c.shipment_id=$2
-    `, [req.params.id, req.params.shipmentId]);
-    if (!existing) return err(res, "Not found", 404);
-    const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.shipmentId]);
-    if (await blockIfWrongSide(req, res, shipmentRow, existing.service_side.toLowerCase())) return;
-    await query("DELETE FROM shipment_haulage_waypoints WHERE id=$1", [req.params.id]);
-    await logEntityEvent('haulage_waypoint', req.params.id, 'DELETED', null, null, null, null);
-    ok(res, { deleted: req.params.id });
-  });
 
   // ─── Milestones ───────────────────────────────────────────────────────────
 

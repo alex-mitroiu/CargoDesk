@@ -12,10 +12,15 @@ module.exports = function paymentTermsRoutes(app, ctx) {
   const { ok, err, auth } = ctx;
   const split = () => ctx.officeSplit;
 
+  // payableAt: where the freight is payable for each term, as the booking request names it (invoicePayableAt): the
+  // carrier's billing office of that side, else the port of loading (PRE) or discharge (COL) — lib/carrier-offices.js.
   app.get("/api/shipments/:id/payment-terms", auth(), async (req, res) => {
     const v = await split().view(req.params.id);
     if (!v) return err(res, "Shipment not found", 404);
-    ok(res, { ...v, canEdit: !!(await split().mayEdit(req.user, req, (await split().loadShipment(req.params.id)).row)) });
+    const { row } = await split().loadShipment(req.params.id);
+    const co = ctx.carrierOffices;
+    const payableAt = co ? { PRE: await co.payableAt(row, "PRE").catch(() => ""), COL: await co.payableAt(row, "COL").catch(() => "") } : { PRE: "", COL: "" };
+    ok(res, { ...v, payableAt, canEdit: !!(await split().mayEdit(req.user, req, row)) });
   });
 
   app.put("/api/shipments/:id/payment-terms", auth(), async (req, res) => {

@@ -4,6 +4,7 @@ import { useAuth } from "../../AuthContext";
 import { onServicesChanged } from "../../servicesBus";
 import { sidebarOrderFromSettings, shipmentNavSequence, nextNavStop } from "../../shipmentNavSequence";
 import { HZ, HZ_MONO } from "../../pages/shipments/shipmentDetailTheme";
+import { isHorizonNextPage } from "../../utils/horizonNextPages";
 
 // ─── » Advance bar ────────────────────────────────────────────────────────────
 // A rail down the right edge of every shipment page: » saves what's unsaved and opens the next
@@ -152,9 +153,9 @@ const ShipmentAdvanceBar = ({ shipment, currentPage, appSettings, navigate }) =>
   return (
     <button ref={btnRef} type="button" className="cd-advbar" data-testid="shipment-advance-bar"
       data-state={barState} data-next={next.pageKeys[0]} onClick={advance}
-      // Trade Horizon next (2026-11-06): a glass rail with an outlined pill, glowing on hover — on Contracts & Schedules
-      // only until the user approves it for every page (their decision, 2026-11-06).
-      data-variant={currentPage === "shipment-schedules" ? "next" : undefined}
+      // Trade Horizon next (2026-11-06): a glass rail with an outlined pill, glowing on hover — on the pages built in Next
+      // (src/utils/horizonNextPages.js; the user's rule 2026-11-18: every design and build uses the latest patterns).
+      data-variant={isHorizonNextPage(currentPage) ? "next" : undefined}
       aria-label={`Save and go to ${nextName}`} aria-keyshortcuts="Alt+ArrowRight" aria-busy={barState === "saving"}
       style={{
         "--adv-surface": HZ.surfaceSolid, "--adv-border": HZ.border, "--adv-border-strong": HZ.borderStrong,

@@ -26,6 +26,7 @@ import { addContainer } from "./helpers/dcsa-sim.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dcsaAdapter = (await import(pathToFileURL(path.join(__dirname, "..", "lib", "carrier-integrations", "dcsa-bkg-v2.js")).href)).default;
+const doors = (await import(pathToFileURL(path.join(__dirname, "..", "lib", "booking-doors.js")).href)).default;
 
 const BASE_HOST = "localhost";
 const BASE_PORT = 3001;
@@ -82,6 +83,37 @@ function testPureFunctions() {
 
   const minimalPayload = dcsaAdapter.buildBookingRequest({ id: "SHP-TEST" }, { pol: "", pod: "", equipment: [] });
   assert("fields with no source data are omitted, never fabricated", minimalPayload.vessel === undefined && minimalPayload.expectedDepartureDate === undefined && minimalPayload.shipmentLocations.length === 0);
+
+  // The carrier's haulage at a door (2026-11-20, lib/booking-doors.js): only a Carrier's Haulage leg from/to a Door counts.
+  const leg = (leg_type, movement_type, pol_loc_type, pod_loc_type) => ({ leg_type, movement_type, pol_loc_type, pod_loc_type });
+  const found = doors.doorLegs([leg("Pick-up", "Merchant's Haulage", "Door", "Container Yard"), leg("Pick-up", "Carrier's Haulage", "Container Yard", "Terminal"), leg("SEA", "SEA", "Terminal", "Terminal"),
+    leg("Delivery", "Carrier's Haulage", "Terminal", "Door")]);
+  assert("doorLegs: a merchant's door or a carrier's leg from a CY is no door pick-up; a carrier's leg to a Door is a door delivery", found.pickUp === null && found.delivery?.pod_loc_type === "Door");
+  assert("doorLegs: DR-CY and DR-PT carrier's pick-ups count", !!doors.doorLegs([leg("Pick-up", "Carrier's Haulage", "Door", "Container Yard")]).pickUp && !!doors.doorLegs([leg("Pick-up", "Carrier's Haulage", "Door", "Terminal")]).pickUp);
+  assert("doorLegs: a carrier's pick-up from GPS Coordinates is a door too (the user, 2026-11-20)", !!doors.doorLegs([leg("Pick-up", "Carrier's Haulage", "GPS Coordinates", "Container Yard")]).pickUp);
+  const gpsPoint = doors.doorPoint({ pol_loc_type: "GPS Coordinates", pol: "", pol_latitude: 51.5555, pol_longitude: 5.0913 }, "origin");
+  const gpsLoc = doors.doorLocation({ companyName: "Shipper BV", address1: "Ringbaan Oost 102", city: "Tilburg", countryIso2: "NL" }, gpsPoint);
+  assert("doorLocation: a GPS leg is the leg's own point, without the profile's address", gpsLoc.geoCoordinate?.latitude === "51.555500" && !gpsLoc.address && gpsLoc.locationName === "Shipper BV", JSON.stringify(gpsLoc));
+  assert("addressGaps: street, city and country, unless a classified location with coordinates", doors.addressGaps({ address1: "Rua A 1", countryIso2: "PT" }).join() === "city"
+    && doors.addressGaps({ classifiedLocation: true, latitude: 38.7, longitude: -9.1 }).length === 0 && doors.addressGaps({ classifiedLocation: true }).length === 3);
+  assert("localDateTime: the door's own offset that day, nothing without a time", doors.localDateTime("2026-07-01T09:00", "Europe/Madrid") === "2026-07-01T09:00:00+02:00"
+    && doors.localDateTime("2026-12-01T09:00", "Europe/Madrid") === "2026-12-01T09:00:00+01:00" && doors.localDateTime("2026-12-01", "Europe/Madrid") === null
+    && doors.localDateTime("2026-12-01T08:00", "America/New_York") === "2026-12-01T08:00:00-05:00");
+  assert("doorContact: Operations first, then the primary contact, then the company's phone",
+    doors.doorContact({ companyName: "X" }, [{ name: "Sales", email: "s@x.example", isPrimary: true, department: "Sales" }, { name: "Ops", phone: "+1 1", department: "Operations" }]).name === "Ops"
+    && doors.doorContact({ companyName: "X" }, [{ name: "Sales", email: "s@x.example", isPrimary: true, department: "Sales" }]).name === "Sales"
+    && doors.doorContact({ companyName: "X Co", phone: "+1 2" }, []).phone === "+1 2" && doors.doorContact({ companyName: "X" }, [{ name: "No way to reach" }]) === null);
+  const profile = { companyName: "Shipper BV", address1: "Ringbaan Oost 102", postalCode: "5013 CD", city: "Tilburg", countryIso2: "NL" };
+  const door = { location: doors.doorLocation(profile, { code: "NLTLB" }), partyAddress: doors.dcsaAddress(profile),
+    contact: { name: "Ops", phone: "+31 13 555 0100" }, detailsOnParty: true, positioningByType: { "40HC": "2026-12-01T09:00:00+01:00" } };
+  const withDoor = dcsaAdapter.buildBookingRequest({ id: "SHP-TEST" }, { ...requestPayload, shipperName: "Shipper BV", originDoor: door });
+  assert("a carrier's door pick-up: SD, the door as PRE and as the equipment's positioning (with its time), the shipper's address and contact on its party",
+    withDoor.receiptTypeAtOrigin === "SD" && withDoor.shipmentLocations[0].locationTypeCode === "PRE" && withDoor.shipmentLocations[0].location.address.city === "Tilburg"
+    && withDoor.requestedEquipments[0].containerPositionings[0].dateTime === "2026-12-01T09:00:00+01:00"
+    && withDoor.documentParties.shipper.partyContactDetails[0].name === "Ops" && withDoor.documentParties.shipper.address?.street === "Ringbaan Oost 102", JSON.stringify(withDoor).slice(0, 500));
+  const asDoorToPort = dcsaAdapter.buildBookingRequest({ id: "SHP-TEST" }, { ...requestPayload, serviceType: "Door-to-Door", placeOfReceipt: "Tilburg warehouse" });
+  assert("no carrier's door leg: CY both ends, whatever the Service Type says", asDoorToPort.receiptTypeAtOrigin === "CY" && asDoorToPort.deliveryTypeAtDestination === "CY"
+    && !asDoorToPort.shipmentLocations.some(l => l.locationTypeCode === "PRE"));
 
   const secret = "unit-test-secret";
   const rawBody = Buffer.from(JSON.stringify({ bookingStatus: "CONFIRMED", carrierBookingReference: "HLCU-REF-1", carrierBookingRequestReference: "REQ-REF-1" }), "utf8");

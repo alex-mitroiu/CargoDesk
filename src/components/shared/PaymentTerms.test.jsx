@@ -22,10 +22,13 @@ const OFFICES = [
   { key: "import", label: "Import office", id: "OFF-NYC", code: "US-USNYC-SI", name: "New York Harbor", unlocode: "USNYC", entityName: "New York Branch" },
   { key: "billing", label: "Billing office", id: "OFF-AMS", code: "NL-NLAMS-SE", name: "Amsterdam Billing", unlocode: "NLAMS", entityName: "Rotterdam Branch" },
 ];
-// GET /api/shipments/:id/payment-terms as lib/office-split.js view() returns it, before the terms are saved.
+// GET /api/shipments/:id/payment-terms as routes/payment-terms.js answers it, before the terms are saved. payableAt: the
+// carrier's billing office per side (lib/carrier-offices.js): its destination office sits in Newark (USEWR), its origin side
+// has none, so the port of loading.
 const DEF = "PPPCCCC", IDS = ["originHaulage", "originPort", "originOther", "freight", "destinationPort", "destinationHaulage", "destinationOther"];
 const view = (over = {}) => ({
   shipmentId: shipment.id, saved: false, followsIncoterm: true, incoterm: "FOB", billingOfficeId: "OFF-AMS", canEdit: true, offices: OFFICES,
+  payableAt: { PRE: "NLRTM", COL: "USEWR" },
   categories: IDS.map((id, i) => ({ id, term: DEF[i] === "C" ? "COL" : "PRE", office: DEF[i] === "C" ? "import" : "export" })),
   ...over,
 });
@@ -47,7 +50,37 @@ describe("Payment terms (CPI) on the Carrier Booking", () => {
     expect(freight).toHaveTextContent("Hudson Home Imports Inc");
     expect(screen.getByTestId("cpi-row-originPort")).toHaveTextContent("Van Leeuwen Meubelen BV");
     const dcsa = JSON.parse(screen.getByTestId("payment-terms-dcsa").textContent);
-    expect(dcsa).toMatchObject({ freightPaymentTermCode: "COL", destinationChargesPaymentTerm: { portChargesPaymentTermCode: "COL" }, invoicePayableAt: { UNLocationCode: "USNYC" } });
+    // Fix F (2026-11-18): payable at the carrier's billing office of the side paying the freight, not our import office (USNYC).
+    expect(dcsa).toMatchObject({ freightPaymentTermCode: "COL", destinationChargesPaymentTerm: { portChargesPaymentTermCode: "COL" }, invoicePayableAt: { UNLocationCode: "USEWR" } });
+  });
+
+  it("the preview follows the freight term: Prepaid is payable at the origin side's place", async () => {
+    api.paymentTerms.get.mockResolvedValue(view({ saved: true }));
+    render(<PaymentTermsCard shipment={shipment} />);
+    await screen.findByTestId("cpi-row-freight");
+    fireEvent.click(screen.getByTestId("cpi-freight-PRE"));
+    expect(JSON.parse(screen.getByTestId("payment-terms-dcsa").textContent).invoicePayableAt).toEqual({ UNLocationCode: "NLRTM" });
+    expect(screen.getByTestId("payment-terms-status")).toHaveTextContent("Changed · not saved yet");
+    expect(screen.getByTestId("payment-terms-payable-at")).toHaveTextContent("else the port of loading");
+  });
+
+  it("folds: the table and the request go, the status, a line per group of charges and the buttons stay (decisions B and C)", async () => {
+    api.paymentTerms.get.mockResolvedValue(view());
+    render(<PaymentTermsCard shipment={shipment} />);
+    await screen.findByTestId("cpi-row-freight");
+    fireEvent.click(screen.getByTestId("payment-terms-section-fold"));
+    expect(screen.getByTestId("cpi-row-freight")).not.toBeVisible();
+    expect(screen.getByTestId("payment-terms-dcsa")).not.toBeVisible();
+    expect(screen.getByTestId("payment-terms-section")).toHaveAttribute("data-open", "false");
+    const summary = screen.getByTestId("payment-terms-summary");
+    // The billing office (OFF-AMS) issues the invoices, but each category keeps its responsible office.
+    expect(summary).toHaveTextContent("Origin charges Prepaid · Rotterdam Office · Van Leeuwen Meubelen BV");
+    expect(summary).toHaveTextContent("Freight and destination Collect · New York Harbor · Hudson Home Imports Inc");
+    expect(screen.getByTestId("payment-terms-status")).toHaveTextContent("Not saved yet · the FOB defaults");
+    expect(screen.getByTestId("payment-terms-save")).toBeInTheDocument();
+    expect(screen.getByTestId("payment-terms-lines")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("payment-terms-section-fold"));
+    expect(screen.getByTestId("cpi-row-freight")).toBeVisible();
   });
 
   it("switching a category moves its office and billed party, and Save sends the categories", async () => {

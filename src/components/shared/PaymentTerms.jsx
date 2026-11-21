@@ -3,7 +3,9 @@ import { api } from "../../api";
 import { toast } from "../../toast";
 import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
-import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY } from "../../pages/shipments/shipmentDetailTheme";
+import { HZ, HZ_MONO, HZ_BODY } from "../../pages/shipments/shipmentDetailTheme";
+import { pillBtnStyle, ctaStyle, sectionLabelStyle } from "../../pages/shipments/schedules/SchedulesParts";
+import { FoldSection, FactsPills } from "./FoldSection";
 import { CATEGORIES, SIDES, sideOfCode, lineSplit, billedPartyOf, dcsaPaymentTerms, defaultCategories } from "../../utils/paymentTerms";
 
 // ─── The office split on the Carrier Booking (2026-11-14, mockup 1cb7bdf6 v2, lib/payment-terms.js, ARCHITECTURE.md §8.52) ──
@@ -25,7 +27,6 @@ export const splitShipment = (shipment, view, categories) => ({
   sideOfficeIds: (view?.offices || []).filter(o => o.key.startsWith("office:")).map(o => o.key.slice(7)),
 });
 
-const eyebrow = () => ({ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".08em" });
 const cell = () => ({ padding: "8px 10px", borderBottom: `1px solid ${HZ.border}`, fontFamily: HZ_BODY, fontSize: 13, color: HZ.text, verticalAlign: "middle" });
 const head = () => ({ ...cell(), fontSize: 10.5, fontWeight: 700, color: HZ.textFaint, textTransform: "uppercase", letterSpacing: ".07em", textAlign: "left" });
 const select = () => ({ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, background: HZ.surfaceSolid, border: `1px solid ${HZ.borderStrong}`,
@@ -35,12 +36,13 @@ const chip = key => ({ display: "inline-flex", alignItems: "center", gap: 5, fon
 
 function TermToggle({ id, value, onChange, disabled }) {
   return (
-    <span role="group" aria-label={id} style={{ display: "inline-flex", border: `1px solid ${HZ.borderStrong}`, borderRadius: 8, overflow: "hidden" }}>
+    <span role="group" aria-label={id} style={{ display: "inline-flex", gap: 2, padding: 2, border: `1px solid ${HZ.border}`, borderRadius: 999, background: HZ.surface2 }}>
       {["PRE", "COL"].map(t => (
         <button key={t} type="button" id={`${id}-${t}`} data-testid={`${id}-${t}`} aria-pressed={value === t} disabled={disabled}
           onClick={() => value !== t && onChange(t)}
-          style={{ fontFamily: HZ_BODY, fontSize: 11.5, fontWeight: 600, border: 0, padding: "4px 10px", cursor: disabled ? "default" : "pointer",
-            background: value === t ? HZ.text : "transparent", color: value === t ? HZ.surfaceSolid : HZ.textMuted }}>{termLabel(t)}</button>
+          style={{ fontFamily: HZ_BODY, fontSize: 11, fontWeight: 600, border: 0, borderRadius: 999, padding: "3px 10px", cursor: disabled ? "default" : "pointer",
+            background: value === t ? HZ.cyanBg : "transparent", color: value === t ? HZ.cyan : HZ.textMuted,
+            boxShadow: value === t ? `inset 0 0 0 1px color-mix(in srgb, ${HZ.cyan} 40%, transparent)` : "none" }}>{termLabel(t)}</button>
       ))}
     </span>
   );
@@ -53,7 +55,40 @@ const OfficeSelect = ({ id, offices, value, onChange, disabled, inherit }) => (
   </select>
 );
 
-export function PaymentTermsCard({ shipment, onSaved }) {
+// What a run of categories covers, in words, for the folded summary.
+const groupLabel = ids => {
+  const all = side => CATEGORIES.filter(c => c.side === side).every(c => ids.includes(c.id));
+  const origin = all("Origin"), dest = all("Destination"), freight = ids.includes("freight");
+  const n = ids.length;
+  if (n === CATEGORIES.length) return "All charges";
+  if (origin && n === 3) return "Origin charges";
+  if (dest && n === 3) return "Destination charges";
+  if (freight && n === 1) return "Ocean freight";
+  if (freight && dest && n === 4) return "Freight and destination";
+  if (freight && origin && n === 4) return "Origin and freight";
+  return ids.map(id => CATEGORIES.find(c => c.id === id)?.label).join(", ");
+};
+// Folded, one line per run of categories with the same term, office and billed party (decision B).
+export const termsSummary = (draft, s, officeByKey) => {
+  const out = [];
+  for (const c of CATEGORIES) {
+    const d = draft[c.id];
+    const party = billedPartyOf(s, d.term)?.name || "—";
+    const last = out[out.length - 1];
+    if (last && last.term === d.term && last.office === d.office && last.party === party) last.ids.push(c.id);
+    else out.push({ ids: [c.id], term: d.term, office: d.office, party });
+  }
+  return out.map(g => ({ label: groupLabel(g.ids), value: termLabel(g.term),
+    tail: `${officeByKey(g.office)?.name || officeByKey(g.office)?.code || "no office"} · ${g.party}` }));
+};
+
+const inset = () => ({ background: HZ.tint, border: `1px solid ${HZ.border}`, borderRadius: 12, padding: "14px 16px", display: "grid", gap: 10, alignContent: "start", minWidth: 0 });
+
+// Trade Horizon Next and foldable (2026-11-18, mockup a3e1b986 v2, ARCHITECTURE.md §8.54): the table full width with what
+// goes to the carrier under it, both folding together (decision C); folded, the header keeps the status, one line per
+// group of charges and the buttons (decision B). open/onToggle come from the page (left out: the card keeps its own,
+// starting open); primary: Save takes the page's one glowing action (false while Send Booking Request can be used).
+export function PaymentTermsCard({ shipment, onSaved, open, onToggle, primary = true }) {
   const [view, setView] = useState(null);
   const [draft, setDraft] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -62,15 +97,17 @@ export function PaymentTermsCard({ shipment, onSaved }) {
     setView(v);
     setDraft(Object.fromEntries(v.categories.map(c => [c.id, { term: c.term, office: c.office }])));
   }).catch(e => toast.error(e.message)), [shipment.id]);
-  useEffect(() => { load(); }, [load, shipment.incoterm, shipment.freightTerms, shipment.billingOfficeId, shipment.emoOfficeId, shipment.imoOfficeId]);
+  useEffect(() => { load(); }, [load, shipment.incoterm, shipment.freightTerms, shipment.billingOfficeId, shipment.emoOfficeId, shipment.imoOfficeId,
+    shipment.carrierCode, shipment.pol, shipment.pod]);
 
   const s = useMemo(() => (view && draft ? splitShipment(shipment, view, draft) : null), [shipment, view, draft]);
   if (!view || !draft) return null;
   const canEdit = !!view.canEdit;
   const dirty = view.categories.some(c => draft[c.id].term !== c.term || draft[c.id].office !== c.office);
   const officeByKey = k => view.offices.find(o => o.key === k);
-  const freightOffice = officeByKey(draft.freight.office);
-  const payload = dcsaPaymentTerms({ categories: draft }, { freightPayableAt: freightOffice?.unlocode || "" });
+  // Where the freight is payable, as the booking request sends it (fix F, 2026-11-18): the carrier's billing office of
+  // the side paying the freight, else the port (lib/carrier-offices.js payableAt), no longer our own office's location.
+  const payload = dcsaPaymentTerms({ categories: draft }, { freightPayableAt: view.payableAt?.[draft.freight.term] || "" });
   const defaults = defaultCategories(shipment.incoterm);
   const followsDefaults = CATEGORIES.every(c => draft[c.id].term === defaults[c.id].term && draft[c.id].office === defaults[c.id].office);
 
@@ -88,71 +125,80 @@ export function PaymentTermsCard({ shipment, onSaved }) {
     finally { setBusy(false); }
   };
 
+  const good = view.saved && !dirty;
+  const statusText = !view.saved ? `Not saved yet · the ${shipment.incoterm || "default"} defaults`
+    : dirty ? "Changed · not saved yet" : view.followsIncoterm ? `Follows the Incoterm ${shipment.incoterm || ""}` : "Set by hand";
+  const status = (
+    <span data-testid="payment-terms-status" style={{ fontFamily: HZ_BODY, fontSize: 11.5, fontWeight: 600, borderRadius: 999, padding: "2px 10px", whiteSpace: "nowrap",
+      color: good ? HZ.goodPillText : HZ.warn, background: good ? HZ.goodBg : HZ.warnBg,
+      border: `1px solid color-mix(in srgb, ${good ? HZ.good : HZ.warn} 40%, transparent)` }}>{statusText}</span>
+  );
+  const actions = (
+    <>
+      <button type="button" data-testid="payment-terms-lines" onClick={() => setShowLines(true)} style={pillBtnStyle()}>Costs and charges</button>
+      {canEdit && view.saved && !view.followsIncoterm && !dirty && (
+        <button type="button" data-testid="payment-terms-reset" disabled={busy} onClick={() => save({ reset: true })} style={pillBtnStyle({ disabled: busy })}>Reset to the Incoterm's defaults</button>
+      )}
+      {canEdit && (dirty || !view.saved) && (
+        <button type="button" data-testid="payment-terms-save" disabled={busy} onClick={() => save(followsDefaults ? { reset: true } : { categories: draft })}
+          style={primary ? ctaStyle({ disabled: busy }) : pillBtnStyle({ accent: true, disabled: busy })}>{busy ? "Saving…" : "Save payment terms"}</button>
+      )}
+    </>
+  );
+
   let stage = "";
   return (
-    <div data-testid="payment-terms-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.7fr) minmax(0, 1fr)", gap: 14, marginBottom: 24 }}>
-      <div style={{ background: HZ.surface, backdropFilter: HZ.cardBlur, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, padding: "16px 18px", display: "grid", gap: 12, minWidth: 0 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <div>
-            <div style={eyebrow()}>Agreed with the carrier in the booking</div>
-            <div style={{ fontFamily: HZ_DISPLAY, fontSize: 16, fontWeight: 700, color: HZ.text }}>Payment terms (CPI)</div>
+    <div data-testid="payment-terms-card">
+      <FoldSection id="shpbooking-payment-terms-section" testId="payment-terms-section" label="Payment terms (CPI)" status={status} actions={actions}
+        open={open} onToggle={onToggle} summary={<FactsPills testId="payment-terms-summary" items={termsSummary(draft, s, officeByKey)} />}>
+        <div style={inset()}>
+          <div style={sectionLabelStyle()}>Agreed with the carrier in the booking</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+              <thead><tr><th style={head()}>Charge category</th><th style={head()}>Prepaid / Collect</th><th style={head()}>Responsible office</th><th style={head()}>Billed to</th></tr></thead>
+              <tbody>
+                {CATEGORIES.flatMap(c => {
+                  const rows = [];
+                  if (c.side !== stage) {
+                    stage = c.side;
+                    rows.push(<tr key={`g-${c.side}`}><td colSpan={4} style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: ".08em",
+                      textTransform: "uppercase", color: HZ.cyan, padding: "10px 10px 4px" }}>{c.side}</td></tr>);
+                  }
+                  const party = billedPartyOf(s, draft[c.id].term);
+                  rows.push(
+                    <tr key={c.id} data-testid={`cpi-row-${c.id}`}>
+                      <td style={{ ...cell(), fontWeight: 600 }}>{c.label}</td>
+                      <td style={cell()}><TermToggle id={`cpi-${c.id}`} value={draft[c.id].term} disabled={!canEdit || busy} onChange={t => setTerm(c.id, t)} /></td>
+                      <td style={cell()}><OfficeSelect id={`cpi-office-${c.id}`} offices={view.offices} value={draft[c.id].office} disabled={!canEdit || busy}
+                        onChange={k => setDraft(d => ({ ...d, [c.id]: { ...d[c.id], office: k } }))} /></td>
+                      <td style={cell()}>
+                        <div>{party.name || "—"}</div>
+                        <div style={{ fontSize: 11.5, color: HZ.textMuted }}>{party.role === "Principal" ? "the principal" : party.role === "Shipper" ? "the shipper" : "the consignee"}</div>
+                      </td>
+                    </tr>);
+                  return rows;
+                })}
+              </tbody>
+            </table>
           </div>
-          <span data-testid="payment-terms-status" style={{ fontFamily: HZ_BODY, fontSize: 11.5, fontWeight: 600, borderRadius: 999, padding: "2px 10px",
-            color: view.saved ? HZ.good : HZ.warn, background: view.saved ? HZ.goodBg : HZ.warnBg }}>
-            {!view.saved ? `Not saved yet · the ${shipment.incoterm || "default"} defaults` : view.followsIncoterm ? `Follows the Incoterm ${shipment.incoterm || ""}` : "Set by hand"}
-          </span>
-        </div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
-            <thead><tr><th style={head()}>Charge category</th><th style={head()}>Prepaid / Collect</th><th style={head()}>Responsible office</th><th style={head()}>Billed to</th></tr></thead>
-            <tbody>
-              {CATEGORIES.flatMap(c => {
-                const rows = [];
-                if (c.side !== stage) { stage = c.side; rows.push(<tr key={`g-${c.side}`}><td colSpan={4} style={{ ...cell(), ...eyebrow(), fontSize: 10, background: HZ.tint || "transparent", padding: "5px 10px" }}>{c.side}</td></tr>); }
-                const party = billedPartyOf(s, draft[c.id].term);
-                rows.push(
-                  <tr key={c.id} data-testid={`cpi-row-${c.id}`}>
-                    <td style={{ ...cell(), fontWeight: 600 }}>{c.label}</td>
-                    <td style={cell()}><TermToggle id={`cpi-${c.id}`} value={draft[c.id].term} disabled={!canEdit || busy} onChange={t => setTerm(c.id, t)} /></td>
-                    <td style={cell()}><OfficeSelect id={`cpi-office-${c.id}`} offices={view.offices} value={draft[c.id].office} disabled={!canEdit || busy}
-                      onChange={k => setDraft(d => ({ ...d, [c.id]: { ...d[c.id], office: k } }))} /></td>
-                    <td style={cell()}>
-                      <div>{party.name || "—"}</div>
-                      <div style={{ fontSize: 11.5, color: HZ.textMuted }}>{party.role === "Principal" ? "the principal" : party.role === "Shipper" ? "the shipper" : "the consignee"}</div>
-                    </td>
-                  </tr>);
-                return rows;
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted, maxWidth: 420 }}>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted }}>
             {view.billingOfficeId
               ? <>The billing office <b style={{ color: HZ.amber }}>{officeByKey("billing")?.code}</b> issues every invoice; each line counts for its responsible office.</>
               : "Each responsible office invoices its own charges."}
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Btn size="sm" variant="secondary" data-testid="payment-terms-lines" onClick={() => setShowLines(true)}>Costs and charges</Btn>
-            {canEdit && view.saved && !view.followsIncoterm && !dirty && (
-              <Btn size="sm" variant="secondary" data-testid="payment-terms-reset" disabled={busy} onClick={() => save({ reset: true })}>Reset to the Incoterm's defaults</Btn>
-            )}
-            {canEdit && (dirty || !view.saved) && (
-              <Btn size="sm" data-testid="payment-terms-save" disabled={busy}
-                onClick={() => save(followsDefaults ? { reset: true } : { categories: draft })}>{busy ? "Saving…" : "Save payment terms"}</Btn>
-            )}
+        </div>
+        <div style={inset()}>
+          <div style={sectionLabelStyle()}>Payment terms in the booking request · DCSA Booking 2.0</div>
+          <pre data-testid="payment-terms-dcsa" style={{ margin: 0, fontFamily: HZ_MONO, fontSize: 11.5, lineHeight: 1.55, color: HZ.text, background: HZ.surface2,
+            border: `1px solid ${HZ.border}`, borderRadius: 10, padding: "10px 12px", overflowX: "auto" }}>{JSON.stringify(payload, null, 2)}</pre>
+          <div data-testid="payment-terms-payable-at" style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted }}>
+            Payable at: the carrier's billing office of the side paying the freight ({termLabel(draft.freight.term)}), else the port of
+            {draft.freight.term === "PRE" ? " loading" : " discharge"}. {view.saved ? "Sent with the next booking request or update."
+              : "Saved and sent with the booking request; from then on the shipment's money is split between its offices."}{" "}
+            The whole request: Booking request → Sent requests → View payload.
           </div>
         </div>
-      </div>
-      <div style={{ background: HZ.surface, backdropFilter: HZ.cardBlur, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, padding: "16px 18px", display: "grid", gap: 10, alignContent: "start", minWidth: 0 }}>
-        <div style={eyebrow()}>Sent to the carrier · DCSA Booking 2.0</div>
-        <div style={{ fontFamily: HZ_DISPLAY, fontSize: 15, fontWeight: 700, color: HZ.text }}>In the booking request</div>
-        <pre data-testid="payment-terms-dcsa" style={{ margin: 0, fontFamily: HZ_MONO, fontSize: 11.5, lineHeight: 1.55, color: HZ.text, background: HZ.tint || HZ.bg,
-          border: `1px solid ${HZ.border}`, borderRadius: 8, padding: "10px 12px", overflowX: "auto" }}>{JSON.stringify(payload, null, 2)}</pre>
-        <div style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted }}>
-          {view.saved ? "Sent with the next booking request or update." : "Saved and sent with the booking request; from then on the shipment's money is split between its offices."}
-        </div>
-      </div>
+      </FoldSection>
       {showLines && (
         <CostsAndChargesModal shipment={shipment} view={view} categories={draft} categoriesDirty={dirty || !view.saved} canEdit={canEdit}
           onClose={() => setShowLines(false)} onSaved={async v => { setShowLines(false); await load(); onSaved?.(v); }} />

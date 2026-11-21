@@ -1212,6 +1212,13 @@ module.exports = function shipmentsRoutes(app, ctx) {
       await tx.query("DELETE FROM transport_document_events WHERE shipment_id=$1", [req.params.id]);
       // Its spot offer goes back to the pool (lib/spot-offers.js); one already booked on stays the record of that booking.
       await tx.query("UPDATE spot_offers SET status='Offered', shipment_id='' WHERE shipment_id=$1 AND status<>'Booked'", [req.params.id]);
+      // Its services and what hangs off them (audit A4, 2026-11-21): shipment_services has no key to the shipment, so they
+      // were left behind. Plan lines and haulage records by hand (no key either; a record's waypoints cascade); a service's
+      // haulage stops and their times cascade with it.
+      const svc = "SELECT id FROM shipment_services WHERE shipment_id=$1";
+      await tx.query(`DELETE FROM shipment_loading_plan_lines WHERE service_id IN (${svc})`, [req.params.id]);
+      await tx.query(`DELETE FROM shipment_haulage_records WHERE service_id IN (${svc})`, [req.params.id]);
+      await tx.query("DELETE FROM shipment_services WHERE shipment_id=$1", [req.params.id]);
       await tx.query("DELETE FROM shipments WHERE id=$1", [req.params.id]);
     });
     for (const d of docs) if (d.stored_name) { try { fs.unlinkSync(path.join(UPLOADS_DIR, d.stored_name)); } catch {} }
@@ -2093,6 +2100,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // through the TRACKED_FIELDS loop above, but this variable-length sibling table never wrote
     // to shipment_events. Mirrors that same mechanism rather than inventing a second one.
     await logEvent(req.params.id, 'PARTY_ASSIGNED', role, null, customerName, '', req.user?.name || req.user?.email || "");
+    // A Trucker party is the side's Pickup/Delivery vendor too (§8.56, decision C): the two never disagree.
+    if (ctx.haulage) await ctx.haulage.syncVendorFromParty(req.params.id, role, customerId, customerName, req.user?.name || req.user?.email || "");
     await maybeRescreen(req.params.id);
     const [row] = await query("SELECT * FROM shipment_parties WHERE id=$1", [id]);
     ok(res, mapShipmentParty(row), 201);
@@ -2111,6 +2120,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!customerId || !customerName) return err(res, "customerId and customerName required");
     await query("UPDATE shipment_parties SET customer_id=$1, customer_name=$2 WHERE id=$3", [customerId, customerName, req.params.id]);
     await logEvent(existing.shipment_id, 'PARTY_REASSIGNED', existing.role, existing.customer_name, customerName, '', req.user?.name || req.user?.email || "");
+    if (ctx.haulage) await ctx.haulage.syncVendorFromParty(existing.shipment_id, existing.role, customerId, customerName, req.user?.name || req.user?.email || "");
     await maybeRescreen(existing.shipment_id);
     ok(res, mapShipmentParty({ ...existing, customer_id: customerId, customer_name: customerName }));
   });
@@ -2124,6 +2134,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     }
     await query("DELETE FROM shipment_parties WHERE id=$1", [req.params.id]);
     await logEvent(existing.shipment_id, 'PARTY_REMOVED', existing.role, existing.customer_name, null, '', req.user?.name || req.user?.email || "");
+    if (ctx.haulage) await ctx.haulage.syncVendorFromParty(existing.shipment_id, existing.role, "", "", req.user?.name || req.user?.email || "");
     await maybeRescreen(existing.shipment_id);
     ok(res, { deleted: req.params.id });
   });

@@ -66,6 +66,10 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
       // The carrier's DCSA Arrival Notice — AN01 only: its ETA, last free days, pickup and return points
       // and release state go on CargoDesk's own arrival notice (phase 8, 2026-10-28).
       const needsCarrierAn = docCode === "AN01";
+      // The carrier's doors, as the DCSA booking sends them — BR01 only (§8.56); the trucker's plan — PU01/DL01 only, from the
+      // side's Pickup or Delivery service (§8.56).
+      const needsDoors = docCode === "BR01";
+      const haulageType = docCode === "PU01" ? "Pickup" : docCode === "DL01" ? "Delivery" : "";
       const [ctrsRaw, shipper, consignee, costLines, parties, filings, rateSnapshots, booking, si, carrierAn] = await Promise.all([
         api.containers.list(),
         shipment.shipperId   ? api.customers.get(shipment.shipperId).catch(() => null)   : Promise.resolve(null),
@@ -78,6 +82,12 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
         needsSi ? api.shippingInstructions.get(shipment.id).catch(() => null) : Promise.resolve(null),
         needsCarrierAn ? api.arrivalNotice.get(shipment.id).catch(() => null) : Promise.resolve(null),
       ]);
+      const bookingDoors = needsDoors ? await api.carrierBooking.doors(shipment.id).catch(() => null) : null;
+      let haulagePlan = null;
+      if (haulageType) {
+        const svc = (await api.services.list(shipment.id).catch(() => [])).find(x => x.serviceType === haulageType && x.status !== "Cancelled");
+        haulagePlan = svc ? await api.haulagePlan.get(shipment.id, svc.id).catch(() => null) : null;
+      }
       const rateSnapshotId = rateSnapshots[0]?.id || null;
       const exportFilingItn = filings.find(f => f.filingType === "AES_EEI" && f.status === "Accepted")?.confirmationNumber || null;
       const allCtrs         = Array.isArray(ctrsRaw) ? ctrsRaw : (ctrsRaw?.results ?? []);
@@ -105,7 +115,7 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
 
       const dataBag = {
         shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines, parties, exportFilingItn, rateSnapshotId, booking, si, taxInfo,
-        carrierArrivalNotice: carrierAn,
+        carrierArrivalNotice: carrierAn, bookingDoors, haulagePlan,
       };
 
       let html;

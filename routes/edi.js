@@ -2,6 +2,8 @@
 
 const { validateOutbound, errorsText, specVersion } = require("../lib/dcsa/validate");
 const { comparisonRows, planLegs } = require("../lib/carrier-confirmation");
+const { doorLegs, doorPoint, dcsaAddress, addressGaps, doorContact, doorLocation, positioningTimes } = require("../lib/booking-doors");
+const { timezoneFor } = require("../lib/timezones");
 
 module.exports = function ediRoutes(app, ctx) {
   const { query, ok, err, uid, auth, requireRole, shipmentSubs,
@@ -107,6 +109,8 @@ module.exports = function ediRoutes(app, ctx) {
       const { dcsa, changes } = await confirmationChanges(booking, raw);
       await query("UPDATE carrier_bookings SET changed_fields=$1, carrier_confirmation=$2, changes_accepted_at=NULL, changes_accepted_by='' WHERE id=$3",
         [changes.length ? JSON.stringify(changes) : "", dcsa ? JSON.stringify(dcsa) : "", booking.id]);
+      // The carrier's cut-offs fill the containers' empty CY and VGM cut-off; a typed one stays (§8.56, decision E).
+      if (dcsa && ctx.haulage) await ctx.haulage.fillCutOffs(shipment.id, dcsa, booking.carrier_code || "Carrier").catch(e => console.error("Cut-offs:", e.message));
       // The thread and Reports → Carrier Responses count it per request.
       if (changes.length) await query("UPDATE edi_messages SET status='confirmed_with_changes' WHERE id=$1", [inId]);
     }
@@ -368,6 +372,46 @@ module.exports = function ediRoutes(app, ctx) {
       ? `the shipper's dangerous goods emergency contact: add a name and a 24-hour phone to ${shipperRow.companyName}'s customer profile`
       : "a shipper with a dangerous goods emergency contact on its customer profile");
     const loop = await shipmentLoopCode(shipment.id).catch(() => "");
+    // The carrier's haulage at a door (2026-11-20, the user's rule; lib/booking-doors.js, ARCHITECTURE.md §8.55): only the
+    // route's Carrier's Haulage leg from a Door or GPS point (pick-up: DR-CY, DR-PT) or to one (delivery: CY-DR, PT-DR) makes
+    // the booking Store Door, and the shipper's or the consignee's customer profile says where the carrier goes and whom it
+    // calls, its name and details on the party. A door the carrier can't find, or no one to call, is said before anything is
+    // sent (doorMissing), like the DG gaps. A GPS leg is found by its own coordinates.
+    const legs = await query("SELECT * FROM shipment_legs WHERE shipment_id=$1 ORDER BY leg_order, created_at", [shipment.id]);
+    const { pickUp, delivery } = doorLegs(legs);
+    const doorMissing = [];
+    const [nvocc] = pickUp ? await query("SELECT 1 FROM shipment_parties WHERE shipment_id=$1 AND role='NVOCC'", [shipment.id]) : [];
+    const doorOf = async (leg, side) => {
+      if (!leg) return null;
+      const origin = side === "origin";
+      const what = origin ? "the carrier's pick-up at the shipper's door" : "the carrier's delivery to the consignee's door";
+      const id = origin ? shipment.shipper_id : shipment.consignee_id;
+      const profile = id ? await getCustomerRow(id).catch(() => null) : null;
+      if (!profile) {
+        doorMissing.push(`${what}: choose the ${origin ? "shipper" : "consignee"} from Master Data → Customers (${(origin ? shipment.shipper_name : shipment.consignee_name) || "none is set"}), so the carrier gets its address`);
+        return null;
+      }
+      const point = doorPoint(leg, side);
+      const gaps = point.gps ? (point.latitude != null && point.longitude != null ? [] : ["GPS coordinates on the leg"]) : addressGaps(profile);
+      if (gaps.length) doorMissing.push(point.gps ? `${what}: add the GPS coordinates to the leg (Contracts & Schedules)`
+        : `${what}: add the ${gaps.join(", ")} to ${profile.companyName}'s address (Master Data → Customers)`);
+      const contact = doorContact(profile, await customerContacts(profile.id));
+      if (!contact) doorMissing.push(`${what}: add a contact with a phone or e-mail to ${profile.companyName}'s customer profile`);
+      if (gaps.length || !contact) return null;
+      const door = { location: doorLocation(profile, point), contact, partyAddress: dcsaAddress(profile), detailsOnParty: origin ? !nvocc : true };
+      if (origin) {
+        // When the containers are to be at the door: the Loading service's planned time per container, the earliest per
+        // equipment line, in the door's own time zone. No Loading plan with a time: no date is sent (none is made up).
+        const plan = await query(`SELECT l.container_id, l.planned_date FROM shipment_loading_plan_lines l JOIN shipment_services s ON s.id = l.service_id
+          WHERE s.shipment_id=$1 AND s.side='Export' AND s.service_type='Loading' AND s.status<>'Cancelled'`, [shipment.id]);
+        const tz = timezoneFor(point.gps ? { countryCode: profile.countryIso2, latitude: point.latitude, longitude: point.longitude }
+          : { unlocode: point.code, countryCode: profile.countryIso2, latitude: profile.latitude, longitude: profile.longitude });
+        door.positioningByType = positioningTimes(plan, ctrs, tz);
+      }
+      return door;
+    };
+    const originDoor = await doorOf(pickUp, "origin");
+    const destinationDoor = await doorOf(delivery, "destination");
     // The payment terms (CPI) once saved (the office split, §8.52): freight, origin and destination charges. The freight
     // term is theirs once saved, else the shipment's Freight Terms.
     let paymentTerms = null, freightTerm = /^(collect|payable at destination)$/i.test(String(shipment.freight_terms || "").trim()) ? "COL" : shipment.freight_terms ? "PRE" : "";
@@ -385,7 +429,7 @@ module.exports = function ediRoutes(app, ctx) {
     if (terms?.saved) paymentTerms = ctx.officeSplit.rules.dcsaPaymentTerms(terms, { freightPayableAt: carrier.payableAt || "" });
     return {
       paymentTerms,
-      serviceType: shipment.service_type || "Port-to-Port", movementType: shipment.movement_type || "FCL",
+      movementType: shipment.movement_type || "FCL",
       freightTerms: shipment.freight_terms || "", incoterm: shipment.incoterm || "",
       declaredValue: shipment.declared_value, declaredValueCurrency: shipment.declared_value_currency || "USD",
       bookingAgent: (agent?.branch_name || agent?.office_name) ? { name: agent.branch_name || agent.office_name,
@@ -397,7 +441,36 @@ module.exports = function ediRoutes(app, ctx) {
       hsCodes: [...new Set(ctrs.map(c => c.hs_code).filter(Boolean))],
       ...(loop ? { service: loop } : {}),
       dangerousGoods, dgEmergencyContact, dgMissing,
+      originDoor, destinationDoor, doorMissing,
     };
+  }
+
+  // The doors the printed booking request (BR01) shows (2026-11-20, §8.56): exactly what the DCSA booking sends (§8.55), so
+  // the paper and the message agree. A carrier's door with a profile it can't use comes back without a location, and its
+  // gaps in missing.
+  app.get("/api/shipments/:id/booking-doors", auth(), async (req, res) => {
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    const legs = await query("SELECT * FROM shipment_legs WHERE shipment_id=$1 ORDER BY leg_order, created_at", [shipment.id]);
+    const { pickUp, delivery } = doorLegs(legs);
+    let extras = { originDoor: null, destinationDoor: null, doorMissing: [] };
+    if (pickUp || delivery) {
+      try { extras = await dcsaBookingExtras(shipment); } catch (e) { return err(res, e.message, 500); }
+    }
+    const view = (door, leg, side) => (leg ? {
+      carrierHaulage: true, gps: (side === "origin" ? leg.pol_loc_type : leg.pod_loc_type) === "GPS Coordinates",
+      location: door?.location || null, contact: door?.contact || null, partyAddress: door?.partyAddress || null,
+      detailsOnParty: !!door?.detailsOnParty, positioning: door?.positioningByType || {},
+    } : null);
+    ok(res, { origin: view(extras.originDoor, pickUp, "origin"), destination: view(extras.destinationDoor, delivery, "destination"), missing: extras.doorMissing || [] });
+  });
+
+  // A customer's contacts (Master Data → Customers → Contacts), from the Customer Service when it owns them.
+  async function customerContacts(customerId) {
+    if (((await getSettings()).customer_source || "local") === "remote") {
+      try { return await ctx.callCustomerService("GET", `/internal/customers/${customerId}/contacts`); } catch { return []; }
+    }
+    return (await query("SELECT * FROM customer_contacts WHERE customer_id=$1 ORDER BY is_primary DESC, created_at ASC", [customerId])).map(ctx.mapCustomerContact);
   }
 
   app.get("/api/shipments/:id/edi-messages", auth(), async (req, res) => {
@@ -455,7 +528,9 @@ module.exports = function ediRoutes(app, ctx) {
       return fail(400, `No DCSA connection for ${shipment.carrier_code}: set one up under Carrier Integrations (or, for a demo, turn on App Settings → Demo carrier)`);
 
     const [existingBooking] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
-    if (existingBooking && existingBooking.status === "Pending")
+    // A request the carrier never received (send_failed) is sent again; one it has is pending (audit 2026-11-18, B1:
+    // Review said "send it again from the Details tab" while this refused it).
+    if (existingBooking && existingBooking.status === "Pending" && existingBooking.last_response_status !== "send_failed")
       return fail(409, "A booking request is already pending for this shipment");
 
     // SPOT rates (the user, 2026-10-21): an expired digital spot offer can't be booked on; an expired
@@ -497,6 +572,7 @@ module.exports = function ediRoutes(app, ctx) {
     // Pending booking that was never sent.
     const extras = await dcsaBookingExtras(shipment);
     if (extras.dgMissing.length) return fail(400, `Can't send the booking request: the carrier needs the dangerous goods declared — add ${extras.dgMissing.join("; ")}`);
+    if (extras.doorMissing.length) return fail(400, `Can't send the booking request: the carrier needs to know where to go and whom to call — ${extras.doorMissing.join("; ")}`);
     const dcsaPayload = integ.adapter.buildBookingRequest(shipment, { ...requestPayload, ...extras });
     const check = validateOutbound("bkg", "post", "/v2/bookings", dcsaPayload);
     if (!check.ok) {
@@ -689,6 +765,7 @@ module.exports = function ediRoutes(app, ctx) {
     const requestPayload = await bookingRequestPayload(shipment, req.body);
     const extras = await dcsaBookingExtras(shipment);
     if (extras.dgMissing.length) return err(res, `Can't send the update: the carrier needs the dangerous goods declared — add ${extras.dgMissing.join("; ")}`, 400);
+    if (extras.doorMissing.length) return err(res, `Can't send the update: the carrier needs to know where to go and whom to call — ${extras.doorMissing.join("; ")}`, 400);
     const dcsaPayload = integ.adapter.buildBookingRequest(shipment, { ...requestPayload, ...extras });
     const result = await integ.adapter.updateBooking(integ.config, booking.carrier_booking_request_reference, dcsaPayload);
     if (!result.ok && result.invalid) return err(res, `Can't send the update: ${result.error.replace(/^Not sent: /, "")}`, 400);
@@ -725,6 +802,7 @@ module.exports = function ediRoutes(app, ctx) {
       if (fetched && Array.isArray(fetched.transportPlan)) {
         dcsa = fetched;
         await query("UPDATE carrier_bookings SET carrier_confirmation=$1 WHERE id=$2", [JSON.stringify(dcsa), booking.id]);
+        if (ctx.haulage) await ctx.haulage.fillCutOffs(shipment.id, dcsa, booking.carrier_code || "Carrier").catch(e => console.error("Cut-offs:", e.message));
       }
     }
     if (!dcsa) return ok(res, { available: false });

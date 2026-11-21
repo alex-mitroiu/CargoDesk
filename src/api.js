@@ -98,6 +98,8 @@ export const api = {
   },
   carrierBooking: {
     get:     (shipmentId)          => req("GET",   `/shipments/${shipmentId}/carrier-booking`),
+    // The carrier's doors as the DCSA booking sends them (§8.55), for the printed booking request (BR01, §8.56).
+    doors:   (shipmentId)          => req("GET",   `/shipments/${shipmentId}/booking-doors`),
     cancel:  (shipmentId, data={}) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/cancel`, data),
     // Sent through a carrier integration (DCSA, TKT-KG4E49): update/amend at the carrier, ask it for the status.
     sendUpdate:  (shipmentId, data = {}) => req("POST", `/shipments/${shipmentId}/carrier-booking/send-update`, data),
@@ -715,14 +717,28 @@ export const api = {
       req("PUT", `/shipments/${shipmentId}/services/${serviceId}/haulage/${containerId}`, d),
     saveCost: (shipmentId, serviceId, containerId, d) =>
       req("PATCH", `/shipments/${shipmentId}/services/${serviceId}/haulage/${containerId}/cost`, d),
-    waypoints: {
-      list:   (shipmentId, serviceId, containerId) =>
-        req("GET",    `/shipments/${shipmentId}/services/${serviceId}/haulage/${containerId}/waypoints`),
-      create: (shipmentId, serviceId, containerId, d) =>
-        req("POST",   `/shipments/${shipmentId}/services/${serviceId}/haulage/${containerId}/waypoints`, d),
-      update: (shipmentId, id, d) => req("PUT",    `/shipments/${shipmentId}/haulage-waypoints/${id}`, d),
-      remove: (shipmentId, id)    => req("DELETE", `/shipments/${shipmentId}/haulage-waypoints/${id}`),
-    },
+  },
+  // Haulage stops on a Pickup or Delivery service (§8.56): every write answers with the whole plan (checks included).
+  haulagePlan: {
+    get:        (shipmentId, serviceId)            => req("GET",    `/shipments/${shipmentId}/services/${serviceId}/haulage-plan`),
+    usual:      (shipmentId, serviceId)            => req("POST",   `/shipments/${shipmentId}/services/${serviceId}/haulage-stops/usual`, {}),
+    addStop:    (shipmentId, serviceId, d)         => req("POST",   `/shipments/${shipmentId}/services/${serviceId}/haulage-stops`, d),
+    updateStop: (shipmentId, serviceId, stopId, d) => req("PUT",    `/shipments/${shipmentId}/services/${serviceId}/haulage-stops/${stopId}`, d),
+    removeStop: (shipmentId, serviceId, stopId)    => req("DELETE", `/shipments/${shipmentId}/services/${serviceId}/haulage-stops/${stopId}`),
+    order:      (shipmentId, serviceId, d)         => req("POST",   `/shipments/${shipmentId}/services/${serviceId}/haulage-stops/order`, d),
+    setTimes:   (shipmentId, serviceId, containerId, stopId, d) =>
+      req("PUT", `/shipments/${shipmentId}/services/${serviceId}/haulage-times/${containerId}/${stopId}`, d),
+    ownStops:   (shipmentId, serviceId, containerId, own) =>
+      req("POST", `/shipments/${shipmentId}/services/${serviceId}/haulage/${containerId}/own-stops`, { own }),
+  },
+  // Master Data → Facilities (§8.56): terminals from the SMDG list, depots by hand.
+  facilities: {
+    list:      (p = {}) => req("GET",    `/facilities?${new URLSearchParams(p)}`),
+    status:    ()       => req("GET",    `/facilities/status`),
+    importSmdg: (csv)   => req("POST",   `/facilities/import-smdg`, csv ? { csv } : {}),
+    create:    (d)      => req("POST",   `/facilities`, d),
+    update:    (id, d)  => req("PUT",    `/facilities/${id}`, d),
+    remove:    (id)     => req("DELETE", `/facilities/${id}`),
   },
   milestones: {
     list:   (shipmentId)       => req("GET",    `/shipments/${shipmentId}/milestones`),

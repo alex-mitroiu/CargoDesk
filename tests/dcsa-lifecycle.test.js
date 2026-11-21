@@ -184,9 +184,11 @@ function startFakeCarrier() {
     assert("the carrier's request reference is stored", /^FAKE-REQ-/.test(reqRef || ""), reqRef);
     const created = F.received.find(r => r.method === "POST" && r.path === "/v2/bookings");
     assert("the carrier got a spec-valid CreateBooking (it would have answered 400 otherwise)", !!created && specErrors(created.body).length === 0, JSON.stringify(specErrors(created?.body || {})));
-    assert("…ISO 6346 code 45G1 for 2 × 40HC, door pick-up as SD with a place of receipt, API-Version 2",
+    // Service Type says Door-to-Port, but the route has no Carrier's Haulage leg from a door: CY, and no place of receipt
+    // (2026-11-20, the route decides; the door itself is tests/dcsa-booking-doors.test.js).
+    assert("…ISO 6346 code 45G1 for 2 × 40HC, CY with no place of receipt (no carrier's door leg), API-Version 2",
       created?.body.requestedEquipments[0]?.ISOEquipmentCode === "45G1" && created?.body.requestedEquipments[0]?.units === 2
-      && created?.body.receiptTypeAtOrigin === "SD" && created?.body.shipmentLocations.some(l => l.locationTypeCode === "PRE") && created?.apiVersion === "2",
+      && created?.body.receiptTypeAtOrigin === "CY" && !created?.body.shipmentLocations.some(l => l.locationTypeCode === "PRE") && created?.apiVersion === "2",
       JSON.stringify(created?.body).slice(0, 400));
     assert("…booking agent = the export office's legal entity / office, commodity from MDM", !!created?.body.documentParties.bookingAgent.partyName
       && !!created?.body.requestedEquipments[0]?.commodities?.[0]?.commodityType, JSON.stringify(created?.body.documentParties));
@@ -307,6 +309,13 @@ function startFakeCarrier() {
     const sendD = await request("POST", `/api/shipments/${D}/edi-messages/booking-request`, {}, token);
     assert("refused request: carrierError returned, booking flagged send_failed", sendD.status === 201 && /Service contract HLX unknown/.test(sendD.body.carrierError || "")
       && sendD.body.booking.lastResponseStatus === "send_failed", JSON.stringify(sendD.body).slice(0, 300));
+    // Audit 2026-11-18 (B1): the carrier never got it, so it can be sent again (it used to be refused as "already pending").
+    const resendD = await request("POST", `/api/shipments/${D}/edi-messages/booking-request`, {}, token);
+    assert("…and it can be sent again: accepted this time, no longer send_failed, with the carrier's reference",
+      resendD.status === 201 && !resendD.body.carrierError && resendD.body.booking.lastResponseStatus !== "send_failed" && !!resendD.body.booking.carrierBookingRequestReference,
+      JSON.stringify(resendD.body).slice(0, 300));
+    const twice = await request("POST", `/api/shipments/${D}/edi-messages/booking-request`, {}, token);
+    assert("…while one the carrier has received stays refused as pending (409)", twice.status === 409, JSON.stringify(twice.body));
 
     console.log("\nSchedule search — DCSA point-to-point routings");
     const loc = (unloc, dt) => ({ facilityTypeCode: "POTE", location: { UNLocationCode: unloc }, dateTime: dt });

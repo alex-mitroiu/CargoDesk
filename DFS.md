@@ -415,8 +415,10 @@ better-matching setup is created afterward. See ARCHITECTURE.md §8.27.
 lanes, countries, commodities, charge codes, pack types, **carrier profiles** (a carrier's own offices at any
 UN/LOCODE, which office books, handles imports and bills per port or country, our customer number at the carrier per
 legal entity, the creditor code of each office; ARCHITECTURE.md §8.53), carrier service **loop codes** with a directional (Eastbound/Westbound)
-port rotation, and an **HS Codes** registry of real 6-digit Harmonized System codes that cargo
-forms pick from instead of typing free text.
+port rotation, an **HS Codes** registry of real 6-digit Harmonized System codes that cargo
+forms pick from instead of typing free text, and **Facilities** (terminals from the SMDG Terminal Code List, imported by an
+admin at run time and never shipped with CargoDesk, and depots added by hand; the places a haulage stop picks;
+ARCHITECTURE.md §8.56).
 **Roles**: admin (write; HS Codes writes also allow operator); every domain (read, as a dependency,
 not a direct user-facing action).
 **Primary data**: owned by the MDM Service when `mdm_source=remote`, monolith-local otherwise.
@@ -575,6 +577,35 @@ coverage; a port beats its country; with no billing row the booking or import of
 carrier or a port changes. The export side can pick another office for the first two, the import side for the other
 two. The booking goes to the booking office, named at its own location, with our customer number at the carrier for the
 export office's legal entity; the freight is payable at the billing office of the side that pays it.
+**The Details page** (ARCHITECTURE.md §8.54, 2026-11-18): drawn in Trade Horizon Next, like Contracts & Schedules: the
+booking card (the carrier's answer, the references, Freight Terms), then the carrier offices and the payment terms, each
+foldable (open the first time, then as the user left it, in their browser), the contract and the booking request (equipment,
+checks, Send). Folded, the offices read as one line and the payment terms keep their status, a line per group of charges and
+Save. The "Payment terms in the booking request" preview shows "payable at" as the booking sends it: the carrier's
+billing office of the side paying the freight, else the port. A request the carrier didn't receive reads "Not received", with
+the carrier's reason, and can be sent again.
+**Door pick-up and delivery** (ARCHITECTURE.md §8.55, 2026-11-20): when the route has a Carrier's Haulage pick-up leg from a
+door or a GPS point (DR-CY, DR-PT), the booking tells the carrier it collects at the door (DCSA "store door") and where: the
+shipper's name, address and contact from its customer profile (on the shipper and on the place), and, from the Loading
+service's plan, when the containers should be there. A Carrier's Haulage delivery leg to a door does the same with the
+consignee's. Anything else (merchant's haulage, a carrier's leg from a yard or a terminal) is booked port to port with no
+address: with merchant's haulage the trucker we choose is told by the Pickup / Delivery service. The Service Type field
+doesn't decide it. A profile with no address (for a classified location, no GPS coordinates) or no contact stops the
+request, saying what to add. The printed booking request (BR01) shows the same: the shipper's (consignee's) address and
+contact and the door when the carrier hauls from (to) it, else "at the terminal (CY)".
+**Pickup and Delivery: the trucker's run** (ARCHITECTURE.md §8.56, 2026-11-20): with merchant's haulage, the Pickup
+(export) or Delivery (import) service plans the run as stops in order, shared by every container unless one gets its own:
+export the empty depot, the shipper's door, the terminal; import the terminal, the consignee's door, the empty depot; any
+weighing, customs or other stop in between. A stop is a customer (its address and contact from its profile), a terminal
+or depot from Master Data → Facilities, or a GPS point. Each container has a planned gate in and out at each stop, in the
+stop's own local time; actual times come from its container events. The carrier's cut-offs, kept from its confirmation,
+show on the page (and fill each container's empty CY and VGM cut-off); the trucker's plan prints the CY cut-off, the
+earliest delivery when given and the VGM cut-off for a container weighed on the way, never the documentation cut-off.
+Checks warn when a gate-in is after the CY cut-off, a weighed container is late for the VGM cut-off, or (import) the full
+pick-up or the empty return falls outside the free time. The trucker is the service's vendor, which the Trucker party
+follows (a name typed instead of a customer can't be the party, and the page says so; cancelling or removing the service
+releases it). The Pickup / Delivery Plan (PU01 / DL01) carries all of it per container: where, whom to ask for, when, which
+goods, and the booking or B/L to quote. Pickup is ordered on the Export side only and Delivery on the Import side only.
 **Key functions**: Send Booking Request as a **DCSA Booking 2.0** message — to the carrier's own
 integration, or, where it has none, to CargoDesk's built-in **demo carrier** (always on outside
 production; in production only when an admin turns it on), which answers like a real carrier and is

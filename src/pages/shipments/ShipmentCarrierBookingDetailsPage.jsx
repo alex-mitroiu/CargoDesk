@@ -7,35 +7,102 @@ import CarrierBookingsTable from "../../components/shared/CarrierBookingsTable";
 import CreditHoldModal from "../../components/shared/CreditHoldModal";
 import Spinner from "../../components/primitives/Spinner";
 import { CommodityDisplay } from "./ShipmentDetailPage";
-import { IconSendPlane, IconAnchor, IconWarning } from "../../components/primitives/Icon";
+import { IconSendPlane, IconWarning } from "../../components/primitives/Icon";
 import { resolveCreditGate } from "../../utils/invoiceGenerator";
 import { canEditShipmentSide } from "../../utils/officeSide";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
 import { PaymentTermsCard } from "../../components/shared/PaymentTerms";
+import { FoldSection, FactsPills, useFolds } from "../../components/shared/FoldSection";
+import { PillNav, GlowEdge, DotPill, frameStyle, sectionLabelStyle, ctaStyle, pillBtnStyle, fmtDate } from "./schedules/SchedulesParts";
 
 // ─── Carrier Booking — Details ────────────────────────────────────────────────
-// The outbound half of a booking: what we're asking the carrier for, and the Send
-// action itself. Sibling to Review (the carrier's response + Confirm/Cancel), split
-// out of the old EdiMessagesDrawer per the same "one concept, one dedicated page"
-// precedent Accounting already established for Invoice/Cost/GP.
+// The outbound half of a booking: what we're asking the carrier for, and the Send action itself. Sibling to Review (the
+// carrier's response + Cancel). EdiMessageList stays as it is (shared with Test Tools and Document Templates).
 //
-// Trade Horizon "New Style" pass — the label/value info grids (Carrier/Route/Freight
-// Terms, Line Agents, Contract/Client/Commodity) became individual stat-tiles (same
-// HZ.bg-boxed treatment as Cargo/Accounting's own stat strips), rather than floating
-// bare in one bordered group box. EdiMessageList/GenerateDocumentModal stay untouched
-// (genuinely shared with non-shipment-detail pages, e.g. TestToolsPage.jsx, MDM
-// Document Templates) — CarrierBookingsTable/CreditHoldModal are now HZ too, since
-// this is their only real consumer alongside Invoice Entry, itself already HZ.
+// Trade Horizon Next (2026-11-18, mockup a3e1b986 v2, ARCHITECTURE.md §8.54; the user's rule: every design and build uses
+// the latest patterns): the header with the route strip and the » pill (src/utils/horizonNextPages.js), a pill nav, the
+// booking as the page's main card (carrier, route, vessel and ETD left the tiles: the header has them), the carrier offices
+// and the payment terms as foldable sections (each starts open and then remembers the user's choice in this browser), the
+// contract, then the booking request (equipment, the checks, Send, what was sent). One glowing action: Send Booking Request
+// while it can be used, else Save payment terms.
 
 const FREIGHT_TERMS_OPTIONS = ["Prepaid", "Collect", "Payable at Destination"];
+const FOLD = { offices: "carrier-booking.offices", terms: "carrier-booking.terms" };
+const FOLD_KEYS = Object.values(FOLD);
 
-const StatTile = ({ label, children }) => (
-  <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8, padding: "10px 14px" }}>
-    <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, fontWeight: 600,
-      textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>{label}</div>
-    <div style={{ fontFamily: HZ_BODY, fontSize: 14, color: HZ.text, fontWeight: 600 }}>{children}</div>
-  </div>
+// The carrier offices' roles: booking = cyan, import = violet, billing = amber, as everywhere on the page.
+const OFFICE_ROLES = [["booking", "Booking office", () => HZ.cyan], ["billing_origin", "Billing · origin", () => HZ.amber],
+  ["import", "Import office", () => HZ.violet], ["billing_destination", "Billing · destination", () => HZ.amber]];
+const FALLBACK_TEXT = { billing_origin: "no billing row: the booking office bills", billing_destination: "no billing row: the import office bills" };
+
+// Same colours as the Bookings on this Shipment table (CarrierBookingsTable).
+const statusColor = status => ({ Created: HZ.textMuted, Pending: HZ.info, Confirmed: HZ.good, Rejected: HZ.crit, Cancelled: HZ.textMuted }[status] || HZ.textMuted);
+const headline = (status, carrier, booking) => (status === "Pending" && booking?.lastResponseStatus === "send_failed" ? `Not received by ${carrier}`
+  : status === "Confirmed" && booking?.lastResponseStatus === "cancellation_requested" ? `Confirmed by ${carrier} · cancellation requested`
+  : { Pending: `Pending with ${carrier}`, Confirmed: `Confirmed by ${carrier}`, Rejected: `Rejected by ${carrier}`, Cancelled: "Cancelled" }[status]
+    || `Not sent to ${carrier} yet`);
+const by = (at, who) => `${fmtDate(at)}${who ? ` by ${who}` : ""}`;
+const subline = ({ status, booking, bookable, connection, carrier }) => {
+  if (status === "Pending" && booking?.lastResponseStatus === "send_failed")
+    return `${carrier} didn't receive the request sent ${by(booking?.requestedAt, booking?.requestedBy)}: send it again at the bottom of the page.`;
+  if (status === "Confirmed" && booking?.lastResponseStatus === "cancellation_requested")
+    return `The cancellation was requested; the booking stays confirmed until ${carrier} agrees (see the Review page).`;
+  if (status === "Pending") return `Sent ${by(booking?.requestedAt, booking?.requestedBy)} · awaiting ${carrier}'s answer: check the Review page once it arrives.`;
+  if (status === "Confirmed") return `Confirmed ${by(booking?.confirmedAt, booking?.confirmedBy)}.`;
+  if (status === "Rejected") return `Answered ${fmtDate(booking?.respondedAt)}: see the Review page.`;
+  if (status === "Cancelled") return `Cancelled ${by(booking?.cancelledAt, booking?.cancelledBy)}${booking?.cancelReason ? ` · ${booking.cancelReason}` : ""}.`;
+  if (!bookable) return connection
+    ? `No DCSA connection for ${carrier}, so it can't be booked from CargoDesk. Set one up under Carrier Integrations${connection.simulatorAvailable === false ? ", or turn on App Settings → Demo carrier for a demo" : ""}.`
+    : "Checking the carrier's DCSA connection…";
+  return "Check the offices, the payment terms and the equipment, then send the booking request at the bottom of the page.";
+};
+const sendBlockedWhy = ({ status, bookable }) => (!bookable ? "No DCSA connection for this carrier."
+  : status === "Pending" ? "Sent: waiting for the carrier's answer." : status === "Confirmed" ? "Confirmed by the carrier." : "");
+
+const factLabel = () => ({ display: "block", fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: HZ.textMuted, marginBottom: 2 });
+const factValue = (nil = false) => ({ fontFamily: nil ? HZ_BODY : HZ_MONO, fontSize: 12.5, fontWeight: nil ? 400 : 700, fontStyle: nil ? "italic" : "normal",
+  color: nil ? HZ.textMuted : HZ.text, wordBreak: "break-word" });
+const Fact = ({ label, value, empty }) => (
+  <div style={{ minWidth: 0 }}><span style={factLabel()}>{label}</span><b style={factValue(!value)}>{value || empty}</b></div>
 );
+const Note = ({ tone, children }) => {
+  const c = tone === "info" ? HZ.info : HZ.warn;
+  return (
+    <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, background: tone === "info" ? HZ.infoBg : HZ.warnBg,
+      border: `1px solid color-mix(in srgb, ${c} 40%, transparent)`, borderRadius: 12, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+      <IconWarning size={13} color={c} /><span>{children}</span>
+    </div>
+  );
+};
+
+const initials = name => String(name || "").replace(/[^A-Za-z0-9 ]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("") || "—";
+// One carrier office, as drawn in the mockup: its initials, its role, its name and where it is.
+const OfficeCard = ({ role, label, tone, entry: e, port }) => {
+  const o = e?.office;
+  return (
+    <div data-testid={`carrier-booking-office-${role}`} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 14px", borderRadius: 12, minWidth: 0,
+      background: HZ.tint, border: `1px ${o ? "solid" : "dashed"} ${o ? HZ.border : HZ.borderStrong}` }}>
+      <span aria-hidden style={{ width: 34, height: 34, borderRadius: "50%", display: "grid", placeItems: "center", flex: "none", fontFamily: HZ_DISPLAY, fontSize: 12, fontWeight: 800,
+        background: o ? HZ.gradCyan : HZ.neutralBg, color: o ? HZ.chipText : HZ.textMuted }}>{o ? initials(o.name) : "—"}</span>
+      <div style={{ minWidth: 0 }}>
+        <span style={{ fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", padding: "1px 7px", borderRadius: 5,
+          color: tone, background: `color-mix(in srgb, ${tone} 12%, transparent)`, border: `1px solid color-mix(in srgb, ${tone} 40%, transparent)` }}>{label}</span>
+        <div style={{ fontFamily: HZ_BODY, fontSize: 13.5, fontWeight: o ? 700 : 600, fontStyle: o ? "normal" : "italic", color: o ? HZ.text : HZ.textMuted,
+          marginTop: 5, lineHeight: 1.3, overflowWrap: "anywhere" }}>{o?.name || "None set"}</div>
+        <div style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted, marginTop: 2 }}>
+          {o ? `${o.unlocode || "—"}${e.fallback ? ` · ${FALLBACK_TEXT[role]}` : ""}` : `for ${e?.port || port || "—"}`}
+        </div>
+      </div>
+    </div>
+  );
+};
+// Folded (decision D): the four in one line, a missing office in the warning colour.
+const officeSummary = co => OFFICE_ROLES.map(([role, label]) => {
+  const e = co?.roles?.[role];
+  if (!e?.office) return { label, value: "none set", warn: true };
+  if (e.fallback) return { label, value: role === "billing_origin" ? "the booking office" : "the import office" };
+  return { label, value: e.office.name, tail: e.office.unlocode || "" };
+});
 
 const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
   const auth = useAuth();
@@ -125,12 +192,6 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
     }).finally(() => setLoading(false));
   }, [shipment.id]);
 
-  // The carrier's offices (§8.53) — read-only here, same as Carrier/Route/Vessel above: the booking goes to the booking
-  // office, located at its own UN/LOCODE, and "payable at" is the billing office of the side paying the freight. They're
-  // changed on Contracts & Schedules' carrier office tiles.
-  const officeTiles = [["booking", "Booking office", HZ.cyan, HZ.cyanBg], ["billing_origin", "Billing · origin", HZ.amber, HZ.warnBg],
-    ["import", "Import office", HZ.violet, HZ.violetBg], ["billing_destination", "Billing · destination", HZ.amber, HZ.warnBg]];
-
   // Same size+type grouping the backend applies to the outbound booking-request payload
   // (routes/edi.js, TKT-0H9TSP) — shown here so what's on screen matches what gets sent.
   const equipment = useMemo(() => {
@@ -172,7 +233,9 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
 
   const bookable = !!connection?.capabilities?.booking;
   const status = booking?.status || "Created";
-  const canSend = canEdit && bookable && status !== "Pending" && status !== "Confirmed";
+  // A request the carrier never received can be sent again (audit 2026-11-18, B1); the server accepts it.
+  const sendFailed = status === "Pending" && booking?.lastResponseStatus === "send_failed";
+  const canSend = canEdit && bookable && (sendFailed || (status !== "Pending" && status !== "Confirmed"));
   const outboundMessages = messages.filter(m => m.direction === "out");
 
   const handleSend = async () => {
@@ -189,8 +252,13 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
     try {
       const result = await api.ediMessages.sendBookingRequest(shipment.id);
       await load();
-      if (result.pending) {
-        toast.info("Booking request sent — awaiting carrier response. Use Integration Board → Test Tools to simulate one.");
+      // The carrier refused it (the server answers 201 with carrierError): say so, never "sent" (audit B2).
+      if (result.carrierError) {
+        toast.error(`${shipment.carrierCode || "The carrier"} didn't receive the booking request: ${result.carrierError}`);
+      } else if (result.pending) {
+        toast.info(result.booking?.isMock
+          ? "Booking request sent to the demo carrier: answer it from Integration Board → Test Tools → DCSA Carrier."
+          : `Booking request sent: awaiting ${shipment.carrierCode || "the carrier"}'s answer.`);
       } else {
         toast.success(result.isMock ? "Booking request sent (demo response received)" : "Booking request sent");
       }
@@ -203,6 +271,7 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
   };
 
   useHorizonFonts();
+  const folds = useFolds(FOLD_KEYS, auth.user?.id);
 
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, color: HZ.textMuted,
@@ -211,245 +280,188 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
     </div>
   );
 
+  const carrier = shipment.carrierCode || "the carrier";
+  const officesOpen = folds.isOpen(FOLD.offices), termsOpen = folds.isOpen(FOLD.terms);
+  // The page's one glowing action (Trade Horizon Next): Send Booking Request while it can be used, else Save payment terms.
+  const sendIsPrimary = canSend;
+  const navItems = [
+    ["booking", "Booking", "shpbooking-booking-section"],
+    ["offices", "Carrier offices", "shpbooking-offices-section", officesOpen ? null : "· folded"],
+    ["terms", "Payment terms", "shpbooking-payment-terms-section", termsOpen ? null : "· folded"],
+    ["contract", "Contract", "shpbooking-contract-section"],
+    ["request", "Booking request", "shpbooking-request-section"],
+  ];
+  const openOnJump = key => { if (key === "offices" && !officesOpen) folds.setOpen(FOLD.offices, true); if (key === "terms" && !termsOpen) folds.setOpen(FOLD.terms, true); };
+
   return (
-    <div id="shpbooking-details-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
-      <CarrierBookingsTable shipment={shipment} />
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {/* Status + BKG- id are no longer repeated here — both already appear on the
-              current row in the "Bookings on this Shipment" table above (CarrierBookingsTable),
-              which is now the single place that shows them. Heading font size matched to that
-              table's own "Bookings on this Shipment" heading rather than standing out as a
-              bigger, differently-weighted title above it. */}
-          <h2 style={{ fontFamily: HZ_DISPLAY, fontSize: 14, fontWeight: 700, color: HZ.text, margin: 0,
-            display: "flex", alignItems: "center", gap: 8 }}>
-            <IconAnchor size={14} />Carrier Booking — Details
-          </h2>
-        </div>
-      </div>
+    <div id="shpbooking-details-page" data-testid="carrier-booking-details-page" style={{ maxWidth: 1100, margin: "0 auto", position: "relative" }}>
+      {/* The horizon wash: a light source at the top of the page for the booking card to glow against. */}
+      <div aria-hidden style={{ position: "absolute", left: -36, right: -36, top: -22, height: 380, background: HZ.ground, pointerEvents: "none", zIndex: 0 }} />
+      <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", gap: 18 }}>
+        <PillNav items={navItems} testIdPrefix="carrier-booking" onJump={openOnJump} />
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-        gap: 10, marginBottom: 24 }}>
-        <StatTile label="Carrier">{shipment.carrierCode || "—"}</StatTile>
-        <StatTile label="Route">{`${shipment.pol || "—"} → ${shipment.pod || "—"}`}</StatTile>
-        <StatTile label="ETD">{shipment.etd || "—"}</StatTile>
-        <StatTile label="Vessel / Voyage">{shipment.vessel ? `${shipment.vessel} / ${shipment.voyage || "—"}` : "—"}</StatTile>
-        <StatTile label="Booking Ref">{booking?.bookingRef || "—"}</StatTile>
-        {/* Which party is financially responsible for the shipment at this point — Prepaid
-            (shipper/exporter pays), Collect (consignee/importer pays), or Payable at
-            Destination. Already existed on the Shipment Form; made editable here too since
-            this is the page where it's operationally relevant when actually booking. */}
-        <div id="shpbooking-freight-terms" style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8, padding: "10px 14px" }}>
-          <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, fontWeight: 600,
-            textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Freight Terms</div>
-          {canEdit ? (
-            <select value={shipment.freightTerms || "Prepaid"} disabled={savingFreightTerms}
-              onChange={handleFreightTermsChange}
-              style={{ width: "100%", padding: "4px 6px", borderRadius: 6, fontFamily: HZ_BODY,
-                fontSize: 13, fontWeight: 600, color: HZ.text, border: `1px solid ${HZ.border}`,
-                background: HZ.surface2, outline: "none", cursor: savingFreightTerms ? "wait" : "pointer" }}>
-              {FREIGHT_TERMS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
+        {/* The booking with the carrier: the page's main card. Carrier, route, vessel and ETD are in the header. */}
+        <section id="shpbooking-booking-section" data-testid="carrier-booking-booking-section" style={{ display: "flex", flexDirection: "column", gap: 12, scrollMarginTop: 90 }}>
+          <div style={{ ...frameStyle(), overflow: "hidden" }}>
+            <GlowEdge />
+            <div style={{ position: "relative", zIndex: 1, padding: "18px 22px", display: "grid", gap: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={sectionLabelStyle()}>Booking with the carrier</div>
+                  <div data-testid="carrier-booking-headline" style={{ fontFamily: HZ_DISPLAY, fontSize: 22, fontWeight: 800, letterSpacing: "-.01em", color: HZ.text, margin: "6px 0 2px" }}>
+                    {headline(status, carrier, booking)}
+                  </div>
+                  <div data-testid="carrier-booking-subline" style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, maxWidth: 720 }}>
+                    {subline({ status, booking, bookable, connection, carrier })}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {booking?.isMock && booking?.carrierBookingRequestReference && (
+                    <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: ".04em", padding: "2px 8px", borderRadius: 5,
+                      background: HZ.violetBg, color: HZ.violetPillText, border: `1px solid color-mix(in srgb, ${HZ.violet} 40%, transparent)` }}>DEMO CARRIER</span>
+                  )}
+                  <DotPill color={sendFailed ? HZ.crit : statusColor(status)} testId="carrier-booking-status">{sendFailed ? "Not received" : status}</DotPill>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "12px 16px" }}>
+                <Fact label="Booking Ref" value={booking?.bookingRef} empty="not confirmed yet" />
+                <Fact label="Request reference" value={booking?.carrierBookingRequestReference} empty="not sent yet" />
+                {/* Which party is financially responsible: Prepaid, Collect or Payable at Destination. Set on the Shipment
+                    Form too; editable here, where it matters when booking. */}
+                <div id="shpbooking-freight-terms" style={{ minWidth: 0 }}>
+                  <span style={factLabel()}>Freight Terms</span>
+                  {canEdit ? (
+                    <select value={shipment.freightTerms || "Prepaid"} disabled={savingFreightTerms} onChange={handleFreightTermsChange} aria-label="Freight Terms"
+                      style={{ fontFamily: HZ_MONO, fontSize: 12, fontWeight: 700, color: HZ.text, background: HZ.surfaceSolid, border: `1px solid ${HZ.border}`,
+                        borderRadius: 999, padding: "3px 10px", maxWidth: "100%", cursor: savingFreightTerms ? "wait" : "pointer" }}>
+                      {FREIGHT_TERMS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  ) : <b style={factValue()}>{shipment.freightTerms || "Prepaid"}</b>}
+                </div>
+                <Fact label="Booking" value={booking?.id} empty="—" />
+              </div>
+            </div>
+          </div>
+          {/* A block wrapper: the table centres itself with auto margins, which in this flex column would shrink it. */}
+          <div style={{ minWidth: 0, marginTop: 6 }}><CarrierBookingsTable shipment={shipment} /></div>
+        </section>
+
+        {/* The carrier's offices (§8.53), read-only here: changed on Contracts & Schedules. Foldable (decision D: folded, the
+            four in one line, "none set" in the warning colour). */}
+        <FoldSection id="shpbooking-offices-section" testId="carrier-booking-offices" label="Carrier offices" tag={shipment.carrierCode || null}
+          accent={HZ.cyan} open={officesOpen} onToggle={() => folds.toggle(FOLD.offices)}
+          summary={<FactsPills testId="carrier-booking-offices-summary-pills" items={officeSummary(carrierOffices)} />}>
+          {/* Two by two, as on Contracts & Schedules (one column on a narrow screen). */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", gap: 12 }}>
+            {OFFICE_ROLES.map(([role, label, tone]) => (
+              <OfficeCard key={role} role={role} label={label} tone={tone()} entry={carrierOffices?.roles?.[role]}
+                port={role === "booking" || role === "billing_origin" ? shipment.pol : shipment.pod} />
+            ))}
+          </div>
+          <div style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted }}>
+            Picked from the carrier's coverage (Master Data → Carriers) when the shipment's carrier or ports were set; change them on
+            Contracts &amp; Schedules. The booking goes to the booking office; the freight is payable at the billing office of the side that pays it.
+          </div>
+        </FoldSection>
+
+        {/* The office split (§8.52): the carrier payment terms per charge category, with what goes to the carrier. */}
+        <PaymentTermsCard shipment={shipment} onSaved={() => onRefresh?.()} open={termsOpen} onToggle={() => folds.toggle(FOLD.terms)} primary={!sendIsPrimary} />
+
+        <section id="shpbooking-contract-section" data-testid="carrier-booking-contract-section" style={{ ...frameStyle(), padding: "16px 20px", scrollMarginTop: 90 }}>
+          <div style={{ ...sectionLabelStyle(), marginBottom: 10 }}>Contract</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "12px 16px" }}>
+            <div style={{ minWidth: 0 }}>
+              <span style={factLabel()}>Contract Number</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                {/* Violet for Central, cyan for SPOT/Pending/Customer Own, as on Contracts & Schedules. */}
+                <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", padding: "2px 8px", borderRadius: 5,
+                  ...(shipment.contractType === "Central"
+                    ? { background: HZ.violetBg, color: HZ.violetPillText, border: `1px solid ${HZ.violet}66` }
+                    : { background: HZ.cyanBg, color: HZ.cyan, border: `1px solid ${HZ.cyan}55` }) }}>{shipment.contractType || "—"}</span>
+                {/* SPOT/Pending/Customer Own have no contract record: their contractRef stands in for the number. */}
+                <b style={factValue()}>{shipment.contractType === "Central" ? (contract?.contractNumber || "—") : (shipment.contractRef || "—")}</b>
+              </div>
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <span style={factLabel()}>Reference</span>
+              {/* The contract's own reference, not shipment.contractRef (for Central a copy of the contract number). */}
+              {shipment.contractType === "Central" ? <b style={factValue(!contract?.contractRef)}>{contract?.contractRef || "—"}</b>
+                : shipment.spotOfferId ? (
+                  // A SPOT shipment priced on a carrier's spot offer books with the offer's reference (contractQuotationReference).
+                  <span data-testid="booking-details-quotation-ref"><b style={factValue()}>{shipment.contractRef}</b>
+                    <span style={{ display: "block", fontFamily: HZ_BODY, fontSize: 11, fontWeight: 500, color: HZ.textMuted, marginTop: 2 }}>Spot offer: sent as the quotation reference</span>
+                  </span>
+                ) : <b style={factValue(true)}>—</b>}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <span style={factLabel()}>Client</span>
+              {/* The contract's Named Account, not the shipper or consignee; none = "No Customer". */}
+              <b style={factValue(!contract?.namedAccount)}>{contract?.namedAccount || "No Customer"}</b>
+              {namedAccountParent && <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginTop: 2 }}>Part of {namedAccountParent}</div>}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <span style={factLabel()}>Commodity</span>
+              {shipment.commodityCode ? <CommodityDisplay code={shipment.commodityCode} /> : <b style={factValue(true)}>—</b>}
+            </div>
+          </div>
+        </section>
+
+        {/* What goes to the carrier, the checks, Send, and what was sent: read it, then send. */}
+        <section id="shpbooking-request-section" data-testid="carrier-booking-request-section" style={{ ...frameStyle(), padding: "16px 20px", display: "grid", gap: 14, scrollMarginTop: 90 }}>
+          <div style={sectionLabelStyle()}>Booking request · equipment sent to the carrier</div>
+          {equipment.length === 0 ? (
+            <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, fontStyle: "italic", background: HZ.tint, border: `1px dashed ${HZ.borderStrong}`,
+              borderRadius: 12, padding: "10px 14px" }}>
+              No containers added yet — the booking request will go out with no equipment detail.
+            </div>
           ) : (
-            <div style={{ fontFamily: HZ_BODY, fontSize: 14, color: HZ.text, fontWeight: 600 }}>
-              {shipment.freightTerms || "Prepaid"}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-        gap: 14, marginBottom: 24, background: HZ.surface, backdropFilter: "blur(20px)",
-        border: `1.5px solid ${HZ.cyan}55`, borderRadius: 10, padding: "16px 20px" }}>
-        {officeTiles.map(([role, label, color, bg]) => {
-          const e = carrierOffices?.roles?.[role];
-          return (
-            <div key={role} data-testid={`carrier-booking-office-${role}`}>
-              <div style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, letterSpacing: ".06em",
-                textTransform: "uppercase", color, background: bg, borderRadius: 4,
-                padding: "1px 6px", width: "fit-content", marginBottom: 6 }}>{label}</div>
-              <div style={{ fontFamily: HZ_BODY, fontSize: 14, color: e?.office ? HZ.text : HZ.textMuted, fontWeight: 600, fontStyle: e?.office ? "normal" : "italic" }}>
-                {e?.office?.name || "None set"}
-              </div>
-              <div style={{ fontFamily: HZ_MONO, fontSize: 10.5, color: HZ.textMuted, marginTop: 2 }}>
-                {e?.office ? `${e.office.unlocode || "—"}${e.fallback ? " · no billing row: " + (role === "billing_origin" ? "the booking office bills" : "the import office bills") : ""}`
-                  : `for ${e?.port || (role.endsWith("origin") || role === "booking" ? shipment.pol : shipment.pod) || "—"}`}
-              </div>
-            </div>
-          );
-        })}
-        <div style={{ gridColumn: "1 / -1", fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted }}>
-          Picked from the carrier's coverage (Master Data → Carriers) when the shipment's carrier or ports were set; change them on
-          Contracts &amp; Schedules. The booking goes to the booking office; the freight is payable at the billing office of the side that pays it.
-        </div>
-      </div>
-
-      {/* The office split (2026-11-14, mockup 1cb7bdf6 v2): the carrier payment terms per charge category, each with its
-          responsible office, and the Costs and charges pop-up — set here before the booking goes to the carrier. */}
-      <PaymentTermsCard shipment={shipment} onSaved={() => onRefresh?.()} />
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-        gap: 10, marginBottom: 24 }}>
-        <StatTile label="Contract Number">
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-            {/* Same violet/cyan pill idiom as the Contracts & Schedules page's own contract
-                summary (matches the approved Trade Horizon mockup: HZ.violet for Central,
-                HZ.cyan for SPOT/Pending/Customer Own) — not the generic cross-app Badge, so this
-                page stays visually consistent with the rest of the Shipment Details HZ theme. */}
-            <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
-              padding: "2px 8px", borderRadius: 4, flexShrink: 0,
-              ...(shipment.contractType === "Central"
-                ? { background: HZ.violetBg, color: HZ.violetPillText, border: `1px solid ${HZ.violet}66` }
-                : { background: HZ.cyanBg, color: HZ.cyan }) }}>
-              {shipment.contractType || "—"}
-            </span>
-          </div>
-          {/* SPOT/Pending/Customer Own have no real linked Contract entity, so contractNumber is
-              always blank for them — contractRef (the only identifying value that actually
-              exists) stands in for it here instead of showing a bare "—". */}
-          {shipment.contractType === "Central" ? (contract?.contractNumber || "—") : (shipment.contractRef || "—")}
-        </StatTile>
-        <StatTile label="Reference">
-          {/* The contract's own real, independently-populated reference — NOT shipment.contractRef,
-              which for Central bookings is just a copy of the contract's contractNumber made at
-              assignment time (ShipmentSchedulesPage.jsx) and would otherwise duplicate the tile above. */}
-          {shipment.contractType === "Central" ? (contract?.contractRef || "—")
-            : shipment.spotOfferId ? (
-              // A SPOT shipment priced on a carrier's spot offer books with the offer's reference
-              // (DCSA contractQuotationReference, routes/spot-offers.js).
-              <span data-testid="booking-details-quotation-ref">{shipment.contractRef}
-                <span style={{ display: "block", fontFamily: HZ_BODY, fontSize: 11, fontWeight: 500, color: HZ.textMuted, marginTop: 2 }}>Spot offer: sent as the quotation reference</span>
-              </span>
-            ) : "—"}
-        </StatTile>
-        <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8, padding: "10px 14px" }}>
-          <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, fontWeight: 600,
-            textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Client</div>
-          {/* Specifically the contract's own Named Account — not the shipment's Shipper/
-              Consignee, which are separate parties. A SPOT/Pending/Customer Own contract (no
-              linked contract record) or a Central contract with no named account both fall
-              through to the same explicit "No Customer" text, per direct request. */}
-          <div style={{ fontFamily: HZ_BODY, fontSize: 14, color: HZ.text, fontWeight: 600 }}>
-            {contract?.namedAccount || "No Customer"}
-          </div>
-          {namedAccountParent && (
-            <div style={{ fontFamily: HZ_BODY, fontSize: 11, color: HZ.textMuted, marginTop: 2 }}>
-              Part of {namedAccountParent}
-            </div>
-          )}
-        </div>
-        <div style={{ background: HZ.bg, border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 8, padding: "10px 14px" }}>
-          <div style={{ fontFamily: HZ_BODY, fontSize: 10, color: HZ.textMuted, fontWeight: 600,
-            textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Commodity</div>
-          {shipment.commodityCode ? <CommodityDisplay code={shipment.commodityCode} /> : (
-            <div style={{ fontFamily: HZ_BODY, fontSize: 14, color: HZ.text, fontWeight: 600 }}>—</div>
-          )}
-        </div>
-      </div>
-
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontFamily: HZ_BODY, fontSize: 10.5, color: HZ.textMuted, fontWeight: 600,
-          textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>
-          Equipment — sent with the booking request
-        </div>
-        {equipment.length === 0 ? (
-          <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, fontStyle: "italic",
-            background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8, padding: "10px 14px" }}>
-            No containers added yet — the booking request will go out with no equipment detail.
-          </div>
-        ) : (
-          <div style={{ background: HZ.surface, backdropFilter: "blur(20px)", border: `1px solid ${HZ.border}`, boxShadow: HZ.cardShadow, borderRadius: 10, overflow: "hidden" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ background: HZ.bg, borderBottom: `1px solid ${HZ.border}` }}>
-                  {["Type", "Count", "Total Weight", "Total Volume"].map(h => (
-                    <th key={h} style={{ textAlign: "left", padding: "8px 16px", fontFamily: HZ_MONO, fontSize: 10,
-                      fontWeight: 700, color: HZ.textMuted, textTransform: "uppercase" }}>{h}</th>
+            <div style={{ overflowX: "auto", background: HZ.tint, border: `1px solid ${HZ.border}`, borderRadius: 12 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 420 }}>
+                <thead>
+                  <tr>{["Type", "Count", "Total Weight", "Total Volume"].map(h => (
+                    <th key={h} style={{ textAlign: "left", padding: "8px 14px", fontFamily: HZ_MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: ".08em",
+                      color: HZ.textMuted, textTransform: "uppercase", borderBottom: `1px solid ${HZ.border}` }}>{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody>
+                  {equipment.map(e => (
+                    <tr key={e.type}>
+                      <td style={{ padding: "9px 14px", fontFamily: HZ_MONO, fontWeight: 700, color: HZ.cyan, fontSize: 13 }}>{e.type}</td>
+                      <td style={{ padding: "9px 14px", fontFamily: HZ_MONO, fontSize: 12.5, color: HZ.text, fontVariantNumeric: "tabular-nums" }}>{e.count}</td>
+                      <td style={{ padding: "9px 14px", fontFamily: HZ_MONO, fontSize: 12.5, color: HZ.text, fontVariantNumeric: "tabular-nums" }}>{e.totalWeightKg.toLocaleString()} kg</td>
+                      <td style={{ padding: "9px 14px", fontFamily: HZ_MONO, fontSize: 12.5, color: HZ.text, fontVariantNumeric: "tabular-nums" }}>{e.totalVolumeCbm.toLocaleString()} m³</td>
+                    </tr>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
-                {equipment.map(e => (
-                  <tr key={e.type} style={{ borderBottom: `1px solid ${HZ.border}` }}>
-                    <td style={{ padding: "9px 16px", fontFamily: HZ_MONO, fontWeight: 700, color: HZ.cyan, fontSize: 13 }}>{e.type}</td>
-                    <td style={{ padding: "9px 16px", fontFamily: HZ_BODY, fontSize: 13, color: HZ.text }}>{e.count}</td>
-                    <td style={{ padding: "9px 16px", fontFamily: HZ_BODY, fontSize: 13, color: HZ.text }}>{e.totalWeightKg.toLocaleString()} kg</td>
-                    <td style={{ padding: "9px 16px", fontFamily: HZ_BODY, fontSize: 13, color: HZ.text }}>{e.totalVolumeCbm.toLocaleString()} m³</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {dgContainerCount > 0 && (
-        <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, marginBottom: 16,
-          background: HZ.warnBg, border: `1px solid ${HZ.warn}44`,
-          borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
-          <IconWarning size={13} color={HZ.warn} />
-          {dgContainerCount} container{dgContainerCount !== 1 ? "s" : ""} with DG cargo will be declared to the carrier.
-        </div>
-      )}
-
-      {reeferGroups.length > 0 && (
-        <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, marginBottom: 16,
-          background: HZ.infoBg, border: `1px solid ${HZ.info}44`,
-          borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
-          <IconWarning size={13} color={HZ.info} />
-          {reeferGroups.map((g, i) => (
-            <span key={i}>{i > 0 && ", "}{g.count} × {g.type} @ {g.setTemperatureC}°C</span>
-          ))} will be declared to the carrier.
-        </div>
-      )}
-
-      {capabilityGaps.length > 0 && (
-        <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, marginBottom: 16,
-          background: HZ.warnBg, border: `1px solid ${HZ.warn}44`,
-          borderRadius: 8, padding: "10px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-          {capabilityGaps.map((g, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <IconWarning size={13} color={HZ.warn} />
-              <span>{g.side === "Export" ? "The booking office" : "The import office"} <strong>{g.officeName || g.agentName}</strong> has no <strong>{g.capabilityLabel}</strong> capability
-                on file, but this shipment has a {g.reason.toLowerCase()}.</span>
+                </tbody>
+              </table>
             </div>
+          )}
+
+          {dgContainerCount > 0 && (
+            <Note tone="warn">{dgContainerCount} container{dgContainerCount !== 1 ? "s" : ""} with DG cargo will be declared to the carrier.</Note>
+          )}
+          {reeferGroups.length > 0 && (
+            <Note tone="info">{reeferGroups.map((g, i) => (<span key={i}>{i > 0 && ", "}{g.count} × {g.type} @ {g.setTemperatureC}°C</span>))} will be declared to the carrier.</Note>
+          )}
+          {capabilityGaps.map((g, i) => (
+            <Note key={i} tone="warn">{g.side === "Export" ? "The booking office" : "The import office"} <strong>{g.officeName || g.agentName}</strong> has no <strong>{g.capabilityLabel}</strong> capability
+              on file, but this shipment has a {g.reason.toLowerCase()}.</Note>
           ))}
-        </div>
-      )}
 
-      {!bookable && (
-        <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.textMuted, marginBottom: 16,
-          background: HZ.bg, border: `1px solid ${HZ.border}`, borderRadius: 8, padding: "10px 14px",
-          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <span>
-            {connection
-              ? `No DCSA connection for ${shipment.carrierCode || "this carrier"}, so it can't be booked from CargoDesk. Set one up under Carrier Integrations${connection.simulatorAvailable === false ? ", or turn on App Settings → Demo carrier for a demo" : ""}.`
-              : "Checking the carrier's DCSA connection…"}
-          </span>
-        </div>
-      )}
-      {status === "Pending" && (
-        <div style={{ fontFamily: HZ_BODY, fontSize: 12.5, color: HZ.text, marginBottom: 16,
-          background: HZ.infoBg, border: `1px solid ${HZ.info}44`,
-          borderRadius: 8, padding: "10px 14px" }}>
-          Awaiting carrier response — check the Review page once it arrives.
-        </div>
-      )}
+          {canEdit && (
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <button type="button" onClick={handleSend} disabled={!canSend || sending} data-testid="carrier-booking-send"
+                style={canSend ? ctaStyle({ disabled: sending }) : pillBtnStyle({ disabled: true })}>
+                {sending ? "Sending…" : <><IconSendPlane size={13} />Send Booking Request</>}
+              </button>
+              {!canSend && <span style={{ fontFamily: HZ_BODY, fontSize: 12, color: HZ.textMuted }}>{sendBlockedWhy({ status, bookable })}</span>}
+            </div>
+          )}
 
-      {canEdit && (
-        <button onClick={handleSend} disabled={!canSend || sending}
-          style={{ background: canSend ? HZ.cyan : HZ.surface2, border: "none", borderRadius: 7,
-            color: canSend ? HZ.chipText : HZ.textMuted, cursor: canSend && !sending ? "pointer" : "default",
-            padding: "9px 20px", fontFamily: HZ_BODY, fontSize: 13, fontWeight: 700,
-            display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 24 }}>
-          {sending ? "Sending…" : <><IconSendPlane size={13} />Send Booking Request</>}
-        </button>
-      )}
-
-      <h3 style={{ fontFamily: HZ_DISPLAY, fontSize: 14, fontWeight: 700, color: HZ.text, marginBottom: 12 }}>
-        Sent Requests
-      </h3>
-      <EdiMessageList messages={outboundMessages} emptyText="No booking requests sent yet." />
+          <div style={{ ...sectionLabelStyle(), marginTop: 4 }}>Sent requests</div>
+          <EdiMessageList messages={outboundMessages} emptyText="No booking requests sent yet." />
+        </section>
+      </div>
 
       {creditHoldModal && (
         <CreditHoldModal holds={creditHoldModal.holds} action="sending a carrier booking request"

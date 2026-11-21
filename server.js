@@ -4387,6 +4387,12 @@ ctx.houseBl = require('./lib/house-bl')(ctx);
 ctx.trackTrace = require('./lib/track-trace')(ctx);
 ctx.arrivalNotices = require('./lib/arrival-notices')(ctx);
 ctx.portCalls = require('./lib/port-calls')(ctx);
+// Haulage stops and facilities (2026-11-20, §8.56): terminals from the SMDG list and depots; a Pickup or Delivery service's
+// stops, times per container and checks; the old free-text waypoints become stops once.
+ctx.facilities = require('./lib/facilities')(ctx);
+ctx.haulage = require('./lib/haulage-stops')(ctx);
+schemaReadyPromise = schemaReadyPromise.then(() => ctx.haulage.migrateLegacyWaypoints())
+  .catch(e => console.error("Haulage stops migration failed:", e.message));
 // The AI Assistant's knowledge of the manuals (Epic TKT-IYOYA5): data/assistant-knowledge.json loaded at
 // startup when it changed; its embeddings are filled after listen() (below), never holding up startup.
 ctx.assistantKnowledge = require('./lib/assistant-knowledge')(ctx);
@@ -4447,6 +4453,8 @@ require('./routes/gl-export')(app, ctx);
 require('./routes/fx-revaluation')(app, ctx);
 require('./routes/customer-statements')(app, ctx);
 require('./routes/shipment-ops')(app, ctx);
+require('./routes/haulage-stops')(app, ctx);
+require('./routes/facilities')(app, ctx);
 require('./routes/carrier-invoices')(app, ctx);
 require('./routes/quotes')(app, ctx);
 require('./routes/spot-offers')(app, ctx);

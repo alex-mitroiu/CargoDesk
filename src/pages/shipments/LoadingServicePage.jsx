@@ -4,12 +4,9 @@ import { api } from "../../api";
 import { toast } from "../../toast";
 import Btn from "../../components/primitives/Btn";
 import DatePicker from "../../components/primitives/DatePicker";
-import { Modal } from "../../components/primitives/Modal";
 import { inputBase } from "../../components/primitives/Form";
 import { buildLoadingPlanHtml } from "../../utils/invoiceGenerator";
-import { IconCheck, IconFlash, IconFolder, IconWarning, IconMapPin } from "../../components/primitives/Icon";
-import { findRoutingLeg } from "../../utils/carrierBooking";
-import HaulageDetailsPanel from "../../components/shared/HaulageDetailsPanel";
+import { IconCheck, IconFlash, IconFolder } from "../../components/primitives/Icon";
 
 // ─── Loading / Unloading Service page (Epic TKT-TBS7QD, Stories TKT-TR6OBR /
 //     TKT-X3SA2E / follow-up Unloading reuse) ──────────────────────────────
@@ -28,54 +25,10 @@ import HaulageDetailsPanel from "../../components/shared/HaulageDetailsPanel";
 const DOC_CODE_BY_TYPE   = { Loading: "LP01", Unloading: "UP01", Pickup: "PU01", Delivery: "DL01" };
 const PLAN_LABEL_BY_TYPE = { Loading: "Loading Plan", Unloading: "Unloading Plan", Pickup: "Pickup Plan", Delivery: "Delivery Plan" };
 
-// Pickup/Delivery only — Loading/Unloading have no equivalent concept. Reports whether
-// we're the ones arranging the covering leg (Merchant's Haulage) or the carrier already is
-// (Carrier's Haulage, via findRoutingLeg — src/utils/carrierBooking.js), so the page can
-// tell the operator at a glance whether this service is actually needed.
-const RoutingCard = ({ serviceType, leg }) => {
-  const isMerchant = leg?.movementType === "Merchant's Haulage";
-  return (
-    <div id="svcplan-routing-card" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: T.cardShadow,
-      padding: "16px 18px", marginBottom: 18 }}>
-      <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 12 }}>
-        Routing
-      </div>
-      {!leg ? (
-        <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, display: "flex", alignItems: "center", gap: 7 }}>
-          <IconWarning size={13} />
-          No {serviceType === "Pickup" ? "Pick-up" : "Delivery"} leg on this shipment yet —
-          add one from Contracts &amp; Schedules.
-        </div>
-      ) : (
-        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: T.body, fontSize: 12.5, color: T.text }}>
-            <IconMapPin size={13} />
-            {serviceType === "Pickup" ? leg.pol : leg.pod}
-          </div>
-          <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted }}>
-            {serviceType === "Pickup" ? leg.etd : leg.eta || "No date yet"}
-          </div>
-          <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
-            padding: "3px 9px", borderRadius: 5,
-            color: isMerchant ? T.accent : T.textMuted,
-            background: isMerchant ? `${T.accent}18` : T.bg,
-            border: `1px solid ${isMerchant ? T.accent + "44" : T.border}` }}>
-            {leg.movementType || "Movement type not set"}
-          </span>
-          {isMerchant ? (
-            <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>— arranged by us</span>
-          ) : (
-            <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>
-              — the carrier is arranging this leg; this service may not be needed
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
+// Pickup and Delivery have their own page since 2026-11-20 (HaulageServicePage.jsx, ARCHITECTURE.md §8.56): stops, times
+// per container and the carrier's closing times. This page is Loading and Unloading only.
 
-const LoadingPlanRow = ({ line, canEdit, saving, onSave, isMerchantHaulage, onOpenHaulage }) => {
+const LoadingPlanRow = ({ line, canEdit, saving, onSave }) => {
   const [seq,   setSeq]   = useState(line.sequenceOrder ?? 1);
   const [notes, setNotes] = useState(line.notes || "");
 
@@ -131,16 +84,6 @@ const LoadingPlanRow = ({ line, canEdit, saving, onSave, isMerchantHaulage, onOp
           onBlur={() => onSave({ notes })}
           style={{ ...inputBase, fontFamily: T.body, fontSize: 12, width: "100%" }} />
       </td>
-      {isMerchantHaulage && (
-        <td style={{ padding: "8px 10px", width: 100 }}>
-          <button type="button" onClick={() => onOpenHaulage(line)}
-            style={{ fontFamily: T.body, fontSize: 11.5, color: T.accent, background: `${T.accent}15`,
-              border: `1px solid ${T.accent}44`, borderRadius: 5, padding: "4px 9px", cursor: "pointer",
-              whiteSpace: "nowrap" }}>
-            🚛 Haulage
-          </button>
-        </td>
-      )}
       {saving && (
         <td style={{ padding: "8px 4px", width: 20 }}>
           <span style={{ fontSize: 10, color: T.textMuted }}>⏳</span>
@@ -154,24 +97,16 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
   const docCode   = DOC_CODE_BY_TYPE[serviceType];
   const planLabel = PLAN_LABEL_BY_TYPE[serviceType];
 
-  const isHaulageType = serviceType === "Pickup" || serviceType === "Delivery";
 
   const [service, setService] = useState(undefined); // undefined = loading, null = not found
   const [lines,   setLines]   = useState([]);
-  const [routingLeg, setRoutingLeg] = useState(null);
   const [savingId, setSavingId] = useState(null);
   const [latestDoc, setLatestDoc] = useState(null);
   const [file,       setFile]       = useState(null);
   const [uploading,  setUploading]  = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [haulageRecords, setHaulageRecords] = useState([]);
-  const [haulageLine, setHaulageLine] = useState(null); // the line currently open in the Haulage modal
   const fileRef = useRef(null);
 
-  // Direct request: improve Merchant's Haulage tracking on Pickup/Delivery specifically — a
-  // Carrier's Haulage or Customer Arranged leg means the carrier/customer already handles this
-  // movement, so none of the new gate/waypoints/driver/cost tracking is relevant there.
-  const isMerchantHaulage = isHaulageType && routingLeg?.movementType === "Merchant's Haulage";
 
   const shipmentContainers = containers.filter(c => c.shipmentId === shipment.id);
 
@@ -187,15 +122,6 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
     return () => { cancelled = true; };
   }, [shipment.id, side, serviceType]);
 
-  useEffect(() => {
-    if (!isHaulageType) return;
-    let cancelled = false;
-    api.legs.list(shipment.id)
-      .then(legs => !cancelled && setRoutingLeg(findRoutingLeg(legs, serviceType)))
-      .catch(() => !cancelled && setRoutingLeg(null));
-    return () => { cancelled = true; };
-  }, [shipment.id, serviceType, isHaulageType]);
-
   const loadLines = (serviceId) =>
     api.loadingPlan.list(shipment.id, serviceId).then(setLines).catch(() => setLines([]));
 
@@ -207,13 +133,6 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
   useEffect(() => {
     if (service) { loadLines(service.id); loadLatestDoc(); }
   }, [service?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const loadHaulageRecords = (serviceId) =>
-    api.haulage.list(shipment.id, serviceId).then(setHaulageRecords).catch(() => setHaulageRecords([]));
-
-  useEffect(() => {
-    if (service && isMerchantHaulage) loadHaulageRecords(service.id);
-  }, [service?.id, isMerchantHaulage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSaveLine = async (containerId, patch) => {
     if (!service) return;
@@ -318,8 +237,6 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
         </div>
       </div>
 
-      {isHaulageType && <RoutingCard serviceType={serviceType} leg={routingLeg} />}
-
       {/* Per-container loading plan */}
       <div id="svcplan-table-section" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: T.cardShadow, overflow: "hidden", marginBottom: 18 }}>
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`,
@@ -337,7 +254,6 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
                 <tr style={{ borderBottom: `1px solid ${T.border}` }}>
                   {[
                     "Container #", "Type", `Planned ${serviceType} Date & Time`, "Seq.", "Notes",
-                    ...(isMerchantHaulage ? ["Haulage"] : []),
                   ].map(h => (
                     <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontFamily: T.body,
                       fontSize: 10.5, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".05em" }}>
@@ -351,8 +267,7 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
                   <LoadingPlanRow key={line.containerId} line={line} canEdit={canEdit}
                     saving={savingId === line.containerId}
                     onSave={patch => handleSaveLine(line.containerId, patch)}
-                    isMerchantHaulage={isMerchantHaulage}
-                    onOpenHaulage={setHaulageLine} />
+ />
                 ))}
               </tbody>
             </table>
@@ -407,22 +322,6 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
         )}
       </div>
 
-      {haulageLine && (
-        <Modal title={`Merchant's Haulage — ${haulageLine.containerNumber || haulageLine.containerId}`}
-          onClose={() => setHaulageLine(null)} width={560}>
-          <HaulageDetailsPanel
-            shipmentId={shipment.id}
-            serviceId={service.id}
-            canEdit={canEdit}
-            record={{
-              ...(haulageRecords.find(r => r.containerId === haulageLine.containerId) || { containerId: haulageLine.containerId }),
-              vendorName: service.vendorName,
-            }}
-            onRecordUpdated={updated => setHaulageRecords(list =>
-              list.map(r => r.containerId === updated.containerId ? updated : r))}
-          />
-        </Modal>
-      )}
     </div>
   );
 };

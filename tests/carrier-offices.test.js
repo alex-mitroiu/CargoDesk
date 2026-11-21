@@ -221,7 +221,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
     // ─── Two offices found only through linked ports: left for a person to pick ──────────
     console.log("\nTwo offices via linked ports");
-    const CARRIER2 = `${CARRIER.slice(0, 3)}Z`;
+    // Never the first carrier's code (that one ends in Z once in 26 runs, and then both were the same carrier).
+    const CARRIER2 = `${CARRIER.slice(0, 3)}${CARRIER[3] === "Z" ? "Y" : "Z"}`;
     const viaA = await request("POST", `/api/carriers/${CARRIER2}/offices`, { name: `Rotterdam Line Office ${rand}`, unlocode: "NLRTM" }, token);
     const viaB = await request("POST", `/api/carriers/${CARRIER2}/offices`, { name: `New York Line Office ${rand}`, unlocode: "USNYC" }, token);
     cleanup.offices.push(viaA.body?.id, viaB.body?.id);
@@ -262,6 +263,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert("the booking agent carries our customer number (ZZZ, with the code list name)", codes?.[0]?.codeListProvider === "ZZZ" && codes[0].partyCode === "ES00041207"
       && codes[0].codeListName === "hlagCustomerNumber", JSON.stringify(body?.documentParties?.bookingAgent));
     assert("Prepaid: the freight is payable at the origin billing office (ESBCN)", body?.invoicePayableAt?.UNLocationCode === "ESBCN", JSON.stringify(body?.invoicePayableAt));
+
+    // The Carrier Booking page's preview (fix F, 2026-11-18): GET …/payment-terms says where the freight is payable for each
+    // term, the place the booking request names: the carrier's billing office of that side at its live location.
+    let pt = (await request("GET", `/api/shipments/${S}/payment-terms`, null, token)).body;
+    assert("the payment terms say where the freight is payable: Prepaid at the origin billing office, Collect at the destination's",
+      pt?.payableAt?.PRE === "ESBCN" && pt?.payableAt?.COL === "USNYC", JSON.stringify(pt?.payableAt));
+    const moved = await request("PUT", `/api/carrier-offices/${usa.body.id}`, { unlocode: "USEWR" }, token);
+    pt = (await request("GET", `/api/shipments/${S}/payment-terms`, null, token)).body;
+    assert("…the billing office's live location, not the port: the American office moved to Newark (USEWR)",
+      moved.status === 200 && pt?.payableAt?.COL === "USEWR", JSON.stringify([moved.status, pt?.payableAt]));
+    await request("PUT", `/api/carrier-offices/${usa.body.id}`, { unlocode: "USNYC" }, token);
 
     // Collect: payable at the destination billing office (the SI builder takes the same place).
     const payCollect = (await request("PUT", `/api/shipments/${S}`, { freightTerms: "Collect" }, token)).status;

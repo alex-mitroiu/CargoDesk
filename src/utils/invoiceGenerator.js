@@ -303,6 +303,101 @@ export const buildLoadingPlanHtml = ({ shipment: sh, invNumber, invDate, notes, 
   return _invShell(`${planLabel} — ${invNumber}`, planLabel.toUpperCase(), invNumber, invDate, body);
 };
 
+// ─── The trucker's Pickup Plan (PU01) / Delivery Plan (DL01) (2026-11-20, ARCHITECTURE.md §8.56, mockup 3d91c28a) ──────
+// Built from the service's haulage plan (GET …/haulage-plan): who it goes to and who it's from, the booking (or the B/L) to
+// quote, the closing times the haulier has to respect (decision A: the CY cut-off, the earliest delivery when given, the VGM
+// cut-off only for a container weighed during the run; never the documentation cut-off), then one block per container: the
+// cargo, its instructions and its stops (where, whom to ask for, planned in and out, each stop's own local time).
+const _hpDay = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], _hpMon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+export const fmtHaulageTime = (local, { timeOnly = false } = {}) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/.exec(String(local || ""));
+  if (!m) return "";
+  if (timeOnly && m[4]) return `${m[4]}:${m[5]}`;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return `${_hpDay[d.getUTCDay()]} ${+m[3]} ${_hpMon[+m[2] - 1]}${m[4] ? ` ${m[4]}:${m[5]}` : ""}`;
+};
+export const buildHaulagePlanHtml = ({ shipment: sh, invNumber, invDate, notes, plan, planLabel }) => {
+  const side = plan?.service?.side || (planLabel === "Delivery Plan" ? "Import" : "Export");
+  const label = planLabel || (side === "Import" ? "Delivery Plan" : "Pickup Plan");
+  if (!plan) {
+    const body = `<div style="background:#f9fafb;border:2px dashed #d1d5db;border-radius:8px;padding:40px;text-align:center;color:#6b7280;font-size:12px">
+      Order the ${side === "Import" ? "Delivery" : "Pickup"} service first: its stops and times make this plan.</div>`;
+    return _invShell(`${label} — ${invNumber}`, label.toUpperCase(), invNumber, invDate, body);
+  }
+  const port = plan.port || {};
+  const t = plan.trucker;
+  const o = plan.office;
+  const contactLines = (...xs) => xs.filter(Boolean).map(_esc).join("<br>");
+  const parties = `<div class="parties">
+      <div class="party"><div class="party-label">To</div>
+        <div class="party-name">${_esc(t?.name || "No trucker set")}</div>
+        <div class="party-addr">${contactLines(t?.email, t?.phone, `Merchant's haulage · ${side === "Import" ? "delivery" : "pick-up"}`)}</div></div>
+      <div class="party"><div class="party-label">From</div>
+        <div class="party-name">${_esc(o?.name || "—")}</div>
+        <div class="party-addr">${contactLines(o?.entity && o.entity !== o.name ? o.entity : "", o?.email, o?.phone)}</div></div>
+    </div>`;
+  const refKey = side === "Import" ? (plan.masterBl ? "B/L (quote it)" : "Booking (quote it)") : "Booking (quote it)";
+  const refVal = side === "Import" ? (plan.masterBl || plan.bookingRef) : plan.bookingRef;
+  const details = `<div class="shp-block"><div class="block-label">${_esc(side)} · ${_esc(label.replace(" Plan", ""))}</div>
+      <div class="details-grid">${[
+        [refKey, refVal ? `<span class="code">${_esc(refVal)}</span>` : "—"],
+        ["Carrier", _esc(sh.carrierCode || plan.carrierCode || "—")],
+        ["Vessel / Voyage", [sh.vessel, sh.voyage].filter(Boolean).map(_esc).join(" / ") || "—"],
+        [side === "Import" ? "Port of discharge" : "Port of loading", `${_esc(port.unlocode || "—")}${port.name ? ` · ${_esc(port.name)}` : ""}`],
+        [side === "Import" ? "ETA" : "ETD", (side === "Import" ? sh.eta : sh.etd) ? fmtHaulageTime(side === "Import" ? sh.eta : sh.etd) : "—"],
+        ["Our reference", _esc(sh.id)],
+      ].map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${v}</div></div>`).join("")}</div></div>`;
+  const ORDER = ["FCO", "VCO", "EFC", "ETA", "DEM", "DET"];
+  const printed = (plan.deadlines || []).filter(d => d.printed).sort((a, b) => ORDER.indexOf(a.code) - ORDER.indexOf(b.code));
+  const dlText = d => {
+    if (d.code === "FCO") return ["Full container at the terminal by (CY cut-off)", d.display];
+    if (d.code === "VCO") return [`VGM cut-off · ${(d.weighed || []).join(", ")} weighed during the run (Method 1)`, d.display];
+    if (d.code === "EFC") return ["Earliest delivery to the terminal", d.display];
+    if (d.code === "ETA") return [`${d.label} at ${port.unlocode || "the port"}`, d.display || "—"];
+    if (d.code === "DEM") return ["Free time at the terminal, from discharge", d.display];
+    if (d.code === "DET") return ["Detention free days, from the full pick-up", d.display];
+    return [d.label, d.display];
+  };
+  const efcMissing = side === "Export" && !printed.some(d => d.code === "EFC");
+  const deadlines = printed.length || efcMissing ? `<div class="section-label">Deadlines · ${_esc(port.name || port.unlocode || "local")} time${port.utcOffset ? ` (${_esc(port.utcOffset)})` : ""}</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:18px">${printed.map(d => {
+      const [k, v] = dlText(d);
+      return `<div style="border:2px solid #111827;border-radius:6px;padding:8px 10px"><div style="font-size:10px;color:#4b5563">${_esc(k)}</div><div style="font-size:14px;font-weight:700">${_esc(v || "—")}</div></div>`;
+    }).join("")}${efcMissing ? `<div style="border:1px dashed #9ca3af;border-radius:6px;padding:8px 10px"><div style="font-size:10px;color:#4b5563">Earliest delivery to the terminal</div><div style="font-size:13px">No restriction given</div></div>` : ""}</div>` : "";
+  const runs = (plan.containers || []).map(c => {
+    const stops = c.ownStops ? (c.stops || []) : (plan.stops || []);
+    const pkWord = String(c.packageDescription || c.packageCode || "package").toLowerCase();
+    const pk = c.packages ? `${c.packages} ${_esc(Number(c.packages) > 1 && !/s$/.test(pkWord) ? `${pkWord}s` : pkWord)}` : "";
+    const weight = c.grossWeightKg != null ? `cargo ${Number(c.grossWeightKg).toLocaleString("en-GB")} kg${c.vgmWeightKg != null ? `, with the container ${Number(c.vgmWeightKg).toLocaleString("en-GB")} kg` : ""}` : "";
+    const dg = c.isDg ? `<span class="dg">DANGEROUS GOODS${c.dgUnNumber ? ` UN ${_esc(c.dgUnNumber)}` : ""}${c.dgClass ? ` · class ${_esc(c.dgClass)}` : ""}</span>` : "not dangerous";
+    const head = [`${_esc(c.equipment)}${c.isoCode ? ` (${_esc(c.isoCode)})` : ""}`, c.seals?.length ? `seal ${c.seals.map(_esc).join(", ")}` : "",
+      [pk, _esc(c.description)].filter(Boolean).join(", "), weight, dg].filter(Boolean).join(" · ");
+    const rec = c.record || {};
+    const who = [rec.driverName && `Driver ${_esc(rec.driverName)}`, rec.truckPlate && `truck ${_esc(rec.truckPlate)}`].filter(Boolean).join(" · ");
+    const rows = stops.length ? stops.map((s, i) => {
+      const tm = c.times?.[s.id] || {};
+      const where = s.place?.kind === "none" ? `<span style="color:#dc2626">To be confirmed${s.unlocode ? ` (${_esc(s.unlocode)})` : ""}</span>`
+        : `<b>${_esc(s.place?.name || "")}</b>${s.place?.code ? ` (${_esc(s.place.code)})` : ""}${(s.place?.lines || []).length ? `<br>${s.place.lines.map(_esc).join("<br>")}` : ""}`;
+      const ask = contactLines(s.contact?.name && s.contact.name !== s.place?.name ? s.contact.name : "", s.contact?.phone, s.contact?.email, s.effectiveReference);
+      const sameDay = tm.plannedIn && tm.plannedOut && tm.plannedIn.slice(0, 10) === tm.plannedOut.slice(0, 10);
+      return `<tr><td><span style="display:inline-block;width:17px;height:17px;border-radius:50%;background:#111827;color:#fff;font-size:10px;font-weight:700;text-align:center;line-height:17px;margin-right:4px">${i + 1}</span>${_esc(s.purposeLabel)}${s.notes ? `<br><span style="font-size:10.5px;color:#4b5563">${_esc(s.notes)}</span>` : ""}</td>
+        <td>${where}</td><td>${ask || "—"}</td>
+        <td>${tm.plannedIn ? fmtHaulageTime(tm.plannedIn) : (tm.plannedOut ? "—" : `<span style="color:#dc2626">Not planned</span>`)}</td>
+        <td>${tm.plannedOut ? fmtHaulageTime(tm.plannedOut, { timeOnly: sameDay }) : "—"}</td></tr>`;
+    }).join("") : `<tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:16px">No stops yet</td></tr>`;
+    return `<div style="border:1px solid #d1d5db;border-radius:8px;margin-bottom:16px;overflow:hidden">
+      <div style="background:#f3f4f6;padding:9px 12px;border-bottom:1px solid #d1d5db"><span class="code" style="font-size:13px">${_esc(c.containerNumber || "TBC")}</span>
+        <span style="font-size:11.5px;color:#374151"> · ${head}</span>${who ? `<div style="font-size:11px;color:#374151;margin-top:3px">${who}</div>` : ""}</div>
+      ${rec.instructions ? `<div style="padding:8px 12px;font-size:11.5px;background:#fff7ed;border-bottom:1px solid #fed7aa;white-space:pre-wrap">${_esc(rec.instructions)}</div>` : ""}
+      <table style="margin:0"><thead><tr><th style="width:22%">Stop</th><th>Where</th><th style="width:24%">Ask for / quote</th><th style="width:14%">Planned in</th><th style="width:10%">Out</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+  }).join("");
+  const body = `${parties}${details}${deadlines}<div class="section-label">Containers and stops · each stop's own local time</div>${runs || `<div style="color:#9ca3af">No containers on this shipment yet</div>`}
+    ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}
+    ${o ? `<div style="font-size:10.5px;color:#4b5563;margin-top:6px">Questions about this order: ${[o.name, o.email, o.phone].filter(Boolean).map(_esc).join(", ")}.</div>` : ""}`;
+  return _invShell(`${label} — ${invNumber}`, label.toUpperCase(), invNumber, invDate, body);
+};
+
 // Generic produced document for every ordered service type without a bespoke page (i.e.
 // everything except Loading/Unloading — see BESPOKE_SERVICE_TYPES in shipmentServicePages.js).
 // Deliberately not tailored per type: a vendor/status/dates recap plus whatever free-text

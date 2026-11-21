@@ -741,6 +741,7 @@ export const EVENT_CONFIG = {
   SERVICE_ORDERED:     { icon: "＋",  label: "Service ordered",      color: () => HZ.good  },
   SERVICE_UPDATED:     { icon: IconPencil,  label: "Service updated",      color: () => HZ.info     },
   SERVICE_REMOVED:     { icon: IconClose,   label: "Service removed",      color: () => HZ.crit   },
+  HAULAGE_PLAN_UPDATED: { icon: IconPencil, label: "Haulage stops updated", color: () => HZ.info     },
   DOCUMENT_GENERATED:            { icon: IconFile, label: "Document generated",          color: () => HZ.good },
   DOCUMENT_GENERATION_ATTEMPTED: { icon: IconFile, label: "Document generation attempted", color: () => HZ.info },
   DOCUMENT_GENERATION_FAILED:    { icon: IconFile, label: "Document generation failed",   color: () => HZ.crit },

@@ -70,15 +70,22 @@ export const stopsOf = legs => {
 // ── Pill nav: jump links to the page's sections, and its actions ─────────────────────────────────────
 const NAV = [["route", "Route", "shpsched-legs-section"], ["contract", "Contract", "shpsched-contract-section"],
   ["agents", "Carrier offices", "shpsched-carrier-offices-section"], ["sailing", "Sailing", "shpsched-sailing-section"]];
-export const PillNav = ({ actions }) => {
-  const [active, setActive] = useState("route");
-  const jump = (key, id) => { setActive(key); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); };
+// items: [key, label, element id, note?] (Contracts & Schedules' by default); onJump(key) runs before the scroll (Carrier
+// Booking opens a folded section there); note is shown small beside the label ("· folded").
+export const PillNav = ({ actions, items = NAV, testIdPrefix = "shipment-schedules", onJump }) => {
+  const [active, setActive] = useState(items[0]?.[0]);
+  const jump = (key, id) => {
+    setActive(key);
+    onJump?.(key);
+    const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    document.getElementById(id)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  };
   return (
-    <div data-testid="shipment-schedules-pill-nav" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+    <div data-testid={`${testIdPrefix}-pill-nav`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
       <nav aria-label="Sections" style={{ display: "inline-flex", gap: 2, padding: 4, border: `1px solid ${HZ.border}`, borderRadius: 999,
         background: HZ.surfaceSolid, boxShadow: HZ.cardShadow, flexWrap: "wrap" }}>
-        {NAV.map(([key, label, id], i) => (
-          <button key={key} type="button" onClick={() => jump(key, id)} data-testid={`shipment-schedules-nav-${key}`}
+        {items.map(([key, label, id, note], i) => (
+          <button key={key} type="button" onClick={() => jump(key, id)} data-testid={`${testIdPrefix}-nav-${key}`}
             aria-current={active === key ? "true" : undefined}
             style={{ fontFamily: HZ_BODY, fontSize: 12.5, fontWeight: 600, padding: "6px 16px", borderRadius: 999, cursor: "pointer",
               display: "inline-flex", gap: 6, alignItems: "center", border: 0,
@@ -86,6 +93,7 @@ export const PillNav = ({ actions }) => {
               background: active === key ? `linear-gradient(180deg, ${HZ.cyanBg}, transparent)` : "none",
               boxShadow: active === key ? `inset 0 0 0 1px color-mix(in srgb, ${HZ.cyan} 40%, transparent)` : "none" }}>
             <span style={{ fontFamily: HZ_MONO, fontSize: 10, fontWeight: 700, opacity: 0.7 }}>{i + 1}</span>{label}
+            {note && <span data-testid={`${testIdPrefix}-nav-${key}-note`} style={{ fontFamily: HZ_MONO, fontSize: 9, fontWeight: 700, letterSpacing: ".04em", color: HZ.textFaint }}>{note}</span>}
           </button>
         ))}
       </nav>

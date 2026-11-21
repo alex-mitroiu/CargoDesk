@@ -1619,6 +1619,119 @@ NLAMS → NLRTM (Carrier's Haulage, 16 Nov), as Save stored them before the fix 
 
 ---
 
+### TC-111: The audit of the trucker's run (2026-11-21, epic TKT-0W1FYJ)
+**Feature:** Export Services → Pickup / Import Services → Delivery, Parties & Offices, Shipments → delete, QA export (lib/haulage-stops.js, lib/service-types.js, lib/shipment-transfer.js; ARCHITECTURE.md §8.56)
+**Precondition:** The shipment of TC-110 with its Pickup (vendor a trucking company from Customers) and Delivery services and their stops
+**Steps:**
+1. Type a trucker's name as the Pickup service's vendor instead of choosing a customer
+2. Choose the trucking company again; cancel the Delivery service; order it again
+3. Order a Pickup on the Import side (API); move the Delivery to the Export side (API)
+4. Export the shipment for QA and import the file
+5. On another shipment, order a Pickup with a vendor and remove the service; then delete that shipment
+6. Give a container its own stops and remove them all
+
+**Expected Result:**
+- 1: the Trucker (Pre-carriage) party is removed; the page says the name isn't in Master Data (no e-mail, not the party)
+- 2: the party comes back; cancelling releases the Trucker (On-carriage) party, ordering again brings it back
+- 3: both refused (400: "ordered on the Export / Import side only"); a status change alone still works
+- 4: the export lists the haulage stops and times; the imported shipment's Pickup has the same stops and times under new ids
+- 5: the party goes with the service; the deleted shipment's services and plan answer 404
+- 6: "Use the shared stops" is still on its block and puts it back
+
+**Status:** PASS (2026-11-21, automated: tests/haulage-stops.test.js; Vitest HaulageServicePage.test.jsx, shipmentServicePages.parity.test.js)
+
+---
+
+### TC-110: The trucker's run: stops, times, cut-offs and the Pickup Plan
+**Feature:** Export Services → Pickup / Import Services → Delivery, Master Data → Facilities (lib/haulage-stops.js, lib/facilities.js; ARCHITECTURE.md §8.56)
+**Precondition:** A booking-ready shipment NLRTM → USNYC (Central contract, FOB, 2 × 40HC: one VGM Method 1, one Method 2 with a typed CY cut-off), a Merchant's Haulage pick-up leg from the shipper's door to the terminal and a delivery leg to the consignee's door; the shipper's profile has an Operations contact; a trucking company and a second one in Customers
+**Steps:**
+1. Master Data → Facilities: Upload the CSV (the SMDG list, or a file in its format); add a depot by hand
+2. Order an Export Pickup service with the trucking company as vendor; change the vendor; set the Trucker (Pre-carriage) party on Parties & Offices
+3. Send the booking request and have the carrier confirm it
+4. Open Export Services → Pickup; Add the usual stops; pick the depot and the terminal for stops 1 and 3
+5. Type the times: each container's gate-in a day or two before the CY cut-off; then move the Method 2 container's gate-in past its typed cut-off day
+6. Give the second container its own stops, add a customs stop to them, then use the shared stops again
+7. Record an Empty Pickup event on the first container; set its driver and truck plate in Details
+8. Generate the Pickup Plan
+9. Order an Import Delivery service, Add the usual stops, plan a full pick-up after the terminal free time
+10. Print the booking request (BR01) for this shipment and for one whose pick-up is the carrier's from the door
+
+**Expected Result:**
+- 1: the terminals are listed by port with their SMDG codes; a terminal past its Valid to is hidden from the pickers; an SMDG row can only be switched off; the depot is listed as added by hand
+- 2: the Trucker (Pre-carriage) party follows the vendor, and the vendor follows the party
+- 3: each container's empty CY and VGM cut-off are filled from the carrier's; the typed one stays and the page flags that it differs
+- 4: the empty pick-up (choose the depot), the shipper's door with its Operations contact, the full gate-in; the gate stops quote the booking number
+- 5: "… before the CY cut-off" on both, and "… before the VGM cut-off" on the Method 1 container only; then "after the CY cut-off day" on the second
+- 6: its own copy of the stops with its times; the customs stop on its route only; back to the shared stops
+- 7: the empty pick-up's actual gate out from the event, in Rotterdam time; the driver and plate on the row
+- 8: to the trucker, from our office, the booking to quote, the CY cut-off, the VGM cut-off for the Method 1 container, no documentation cut-off; per container its cargo and stops with the planned times
+- 9: the terminal, the consignee's door, the empty return; the terminal free time check fails; the Trucker (On-carriage) party is the Delivery vendor
+- 10: merchant's haulage: "Receipt: At the terminal (CY)", no shipper address; carrier's haulage: the shipper's address and contact and the door block
+
+**Status:** PASS (2026-11-20, automated: tests/haulage-stops.test.js; tests/merchant-haulage.test.js; Edge pass on a copy of the real data, SHP-AQ1FIM)
+
+---
+
+### TC-109: The carrier's haulage at a door goes to the carrier with the address and contact
+**Feature:** Carrier Booking → Send Booking Request, DCSA Booking 2.0 (lib/booking-doors.js, routes/edi.js; ARCHITECTURE.md §8.55)
+**Precondition:** A complete booking-ready shipment ESBCN → USNYC (Central contract, FOB, 2 × 40HC), the shipper and consignee chosen from Customers with full addresses; the shipper has a primary Sales contact and an Operations contact
+**Steps:**
+1. Route: a Carrier's Haulage pick-up leg from a Door (ESHOS) to a Container Yard (ESBCN), then the sea leg; plan the export Loading service (09:00 one day, 14:30 the next); send the booking request
+2. Route: the sea leg, then a Carrier's Haulage delivery leg from the terminal (USNYC) to a Door (USSEC); send
+3. Route: a Merchant's Haulage pick-up leg from the same door, Service Type Door-to-Port; send
+4. A shipper that is a classified location (GPS only, no street), route as in 1; send
+5. A shipper with no street or city on its profile, route as in 1; send
+6. Route: a Carrier's Haulage pick-up leg from GPS Coordinates (41.3712, 2.1048) to ESBCN, then the sea leg; send
+
+**Expected Result:**
+- 1: receipt SD; the place of receipt and the equipment line's container positioning = the shipper's name, address (line 2 joined to the street), ESHOS; the positioning at the earliest planned time with Madrid's offset; the shipper party carries its address and the Operations contact; valid Booking 2.0
+- 2: delivery SD, receipt CY; the place of delivery = the consignee's address; the consignee party its address and the company's phone; no positioning; no shipper details
+- 3: CY, no place of receipt, no positioning, no shipper contact (the route decides, not Service Type)
+- 4: sent; the place of receipt carries the GPS coordinates, no address
+- 5: 400 "the carrier needs to know where to go and whom to call — … add the street, city to <shipper>'s address"; nothing sent or recorded
+- 6: receipt SD; the place of receipt = the shipper's name at the leg's coordinates, no address; the shipper party its address and contact
+
+**Status:** PASS (2026-11-20, automated: tests/dcsa-booking-doors.test.js; tests/carrier-integrations.test.js)
+
+---
+
+### TC-108: A booking request the carrier never received can be sent again
+**Feature:** Carrier Booking → Details, Send Booking Request (routes/edi.js; audit TKT-CJNFID B1, B2)
+**Precondition:** A complete booking-ready shipment whose carrier refuses the first request (the test carrier's "Service contract HLX unknown")
+**Steps:**
+1. Send the booking request
+2. Send it again
+3. Send it a third time
+
+**Expected Result:**
+- 1: 201 with the carrier's error; the booking is flagged `send_failed`; Details reads "Not received by <carrier>", a red Not received dot, the error in a red toast (never "sent"); Send can be used
+- 2: accepted, with the carrier's request reference; no longer `send_failed`
+- 3: 409 "A booking request is already pending for this shipment"
+
+**Status:** PASS (2026-11-18, automated: tests/dcsa-lifecycle.test.js; src/pages/shipments/ShipmentCarrierBookingDetailsPage.test.jsx)
+
+---
+
+### TC-107: Carrier Booking in Trade Horizon Next — foldable offices and payment terms
+**Feature:** Carrier Booking → Details and Review (ARCHITECTURE.md §8.54, mockup a3e1b986 v2)
+**Precondition:** A scratch carrier whose Madrid office (ESMAD) books Spain's exports, nothing on the import side; a complete Central FOB shipment ESBCN → USNYC (Collect; shipper and consignee with addresses, ETD in 10 days, ETA in 24, commodity, a 40' HC of glazed tiles, a SEA leg and its sailing)
+**Steps:**
+1. Open Carrier Booking → Details
+2. Fold Carrier offices and Payment terms (CPI); reload the page
+3. With the payment terms folded, press Save payment terms; click the Payment terms pill
+4. Open Carrier Booking → Review
+
+**Expected Result:**
+- The Next header (route strip) and the » pill; pills Booking, Carrier offices, Payment terms, Contract, Booking request; "Not sent to <carrier> yet"; the booking office card Madrid · ESMAD, the import office "None set"; Send Booking Request can be used
+- Folded: the offices in one line with "none set" in the warning colour; the payment terms' status "Not saved yet · the FOB defaults", a Prepaid line and a Collect line, Save still there; after the reload both are still folded and their pills say "· folded"
+- 3: "Follows the Incoterm FOB"; the pill opens the section; "In the booking request" is payable at USNYC (Collect, no billing office on the import side: the port of discharge); with the carrier's destination billing office in Newark the preview names USEWR
+- 4: the same header and » pill
+
+**Status:** PASS (2026-11-18, automated: cypress/e2e/carrier-booking-folds.cy.js; src/components/shared/FoldSection.test.jsx; src/pages/shipments/ShipmentCarrierBookingDetailsPage.test.jsx; src/components/shared/PaymentTerms.test.jsx; tests/carrier-offices.test.js)
+
+---
+
 ### TC-106: Carrier offices — booking, import and billing office per carrier and place
 **Feature:** The carrier's profile on Master Data → Carriers and a shipment's four carrier offices (ARCHITECTURE.md §8.53)
 **Precondition:** A scratch carrier code; our Spanish legal entity with a Barcelona export office; a complete Central ESBCN → USNYC shipment (CIF, Prepaid, shipper and consignee with addresses, ETD/ETA, commodity, a SEA leg, a 40' HC)

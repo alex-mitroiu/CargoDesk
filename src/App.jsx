@@ -24,6 +24,7 @@ import { runNavigationGuard } from "./navigationGuard";
 import { buildLoadingPlanHtml } from "./utils/invoiceGenerator";
 import LoadingServicePage from "./pages/shipments/LoadingServicePage";
 import GenericServicePage from "./pages/shipments/GenericServicePage";
+import HaulageServicePage from "./pages/shipments/HaulageServicePage";
 import VgmServicePage from "./pages/shipments/VgmServicePage";
 
 import Btn from "./components/primitives/Btn";
@@ -32,7 +33,7 @@ import { Field } from "./components/primitives/Form";
 import {
   IconSailboat, IconDashboard, IconFlash, IconArchive, IconClipboard, IconTag, IconFile,
   IconFlask, IconRefresh, IconCheck, IconCalendar, IconGroup, IconCircle,
-  IconBuilding, IconShip, IconPackage, IconMapPin, IconLink, IconRoute,
+  IconBuilding, IconShip, IconPackage, IconMapPin, IconLink, IconRoute, IconWarehouseDoor,
   IconFlag, IconHashtag, IconEarth, IconGovernment, IconSettings, IconChartBar, AnyIcon,
   IconReceipt, IconCoin, IconAnchor, IconSearch, IconMail, IconMailUnread, IconBaseStation,
   IconUpload, IconDownload, IconLock, IconFileCertificate, IconWarning,
@@ -43,6 +44,7 @@ import HealthModal from "./components/shared/HealthModal";
 import ShipmentFormSidebar from "./components/shared/ShipmentFormSidebar";
 import ShipmentDetailSidebar from "./components/shared/ShipmentDetailSidebar";
 import ShipmentAdvanceBar from "./components/shared/ShipmentAdvanceBar";
+import { isHorizonNextPage } from "./utils/horizonNextPages";
 
 import ShipmentsPage     from "./pages/shipments/ShipmentsPage";
 import ShipmentFormPage  from "./pages/shipments/ShipmentFormPage";
@@ -86,6 +88,7 @@ import MdmCarriersPage        from "./pages/mdm/MdmCarriersPage";
 import MdmVesselsPage         from "./pages/mdm/MdmVesselsPage";
 import MdmPortLocationsPage   from "./pages/mdm/MdmPortLocationsPage";
 import MdmLinkedPortsPage     from "./pages/mdm/MdmLinkedPortsPage";
+import MdmFacilitiesPage      from "./pages/mdm/MdmFacilitiesPage";
 import MdmCarrierIntegrationsPage from "./pages/mdm/MdmCarrierIntegrationsPage";
 import MdmTradeLanesPage      from "./pages/mdm/MdmTradeLanesPage";
 import MdmRegionsPage         from "./pages/mdm/MdmRegionsPage";
@@ -735,7 +738,7 @@ function App() {
   }, [authLoading, user, page]);
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-integrations", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-loop-map-explorer", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "mdm-lane-steering", "mdm-margin-rules", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-charge-defaults", "mdm-gl-account-mappings", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-integrations", "mdm-ports", "mdm-linked", "mdm-facilities", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-loop-map-explorer", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "mdm-lane-steering", "mdm-margin-rules", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-charge-defaults", "mdm-gl-account-mappings", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office", "org-bl-terms"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
@@ -748,7 +751,7 @@ function App() {
   const horizonPage = !!user && !authLoading && (page === "detail" || page === "dashboard" || (page === "home" && ccActive)
     || Object.values(SHIPMENT_SUBPAGES).includes(page) || Object.values(ACCOUNTING_SUBPAGES).includes(page)
     || Object.values(CARRIER_BOOKING_SUBPAGES).includes(page) || Object.values(CUSTOMS_FILING_SUBPAGES).includes(page)
-    || SERVICE_PAGE_KEYS.includes(page));
+    || SERVICE_PAGE_KEYS.includes(page) || page === "mdm-facilities");
   if (T.hz !== horizonPage) applyTheme(isDark, horizonPage);
   if (horizonPage) loadHorizonFonts();
 
@@ -835,6 +838,7 @@ function App() {
     "mdm-hs-codes":     "Master Data — HS Codes",
     "mdm-ports":        "Master Data — Port Locations",
     "mdm-linked":       "Master Data — Linked Ports",
+    "mdm-facilities":   "Master Data — Facilities",
     "mdm-loop-codes":   "Master Data — Loop Codes",
     "mdm-loop-map-explorer": "Master Data — Loop Map Explorer",
     "mdm-tradelanes":   "Master Data — Trade Lanes",
@@ -2038,6 +2042,9 @@ function App() {
                   {portsNavOpen && (
                     <NavBtn pageKey="mdm-linked"   icon={IconLink} label="Linked Ports"   subIndent />
                   )}
+                  {portsNavOpen && (
+                    <NavBtn pageKey="mdm-facilities" icon={IconWarehouseDoor} label="Facilities" subIndent />
+                  )}
 
                   <NavBtn pageKey="mdm-equipment" icon={IconArchive} label="Equipment"      indent />
                   <NavBtn pageKey="mdm-document-templates" icon={IconFile} label="Document Templates" indent />
@@ -2110,7 +2117,7 @@ function App() {
           marginRight: "var(--cd-advance-bar-w, 0px)" }}>
 
         {(page === "detail" || SHIPMENT_SUBPAGE_LABELS[page]) && selectedShipment && isEnabled(page) && (
-          <ShipmentHeaderBar shipment={selectedShipment} containers={containers} horizonNext={page === "shipment-schedules"}
+          <ShipmentHeaderBar shipment={selectedShipment} containers={containers} horizonNext={isHorizonNextPage(page)}
             onNavigateToSchedules={() => navigate("shipment-schedules", selectedShipment.id)}
             onNavigateToParties={() => navigate("shipment-parties", selectedShipment.id)}
             onUpdate={handleUpdateShipment}
@@ -2330,8 +2337,9 @@ function App() {
             `containers`, not a satellite table, so it doesn't fit LoadingServicePage's
             shape — checked first, ahead of the generic isBespokeServiceType branch, since
             LoadingServicePage indexes doc-type/label maps that have no "VGM" entry).
-            Loading/Unloading/Pickup/Delivery share LoadingServicePage.jsx (identical
-            per-container date/time-plan shape); every other type gets GenericServicePage.jsx. */}
+            Loading/Unloading share LoadingServicePage.jsx (identical per-container date/time-plan shape);
+            Pickup/Delivery have HaulageServicePage.jsx (stops, times per container, the carrier's closing
+            times, §8.56); every other type gets GenericServicePage.jsx. */}
         {SERVICE_PAGE_INFO[page] && selectedShipment && (() => {
           const { side, type } = SERVICE_PAGE_INFO[page];
           return type === "VGM" ? (
@@ -2339,6 +2347,11 @@ function App() {
               shipment={selectedShipment} containers={containers} side={side}
               canEdit={authCtxValue.canEditShipments}
               onEditContainer={handleEditContainer} />
+          ) : type === "Pickup" || type === "Delivery" ? (
+            <HaulageServicePage
+              shipment={selectedShipment} side={side} serviceType={type}
+              canEdit={authCtxValue.canEditShipments}
+              onViewDocuments={() => navigate("shipment-documents", selectedShipment.id)} />
           ) : isBespokeServiceType(type) ? (
             <LoadingServicePage
               shipment={selectedShipment} containers={containers} side={side} serviceType={type}
@@ -2503,6 +2516,7 @@ function App() {
         {page === "mdm-vessels"    && isEnabled("mdm-vessels")    && <MdmVesselsPage />}
         {page === "mdm-ports"      && isEnabled("mdm-ports")      && <MdmPortLocationsPage />}
         {page === "mdm-linked"     && isEnabled("mdm-linked")     && <MdmLinkedPortsPage />}
+        {page === "mdm-facilities" &&                                 <MdmFacilitiesPage />}
         {page === "mdm-loop-codes"&&                                  <MdmLoopCodesPage />}
         {page === "mdm-lane-steering" &&                              <MdmLaneSteeringPage />}
         {page === "mdm-margin-rules" &&                               <MdmMarginRulesPage />}

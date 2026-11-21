@@ -5,7 +5,7 @@
 // buildLoadingPlanHtml, etc.). This was the one thing blocking GenerateDocumentModal/DocumentsModal
 // from ever moving out of App.jsx themselves — a separate component file would have needed to
 // import these back from App.jsx, a circular import no other page in this codebase does.
-import { fmtCurr, _esc, _invShell, partyByRole, buildFreightInvoiceHtml, buildLoadingPlanHtml } from "./invoiceGenerator";
+import { fmtCurr, _esc, _invShell, partyByRole, buildFreightInvoiceHtml, buildLoadingPlanHtml, buildHaulagePlanHtml, fmtHaulageTime } from "./invoiceGenerator";
 
 const DOC_TYPES = [
   { code: "BL01", label: "Bill of Lading" },
@@ -386,29 +386,70 @@ const _equipmentSectionsHtml = ({ equipmentByType, dgByType, reeferByKey }) => {
     </tbody></table>` : ""}`;
 };
 
-const buildCarrierBookingRequestHtml = ({ shipment: sh, invNumber, invDate, notes, containers, parties, exportFilingItn, rateSnapshotId }) => {
+// A carrier's door on the printed booking request (2026-11-20, §8.56): the same data the DCSA booking sends (§8.55), from
+// GET …/booking-doors. Only when the carrier hauls from or to a door (the user's rule); merchant's haulage prints the CY line.
+const _doorAddressLines = loc => {
+  if (!loc) return [];
+  if (loc.address) return [loc.address.street, [loc.address.postCode, loc.address.city].filter(Boolean).join(" "), [loc.address.stateRegion, loc.address.countryCode].filter(Boolean).join(", ")].filter(Boolean);
+  if (Array.isArray(loc.addressLines)) return loc.addressLines;
+  if (loc.geoCoordinate) return [`GPS ${loc.geoCoordinate.latitude}, ${loc.geoCoordinate.longitude}`];
+  return [];
+};
+const _contactLine = c => [c?.name, c?.phone, c?.email].filter(Boolean).join(" · ");
+const _partyDetails = door => {
+  if (!door?.detailsOnParty) return "";
+  const lines = _doorAddressLines(door.partyAddress || {});
+  const c = door.contact || {};
+  const contact = _contactLine(c.name && c.name === door.location?.locationName ? { ...c, name: "" } : c);
+  return `<div class="party-addr">${[...lines, contact].filter(Boolean).map(_esc).join("<br>")}</div>`;
+};
+const _doorBlock = (door, which) => {
+  if (!door) return "";
+  const origin = which === "origin";
+  const title = origin ? "Carrier's pick-up at the shipper's door · receipt: store door (SD)" : "Carrier's delivery to the consignee's door · delivery: store door (SD)";
+  if (!door.location) return `<div class="shp-block" style="border:2px solid #dc2626"><div class="block-label" style="color:#dc2626">${title}</div>
+    <div style="font-size:12px;color:#dc2626">The address or the contact is missing on the customer profile: the request can't be sent until it's added.</div></div>`;
+  const loc = door.location;
+  const positioning = Object.entries(door.positioning || {}).map(([type, at]) => `${_esc(type)} · ${_esc(fmtHaulageTime(String(at).slice(0, 16)))} (${_esc(String(at).slice(19) || "local")})`).join("<br>");
+  return `<div class="shp-block" style="border:2px solid #0f766e;background:#f0fdfa"><div class="block-label" style="color:#0f766e">${title}</div>
+    <div class="details-grid">
+      <div><div class="detail-key">${origin ? "Place of receipt" : "Place of delivery"}</div><div class="detail-val">${_esc(loc.locationName || "—")}</div>
+        <div style="font-size:11px;color:#4b5563">${[..._doorAddressLines(loc), loc.UNLocationCode].filter(Boolean).map(_esc).join("<br>")}</div></div>
+      ${origin ? `<div><div class="detail-key">Containers positioned</div><div class="detail-val">${positioning || "No time in the Loading plan"}</div></div>` : "<div></div>"}
+      <div><div class="detail-key">Contact at the door</div><div class="detail-val">${_esc(door.contact?.name || "—")}</div>
+        <div style="font-size:11px;color:#4b5563">${[door.contact?.phone, door.contact?.email].filter(Boolean).map(_esc).join("<br>")}</div></div>
+    </div></div>`;
+};
+
+const buildCarrierBookingRequestHtml = ({ shipment: sh, invNumber, invDate, notes, containers, parties, exportFilingItn, rateSnapshotId, bookingDoors }) => {
   const nvocc = partyByRole(parties, "NVOCC");
   const breakdown = _equipmentBreakdown(containers);
+  const origin = bookingDoors?.origin || null, destination = bookingDoors?.destination || null;
 
   const body = `
     <div class="parties" style="grid-template-columns:1fr 1fr 1fr">
       <div class="party"><div class="party-label">Shipper</div>
         <div class="party-name">${_esc(nvocc?.customerName || sh.shipperName || "—")}</div>
+        ${_partyDetails(origin)}
       </div>
       <div class="party"><div class="party-label">Consignee</div>
         <div class="party-name">${_esc(sh.consigneeName || "—")}</div>
+        ${_partyDetails(destination)}
       </div>
       <div class="party"><div class="party-label">Notify Party</div>
         <div class="party-name">${_esc(sh.notifyName || "—")}</div>
       </div>
     </div>
+    ${_doorBlock(origin, "origin")}${_doorBlock(destination, "destination")}
     <div class="shp-block"><div class="block-label">Booking Details</div>
       <div class="details-grid">${_detailGrid([
         ["Carrier", _esc(sh.carrierCode || "—")],
         ["Port of Loading", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
         ["Port of Discharge", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
-        ...(sh.placeOfReceipt ? [["Place of Receipt", _esc(sh.placeOfReceipt)]] : []),
-        ...(sh.placeOfDelivery ? [["Place of Delivery", _esc(sh.placeOfDelivery)]] : []),
+        ...(bookingDoors ? [["Receipt", origin ? "Store door (SD): the carrier collects" : "At the terminal (CY)"],
+          ["Delivery", destination ? "Store door (SD): the carrier delivers" : "At the terminal (CY)"]] : []),
+        ...(sh.placeOfReceipt && !origin ? [["Place of Receipt", _esc(sh.placeOfReceipt)]] : []),
+        ...(sh.placeOfDelivery && !destination ? [["Place of Delivery", _esc(sh.placeOfDelivery)]] : []),
         ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
         ...(sh.cargoReadyDate ? [["Cargo Ready Date", new Date(sh.cargoReadyDate).toLocaleDateString("en-GB")]] : []),
         ["Vessel", _esc(sh.vessel || "—")], ["Voyage", _esc(sh.voyage || "—")],
@@ -1101,8 +1142,9 @@ const dispatchDocBuilder = (code, data) => {
     // (LoadingServicePage.jsx), which fetches and passes the real per-container lines.
     case "LP01":             return buildLoadingPlanHtml(data);
     case "UP01":             return buildLoadingPlanHtml({ ...data, planLabel: "Unloading Plan" });
-    case "PU01":             return buildLoadingPlanHtml({ ...data, planLabel: "Pickup Plan" });
-    case "DL01":             return buildLoadingPlanHtml({ ...data, planLabel: "Delivery Plan" });
+    // The trucker's plan: the Pickup / Delivery service's stops, times and deadlines (§8.56; data.haulagePlan).
+    case "PU01":             return buildHaulagePlanHtml({ ...data, plan: data.haulagePlan || null, planLabel: "Pickup Plan" });
+    case "DL01":             return buildHaulagePlanHtml({ ...data, plan: data.haulagePlan || null, planLabel: "Delivery Plan" });
     default:                 return buildGenericDocHtml(data);
   }
 };

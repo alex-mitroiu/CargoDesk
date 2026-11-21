@@ -124,7 +124,7 @@ const IconTile = ({ items }) => {
 // this component's existing data (it would mean a new fetch just for the minimized state), so
 // Shipper stands in its place here — same "don't add fetches for a visual pass" rule this
 // codebase's other Trade Horizon ports (Dashboard, Command Center) already followed.
-// The folded row as it is on every page but Contracts & Schedules (HEAD's, unchanged).
+// The folded row as it is on the pages not yet built in Next (HEAD's, unchanged).
 const ChipRowClassic = ({ shipment, ctrs, cargoValueUsd, openTicketCount }) => {
   const ctrTypeKeys = [...new Set(ctrs.map(c => `${c.size}${c.type}`))];
   const containerSummary = ctrs.length === 0 ? null
@@ -165,7 +165,7 @@ const ChipRowClassic = ({ shipment, ctrs, cargoValueUsd, openTicketCount }) => {
   );
 };
 
-// Trade Horizon next (Contracts & Schedules only until the user approves it for every page, 2026-11-06), mockup
+// Trade Horizon next (on the pages built in Next, src/utils/horizonNextPages.js), mockup
 // 402fb5b5 v5–v7: Principal, Shipper, Consignee and Incoterm lead the row ("—" when empty), then the carrier's code (the
 // user: "just use the carrier code, it's shorter, cleaner and better"), the main vessel (syncShipmentFromLegs puts the
 // MAIN sea leg's on the shipment), its voyage and the service of the saved sailing, all as plain label and value. No
@@ -276,9 +276,9 @@ const RouteStrip = ({ shipment, legs, ctrs, teu, dgClasses, dgMeaning, isDg }) =
   );
 };
 
-// horizonNext: the Trade Horizon next header (route strip, the user's facts and order) — App.jsx passes it on Contracts &
-// Schedules only; the user's decision 2026-11-06: "until we get everything in the correct shape, we keep it in the
-// contracts and schedules, then we can convert the object into a global one".
+// horizonNext: the Trade Horizon next header (route strip, the user's facts and order) — App.jsx passes it on the pages
+// built in Next (src/utils/horizonNextPages.js: Contracts & Schedules, Carrier Booking). The user's rule (2026-11-18):
+// every design and build uses the latest patterns, so a page gets this header when it is next built.
 const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, onNavigateToParties, onUpdate, onRefresh, onEdit, horizonNext = false }) => {
   // Minimized by default (direct request) — resets to minimized on every new shipment rather
   // than persisting a preference, so "minimized by default" holds for every shipment visited,

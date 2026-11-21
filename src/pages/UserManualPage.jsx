@@ -482,12 +482,36 @@ const UserManualPage = () => {
             shows it read-only. Charges already on a confirmed invoice keep their mark and office, and a draft invoice
             made before a change has to be generated again. If nobody saved the terms, sending the booking saves them as
             the Incoterm sets them.</P>
+          <P>The page reads top to bottom: the booking with the carrier (its answer, the references, Freight Terms), the{" "}
+            <Tag>Carrier offices</Tag>, the <Tag>Payment terms (CPI)</Tag>, the contract, then the booking request with{" "}
+            <Tag>Send Booking Request</Tag>; the pills at the top jump to each. Click the arrow beside{" "}
+            <Tag>Carrier offices</Tag> or <Tag>Payment terms (CPI)</Tag> to fold it: the offices then read as one line (a
+            missing one in orange), and the payment terms keep their status, one line per group of charges and the Save
+            button. Each section stays the way you left it, in your browser; a pill opens a folded one.</P>
           <P>Once a schedule's attached, this page turns into a real form. Click{" "}
             <Tag>Send Booking Request</Tag> to transmit it to the carrier as a standard{" "}
             <strong>DCSA</strong> booking message, with its own outbound record you can review later.
             A carrier that isn't connected yet is played by CargoDesk's built-in{" "}
             <strong>demo carrier</strong> (marked DEMO CARRIER). A SPOT shipment's booking carries its
             spot offer's quotation number; an expired digital offer can't be sent — replace it first.</P>
+          <P>If the carrier collects the containers at the shipper's door (on <Tag>Contracts &amp; Schedules</Tag>, a{" "}
+            <strong>Carrier's Haulage</strong> pick-up leg from a <strong>Door</strong> or from GPS coordinates), the booking
+            tells it where: the shipper's name, address and a contact from its customer profile (an Operations contact first;
+            for GPS coordinates, the leg's point), and, when the{" "}
+            <Tag>Loading</Tag> service has planned times, when the containers should be at the door. A Carrier's Haulage
+            delivery leg to a door does the same with the consignee's address. With Merchant's Haulage the carrier gets no
+            address: the trucker you choose gets it from the Pickup or Delivery service. A profile without an address (or, for a classified location, its GPS coordinates) or without a phone
+            or e-mail stops the request, saying what to add.</P>
+          <P>With <strong>Merchant's Haulage</strong>, plan the trucker's run on <Tag>Export Services → Pickup</Tag> (or{" "}
+            <Tag>Import Services → Delivery</Tag>). Click <Tag>Add the usual stops</Tag> (the empty depot, the shipper's door, the
+            terminal; on import the terminal, the consignee's door, the empty depot), pick each place (a terminal or depot from
+            Master Data → Facilities, a customer, or a GPS point), and type when each container should be at each stop. The
+            carrier's cut-offs are shown above, and each container's checks say how far its gate-in is from the CY cut-off (and,
+            for a container weighed on the way, the VGM cut-off). <Tag>Generate Pickup Plan</Tag> prints it all for the trucker,
+            who is the service's vendor: where to go, whom to ask for, when, which goods, and the booking number to quote. The
+            documentation cut-off stays with your team and isn't printed. A container that takes another route gets{" "}
+            <Tag>Own stops</Tag>; <Tag>Use the shared stops</Tag> puts it back. Choose the trucker from Customers: a name typed
+            instead has no e-mail to send the plan to and can't be the shipment's Trucker party.</P>
           <P>The booking goes to the carrier's <strong>local office</strong>: the shipment's{" "}
             <Tag>Carrier booking office</Tag> (Contracts &amp; Schedules), named at its own location, not the carrier's
             head office. It also carries your company's <strong>customer number</strong> at the carrier, and says where
@@ -498,6 +522,8 @@ const UserManualPage = () => {
         </StepBody>
         <Step n={3}>Wait for the carrier's answer</Step>
         <StepBody>
+          <P>If the carrier didn't receive the request (its system refused it or was down), the page says{" "}
+            <strong>Not received</strong> with the carrier's reason, and <Tag>Send Booking Request</Tag> can be used again.</P>
           <P>The booking sits as <Badge variant="warning">Pending</Badge> until the carrier answers.
             Only the carrier confirms a booking — there's no manual Confirm. When it does,{" "}
             <Tag>Booking & Review</Tag> shows <strong>Requested (A) vs Carrier (B)</strong>: every
@@ -529,7 +555,7 @@ const UserManualPage = () => {
           shows the fee first — the cancellation fee with enough notice before departure, the no-show
           fee inside it — and CargoDesk adds it as a BUY cost line once the carrier confirms the
           cancellation. Whether to bill it on to the customer is your call.</Callout>
-        <Screenshot src={imgBooking} alt="The Carrier Booking Details page showing a confirmed booking" caption="Carrier Booking — Details, once confirmed. 'Bookings on this Shipment' at the top always shows the current one, plus any earlier attempts, so nothing about the booking history is ever lost." />
+        <Screenshot src={imgBooking} alt="The Carrier Booking Details page with its carrier offices and payment terms folded" caption="Carrier Booking — Details with the carrier offices and the payment terms folded: the four offices in one line, the payment terms with their status and a line per group of charges. Above them, the booking card and 'Bookings on this Shipment' (the current booking plus any earlier attempts, so nothing about the booking history is ever lost)." />
       </div>
     ),
     parties: (
@@ -1209,6 +1235,13 @@ const UserManualPage = () => {
         <P>The port database contains 14,000+ UN/LOCODE records with coordinates. Use the search bar to filter by code or name. Every row with coordinates includes a <strong>📍 Map</strong> link that opens Google Maps at that location. You can add custom ports or edit existing ones.</P>
         <H3>Linked Ports</H3>
         <P>Create links between ports that share a geographical area (e.g. <Tag>USLAX</Tag> → <Tag>USLGB</Tag>). Useful for matching booking data where the same physical port appears under multiple codes.</P>
+        <H3>Facilities</H3>
+        <P>The terminals and depots a trucker goes to (under Port Locations). An admin brings in the terminals with{" "}
+          <Tag>Update from SMDG</Tag>: the SMDG Terminal Code List, the code list carriers use for terminals (e.g.{" "}
+          <Tag>NLMVII</Tag>, APM Terminals Maasvlakte 2). If the download fails, <Tag>Upload the CSV</Tag> takes the file instead.
+          A terminal that closes drops out of the pickers by itself; you can only switch one off. Depots aren't on any open
+          list: add them with <Tag>＋ Add depot</Tag>, with a BIC facility code if you have one. A facility a Pickup or Delivery
+          stop uses can't be removed: switch it off instead.</P>
         <H3>Trade Lanes</H3>
         <P>14 FIATA high-level trade lanes are pre-configured (<Tag>FE</Tag>, <Tag>EU-N</Tag>, <Tag>ME</Tag>, etc.). Each lane lists its assigned countries. Use the edit modal to search for countries by name or ISO2 code and add or remove them from the lane.</P>
         <H3>Countries</H3>
