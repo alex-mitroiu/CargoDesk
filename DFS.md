@@ -8,7 +8,9 @@ office on the booking; and 2026-10-28 for the carrier's Master B/L, VGM declarat
 the carrier's events and vessel times; 2026-10-29 for the House B/L audit's rules (§5.9), dangerous goods in
 the booking (§5.12) and the shipper's DG emergency contact (§5.8); 2026-11-02 for the » Advance bar on shipment
 pages (§5.2); 2026-11-06 for the managing offices from the ports, the shipment header's facts and routing after
-entry (§5.2), and the space position on Contracts & Schedules (§5.3)). **Scope**:
+entry (§5.2), and the space position on Contracts & Schedules (§5.3); 2026-11-17 to 2026-11-20 for carrier offices, the Carrier
+Booking's folds, the carrier's door in the booking and the trucker's stops (§5.12) and Master Data → Facilities (§5.6),
+all released in v0.91.16 "Gatehouse" on 2026-11-21). **Scope**:
 whole application, at the level of its major
 functional domains and system-to-system data flows — not an exhaustive per-route specification.
 **Companion documents**: [`ARCHITECTURE.md`](ARCHITECTURE.md) (technical architecture, module
@@ -754,7 +756,7 @@ ARCHITECTURE.md §§2–7 and is intentionally not duplicated here.
 
 | ID | Store | Owner | Representative tables |
 |---|---|---|---|
-| D1 | Monolith DB | `server.js` + `routes/*.js` | `spot_offers`, `spot_offer_lines`, `margin_rules`, `booking_escalations`, `lane_steerings`, `dcsa_sim_bookings`, `shipments`, `containers`, `shipment_cost_lines`, `shipment_parties`, `shipment_milestones`, `carrier_bookings`, `quotes`, `allocations`, `shipment_documents`, `customer_statements`, `gl_export_batches`, `users`, `app_settings` |
+| D1 | Monolith DB | `server.js` + `routes/*.js` | `spot_offers`, `spot_offer_lines`, `margin_rules`, `booking_escalations`, `lane_steerings`, `dcsa_sim_bookings`, `shipments`, `containers`, `carrier_offices`, `shipment_carrier_offices`, `haulage_stops`, `facilities`, `shipment_cost_lines`, `shipment_parties`, `shipment_milestones`, `carrier_bookings`, `quotes`, `allocations`, `shipment_documents`, `customer_statements`, `gl_export_batches`, `users`, `app_settings` |
 | D2 | Contract Service DB | `services/contract-management/` | `contracts`, `contract_legs`, `contract_rates`, `contract_routings` |
 | D3 | MDM Service DB | `services/mdm/` | `carriers`, `vessels`, `port_locations`, `linked_ports`, `trade_lanes`, `countries`, `commodities` (and the legacy `carrier_agents`, read once by the move to carrier offices) |
 | D4 | Screening Service DB | `services/screening/` | `sanctions_entries`, `sanctions_syncs` |

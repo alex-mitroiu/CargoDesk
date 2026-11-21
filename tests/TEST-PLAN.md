@@ -9,17 +9,17 @@ plan, kept for history: it describes node:sqlite and 3 suites, long since replac
 
 ---
 
-## 0. The test suite today (2026-11-02)
+## 0. The test suite today (2026-11-21)
 
 Three layers, all automated. Every feature ships with tests in each layer it touches; the new
 behaviour of an epic is described in its ARCHITECTURE.md §8 section, with the test files named there.
 
 | Layer | Where | How many | Run with |
 |---|---|---|---|
-| Backend API tests | `tests/*.test.js` (plain Node, `fetch` against the running monolith) | 126 files; 116 in the `npm test` chain, the rest in the per-service `test:*-toggle` scripts | `npm test`, or one file: `node tests/<name>.test.js` |
+| Backend API tests | `tests/*.test.js` (plain Node, `fetch` against the running monolith) | 140 files; 129 in the `npm test` chain, the rest in the per-service `test:*` scripts. A full pass runs 137: the chain plus the distribution and contract-service suites | `npm test`, or one file: `node tests/<name>.test.js` |
 | Microservice tests | `services/*/tests/*.test.js` | per service | `npm run test:contract-service`, `test:mdm-service`, `test:kanban-service`, `test:customer-service`, `test:screening-service`, `test:distribution-service` |
-| Frontend unit tests | `src/**/*.test.js(x)` (Vitest + Testing Library) | 37 files, 406 tests | `npm run test:frontend` |
-| Browser tests | `cypress/e2e/*.cy.js` | 39 specs, 298 tests | `npx cypress run` (from this VS Code shell: `env -u ELECTRON_RUN_AS_NODE npx cypress run`) |
+| Frontend unit tests | `src/**/*.test.js(x)` (Vitest + Testing Library) | 57 files, 597 tests | `npm run test:frontend` |
+| Browser tests | `cypress/e2e/*.cy.js` | 42 specs, 308 tests (1 pending by design) | `npx cypress run` (from this VS Code shell: `env -u ELECTRON_RUN_AS_NODE npx cypress run`); in Edge, one spec per run (step 4) |
 
 **How to run a full pass**
 1. Start the stack (`npm run dev`), or restart only the monolith. Stop it with
@@ -28,7 +28,9 @@ behaviour of an epic is described in its ARCHITECTURE.md §8 section, with the t
    `LOGIN_RATE_MAX=1000 DOC_ACTION_RATE_MAX=500 EXPORT_RATE_MAX=200 AI_EXTRACT_RATE_MAX=200 AI_CHAT_RATE_MAX=200`.
 3. Run the backend files one at a time and read each result. `npm test` is a `&&` chain that stops
    silently at the first failing file, so its final tally can hide every file after it.
-4. Run Vitest, then Cypress against :5173.
+4. Run Vitest, then Cypress against :5173. In Edge 158 and later (Cypress 15.21), run one spec per `cypress run`,
+   each with a time limit: a run with several specs crashes when it moves to the second ("* is not a valid URL"),
+   and a spec that hangs would otherwise go unnoticed.
 
 **Test data rules**
 - Every test that creates a shipment provisions its own offices (`ensureOffices()`):
@@ -36,7 +38,7 @@ behaviour of an epic is described in its ARCHITECTURE.md §8 section, with the t
 - Payloads use realistic, complete shipments: parties, Incoterm, POL/POD, ETD/ETA, commodity and
   real containers.
 - Rows that change what other records are offered must be removed after the test: Lane Steering
-  lines, space configurations, margin rules and carrier agents. Date them clear of real data
+  lines, space configurations, margin rules and carrier office coverage (on a carrier code of the test's own). Date them clear of real data
   (the steering tests use 2028).
 - A confirmed booking comes only from the carrier. Give the shipment containers, a SEA leg, an ETD
   and a contract number or carrier quote reference (`contractRef`; a DCSA booking names exactly one),
@@ -54,10 +56,17 @@ behaviour of an epic is described in its ARCHITECTURE.md §8 section, with the t
 - A dangerous goods booking needs every DG container's UN number, proper shipping name, class and weight, and
   a shipper with its own DG emergency contact (`dgEmergencyContact` on the customer); there is no fallback.
 - A shipment holding an issued House B/L can't be deleted (cancel it): such a test leaves its shipment behind.
+- A spec that clicks through the page's own `window.confirm` stubs it on the page:
+  `cy.window().then(win => cy.stub(win, "confirm").returns(true))`. Since Edge 158, Cypress's `window:confirm` answer
+  no longer reaches it, and the open dialog hangs the browser for good (`spot-offers.cy.js`, 2026-11-21).
 - The demo carrier's own API (`/dcsa-sim/*`) needs its token: read `accessToken` from
   `GET /api/dcsa-simulator/status` as admin and send it as the Bearer token.
 
-**Latest full run:** 2026-10-29, for v0.91.12 (the DG contact form and the release audit's fixes). Backend 116/116
+**Latest full run:** 2026-11-21, for v0.91.16 "Gatehouse": the CI replica on an empty database, backend 137/137 files
+(4,550 checks), Vitest 597/597, Cypress 307 of 308 tests in 42 specs (1 pending by design), one spec per run in Edge;
+see SYSTEM-TEST-RESULTS.md. The manual test cases for carrier offices, the Carrier Booking's folds, the carrier's door
+and the trucker's run are TC-106–TC-111 in TEST-CASES.md.
+**2026-10-29**, for v0.91.12 (the DG contact form and the release audit's fixes). Backend 116/116
 files, Vitest 383/383, Cypress 295/295 on the first run (see SYSTEM-TEST-RESULTS.md). The manual test cases for Where to
 book are Area 11 of TEST-CASES.md; for the DCSA carrier messages, the Master B/L and its amendment, VGM
 declarations, carrier events, equipment and seals, and the Arrival Notice Area 12; for the House B/L audit's fixes

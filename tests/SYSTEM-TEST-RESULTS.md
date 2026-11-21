@@ -1124,3 +1124,39 @@ Found on the way:
 - `tests/main-vessel-carrier-changes.test.js` found no demo transshipments: the new audit test had saved a real HLCU
   NLRTM → USNYC sailing, and a real (catalog) sailing on a lane hides the demo ones. The test no longer saves a sailing
   (the sea leg is enough for the booking), and the three fixture sailing rows left on that lane were removed.
+
+### Runs between 2026-11-07 and 2026-11-21, recorded late
+
+These runs were reported in the commits and ARCHITECTURE.md but not here.
+- **2026-11-14, v0.91.15 "Collect" (88af8e8):** the CI replica on an empty database 136/136 backend files, Vitest 576/576,
+  Cypress 302 passed + 1 skipped by design.
+- **2026-11-17, carrier offices (885e6c5):** CI #137 failed in the Cypress job only: `lane-steering.cy.js` sailed on a
+  fixed date (2026-11-16) while the steering line it makes starts today. Fixed in 04c53d1 (the ETD is now relative to today).
+- **2026-11-18, the Carrier Booking's folds (§8.54):** backend 135/135 on the replica, Vitest 590,
+  `carrier-booking-folds.cy.js` 4/4 and seven related specs 38/38 in Edge.
+- **2026-11-20, the trucker's run (§8.56):** `tests/haulage-stops.test.js` 58/58 and 14 related files on the replica,
+  Vitest 592, an Edge pass on Pickup and Delivery.
+
+### 2026-11-21: v0.91.16 "Gatehouse" — the full regression after the audit of the trucker's run
+
+Run on fddbec4 (carrier offices, the Carrier Booking in Trade Horizon Next, the carrier's door in the booking, haulage
+stops and Facilities, and the fixes of the audit TKT-0W1FYJ), CI-style on the scratchpad replica: empty databases, the
+seed, CI's rate-limit settings, the distribution, pdf-render and contract services, Vite started by the runner.
+
+| Check | Result |
+|---|---|
+| Full backend: every file in `npm test` plus the distribution and contract-service suites, each on its own | **137/137** files, 4,550 checks |
+| Vitest | **597/597** in 57 files |
+| Cypress in Edge, one spec per run | **42/42** specs, **307** of 308 tests passed, 1 pending by design (`containers.cy.js`) |
+
+Found on the way:
+- **Edge 158 (updated 2026-11-18) and Cypress 15.21.0 no longer work together as before.** One `cypress run` with
+  several specs crashes when it moves to the second spec ("* is not a valid URL"), so every spec now runs on its own,
+  with a 15-minute limit each.
+- **`spot-offers.cy.js` hung for eight hours.** Removing a spot offer asks "Remove spot offer …? Its BUY lines go with
+  it." through the browser's `window.confirm`. Cypress's own `window:confirm` answer no longer reaches a confirm the page
+  raises, and the open dialog froze the headless browser: no CPU, no answer over the debugging protocol. A two-line probe
+  spec that only raises a confirm hung the same way, and the same steps replayed in plain Edge removed the offer, so the
+  app was not at fault. The spec now stubs the page's confirm and checks it was asked once with that message: 8/8.
+- **`trade-manager-role.cy.js` failed once** (the Carriers heading was not seen within 8 s), right after the hung spec was
+  stopped; on its own it passed 11/11.

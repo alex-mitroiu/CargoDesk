@@ -173,8 +173,11 @@ describe("Spot offers", () => {
       cy.get('[data-testid="spot-tab-pick"]').should("have.attr", "aria-selected", "true");
       cy.contains('[data-testid^="spot-pool-row-"]', o.offerRef, { timeout: 10000 }).within(() => cy.contains("button", "Pick").click());
       cy.get('[data-testid="spot-offer-ref"]', { timeout: 15000 }).should("contain", o.offerRef);
-      cy.on("window:confirm", () => true);
+      // Stub the page's own confirm: since Edge 158 (2026-11-18) Cypress 15.21's built-in window:confirm handling no longer
+      // reaches a confirm the page raises, and the native dialog blocks headless Edge for good (the spec hung for hours).
+      cy.window().then(win => cy.stub(win, "confirm").as("confirmRemove").returns(true));
       cy.get('[data-testid="spot-offer-remove"]').click();
+      cy.get("@confirmRemove").should("have.been.calledOnceWith", `Remove spot offer ${o.offerRef}? Its BUY lines go with it.`);
       cy.get('[data-testid="spot-offer-empty"]', { timeout: 15000 }).should("be.visible");
     });
   });

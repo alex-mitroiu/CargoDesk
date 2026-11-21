@@ -1,12 +1,15 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.91.15 "Collect" · **Date:** 2026-11-14
+**Version:** 0.91.16 "Gatehouse" · **Date:** 2026-11-21
 **Audience:** Software architects, senior engineers, technical reviewers
 **See also:** [`DFS.md`](DFS.md) — the Design & Functional Specification (data flow diagrams,
 per-domain functional scope, roles) covers *what* the system does and *how data moves through it*;
 this document covers *how it's built*.
 
-> **2026-11-17 (unreleased).** §8.53 (carrier offices: booking, import and billing office per carrier and place, replacing
-> the Carrier Agents and Line Agent parties) and its audit TKT-IFZANU (§11), committed without a version bump.
+> **2026-11-21 (v0.91.16 "Gatehouse") — release.** §8.53 (carrier offices: booking, import and billing office per carrier and
+> place, replacing the Carrier Agents and Line Agent parties), §8.54 (Carrier Booking in Trade Horizon Next, with foldable
+> sections), §8.55 (the carrier's haulage at a door in the DCSA booking) and §8.56 (haulage stops on the Pickup and Delivery
+> services, Master Data → Facilities) were written as the work landed and ship in v0.91.16; the audits TKT-IFZANU, TKT-CJNFID
+> and TKT-0W1FYJ are logged in §11.
 >
 > **2026-11-14 (v0.91.15 "Collect") — release.** §8.52 (the office split: payment terms per charge category,
 > responsible offices, the billing office; each line's Prepaid/Collect follows its category) was written as the work landed

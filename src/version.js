@@ -2,12 +2,18 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.91.15";
-export const BUILD     = "2026-11-14";
-export const CODENAME  = "Collect";
-export const BUILD_FINGERPRINT = "7e3b91c4";
+export const VERSION   = "0.91.16";
+export const BUILD     = "2026-11-21";
+export const CODENAME  = "Gatehouse";
+export const BUILD_FINGERPRINT = "b6d47e1a";
 
 export const CHANGELOG = [
+  {
+    version:  "0.91.16",
+    date:     "2026-11-21",
+    codename: "Gatehouse",
+    summary:  "Carrier offices and the trucker's run — carrier offices replace the Carrier Agents list and the Line Agent parties: each carrier's booking, import and billing offices per port or country, picked for every shipment from its sea legs, with our account number per legal entity and the issuing office on carrier invoices; the Carrier Booking in Trade Horizon Next with foldable carrier offices and payment terms; a carrier's haulage leg from or to a door sends the door's address and contact from the shipper's or consignee's customer profile in the DCSA booking; Pickup and Delivery plan the trucker's stops (empty depot, door, terminal, from the new Master Data → Facilities with the SMDG terminal list) with a planned gate in and out per container, the carrier's cut-offs and their checks, printed on the trucker's plan; plus the findings of three audits (TKT-IFZANU, TKT-CJNFID, TKT-0W1FYJ) fixed.",
+  },
   {
     version:  "0.91.15",
     date:     "2026-11-14",

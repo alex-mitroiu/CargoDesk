@@ -3,7 +3,7 @@
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
 [![CI](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.91.15-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.91.16-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-custom-lightgrey)
 
@@ -512,7 +512,7 @@ CargoDesk/
 
 ## Database Schema
 
-119 tables in the monolith — schema declared in `lib/schema.js` at startup, migrations applied automatically. See the About page's **Architectural Details** tab for the full domain-grouped list; the table below covers the core/most-referenced ones.
+139 tables in the monolith — schema declared in `lib/schema.js` at startup, migrations applied automatically. See the About page's **Architectural Details** tab for the full domain-grouped list; the table below covers the core/most-referenced ones.
 
 | Table | Purpose |
 |---|---|
@@ -527,6 +527,9 @@ CargoDesk/
 | `country_trade_lanes` | Country → lane assignments |
 | `regions` | Region MDM |
 | `countries` | ISO 3166-1 countries + `portCount` via LEFT JOIN |
+| `carrier_offices` | A carrier's own offices and companies; with `carrier_office_coverage` (port or country, direction, role: booking, import, billing) they give each shipment its carrier offices (`shipment_carrier_offices`) |
+| `facilities` | Terminals (SMDG Terminal Code List, imported by an admin) and depots added by hand: the places a haulage stop picks |
+| `haulage_stops` | A Pickup or Delivery service's stops in order (shared route or one container's own), with `haulage_stop_times` per container: planned and actual gate in/out |
 | `tickets` | Kanban board cards (`shipment_id`, `parent_id`, `assignee_id`, `due_date`, `version`) |
 | `ticket_links` | Cross-ticket dependency relationships (blocks / is blocked by / etc.) |
 | `shipment_events` | Full audit log: `FIELD_UPDATED`, `STATUS_CHANGED`, `CONTAINER_ADDED/REMOVED/UPDATED` |
@@ -572,6 +575,7 @@ Recent releases below; full version history (back to v0.1.0) lives in [CHANGELOG
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.91.16 | Gatehouse | Carrier offices and the trucker's run — carrier offices replace the Carrier Agents list and the Line Agent parties: each carrier's booking, import and billing offices per port or country, picked for every shipment from its sea legs, with our account number per legal entity and the issuing office on carrier invoices; the Carrier Booking in Trade Horizon Next with foldable carrier offices and payment terms; a carrier's haulage leg from or to a door sends the door's address and contact from the shipper's or consignee's customer profile in the DCSA booking; Pickup and Delivery plan the trucker's stops (empty depot, door, terminal, from the new Master Data → Facilities with the SMDG terminal list) with a planned gate in and out per container, the carrier's cut-offs and their checks, printed on the trucker's plan; plus the findings of three audits (TKT-IFZANU, TKT-CJNFID, TKT-0W1FYJ) fixed. |
 | 0.91.15 | Collect | The office split — on the Carrier Booking the OCC/BK sets the payment terms (CPI) per DCSA charge category, each Prepaid or Collect with its responsible office, defaulted from the Incoterm and sent with the booking request; every cost and charge belongs to its category's office (the Costs and charges pop-up moves one), is billed to the party its term names and counts for its office's legal entity; an office's billing office issues every invoice of its shipments; one invoice per issuing entity and billed party, with VAT, GL Export, statements, reminders, collections and receivables following them, and GP by office; each line's own Prepaid/Collect follows its category; plus the findings of the QA export/import audit (TKT-KL28KB) and of the office split's pre-release audit (TKT-E9ZOIR) fixed. |
 | 0.91.14 | Telex | Bundled release — House B/L terms and conditions per legal entity and language, printed after the face and carried by the eBL; the carrier's Master B/L as sent to you: printed from the carrier's DCSA data or its PDF read and checked against the shipment, its paper originals or eBL tracked until the carrier releases the cargo, and CargoDesk's own MB01 retired; shipment messages signed by whoever is signed in; Export for QA, a production shipment as one JSON file that a test system imports as an IMPORTED shipment that never sends anything; the principal set by the incoterm on every screen, through the API and on quote conversion, kept once someone chooses one, every party change on the History, and the invoice's Bill To naming who pays (a credit note the party its invoice billed); and the findings of the two pre-release audits (TKT-GC05AS, TKT-E1GOI6) fixed. |
 | 0.91.13 | Drayage | Bundled release — Contracts & Schedules on the Trade Horizon next design (the header's facts, one blank leg to start a route, the space and the Lane Steering line instead of the charges); the route's rules on every save (pick-up, sea and delivery legs in that order, one Carrier's Haulage leg per side, dates that run forward), the whole route saved at once and refused with what's wrong and the order it should have; route problems in one dialog, and a contract that no longer fits the route taken off on Save after a warning, never while the carrier has the booking on it; typed contract legs (Pick-up, SEA, Delivery, with several places, the kind of place and the mode, so a barge pre-carriage can be priced) and the contract search reading the shipment's Carrier's Haulage leg wherever it sits (a container-yard pick-up never matched a contract before); the export and import offices filled from the ports, the creator's own office kept as the controlling office; and the four findings of the pre-release audit (TKT-YZ2EON) fixed. |
