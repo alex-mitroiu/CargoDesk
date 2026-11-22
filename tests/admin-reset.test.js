@@ -82,6 +82,11 @@ async function login(email, password) {
     assert("sanctions tables are preserved",
       preview.body.preserve.includes("sanctions_entries") && preview.body.preserve.includes("sanctions_syncs"));
     assert("app_settings is preserved", preview.body.preserve.includes("app_settings"));
+    // 2026-11-22 audit R1 (ARCHITECTURE.md §8.57): the reference data the server loads by itself survives a reset, with the
+    // record of what was loaded (else the next start puts deleted rows back) and the facilities (SMDG is downloaded once).
+    assert("hs_codes, facilities and reference_data_loads are preserved",
+      ["hs_codes", "facilities", "reference_data_loads"].every(t => preview.body.preserve.includes(t) && !preview.body.reset.includes(t)),
+      JSON.stringify(preview.body.preserve));
     assert("business tables appear in reset, not preserve",
       preview.body.reset.includes("shipments") && preview.body.reset.includes("customers") &&
       preview.body.reset.includes("users") &&

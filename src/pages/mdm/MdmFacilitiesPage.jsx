@@ -87,7 +87,10 @@ const MdmFacilitiesPage = () => {
     setBusy("import");
     try {
       const r = await api.facilities.importSmdg(csv);
-      toast.success(`SMDG list imported: ${r.added} added, ${r.updated} updated${r.skipped ? `, ${r.skipped} rows skipped` : ""}`);
+      const order = { "M/D/Y": "month/day/year", "D/M/Y": "day/month/year" }[r.dates?.order];
+      toast.success(`SMDG list imported: ${r.added} added, ${r.updated} updated${r.skipped ? `, ${r.skipped} rows skipped` : ""}${order ? `; the file's dates read as ${order}` : ""}`);
+      // A spreadsheet re-save whose dates can't tell day from month (2026-11-22): those dates are left empty, never guessed.
+      if (r.dates?.unreadable) toast.error(`${r.dates.unreadable} dates in the file couldn't be read (day and month can't be told apart), so they were left empty. Update from SMDG gets the original file.`);
       await load();
     } catch (e) { toast.error(e.message || "The import failed"); }
     setBusy("");
@@ -130,7 +133,7 @@ const MdmFacilitiesPage = () => {
             <span style={sectionLabelStyle()}>Master Data</span>
             <h1 style={{ fontFamily: HZ_DISPLAY, fontSize: 24, margin: "4px 0 6px", letterSpacing: "-.01em" }}>Facilities</h1>
             <p style={{ margin: 0, fontSize: 13, color: HZ.textMuted, maxWidth: 680 }}>Terminals from the SMDG Terminal Code List, the code list DCSA uses for terminals, and depots
-              added by hand. A Pickup or Delivery stop picks its place here. The SMDG list is public but states no licence, so it's imported here, never shipped with CargoDesk.</p>
+              added by hand. A Pickup or Delivery stop picks its place here. The SMDG list is public but states no licence, so CargoDesk never ships it: it downloads the list once when it first starts, and Update from SMDG fetches it again.</p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
               {status?.smdgCount ? <span data-testid="facilities-smdg-status" style={tag(HZ.cyan)}>SMDG LIST · {status.smdgCount.toLocaleString("en-GB")} TERMINALS · {status.smdgPorts} PORTS
                 {status.smdgLastChange ? ` · CHANGED ${fmtDate(status.smdgLastChange).toUpperCase()}` : ""}</span>
@@ -167,7 +170,7 @@ const MdmFacilitiesPage = () => {
             <tbody>
               {rows === null ? <tr><td colSpan={8} style={{ ...td, color: HZ.textMuted }}>Loading…</td></tr>
                 : filtered.length === 0 ? <tr><td colSpan={8} style={{ ...td, color: HZ.textMuted }}>
-                    {rows.length ? "Nothing matches." : isAdmin ? "No facilities yet. Update from SMDG brings in the terminals; add depots by hand." : "No facilities yet. An admin imports the SMDG terminals; depots are added by hand."}</td></tr>
+                    {rows.length ? "Nothing matches." : isAdmin ? "No facilities yet. The SMDG terminals arrive once CargoDesk has downloaded them (it tries again later if it couldn't); Update from SMDG or Upload the CSV brings them in now. Add depots by hand." : "No facilities yet. The SMDG terminals arrive once CargoDesk has downloaded them; depots are added by hand."}</td></tr>
                 : filtered.slice(0, shown).map(r => (
                   <tr key={r.id} data-testid="facilities-row" style={{ opacity: r.open ? 1 : 0.55 }}>
                     <td style={{ ...td, fontFamily: HZ_MONO, fontWeight: 700 }}>{r.code || <span style={{ color: HZ.textFaint }}>—</span>}</td>

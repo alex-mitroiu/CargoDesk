@@ -8,7 +8,8 @@
  *   - npm run dev  (Vite :5173 + Express :3001)
  *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  *
- * Fixtures (seeded by `npm run seed` — scripts/import-mdm-data.js's COUNTRY_LANE_DEFAULTS):
+ * Fixtures (loaded by the server itself on its first start — lib/reference-data.js: data/countries.json's lanes and
+ * the 14 trade lanes' transit days):
  *   CNAPP  →  FE lane  (28d transit)
  *   CNAQG  →  FE lane  (28d transit)
  *   SADMM  →  ME lane  (18d transit)

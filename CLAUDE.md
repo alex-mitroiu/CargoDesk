@@ -6,14 +6,14 @@ Full-stack freight management app. React 18 + Vite frontend, Express + dual-back
 `lib/db.js`) backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.91.16 "Gatehouse"**
-- First-time setup: `npm run setup` (`scripts/setup.js`) — boots the server once to create its
-  schema, shuts it down cleanly, then seeds MDM reference data, in the correct order. NOT
-  zero-script — a genuinely fresh `pgdata/` has no ports/carriers/vessels/commodities until this
-  runs (the old "auto-copies `db/cargodesk.sample.db` into a fresh `cargodesk.db`" mechanism was
-  `node:sqlite`-era and is gone, see `db/cargodesk.sample.db`'s own row in the table below).
+- Version: **v0.91.17 "Gazetteer"**
+- First-time setup: none (2026-11-22, ARCHITECTURE.md §8.57). The server's first start creates the schema and
+  loads the reference data from `data/` itself (`lib/reference-data.js`: ports, carriers, countries + lanes,
+  regions, commodities, HS codes, and the mock vessels outside production), then downloads the SMDG terminal
+  list once in the background (`lib/facilities.js` firstStartImport). `npm run setup` still exists but only
+  boots the server once and stops it cleanly.
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006 + the Kanban Service on :3007 + the Customer Service on :3008, concurrently)
-- Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — refreshes MDM data from `data/*.csv`/`.json`. **Must run with the server stopped** — `lib/db.js` holds an exclusive lock on `pgdata/` (added 2026-09-04 after a real corrupted-database incident: running this concurrently with a live server silently corrupts the WAL, surfacing only on the server's next restart as an opaque pglite WASM abort) — a second process now gets an immediate, clear rejection instead.
+- Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — a FULL restore from `data/*.csv`/`.json` (every missing row back, deleted ones included; ports refreshed; vessels even in production); never needed for a new install. **Must run with the server stopped** — `lib/db.js` holds an exclusive lock on `pgdata/` (added 2026-09-04 after a real corrupted-database incident: running this concurrently with a live server silently corrupts the WAL, surfacing only on the server's next restart as an opaque pglite WASM abort) — a second process now gets an immediate, clear rejection instead.
 
 ## Stack
 - Frontend: React 18, Vite, JSX with inline styles (no CSS files, no Tailwind)
@@ -48,7 +48,8 @@ routes/
   allocations.js     /api/allocations/* (CRUD, match, conflicts)
   mdm.js             /api/carriers, /api/vessels, /api/port-locations, /api/linked-ports,
                      /api/trade-lanes, /api/country-trade-lanes, /api/regions, /api/countries,
-                     /api/unlocodes, /api/commodities
+                     /api/unlocodes, /api/commodities, /api/reference-data (admin: what the server loaded
+                     from data/ on its starts, §8.57)
   kanban.js          /api/tickets/*, /api/ticket-links/*, /api/kb/* — every route branches on
                      app_settings.kanban_source since v0.82.0, proxying to the standalone
                      Kanban/Testing Service in 'remote' mode (services/kanban/)
@@ -199,7 +200,16 @@ lib/
                      only; refused on service POST/PATCH (audit A6). = src/shipmentServicePages.js's list (parity test)
   facilities.js      Master Data → Facilities (§8.56), built once as ctx.facilities: SMDG terminals imported at run time
                      (importSmdg: fetched or an uploaded CSV; adds/updates, never deletes; never committed: no licence),
-                     depots by hand, list/status/create/update/remove. Pure exports: parseCsv, parseSmdg
+                     depots by hand, list/status/create/update/remove; firstStartImport (§8.57: downloaded once after
+                     listen() until one import succeeded, retried 1 h, 2 h … ≤ 24 h; REFERENCE_DOWNLOADS=off skips it).
+                     parseSmdg reads ISO dates and a spreadsheet re-save (M/D/Y or D/M/Y, told by the file's own
+                     dates; ambiguous or mixed → left empty, counted in `dates.unreadable`; 2026-11-22).
+                     Pure exports: parseCsv, parseSmdg, firstStartSkipped, retryHours
+  reference-data.js  Reference data the server loads itself (§8.57, 2026-11-22), built once in server.js (ctx.referenceData):
+                     load({ mode: 'auto' | 'full', vessels }) over the datasets trade-lanes, countries, country-trade-lanes,
+                     ports, regions, carriers, commodities, hs-codes, vessels (mock: outside production only), each recorded
+                     in reference_data_loads (version + keys); status() for GET /api/reference-data. Pure exports: parsePorts,
+                     parseCarriers, regionsOf, planLoad (first = all, unchanged = none, changed = only keys new to the file)
   booking-doors.js   The carrier's haulage at a door in the DCSA booking (§8.55): doorLegs (a Carrier's Haulage Pick-up from a
                      Door or GPS point, or Delivery to one: the only Store Door), doorPoint, dcsaAddress, addressGaps, doorContact, doorLocation,
                      localDateTime, positioningTimes (the Loading plan's earliest time per equipment line). Pure; read by
@@ -325,17 +335,14 @@ cypress/support/
   offices.js         Same ensureOffices() for Cypress specs — a separate implementation because the
                      runners differ (fetch vs cy.request); keep the two behaviorally identical
 scripts/
-  setup.js                         First-time setup (npm run setup) — boots the server once to
-                                   create its schema, shuts it down cleanly, then runs
-                                   import-mdm-data.js, in the order that avoids the pglite
-                                   concurrent-connection corruption bug below
-  import-mdm-data.js               Seeds ports, carriers, vessels, commodities, the curated 48-entry
-                                   HS-6 registry (data/hs-codes.json, v0.91.5), and the full
-                                   208-country/182-country-trade-lane registry, read directly
-                                   from the committed db/cargodesk.sample.db (npm run seed) — must
-                                   run with the server stopped (lib/db.js's pgdata/ lock refuses a
-                                   second concurrent connection rather than silently corrupting it,
-                                   2026-09-04)
+  setup.js                         Optional since 2026-11-22 (npm run setup): boots the server once (schema +
+                                   reference data, which the server loads itself) and shuts it down cleanly
+                                   through /internal/dev/shutdown. No seed step any more
+  import-mdm-data.js               npm run seed: lib/reference-data.js in mode 'full' — every missing row of
+                                   data/ back (ports, carriers, countries + lanes from data/countries.json,
+                                   regions, commodities, HS codes, vessels even in production), ports refreshed,
+                                   empty transit days filled — must run with the server stopped (lib/db.js's
+                                   pgdata/ lock refuses a second concurrent connection, 2026-09-04)
   build-dfs-html.cjs               Rebuilds documentation/cargodesk-dfs.html from DFS.md (run it after
                                    changing DFS.md): the page's shell kept, sections regenerated with
                                    marked, the DFDs rendered offline with mermaid in puppeteer's Chrome
@@ -385,13 +392,11 @@ scripts/
 exports/
   dashboard-template.xlsx          Base XLSX template with named ranges for chart wiring
 db/
-  cargodesk.sample.db              Committed MDM reference DB (ports/carriers/vessels/commodities/
-                                   regions/trade lanes/countries only — no shipments, contracts,
-                                   customers, or users). Read directly by `npm run seed`
-                                   (scripts/import-mdm-data.js) into the live Postgres/pglite
-                                   database — the older "auto-copied to cargodesk.db on first
-                                   boot" mechanism was a node:sqlite-era behavior, retired along
-                                   with node:sqlite itself once the app moved to Postgres.
+  cargodesk.sample.db              Older SQLite copy of the reference data (ports/carriers/vessels/
+                                   commodities/regions/trade lanes/countries — no business data).
+                                   No longer read at run time (2026-11-22): data/countries.json was
+                                   taken from it, and the Docker image no longer copies it.
+                                   tests/mdm-reference-data.test.js still checks it
   cargodesk.sample-data.json       Committed demo business-data snapshot (shipments/customers/
                                    contracts/tickets/...) — loaded via `npm run seed:sample-data`
                                    (scripts/import-sample-data.js) so a fresh clone starts with
@@ -847,7 +852,7 @@ The original inline routes remain in server.js as **dead code** (route files reg
 Express uses first-match). They act as a fallback and can be deleted once the extracted routes
 are fully validated.
 
-## Database — 77 tables listed below (139 total, remeasured 2026-11-20 after the haulage stop tables via `grep -c "CREATE TABLE IF NOT EXISTS" lib/schema.js` — see the About page's Architectural Details tab, or `ARCHITECTURE.md` §6, for the full domain-grouped list)
+## Database — 78 tables listed below (140 total, remeasured 2026-11-22 after reference_data_loads via `grep -c "CREATE TABLE IF NOT EXISTS" lib/schema.js` — see the About page's Architectural Details tab, or `ARCHITECTURE.md` §6, for the full domain-grouped list)
 | Table | Purpose |
 |---|---|
 | shipments | Core shipment records (+ `imported_from`/`imported_meta`: imported from another system's QA export, §8.50 — such a shipment sends nothing; + `steering_line_id`/`steering_verdict`/`steering_rank`/`steering_pick`/`steering_reason`/`steering_checked_at`: whether its contract followed the Lane Steering, §8.39); `bl_number_source` (SERIES or TYPED) and `bl_to_order` for the House B/L, §8.40) |
@@ -892,7 +897,8 @@ are fully validated.
 | shipment_loading_plan_lines | Per-container loading plan (planned date, sequence, notes) for a Loading service — Epic TKT-TBS7QD |
 | haulage_stops | A Pickup/Delivery service's stops in order (§8.56): `container_id` NULL = the shared route, set = one container's own stops (`shipment_haulage_records.own_stops`); `purpose` (EMPTY_PICKUP, LOAD, WEIGH, CUSTOMS, FULL_GATE_IN, FULL_PICKUP, UNLOAD, EMPTY_RETURN, OTHER); the place = `customer_id` (live profile), `facility_id`, GPS, a typed name (moved waypoints) or none; `legacy_waypoint_id` |
 | haulage_stop_times | Planned in/out and typed actual in/out per container and stop, the stop's own wall-clock time "YYYY-MM-DDTHH:mm" (PK stop_id + container_id) |
-| facilities | Master Data → Facilities (§8.56): `source` smdg (id FAC-SMDG-<UN/LOCODE>-<code>, from the SMDG Terminal Code List, imported at run time, never deleted by an import; `valid_to` closes one) or manual (depots, a BIC/SMDG `code` optional); `kind` TERMINAL/DEPOT/OTHER; local only |
+| facilities | Master Data → Facilities (§8.56): `source` smdg (id FAC-SMDG-<UN/LOCODE>-<code>, from the SMDG Terminal Code List, imported at run time — downloaded once on the first start, §8.57 — never deleted by an import; `valid_to` closes one) or manual (depots, a BIC/SMDG `code` optional); `kind` TERMINAL/DEPOT/OTHER; local only |
+| reference_data_loads | One row per reference dataset the server loaded from `data/` (§8.57): `version` (hash of the parsed file), `row_keys` (JSON: the keys that file held), `rows_in_file`, `rows_added`, `mode` auto/full, `loaded_at`. A changed file adds only keys not in `row_keys`, so a deleted row stays deleted |
 | shipment_screenings | OFAC/SDN screening results and override records. Since v0.58.0 covers all 13 party-role slots (4 fixed + 9 `shipment_parties`), not just Shipper/Consignee/Principal — each hit's `field` corroborates by both name-match and `customer_id`-against-`customer_screenings` |
 | shipment_documents | Uploaded documents metadata (filename, type, label). `bl_surrendered_at`/`_by`, `bl_released_at`/`_by` (v0.90.0, House B/L Lifecycle) — post-issuance facts on a confirmed `BL01` row, same sparse per-doc-type idiom `paid_at`/`paid_amount` (FR01/FR02-only) already established. Idempotent, set via `PATCH .../bl-surrender`/`.../bl-release`, logged through the existing `entity_events` mechanism |
 | document_templates | Document Template Editor (v0.90.0) — a free-form canvas layout scoped by `(doc_type, office_id?, carrier_code?)`, `BL01` pilot only. `fields` is a JSON array of absolutely-positioned boxes (bound to a shipment value or free text) or `type:"table"` repeating regions bound to `containers`. No DB-level `UNIQUE` on the scope triple (Postgres treats `NULL <> NULL`, so two generic rows wouldn't collide at the constraint level anyway) — the create route enforces it itself via `IS NOT DISTINCT FROM` |
@@ -991,6 +997,18 @@ are fully validated.
   `ON DELETE CASCADE` on its service_id or a line there, and a place in lib/shipment-transfer.js PARTS. A path that keeps a carrier confirmation calls `fillCutOffs`
   (empty cut-offs only). The SMDG terminal list is imported at run time and must never be committed (no licence; decision
   D); tests import fictitious rows and remove them (facilities are lookup rows).
+- **Reference data loads itself (§8.57, 2026-11-22; the user: "with the first deployment all this data is seeded so that
+  people do not have to run scripts constantly or upload manually files")**: `lib/reference-data.js` runs in the startup
+  chain before the port backfills and listen(), and rebuilds the port caches when it added rows. The user's decisions: a
+  changed file adds only its NEW rows (never overwrite, never delete, a deleted row isn't brought back); the mock vessels
+  load outside production only; the SMDG list is downloaded once (retried until one import succeeded, no refresh); the
+  denied-party lists' first sync stays manual. New reference data goes into `data/` plus a dataset entry in
+  `lib/reference-data.js` (rows, keyOf, a multi-row insert) — never a script someone has to run. CI no longer seeds: its
+  tests run on what the first start loaded, with `REFERENCE_DOWNLOADS=off` (no SMDG download on CI). `npm run seed` is
+  the explicit full restore. The MDM Service seeds its own copy from `services/mdm/mdm.sample-data.json` (seedIfEmpty);
+  keep that file's rows in step with `data/` (tests/mdm-reference-data.test.js checks the ZA/ZM/ZW and SGSIN rows).
+  Reset Demo Data keeps `hs_codes`, `facilities` and `reference_data_loads` (routes/admin-reset.js PRESERVE_TABLES, audit
+  R1): a table the loader fills, and its record, must survive a reset together, or the next start puts deleted rows back.
 - **Statements: Gross, VAT, Net** — every place a consolidated statement shows its three amounts (document columns, VAT summary, totals, New Statement + detail modals) uses that order, the user's convention (2026-09-30). Invoices (FR01/FR02/CN01) keep Net then VAT; ask before changing them. A statement's document reuses the invoice's `vatCell` / `taxDetailsBlock` / `reverseChargeNote`.
 - **VAT in finance reports** (Epic TKT-XV4UHD): a confirmed statement counts as an issued billing document in GL Export, VAT Liability and FX Revaluation, read from the cost lines it bills (same source as an invoice). FX values documents at GROSS. A reverse-charged PURCHASE is self-assessed at `branches.standard_vat_rate` (output + input VAT, net zero; no rate = base-only + `selfAssessRateMissing`). GL Export posts VAT to `gl_control_account_vat_output`/`_vat_input` with AR/AP at gross and AR/AP = sum of the rounded rows (every entry balances); its VAT uses the VAT report's formula so the two agree. **Receivables are GROSS** — `computeArExposure` (outstanding AR, aging, committed exposure), `docAmountUsd` (dunning, Billing Performance, Invoice Collections) and Invoice Entry's Mark-as-Paid default all apply `vatFactor` (server.js, via ctx); a confirmed statement is a receivable too (in AR + aging, its lines out of committed exposure). An FR01/FR02/CN01 is deletable only while draft and its status only moves forward (no confirmed → draft, no re-confirming a voided one) — routes/shipment-ops.js `BILLING_DOC_TYPES`. A SHIPMENT with a confirmed/voided invoice or charges on a non-voided statement can't be deleted (409 → cancel it instead); an allowed delete takes its remaining documents (rows + files) with it. Tests: shipments that billed a customer now stay after cleanup, so remove their scratch office/branch with `retireOffice`/`retireBranch` (tests/helpers/offices.mjs), which deactivates when delete is refused — a leftover ACTIVE office would be picked by every later test's `ensureOffices()`.
 - **Conditional-UPDATE claim for batch exports** (`runGlExport`, TKT-OBCQH7): build the candidate rows, then `UPDATE … SET batch WHERE gl_exported_at IS NULL AND id IN (…) RETURNING id` inside the batch's transaction, and export only what came back — the multi-row form of the claim-atomically rule above. A race like this can't be reproduced against dev pglite (a request that only awaits pglite queries runs start to finish before the next request is read), so prove it with an interleaving fake-DB unit test (`tests/gl-export-claim.test.js`), and check the test fails on the old code.
@@ -1055,6 +1073,18 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.91.17 "Gazetteer")
+The reference data a new installation needs, loaded by the server itself (§8.57, story TKT-J54D47), and its pre-release
+audit TKT-QXISZ8 (R1–R3 fixed, R4 kept and documented) with the spreadsheet-dates fix TKT-5OGR56.
+- **lib/reference-data.js** — datasets from `data/` (new `data/countries.json`), recorded in `reference_data_loads`; in the
+  startup chain before listen(); `GET /api/reference-data`; `npm run seed` = full restore; `npm run setup` only boots and stops.
+- **SMDG first-start download** — `lib/facilities.js` firstStartImport (retries 1 h … 24 h; `REFERENCE_DOWNLOADS=off`);
+  parseSmdg reads a spreadsheet's M/D/Y or D/M/Y dates by the file's own order.
+- **CI and Docker** — no seed step in either CI job; the image no longer copies db/cargodesk.sample.db.
+- **Reset Demo Data** keeps `hs_codes`, `facilities`, `reference_data_loads` (R1).
+- **The MDM Service's seed** gained ZA/ZM/ZW (lane SAF) and SGSIN.
+- Verified on the CI replica's empty databases with no seed step: backend 138/138 files (4,601 checks); Vitest 597/597; vite build; Cypress A_smoke, lane-steering, shipment-form, transit-suggestion 40/40 in Edge (the full 42-spec run was not repeated: no screen changed beyond wording and one message); a real Reset Demo Data, restarts, production mode and a tampered database checked by hand. The user's real database started with it twice: nothing added, nothing lost (backup backups/pgdata-2026-11-22-pre-reference-data).
 
 ## Recent changes (v0.91.16 "Gatehouse")
 Release of 885e6c5 and 04c53d1 (pushed unversioned on 2026-11-17), the local commit fddbec4 and this commit. Three audits

@@ -89,6 +89,23 @@ const amsterdamMs = local => {
       && parsed.rows[0].address === "Testweg 1, Port number 1, 3199 LC Maasvlakte Rotterdam, The Netherlands" && parsed.rows[1].remarks === 'Closed, merged into "Alpha"'
       && parsed.rows[0].latitude === 51.954167 && parsed.rows[0].id === `FAC-SMDG-NLRTM-QA${rand}`, JSON.stringify(parsed).slice(0, 400));
     assert("…and refuses a file that isn't the list", !!parseSmdg("a,b,c\n1,2,3").error);
+    // A copy re-saved in a spreadsheet (2026-11-22: the user's upload had 1/19/2022): the file's own dates tell the order.
+    const H = "UNLOCODE,Terminal Code,Terminal Facility Name,Last change,Valid from,Valid to";
+    const dates = rows => { const p = parseSmdg([H, ...rows].join("\n")); return { order: p.dates.order, unreadable: p.dates.unreadable, d: p.rows.map(r => [r.lastChange, r.validFrom, r.validTo].join("|")) }; };
+    const iso = dates(["NLRTM,A,Alpha,2026-11-01,2014-08-26,", "NLRTM,B,Beta,,2010-01-01,2020-12-31"]);
+    assert("the list's own ISO dates read as before", iso.order === "ISO" && iso.unreadable === 0 && iso.d.join() === "2026-11-01|2014-08-26|,|2010-01-01|2020-12-31", JSON.stringify(iso));
+    const us = dates(["NLRTM,A,Alpha,11/1/2026,8/26/2014,", "NLRTM,B,Beta,,1/1/2010,12/31/2020"]);
+    assert("an Excel (US) re-save: 8/26/2014 can only be month first, so 11/1/2026 is 1 November", us.order === "M/D/Y" && us.d.join() === iso.d.join(), JSON.stringify(us));
+    const eu = dates(["NLRTM,A,Alpha,01.11.2026,26.08.2014,", "NLRTM,B,Beta,,01.01.2010,31.12.2020"]);
+    assert("a European re-save with dots: day first, the same dates", eu.order === "D/M/Y" && eu.d.join() === iso.d.join(), JSON.stringify(eu));
+    const twoDigit = dates(["NLRTM,A,Alpha,1/19/22 0:00,10/5/12 12:00 AM,"]);
+    assert("two-digit years and a time after the date", twoDigit.d[0] === "2022-01-19|2012-10-05|", JSON.stringify(twoDigit));
+    const ambiguous = dates(["NLRTM,A,Alpha,11/1/2026,8/6/2014,"]);
+    assert("every date ambiguous: left empty and counted, never guessed", ambiguous.order === "unknown" && ambiguous.unreadable === 2 && ambiguous.d[0] === "||", JSON.stringify(ambiguous));
+    const mixed = dates(["NLRTM,A,Alpha,13/1/2026,1/13/2014,"]);
+    assert("both orders in one file: left empty and counted", mixed.order === "mixed" && mixed.unreadable === 2, JSON.stringify(mixed));
+    const impossible = dates(["NLRTM,A,Alpha,2/30/2022,1/19/2022,"]);
+    assert("a day that doesn't exist (30 February) is left empty and counted; the rest read", impossible.unreadable === 1 && impossible.d[0] === "|2022-01-19|", JSON.stringify(impossible));
     const tz = "Europe/Amsterdam";
     const stops = [{ id: "e", purpose: "EMPTY_PICKUP", timezone: tz }, { id: "d", purpose: "LOAD", timezone: tz }, { id: "g", purpose: "FULL_GATE_IN", timezone: tz }];
     const cut = { FCO: limitOf("2026-10-24T12:00:00Z", "carrier"), VCO: limitOf("2026-10-23T12:00:00Z", "carrier") };

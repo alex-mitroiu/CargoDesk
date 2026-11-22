@@ -135,7 +135,7 @@ const MdmVesselsPage = () => {
           <PageSpinner />
         ) : results.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
-            {search ? "No vessels match your search." : "No vessels yet. Run: node import-mdm-data.js"}
+            {search ? "No vessels match your search." : "No vessels yet. A production installation starts without any: ships arrive with AIS Vessel Tracking, or add one with ＋ Add Vessel."}
           </div>
         ) : results.map(v => (
           <div key={v.imo}

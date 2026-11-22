@@ -1,10 +1,14 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.91.16 "Gatehouse" · **Date:** 2026-11-21
+**Version:** 0.91.17 "Gazetteer" · **Date:** 2026-11-22
 **Audience:** Software architects, senior engineers, technical reviewers
 **See also:** [`DFS.md`](DFS.md) — the Design & Functional Specification (data flow diagrams,
 per-domain functional scope, roles) covers *what* the system does and *how data moves through it*;
 this document covers *how it's built*.
 
+> **2026-11-22 (v0.91.17 "Gazetteer") — release.** §8.57 (reference data loaded by the server itself on its first start: no
+> `npm run setup` / `npm run seed`, the SMDG terminal list downloaded once, CI without a seed step), with §6
+> (`reference_data_loads`) and §14, was written as the work landed and ships in v0.91.17; its audit TKT-QXISZ8 is logged in §11.
+>
 > **2026-11-21 (v0.91.16 "Gatehouse") — release.** §8.53 (carrier offices: booking, import and billing office per carrier and
 > place, replacing the Carrier Agents and Line Agent parties), §8.54 (Carrier Booking in Trade Horizon Next, with foldable
 > sections), §8.55 (the carrier's haulage at a door in the DCSA booking) and §8.56 (haulage stops on the Pickup and Delivery
@@ -117,7 +121,7 @@ this document covers *how it's built*.
 ---
 
 ## Table of Contents
-_(§8.56 added 2026-11-20 (haulage stops on the Pickup and Delivery services, Master Data → Facilities with the SMDG terminals, the carrier's cut-offs on the trucker's plan; with §6 and §14); §8.55 added 2026-11-20 (the carrier's haulage at a door in the DCSA booking: the address and contact from the customer profiles; no §6 or §14 change); §8.54 added 2026-11-18 (Carrier Booking in Trade Horizon Next with foldable sections; payable at the carrier billing office's live location; no §6 or §14 change); §8.53 added 2026-11-16 (carrier offices: booking, import and billing office per carrier and place; with §6 and §14);
+_(§8.57 added 2026-11-22 (reference data loaded by the server itself on its first start, the SMDG list downloaded once, CI without a seed step; with §6 and §14); §8.56 added 2026-11-20 (haulage stops on the Pickup and Delivery services, Master Data → Facilities with the SMDG terminals, the carrier's cut-offs on the trucker's plan; with §6 and §14); §8.55 added 2026-11-20 (the carrier's haulage at a door in the DCSA booking: the address and contact from the customer profiles; no §6 or §14 change); §8.54 added 2026-11-18 (Carrier Booking in Trade Horizon Next with foldable sections; payable at the carrier billing office's live location; no §6 or §14 change); §8.53 added 2026-11-16 (carrier offices: booking, import and billing office per carrier and place; with §6 and §14);
 §8.52 added 2026-11-14 (the office split: payment terms per category, responsible offices, the billing office; §14); §8.51 added 2026-11-13 (the principal follows the incoterm, the invoice's Bill To; §14 and the §11 audit row TKT-E1GOI6); §8.47 added 2026-11-06 (Trade Horizon next: Contracts & Schedules, the shipment header, the » pill; the §8.6 bucket split; no §6 or §14 change); §8.46 added 2026-11-06 (EMO/IMO fill themselves from the ports, with §14); §8.45 added 2026-11-02 (the » Advance bar on shipment pages; no §6 or §14 change); §8.44 added 2026-10-29 (the House B/L audit's fixes, dangerous goods in the DCSA booking and the shipper's DG emergency contact, with §6 and §14); §8.43 added 2026-10-28 (the remaining DCSA phases: Master B/L amendments, equipment, Arrival Notice, Port Call, with §6 and §14); §8.42 added 2026-10-28 (DCSA phases 4–6, with §6 and §14); §8.41 added 2026-10-27 (the DCSA message review, with §6 and §14); §8.40 added 2026-10-21 (House B/L, Story 1) and completed 2026-10-24 (the remaining gaps, with §6 and §14); §8.33–8.39 added 2026-09-30 → 2026-10-21, with the §6 table count and groupings and the §14
 write-triggered side effects brought up to date on 2026-10-21 (§8.39, Where to book); §8.28–8.32, the full §5 `routes/` re-measure and the §4/§6/§8.5/§8.6/§11/§14 updates added
 2026-09-29 (v0.91.9 + unreleased); §8.26–8.27 and the §4/§6/§11 updates added 2026-09-25 (v0.91.8); §8.25 added 2026-09-20 (v0.91.6);
@@ -625,11 +629,13 @@ and 25 indexes now exist beyond primary keys (§11 — this resolves the old "no
 
 ## 6. Data Model
 
-**139 tables** in the monolith's own database (remeasured 2026-11-20 with `grep -c "CREATE TABLE IF NOT EXISTS"
+**140 tables** in the monolith's own database (remeasured 2026-11-22 with `grep -c "CREATE TABLE IF NOT EXISTS"
 lib/schema.js`; the count above this line had stayed at 132 through the carrier office tables of 2026-11-16), plus the
 Contract Management service's own 4-table copy (`contracts`/`contract_legs`/`contract_rates`/`contract_routings`) when
 `contract_source='remote'` (§8.1) — never both populated as the live source at once.
 
+- **2026-11-22 (reference data loaded by the server itself, §8.57):** +1, `reference_data_loads` (per dataset: the file's
+  version, the keys it held, rows added, mode auto/full).
 - **2026-11-20 (haulage stops and facilities, §8.56):** +3, `facilities`, `haulage_stops`, `haulage_stop_times`; columns
   `shipment_haulage_records.own_stops`, `.truck_plate`, `.gate_moved` and `shipment_haulage_waypoints.migrated_stop_id`
   (the waypoints are no longer written; their routes are gone).
@@ -771,7 +777,9 @@ carrier_offices ──┬── carrier_office_coverage     (port or country × 
 carrier_account_numbers · carrier_profile_settings  (our customer number at the carrier per legal
                                                       entity, the code list name — §8.53)
 facilities                                          (terminals from the SMDG Terminal Code List, depots by
-                                                      hand; a haulage stop's place — §8.56)
+                                                      hand; a haulage stop's place — §8.56; the list is
+                                                      downloaded once on the first start — §8.57)
+reference_data_loads                                (what the server loaded from data/ per dataset — §8.57)
 (carrier_agents / carrier_agent_locations / carrier_agent_schedule_rows: the Line Agents until
  2026-11-16, moved to carrier offices once and no longer created; kept as they were where present)
 
@@ -5040,8 +5048,8 @@ planned date, and the Trucker party rather than the service's vendor. The carrie
 - **Master Data → Facilities** (`lib/facilities.js`, `ctx.facilities`; routes `routes/facilities.js`; page
   `src/pages/mdm/MdmFacilitiesPage.jsx`, Trade Horizon Next): terminals from the SMDG Terminal Code List (the code list a
   DCSA `facility` uses with BIC; 1,259 terminals at 735 ports on 2026-11-20). Decision D: the list's repository states no
-  licence, so it is never committed: an admin imports it at run time (POST /api/facilities/import-smdg, fetched from
-  GitHub, or `{csv}` uploaded), which adds and updates rows (id `FAC-SMDG-<UN/LOCODE>-<code>`) and never deletes one; a
+  licence, so it is never committed: it is imported at run time — downloaded once on the first start since 2026-11-22
+  (§8.57), then by an admin (POST /api/facilities/import-smdg, fetched from GitHub, or `{csv}` uploaded) — which adds and updates rows (id `FAC-SMDG-<UN/LOCODE>-<code>`) and never deletes one; a
   terminal past its Valid to is closed and leaves the pickers by itself. An SMDG row changes only with the next import
   (409), except being switched off. Depots and other places are added by hand (a BIC or SMDG code optional, ≤ 6
   characters); a facility a stop uses can't be removed (409). Local only, like HS codes.
@@ -5067,6 +5075,86 @@ planned date, and the Trucker party rather than the service's vendor. The carrie
   C both ways; E with the demo carrier's confirmation; A; the usual stops, places, times, own stops, order, an event's
   actual time, the truck; a Delivery run's free time; BR01's doors), `tests/merchant-haulage.test.js` (the record without
   the gate times, the waypoint routes gone), TC-110.
+
+### 8.57 Reference data loaded by the server itself on its first start (2026-11-22)
+
+The user: "we need to have a logic that with the first deployment all this data is seeded so that people do not have to
+run scripts constantly or upload manually files." Until then a new install had no ports, carriers or countries until
+someone ran `npm run setup` / `npm run seed` with the server stopped (pglite is single-connection), the Docker image
+(`CMD node server.js`) never ran either, and the SMDG terminal list (§8.56) needed an admin's click or an upload.
+
+**The user's decisions (2026-11-22):**
+1. The SMDG list is downloaded **once** on the first start, retried until one import has succeeded; no periodic refresh
+   (an admin's Update from SMDG afterwards).
+2. The denied-party lists' (OFAC SDN, CSL) first sync **stays manual**, though screening checks against an empty list
+   until it runs (said when asked).
+3. The mock vessels (`data/vessels.json`, retired Maersk ships) load **outside production only**.
+4. A later release with a changed data file adds **only its new rows**: nothing overwritten, nothing deleted.
+
+**How it works** (`lib/reference-data.js`, built once in server.js as `ctx.referenceData`):
+- **Datasets**, in this order: `trade-lanes` (the 14 FIATA lanes and transit days, a constant moved from the seed
+  script), `countries` and `country-trade-lanes` (`data/countries.json`, 211 countries and 185 lane assignments, taken
+  from `db/cargodesk.sample.db`, which is no longer read at run time), `ports` (`data/seaports.csv`, 14,270, each with
+  its time zone from `lib/timezones.js`), `regions` (the ports' 33 zone codes), `carriers` (`data/carriers.csv`, 68),
+  `commodities` (294), `hs-codes` (48), `vessels` (350, mock).
+- **Each load is recorded** in `reference_data_loads`: `version` (a hash of the parsed rows, so line endings or
+  timestamps don't count), `row_keys` (the keys that file held), `rows_in_file`, `rows_added`, `mode`.
+  `planLoad` decides what a start adds: never loaded → every row; same version → nothing; changed version → only the
+  keys the last loaded file didn't have. Inserts are `ON CONFLICT DO NOTHING`, so nothing is overwritten, and a row
+  someone deleted is not brought back by a later release (its key was in the last file). Country lanes are inserted only
+  where the country and the lane still exist.
+- **When**: in the startup chain after the schema and settings seeds, before the port backfills and `listen()`, so no
+  request sees a half-loaded database; when anything was added the port caches (`portLanesMap`, `portCountryMap`) are
+  rebuilt. Multi-row inserts (500 rows a statement) make it fast: on an empty pglite database the whole first start took
+  8.5 s and the load itself 0.4 s (2026-11-22); a later start adds nothing (1.6 s).
+- **Production**: `vessels` is skipped and not recorded, so it never loads by itself there. Master Data → Vessels starts
+  empty: ships arrive with AIS (`lib/ais-listener.js` inserts one on its first static report; the user's database holds
+  35,913 that way) or are added with ＋ Add Vessel.
+- **`npm run seed`** (`scripts/import-mdm-data.js`) is now the same module in mode `full`: every missing row back
+  (deleted ones included), ports refreshed where the file differs (one `UPDATE … FROM (VALUES …)` per batch), empty
+  transit days filled, vessels even in production. Still only with the server stopped. `npm run setup` only boots the
+  server once and stops it.
+- **The SMDG list** (`ctx.facilities.firstStartImport`, lib/facilities.js): after `listen()`, in the background. It does
+  nothing once `facilities_smdg_imported_at` is set (any successful import, download or upload). A failed download is
+  logged and tried again after 1, 2, 4 … hours, at most 24 apart (an unref'd timer); the import itself is §8.56's
+  `importSmdg` and is logged as an `IMPORTED` entity event `by: "first start"`. `REFERENCE_DOWNLOADS=off` skips it
+  (CI: the tests import fictitious terminals and count on them).
+- **`GET /api/reference-data`** (admins, routes/mdm.js): per dataset its last load and the rows its table holds now.
+- **The MDM Service** seeds its own copy from `services/mdm/mdm.sample-data.json` when empty (`seedIfEmpty`). That file
+  had missed the 2026-10-09 fix (TKT-XU38KY): South Africa, Zambia and Zimbabwe (lane SAF) and the port SGSIN were added.
+- **CI** no longer stops the monolith, runs `npm run seed` and restarts it (with `kill -9`): both jobs run on what the
+  first start loaded, with `REFERENCE_DOWNLOADS: 'off'`. The Dockerfile no longer copies `db/cargodesk.sample.db`.
+
+**Pre-release audit (2026-11-22, epic TKT-QXISZ8, §11's audit log; the user: "Audit first").**
+- **R1 TKT-N0KINO** (medium): Reset Demo Data kept the MDM tables but wiped `facilities`, `hs_codes` and
+  `reference_data_loads`: the SMDG terminals were gone for good (the first-start download never runs again once an import
+  was made), the HS codes empty until the next start (a gap since v0.91.5), and the next start put back every reference row
+  an admin had deleted. All three are now in `PRESERVE_TABLES` (routes/admin-reset.js).
+- **R2 TKT-LR6UIL** (low): one dataset failing to load stopped the ones after it. Each now loads on its own; a failed one is
+  logged, not recorded, and tried again on the next start.
+- **R3 TKT-39M0YA** (low): a History line that failed to write made a successful SMDG first-start import read as a failed
+  download (and armed a retry). The line is written after the import, its failure logged on its own.
+- **R4 TKT-E4KE62** (kept, documented): an install seeded before this change has no load record, so its first start after
+  the upgrade can't tell a row an admin deleted from one an older seed never had (ZA, SGSIN before TKT-XU38KY): it adds
+  every file row it lacks, once, overwriting nothing. Afterwards only a changed file's new rows. The user's database
+  gained nothing that way.
+- **TKT-5OGR56** (found on the user's own import; the user: "Fix it first"): an SMDG CSV opened and saved in a spreadsheet has
+  dates like 1/19/2022, and the reader took only ISO, so every Valid from, Valid to and Last change came out empty.
+  `parseSmdg` now reads M/D/Y and D/M/Y (dots, dashes, two-digit years, a time after the date), the order told by the
+  file's own dates (a first part above 12 → day first, a second part above 12 → month first); a file that can't tell, or
+  mixes both, leaves those dates empty and counts them (`dates: { order, unreadable }` in the import's answer, shown by
+  the page), as does an impossible date. The user's file now reads all 1,259 Valid from and 546 Last change dates.
+- **Pre-existing, unchanged (the user's call):** Reset Demo Data also wipes 20 Master Data-like tables (offices, branches,
+  carrier offices and their coverage, lane steering, margin rules, charge defaults, GL mappings, document templates, loop
+  codes, B/L terms, carrier integrations, …).
+
+**Verified (2026-11-22, the CI replica's empty databases):** the first start loaded every dataset (vessels too, outside
+production) and the second added nothing; loaded as production, vessels were skipped; a renamed port, a deleted country and
+a deleted carrier stayed as they were on the next start, and `npm run seed` brought them back and refreshed the port; the
+SMDG list arrived on the first start with downloads on (1,259 terminals at 735 ports, 20 at NLRTM) and was not fetched again
+on the second. `tests/reference-data.test.js` (TC-112) covers the files, `planLoad`, `load()` over a stand-in database,
+the download's switch and waits, and the live `GET /api/reference-data`; `tests/mdm-reference-data.test.js` checks the
+two JSON seeds.
 
 ## 9. Data Flow Diagrams
 
@@ -5336,6 +5424,7 @@ continues; don't rewrite history once an item's checked.
 | 2026-11-12 | **Pre-release audit of the terms + carrier's Master B/L batch (TKT-GC05AS)**: everything since v0.91.13 (local commits 4979350 + b9b01d9, not pushed): House B/L terms and conditions (§8.48), Messages signed by the user, the manual gaps and AI test set, the carrier's Master B/L (§8.49: custody, print, PDF, MB01 retired, release warning). Method: a read by risk class (scope, side, role and status lock on the new routes; every other writer and reader of MB01, BL01, offices and transport_documents; what the terms change for the eBL; what a deleted or replaced document leaves behind; inputs the screens never send), live probes (scratchpad audit-0914-probe.mjs). Report https://claude.ai/code/artifact/0d1815e1-7a00-4297-b9f1-ce18e4a1e542. | **8 findings (3 medium, 5 low); all fixed the same day ("fix all findings"; C2 and C4 as recommended, the user: C2 "document this in the manual", C4 "for historical purposes we need to allow access, especially in the US"), §8.48/§8.49** | C1 TKT-I5FX4A the import side can undo the export side's custody steps and save a by-eye check of its PDF (SHP-5RSTKS: 200 where recording is 403); C2 TKT-H5UFMT an eBL issued from an uploaded BL01 carries the one-sentence placeholder, not the entity's terms (SHP-7TFI1J vs SHP-RFVBG1); C3 TKT-NR3S73 stopping a language an office defaults to: no warning, the office still listed, and its form refused 400 until changed (NL-NLRTM-SE, restored); C4 TKT-8W3S3B the panel offers actions the server refuses (Completed: 409 SHIPMENT_LOCKED while a Documents MB01 upload works; the import side: 403); C5 TKT-C4D2E8 deleting the panel's MB01 leaves it pointing at nothing; C6 TKT-C7UJL7 Replace / Print again leave the earlier MB01 confirmed, no document history entry; C7 TKT-H55WTK a Document Template Editor BL01 face can't name the terms pages (read); C8 TKT-QC6PWN step dates default to and are checked against the UTC date (read). Checked clean: scope on every new route, the role set, cascades on shipment delete, pdf.js with eval off and its Docker install, Messages signing for every role, an amendment's terms, MB01 generate refused. **Fixed:** C1 undo and the by-eye check follow the step's side; C2 an uploaded BL01 is issued with the panel's terms (stored, carried by the eBL; manual explains); C3 stopping a language moves its offices to English, named first, and the office save checks only a changed default; C4 the panel's PDF, print, steps and undo stay open on closed shipments, the panel hides what the side can't do; C5 deleting/voiding the panel's MB01 clears its link; C6 a replaced PDF or copy is voided ("Replaced by"), history logged; C7 a "Terms reference" field in the template editor; C8 dates in the user's day (server: up to UTC + 1). Tests: carrier-mbl (59), bl-terms (48), Vitest CarrierMasterBlPanel, HouseBlPanel, BlTermsPage, houseBlPrint. |
 | 2026-11-13 | **Pre-release audit of the incoterm principal rule (TKT-E1GOI6)**: the latest addition in 85fbff4 (§8.51): the principal following the incoterm on create, save and quote conversion, the parties on the History, the invoice's Bill To. Method: every reader of the principal (screening, credit, Where to book and the steering verdict, space and contract matching, invoices and credit notes, statements, carrier messages), every path that writes it (form, Conditions, Parties, API, quote conversion, QA import), the History field list's other users; live probe (scratchpad audit-0914-incoterm-probe.mjs). The QA export/import in the same commit was verified, not audited. | **5 findings (2 medium, 3 low); all fixed the same day, §8.51** | D1 TKT-XXZSOF a principal moved by the incoterm kept the old principal's named-account contract and space, its steering verdict still on the old principal's line, no warning (SHP-ISA729: FOB → CIF on the Conditions page); D2 TKT-DV6AUG a credit/debit note addressed (Bill To and VAT number) to the principal now, not the party its invoice billed; D3 TKT-2LDA6I the History reason never written for edits made in the app (the screens send the moved principal, the server took it as chosen); D4 TKT-DWCMLA the Bill To box printed CargoDesk wording ("the shipment's principal") on the customer's document; D5 TKT-XH02PJ a principal given by name only replaced by the implied party (API only; none in the user's 1,856 shipments). Checked clean: only the shipment save walks `TRACKED_FIELDS`; screening re-runs on the moved principal; a locked shipment refuses the save before the rule runs; no carrier message carries the principal; quote conversion keeps the quote's customer as shipper (an FOB quote billed the consignee before too). **Fixed:** D1 the verdict is judged again on any principal change and the save returns `principalNotice` (a warning toast); D2 `shipmentBilledAs`; D3 the reason is recorded when the principal sent is the rule's; D4 the name only; D5 a name-only principal is the caller's (both copies of the rule). Tests: incoterm-principal (20), Vitest invoiceGenerator (21), incotermPrincipal parity (10). |
 | 2026-11-21 | **Audit of haulage stops, Facilities and the carrier's door (TKT-0W1FYJ)**, before their commit: everything since TKT-CJNFID: the carrier's haulage at a door in the DCSA booking (§8.55) and haulage stops, Master Data → Facilities and the trucker's plan (§8.56). Method: the new routes read for scope, side, role and status lock; every writer of the Trucker party and the service vendor; what a deleted shipment, service or container leaves behind; the QA export; inputs the screens never send; live checks on the CI replica with scratch offices, users and shipments (scratchpad audit-haulage.mjs). | **6 findings (2 medium, 4 low; A4 and A6 predate this work); all fixed the same day ("fix the issues, create the commit and then run all the tests")** | A1 TKT-X0EXIJ a trucker typed as free text left the old Trucker party in place (the plan to one company, the party and Send's list to another); A2 TKT-4T44HU cancelling or removing the Pickup/Delivery service left its Trucker party; A3 TKT-KPKDVX the QA export/import dropped the haulage stops and their times; A4 TKT-KBV6M6 deleting a shipment left its services, plan lines and haulage records (and now stops), readable by the old id (the user's database: 369 such Pickup/Delivery services); A5 TKT-ENR040 a container whose own stops were all removed had no way back to the shared stops on the page; A6 TKT-8IB8HX the API let a Pickup move to the Import side (and Delivery to Export). Checked clean: viewer and wrong-side refusals (403), an unrelated office's user (404), another shipment's service, another service's stop and another shipment's container (404), read-only GETs (the AI assistant's mode), only an admin imports the SMDG list, a Completed shipment refuses stops and times (409), a service type changed and back keeps its stops, SMDG codes safe as ids. **Fixed:** A1 a vendor that isn't a customer clears the party, the page says so; A2 `releaseTruckerParty` on cancel and remove (only while it's still that vendor and no other live service has it); A3 `haulage_stops` and `haulage_stop_times` in the QA PARTS; A4 the shipment delete removes its services, plan lines and haulage records (stops cascade), a service delete its plan lines and records, and a missing shipment's services, plan and stops answer 404 (the orphans already in the database are left, not deleted); A5 "Use the shared stops" on the own-stops block's header; A6 `lib/service-types.js` (= the screens' SERVICE_TYPE_SIDES, parity test) refuses a side the type doesn't allow on POST and PATCH. Tests: haulage-stops (A1–A4, A6), Vitest HaulageServicePage (A5, A1), shipmentServicePages parity. |
+| 2026-11-22 | **Pre-release audit of the first-start reference data (TKT-QXISZ8)**, before 0.91.17: everything since v0.91.16 (§8.57: lib/reference-data.js, the SMDG first-start download, GET /api/reference-data, npm run seed / setup, CI without a seed step, the Dockerfile, the MDM Service's seed file). Method: the new code read against everything touching the same tables (Reset Demo Data, mdm_source=remote, the startup chain and port caches, Docker, the documents and page that show facility data); live checks on the CI replica (a real reset, restarts, production mode, a tampered database) and on a copy of the user's database. | **4 findings (1 medium, 2 low, 1 kept and documented) + the Excel-dates bug; all fixed the same day** | R1 TKT-N0KINO Reset Demo Data wiped facilities, hs_codes and reference_data_loads (SMDG gone for good, deleted rows back on the next start) → preserved; R2 TKT-LR6UIL one failing dataset stopped the rest → each on its own; R3 TKT-39M0YA a failed History line read as a failed download → separate; R4 TKT-E4KE62 an upgraded install adds every missing file row once → documented; TKT-5OGR56 a spreadsheet re-save of the SMDG list lost its dates → read by the file's own order. **Sound:** /api/reference-data admin-only; the download URL fixed; facility data escaped in PU01/DL01, websites never links; concurrent starts on one Postgres safe; the uploaded CSV kept out of Docker builds. Pre-existing: a reset also wipes 20 Master Data-like tables (left to the user). Tests: tests/reference-data.test.js, tests/admin-reset.test.js, tests/haulage-stops.test.js. |
 | 2026-11-18 | **Audit of the Carrier Booking folds (TKT-CJNFID)**, before their commit (§8.54). Method: the diff read path by path (the Next pages list, FoldSection/useFolds, the Details page, PaymentTermsCard, payable-at); the booking send in each state (Created, Pending, sent but not received, Confirmed, cancellation requested, Rejected, Cancelled); the payment terms before and after they are saved; the folds' accessibility; a real-browser pass on a copy of the user's database; and, at the user's question, the whole DCSA booking request against the Booking 2.0 spec. | **6 findings (1 high, 2 medium, 3 low): 5 fixed, D1 waits on a decision; the request review became story TKT-JV1SF2** | B1 TKT-KQYQU3 a booking request the carrier never received couldn't be sent again (409 "already pending", Send disabled; Review said to resend from Details), since 2026-10-09; B2 TKT-3G1MVU a refused request was announced as "Booking request sent"; D1 TKT-ML3GRC before the payment terms are saved, the booking card's Freight Terms and the freight row can disagree and sending applies the Incoterm's (since v0.91.15); B3 TKT-2ADXRB a folded section's aria-controls named a removed element; B4 TKT-39XAWL "In the booking request" looked like the whole request; B5 TKT-L7ESEV a requested cancellation read as plain Confirmed on Details. Checked clean: fold memory per user id, folds after a reload, a pill opens its section, Costs and charges from a folded section, the same payable-at in the booking, the SI and the preview, the header and » pill on both tabs. **Fixed:** B1 the server resends a `send_failed` request, Details offers Send ("Not received by <carrier>"); B2 the carrier's error in a red toast; B3 the body hidden, not removed; B4 "Payment terms in the booking request" and where the whole request is; B5 "Confirmed by <carrier> · cancellation requested". Tests: dcsa-lifecycle (resend, 409 once received), Vitest Details 6, FoldSection 3, PaymentTerms 7; Cypress folds + booking lifecycle/negative 12/12. |
 | 2026-11-17 | **Audit of carrier offices (TKT-IFZANU)**, before their commit (§8.53). Method: the new code read again path by path (profile, coverage rule, the shipment's copy, the booking and SI payable-at, Freight Audit's issuer, GL Export, the QA export, the move from Carrier Agents, the screens); the remote Master Data mode; every path that changes a shipment's carrier or ports; History; screening; the Cypress spec and a real-browser pass on a copy of the user's database. | **9 findings (4 medium, 5 low); all fixed the same day ("perform the audit, fix any findings, then commit and push")** | F1 TKT-QVVNCJ "Payable at Destination" went out as Prepaid (SI builder, House B/L DCSA document, printed BL01, the booking fallback all tested `=== "Collect"` or /collect/); F7 TKT-FZCDNN a screening hit on a carrier office wasn't shown in the Compliance panel; F8 TKT-CS368M the tile's office picker overflowed onto the next tile (Cypress: "covered by another element"); F9 TKT-GP3TIZ in remote Master Data mode coverage refused ports and countries only the MDM service holds; F2 TKT-R6GRMW the move named an office "Agent <id>" when its customer couldn't be read; F3 TKT-AX74CD History logged "X → X" and "null → null"; F4 TKT-MNEV5C the tile's list dropped an office set inactive (Save would empty it); F5 TKT-FEYDOZ "Not recorded" picked as the issuer was replaced by the default; F6 TKT-2T22W6 dead Carrier Agent mappers. Checked clean: side gating (403), another carrier's or an inactive office refused, picked again only on a carrier or sea-port change, the booking valid DCSA 2.0 with the office at its own location and our account number, the move runs once (1 office, 2 coverage rows, 47 Line Agents, on the copy and then on the user's database, backed up first to backups/pgdata-2026-11-17-pre-carrier-offices), the QA export carries the copy, the section locks with a Completed/Cancelled shipment. **Fixed:** F1 one rule (Collect or Payable at Destination = Collect) in every reader; F7 a Carrier Offices phase; F8 tiles shrink, the select fills its tile, two equal columns; F9 the checks ask the MDM service in remote mode; F2 the party's name; F3 History only on a change; F4 the current office kept, marked inactive; F5 an explicit null kept; F6 removed. Tests: carrier-offices (60, incl. GL Export's Counterparty), mdm-service-toggle (remote coverage), Cypress carrier-offices 3/3. |
 | 2026-11-14 | **Audit of the office split (TKT-E9ZOIR)**, before its release (§8.52), with the change that each line's Prepaid/Collect follows its category's term. Method: who may change the terms and lines; every billing path (generate, confirm, reverse + credit note, statements) against a change of terms or offices after the fact; what follows the line's entity (VAT, GL, statements, reminders, AR); the QA export's references; the billing office's lifecycle. Live probe on the CI replica's scratch database, never the user's (scratchpad audit-split-probe.mjs). | **5 findings (1 high, 2 medium, 2 low); all fixed the same day ("audit, commit and push")** | S1 TKT-2Y5Z8M the CN01 was billed by the terms as they are now: after a terms change it was refused 409 'different parties' and left its invoice voided with no related document, a bare void GL and VAT treat as never issued (SHP-OGDG43 on the replica); after the billing office was taken off it was issued by the import office's entity (SHP-TLWES5); S2 TKT-T7NJS5 a draft made before a terms change confirmed to the shipper while its charge had moved to the consignee (SHP-ZR7ZBP); S3 TKT-PRA1PQ the QA export didn't list the billing office, so an imported shipment kept another system's office id; S4 TKT-JQ5L1M an issued charge and a posted cost could be moved to another office; S5 TKT-EO2AJT a deactivated billing office was still copied onto new shipments. Checked clean: only the export side's OCC/BK, admins and operators change the terms (viewer 403); the terms lock with a Completed/Cancelled shipment; mixed invoices refused; VAT, GL and statements per issuing entity; reminders and collections by issuing office and billed party; the booking carries the terms; an office a shipment names as billing office can't be deleted; issued charges keep their Prepaid/Collect. **Fixed:** S1 the CN01 names its invoice (`relatedDocId`) and takes its issuer and billed party; S2 confirming re-checks the draft's split (409, generate again); S3 billing and issuing offices are references; S4 `save` refuses (409), the pop-up shows those lines read-only; S5 `billingOfficeFor` takes an active billing office only. Tests: office-split (S1–S5). |
@@ -5740,6 +5829,14 @@ here:
   confirmation itself) are recorded first, then an open escalation is resolved or sent back.
 - **`backfillMainVessel()`** (server.js, §8.37). At startup, open shipments with a transshipment get
   the main sea leg's vessel/voyage/IMO. Idempotent: rows already right are untouched.
+
+**Added 2026-11-22 (reference data, §8.57).**
+
+- **The reference data load** (`referenceData.load()`, lib/reference-data.js; startup, before the port backfills and
+  listen): per dataset, every row on a fresh database, only a changed file's new keys later, nothing when the file is the
+  one last loaded (`reference_data_loads`). Rebuilds the port caches when it added rows.
+- **The SMDG first-start download** (`ctx.facilities.firstStartImport`, after listen): until one import has succeeded
+  (`facilities_smdg_imported_at`); a failure re-arms a timer (1, 2, 4 … ≤ 24 h). Off with `REFERENCE_DOWNLOADS=off`.
 
 **Added 2026-11-20 (haulage stops, §8.56).**
 

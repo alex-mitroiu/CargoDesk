@@ -25,6 +25,10 @@ const PRESERVE_TABLES = new Set([
   // Admin-maintained registries — same "seeded defaults + Master Data editable" idiom as MDM
   "charge_code_definitions", "pack_type_definitions", "container_type_definitions",
   "duty_rate_chapters", "milestone_templates", "invoice_status_reason_codes",
+  // Reference data the server loads by itself (2026-11-22 audit R1, ARCHITECTURE.md §8.57): the HS codes registry, the
+  // facilities (SMDG terminals are downloaded only once, so a wipe would leave them gone; depots are typed by hand), and
+  // the record of what was loaded (wiping it while keeping the tables made the next start put deleted rows back).
+  "hs_codes", "facilities", "reference_data_loads",
   // Compliance reference data — large external OFAC/CSL sync, re-syncing needs live network access
   "sanctions_entries", "sanctions_syncs",
   // App-level infra config, not business data

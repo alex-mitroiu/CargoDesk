@@ -1160,3 +1160,46 @@ Found on the way:
   app was not at fault. The spec now stubs the page's confirm and checks it was asked once with that message: 8/8.
 - **`trade-manager-role.cy.js` failed once** (the Carriers heading was not seen within 8 s), right after the hung spec was
   stopped; on its own it passed 11/11.
+
+### 2026-11-22: reference data loaded by the server itself (ARCHITECTURE.md §8.57, unreleased)
+
+Run on 1f1d85a plus the uncommitted change, CI-style on the scratchpad replica: empty databases and, for the first time,
+**no seed step**. The reference data in the database is what the monolith's first start loaded. CI's rate-limit settings
+were used, with `REFERENCE_DOWNLOADS=off`, as the workflow now sets it.
+
+| Check | Result |
+|---|---|
+| First start on an empty database | up in 5.3–8.5 s; all nine datasets loaded (14,270 ports, 211 countries, 185 lane assignments, 33 regions, 68 carriers, 294 commodities, 48 HS codes, 14 trade lanes, 350 vessels) |
+| Second start | up in 1.4–1.6 s, nothing loaded |
+| Full backend: every file in `npm test` plus the distribution and contract-service suites, each on its own | **138/138** files, 4,592 checks (the new `reference-data.test.js`: 37) |
+| Vitest | **597/597** in 57 files |
+| Production build | OK |
+
+Checked by hand on the same empty databases:
+- Loaded as production, the vessels were skipped and everything else loaded in 0.4 s.
+- A renamed port, a deleted country and a deleted carrier stayed as they were on the next start; `npm run seed` brought
+  them back and refreshed the port.
+- With downloads on, the SMDG list arrived after the first start (1,259 terminals at 735 ports, 20 at NLRTM) and was not
+  fetched again on the second.
+- On a copy of the user's database from 2026-11-20 (seeded the old way), the first load added nothing (every file row was
+  already there) and took 0.3 s.
+
+Cypress in Edge, one spec per run on the same seed-less setup (the workflow's Cypress job no longer seeds either): the
+specs that lean hardest on the reference data, `A_smoke`, `lane-steering`, `shipment-form` and `transit-suggestion`
+(country lanes and transit days): **4/4** specs, **40/40** tests. The full 42-spec run was not repeated (no screen changed
+beyond wording). Not run: a start with no internet access (covered by the retry-wait unit check only).
+
+### 2026-11-22: v0.91.17 "Gazetteer" — after the audit (TKT-QXISZ8) and the spreadsheet-dates fix
+
+The same CI-style setup (empty databases, no seed step, `REFERENCE_DOWNLOADS=off`), with the audit's fixes R1–R3 and the
+SMDG date reader.
+
+| Check | Result |
+|---|---|
+| Full backend, each file on its own | **138/138 files (4,601 checks)** |
+| Vitest | **597/597** in 57 files |
+| Production build | OK |
+
+By hand on the replica: a real Reset Demo Data (118 tables cleared) kept 1,259 terminals, 48 HS codes and the load
+records; a carrier deleted before it stayed deleted after a restart, and the list wasn't downloaded again. The user's own
+SMDG upload (re-saved with US dates) now reads all 1,259 Valid from and 546 Last change dates.

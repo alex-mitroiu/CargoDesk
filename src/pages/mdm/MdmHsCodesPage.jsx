@@ -228,7 +228,7 @@ const MdmHsCodesPage = () => {
           <PageSpinner />
         ) : results.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body }}>
-            {search || chapter ? "No HS codes match." : "No HS codes yet — run: node scripts/import-mdm-data.js"}
+            {search || chapter ? "No HS codes match." : "No HS codes yet. CargoDesk loads them from its data files when the server starts; if this stays empty, the server log says why."}
           </div>
         ) : results.map(h => (
           <div key={h.code}

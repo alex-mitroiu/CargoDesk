@@ -47,12 +47,10 @@ COPY server.js ./
 COPY lib ./lib
 COPY routes ./routes
 COPY scripts ./scripts
+# data/ holds the reference data the server loads by itself on its first start (2026-11-22, lib/reference-data.js):
+# ports, carriers, countries with their trade lanes (data/countries.json — it replaced reading them out of
+# db/cargodesk.sample.db, which this image no longer needs), commodities, HS codes. A container needs no seed step.
 COPY data ./data
-# Reference dataset scripts/import-mdm-data.js reads the 208 countries and their trade-lane assignments from.
-# Without it that script does NOT fail — it prints "Countries: 0 inserted" and carries on — so a seeded
-# container ends up with ports but no trade lanes, and every derived lane (shipment trade lane, Space
-# Configurations' Origin/Destination Trade) comes back empty. Just this one file, not the whole db/ folder.
-COPY db/cargodesk.sample.db ./db/cargodesk.sample.db
 COPY --from=build /app/dist ./dist
 
 EXPOSE 3001

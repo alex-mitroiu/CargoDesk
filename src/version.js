@@ -2,12 +2,18 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.91.16";
-export const BUILD     = "2026-11-21";
-export const CODENAME  = "Gatehouse";
-export const BUILD_FINGERPRINT = "b6d47e1a";
+export const VERSION   = "0.91.17";
+export const BUILD     = "2026-11-22";
+export const CODENAME  = "Gazetteer";
+export const BUILD_FINGERPRINT = "23290adf";
 
 export const CHANGELOG = [
+  {
+    version:  "0.91.17",
+    date:     "2026-11-22",
+    codename: "Gazetteer",
+    summary:  "A new installation seeds itself — on its first start the server loads its reference data from its own files (14,270 ports, 68 carriers, 211 countries with their trade lanes, regions, commodities, HS codes and, outside production, the mock vessel list) before it answers any request, and downloads the SMDG terminal list once in the background, retrying until it gets through: no npm run setup or seed, no upload, and Docker containers no longer start empty. A later release adds only new rows; nothing edited or deleted is touched. Admins see each load at GET /api/reference-data; npm run seed is now a full restore. CI runs on what the first start loaded, with no seed step. The MDM Service's seed gained South Africa, Zambia, Zimbabwe and SGSIN. An SMDG CSV re-saved in a spreadsheet keeps its dates. The pre-release audit's fixes: Reset Demo Data keeps facilities, HS codes and the load record; one failing dataset no longer stops the rest.",
+  },
   {
     version:  "0.91.16",
     date:     "2026-11-21",

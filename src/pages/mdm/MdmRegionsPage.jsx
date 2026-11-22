@@ -79,7 +79,7 @@ const MdmRegionsPage = () => {
           <PageSpinner />
         ) : regions.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
-            No regions yet. Run <code style={{ fontFamily: T.mono, color: T.textCode }}>node import-mdm-data.js</code> to auto-populate from port data.
+            No regions yet. CargoDesk derives them from the ports' zones when the server starts; if this stays empty, the server log says why.
           </div>
         ) : regions.map(r => (
           <div key={r.code}

@@ -147,7 +147,7 @@ const MdmCommoditiesPage = () => {
           <PageSpinner />
         ) : results.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body }}>
-            {search ? "No commodities match." : "No commodities yet — run: node import-mdm-data.js"}
+            {search ? "No commodities match." : "No commodities yet. CargoDesk loads them from its data files when the server starts; if this stays empty, the server log says why."}
           </div>
         ) : results.map(c => (
           <div key={c.code}

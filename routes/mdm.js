@@ -22,6 +22,14 @@ module.exports = function mdmRoutes(app, ctx) {
   // either way.
   const isRemote = async () => ((await getSettings()).mdm_source || "local") === "remote";
 
+  // ─── Reference data loaded by the server itself (2026-11-22, lib/reference-data.js) ────────────────────────────────
+  // Admins: each dataset's last load (file version, rows in the file, rows added, when) and the rows its table holds now.
+  // Local tables only: the MDM Service seeds its own copy (services/mdm seedIfEmpty).
+  app.get("/api/reference-data", requireRole(["admin"]), async (req, res) => {
+    try { ok(res, await ctx.referenceData.status()); }
+    catch (e) { err(res, e.message, 500); }
+  });
+
   // ─── Carriers ─────────────────────────────────────────────────────────────
 
   app.get("/api/carriers", async (req, res) => {

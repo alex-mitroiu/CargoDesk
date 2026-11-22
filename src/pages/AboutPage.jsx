@@ -101,7 +101,7 @@ import { IconSettings, IconAnchor, IconBaseStation, AnyIcon } from "../component
         { name: "longitude",    type: "REAL",     note: "Geographic longitude" },
         { name: "country_code", type: "TEXT",     note: "ISO2 country code" },
         { name: "zone_code",      type: "TEXT",   note: "Subdivision / zone code" },
-        { name: "last_synced_at", type: "TEXT",   note: "UTC timestamp of last import-mdm-data.js sync — enables delta sync and deprecation detection. Added v0.11.0" },
+        { name: "last_synced_at", type: "TEXT",   note: "UTC timestamp the row was loaded or last refreshed from data/seaports.csv (the server's first start, or npm run seed) — enables delta sync and deprecation detection. Added v0.11.0" },
       ],
     },
     {
@@ -400,7 +400,7 @@ const DB_DOMAINS = [
   { name: "Contracts & Rates", color: "#2dcc8f", tables: "contracts · contract_legs · contract_rates · entity_events" },
   { name: "Allocations", color: "#2dcc8f", tables: "allocations" },
   { name: "Customers & Compliance", color: "#a855f7", tables: "customers · customer_documents · customer_identifiers · customer_screenings · sanctions_entries · sanctions_syncs" },
-  { name: "MDM Reference Data", color: "#a855f7", tables: "carriers · vessels · port_locations · linked_ports · trade_lanes · country_trade_lanes · regions · countries · commodities · loop_codes · loop_code_ports · hs_codes · carrier_offices · carrier_office_coverage · carrier_office_hours · carrier_account_numbers · carrier_profile_settings · facilities" },
+  { name: "MDM Reference Data", color: "#a855f7", tables: "carriers · vessels · port_locations · linked_ports · trade_lanes · country_trade_lanes · regions · countries · commodities · loop_codes · loop_code_ports · hs_codes · carrier_offices · carrier_office_coverage · carrier_office_hours · carrier_account_numbers · carrier_profile_settings · facilities · reference_data_loads" },
   { name: "Kanban & Testing", color: "#4db3e8", tables: "tickets · ticket_links · test_items · test_case_links · kb_projects · kb_columns · kb_versions" },
   { name: "EDI Messaging", color: "#4db3e8", tables: "edi_messages" },
   { name: "Booking & Spot Rates", color: "#4db3e8", tables: "carrier_bookings · booking_escalations · booking_escalation_steps · lane_steerings · lane_steering_options · spot_offers · spot_offer_lines · margin_rules · dcsa_sim_bookings · dcsa_sim_spot_offers" },

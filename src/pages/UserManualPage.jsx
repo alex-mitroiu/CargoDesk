@@ -1214,6 +1214,7 @@ const UserManualPage = () => {
       <div>
         <H2>Master Data Management (MDM)</H2>
         <P>MDM is the reference layer for all operational data. Changes here propagate automatically to shipment forms and the dashboard.</P>
+        <P>A new installation starts with its reference data in place: when CargoDesk first starts it loads the ports, carriers, countries with their trade lanes, regions, commodities and HS codes from its own data files, and downloads the SMDG terminal list (see Facilities). Nobody runs a script or uploads a file. A later release that brings new entries adds only those; anything you changed or removed stays as you left it.</P>
         <H3>Carriers</H3>
         <P>Add, edit, or remove ocean carriers. Each carrier requires a SCAC code (e.g. <Tag>MAEU</Tag>) and a full name. Carriers listed here appear in the shipment carrier dropdown.</P>
         <P>Click a carrier's code (or <strong>Offices &amp; Coverage</strong> in its menu) to open its profile, with four tabs:</P>
@@ -1222,7 +1223,7 @@ const UserManualPage = () => {
         <P><strong>Our account numbers</strong> — your customer number at the carrier for each of your legal entities that books with it, and (if the carrier asks) the name it gives that code. A booking carries the number of the legal entity behind the shipment's export office.</P>
         <P><strong>Connection</strong> — the carrier's DCSA connection (Carrier Integrations). There is one per carrier; what differs by country or entity is the account number.</P>
         <H3>Vessels</H3>
-        <P>The IMO vessel registry — tens of thousands of real ships, each with its own IMO number, flag, build year, and tonnage. Search by name, IMO, or type. A vessel with no confirmed name yet shows <em>"Name pending — awaiting a clean AIS report"</em> rather than garbled data; it fills in automatically once a real position report comes through.</P>
+        <P>The IMO vessel registry: each ship with its IMO number, flag, build year and tonnage. Search by name, IMO, or type. A test or demo installation starts with a sample list of 350 retired ships to try CargoDesk with; a production installation starts with none. Ships arrive by themselves once AIS Vessel Tracking is on (each one the first time its report comes in), and you can add one with <Tag>＋ Add Vessel</Tag>. A vessel with no confirmed name yet shows <em>"Name pending — awaiting a clean AIS report"</em> rather than garbled data; it fills in automatically once a real position report comes through.</P>
         <Screenshot src={imgMdmVessels} alt="The Master Data Vessels list" caption="Master Data → Vessels — a searchable index of the IMO registry." />
         <H3>Commodities</H3>
         <P>The freight commodity code list, each code with its own grade classification. Add a custom code if the one you need isn't already there. Shipments, quotes, opportunities and contracts all name their commodity by a code from this list. A shipment's commodity is set on the New Shipment form or later on its <Tag>Conditions</Tag> page. It is used in three places:</P>
@@ -1236,9 +1237,13 @@ const UserManualPage = () => {
         <H3>Linked Ports</H3>
         <P>Create links between ports that share a geographical area (e.g. <Tag>USLAX</Tag> → <Tag>USLGB</Tag>). Useful for matching booking data where the same physical port appears under multiple codes.</P>
         <H3>Facilities</H3>
-        <P>The terminals and depots a trucker goes to (under Port Locations). An admin brings in the terminals with{" "}
-          <Tag>Update from SMDG</Tag>: the SMDG Terminal Code List, the code list carriers use for terminals (e.g.{" "}
-          <Tag>NLMVII</Tag>, APM Terminals Maasvlakte 2). If the download fails, <Tag>Upload the CSV</Tag> takes the file instead.
+        <P>The terminals and depots a trucker goes to (under Port Locations). The terminals come from the SMDG Terminal Code
+          List, the code list carriers use for terminals (e.g. <Tag>NLMVII</Tag>, APM Terminals Maasvlakte 2). CargoDesk downloads
+          it once when it first starts, and tries again later if it couldn't reach it. After that an admin fetches the latest
+          list with <Tag>Update from SMDG</Tag>; if the download fails, <Tag>Upload the CSV</Tag> takes the file instead.
+          A copy opened and saved in a spreadsheet keeps its dates (1/19/2022 or 19.01.2022): CargoDesk works out from the
+          file itself whether the day or the month comes first, and if the file can't tell, it leaves those dates empty and
+          says how many, so Update from SMDG is the better source.
           A terminal that closes drops out of the pickers by itself; you can only switch one off. Depots aren't on any open
           list: add them with <Tag>＋ Add depot</Tag>, with a BIC facility code if you have one. A facility a Pickup or Delivery
           stop uses can't be removed: switch it off instead.</P>

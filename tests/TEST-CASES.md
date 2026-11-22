@@ -1619,6 +1619,51 @@ NLAMS → NLRTM (Carrier's Haulage, 16 Nov), as Save stored them before the fix 
 
 ---
 
+### TC-113: The audit of the reference data, and a spreadsheet's SMDG dates (2026-11-22, epic TKT-QXISZ8)
+**Feature:** Reset Demo Data (routes/admin-reset.js), the reference data loader (lib/reference-data.js), Master Data → Facilities → Upload the CSV (lib/facilities.js parseSmdg); ARCHITECTURE.md §8.57
+**Precondition:** An installation that loaded its reference data and the SMDG list on its first start
+**Steps:**
+1. Delete a carrier; App Settings → Danger Zone → Reset Demo Data (type RESET)
+2. Open Master Data → Facilities and HS Codes; restart the server and look again, and at the carrier
+3. Open the SMDG list in Excel, save it as CSV (dates become 1/19/2022), Upload the CSV
+4. Upload a small copy whose dates are all ambiguous (e.g. 11/1/2026 and 8/6/2014 only)
+
+**Expected Result:**
+- 1–2: the 1,259 terminals, the 48 HS codes and the reference data records are still there after the reset and the restart; the deleted carrier stays deleted; the list isn't downloaded again
+- 3: "the file's dates read as month/day/year"; each terminal's Valid from and Last change are filled (e.g. HAJT Ajman: 2022-01-19)
+- 4: those dates are left empty and the page says how many couldn't be read (day and month can't be told apart)
+
+**Status:** PASS (2026-11-22, automated: tests/admin-reset.test.js, tests/reference-data.test.js, tests/haulage-stops.test.js; steps 1–2 by hand on the CI replica)
+
+---
+
+### TC-112: Reference data on a new installation (2026-11-22)
+**Feature:** The server's first start (lib/reference-data.js, lib/facilities.js firstStartImport; ARCHITECTURE.md §8.57), Master Data, GET /api/reference-data, npm run seed
+**Precondition:** An empty database (a new installation, or the CI replica's emptied pgdata/); no seed script run
+**Steps:**
+1. Start the server (`npm run dev` or `node server.js`); open Master Data → Port Locations, Countries, Carriers, Commodities, HS Codes, Vessels
+2. As an admin, GET /api/reference-data
+3. Open Master Data → Facilities a minute later (downloads on)
+4. Restart the server; GET /api/reference-data and Facilities again
+5. Rename a port, delete a country and a carrier; restart the server
+6. Stop the server; run `npm run seed`; start it again
+7. Start a new installation with NODE_ENV=production
+8. Start a new installation with REFERENCE_DOWNLOADS=off; then one with no internet access
+
+**Expected Result:**
+- 1: the lists are filled: 14,270 ports (SGSIN among them), 211 countries (South Africa on lane SAF), 68 carriers, 294 commodities, 48 HS codes, 350 vessels; the server log has one "Reference data added: …" line; the first start takes seconds
+- 2: nine datasets, each with its file's row count and the rows its table holds; an operator gets 403
+- 3: 1,259 SMDG terminals at 735 ports (NLRTM has 20); the log says "SMDG terminal list downloaded on first start"
+- 4: nothing loaded or downloaded again (no log line; the import date unchanged)
+- 5: the renamed port and the deleted rows stay as they are
+- 6: the deleted country (with its lane) and carrier are back and the port has its file name again
+- 7: no vessels (Master Data → Vessels says ships arrive with AIS Vessel Tracking or ＋ Add Vessel); everything else loaded
+- 8: no SMDG download with the switch off; without internet the log says when it tries again (1 h, then 2, 4 … at most 24 h) and Facilities says the terminals arrive once downloaded
+
+**Status:** PASS (2026-11-22, automated: tests/reference-data.test.js, tests/mdm-reference-data.test.js; steps 1–7 on the CI replica's empty databases)
+
+---
+
 ### TC-111: The audit of the trucker's run (2026-11-21, epic TKT-0W1FYJ)
 **Feature:** Export Services → Pickup / Import Services → Delivery, Parties & Offices, Shipments → delete, QA export (lib/haulage-stops.js, lib/service-types.js, lib/shipment-transfer.js; ARCHITECTURE.md §8.56)
 **Precondition:** The shipment of TC-110 with its Pickup (vendor a trucking company from Customers) and Delivery services and their stops

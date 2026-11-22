@@ -152,7 +152,7 @@ const MdmPortLocationsPage = () => {
           <PageSpinner />
         ) : results.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
-            {search || country ? "No ports match your search." : "No port data yet. Run: node import-mdm-data.js"}
+            {search || country ? "No ports match your search." : "No ports yet. CargoDesk loads them from its data files when the server starts; if this stays empty, the server log says why."}
           </div>
         ) : results.map(p => (
           <div key={p.unlocode}

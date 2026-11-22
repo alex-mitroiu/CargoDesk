@@ -3,7 +3,7 @@
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
 [![CI](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.91.16-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.91.17-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-custom-lightgrey)
 
@@ -141,15 +141,15 @@ npm install
 
 ### First-Time Setup
 
-```bash
-npm run setup
-```
-
-This does the one-time dance in the right order so you don't have to: boots the server once to
-create its schema and a default admin account, shuts it down cleanly, then loads MDM reference
-data (ports, carriers, vessels, commodities, regions, trade lanes). That order matters — see
-[Troubleshooting](#troubleshooting) below for why running the seed step *while the server is
-still up* corrupts the database — `npm run setup` and `npm run seed` both refuse to do that.
+Nothing to run. On its first start the server creates its schema and a default admin account, then
+loads its reference data from the committed files in `data/`: 14,270 ports, 68 carriers, 211 countries
+with their trade lanes, regions, commodities, HS codes and, outside production, a sample list of 350
+(retired, mock) vessels. That takes a few seconds. In the background it then downloads the SMDG Terminal
+Code List once (1,259 terminals at 735 ports; it is never committed because its repository states no
+licence) and tries again later if it can't reach GitHub. A later release whose data files gained rows
+adds only those rows at its next start; nothing you edited or removed is touched. Admins can see what
+was loaded at `GET /api/reference-data`. (`npm run setup` still works: it now only starts the server
+once and stops it cleanly.)
 
 Optionally, `npm run seed:sample-data` also loads a committed snapshot of realistic demo business
 data (shipments, customers, contracts, tickets) instead of starting from an empty shell. Neither
@@ -193,15 +193,15 @@ terminal window, restarting after a code change, or killing a stuck port (see Tr
 below) — it's the same clean shutdown a signal handler runs, just reachable over HTTP so it
 works even for a detached or background process.
 
-Want to re-import master data from scratch instead (e.g. after editing `data/*.csv`)? **Stop the
-server first** (see above) — `npm run seed` writes to the database directly, and with the
-embedded pglite database (no `DATABASE_URL` set), running it while the server is still up will
-silently corrupt it; the corruption only shows up the next time the server restarts. The script
-refuses to run if it detects the server still listening on :3001, but stop it properly regardless
-of that guard, then restart once seeding finishes:
+Want every reference row back exactly as the files have it (rows someone deleted included, ports
+refreshed from `data/seaports.csv`)? That is `npm run seed`, a full restore. **Stop the server first**
+(see above): it writes to the database directly, and with the embedded pglite database (no
+`DATABASE_URL` set), running it while the server is still up will silently corrupt it; the corruption
+only shows up the next time the server restarts. The script refuses to run if it detects the server
+still listening on :3001, but stop it properly regardless of that guard, then restart once it finishes:
 
 ```bash
-npm run seed             # re-imports ports, carriers, vessels, regions, commodities, HS codes
+npm run seed             # full restore: ports, carriers, countries + lanes, regions, commodities, HS codes, vessels
 ```
 
 Adding sample carrier contracts to poke around with is the opposite — `npm run seed:contracts`
@@ -227,8 +227,8 @@ On first startup, if no users exist, the server seeds a default admin account:
 | Script | Description |
 |--------|-------------|
 | `npm run dev` | Start API server (port 3001) + Vite dev server (port 5173) concurrently |
-| `npm run setup` | First-time setup — boots the server once, shuts it down cleanly, then seeds MDM data, in the right order |
-| `npm run seed` | Seed ports, carriers, vessels, regions, commodities, HS codes (server must be **stopped**) |
+| `npm run setup` | Optional: boots the server once (schema + reference data) and shuts it down cleanly. The server loads its reference data by itself |
+| `npm run seed` | Full restore of the reference data from `data/` (deleted rows come back, ports refreshed; server must be **stopped**) |
 | `npm run seed:contracts` | Seed sample carrier contracts |
 | `npm run checkdb` | Inspect DB schema and row counts |
 | `npm run export:template` | Regenerate `exports/dashboard-template.xlsx` |
@@ -239,10 +239,10 @@ On first startup, if no users exist, the server seeds a default admin account:
 
 - `pgdata/` (the embedded pglite database directory, used whenever `DATABASE_URL` is unset) is
   created automatically on the first server start and excluded from version control (see
-  `.gitignore`) — only `db/cargodesk.sample.db`, the reference file `npm run seed` reads
-  countries/trade-lanes from, is committed.
+  `.gitignore`). The reference data the server loads into it lives in `data/` (`seaports.csv`,
+  `carriers.csv`, `countries.json`, `commodities.json`, `hs-codes.json`, `vessels.json`).
 - Schema changes are applied via safe `ALTER TABLE`-style migrations at startup — no manual DB intervention needed.
-- `npm run seed` needs the server **stopped** first (see Troubleshooting); `npm run seed:contracts` is the opposite — it talks to the live API, so it needs the server **running**.
+- `npm run seed` (a full restore, never needed for a new install) needs the server **stopped** first (see Troubleshooting); `npm run seed:contracts` is the opposite — it talks to the live API, so it needs the server **running**.
 - The FX converter and weather widget use free public APIs — no API keys required.
 - The WebSocket server shares port 3001 with the Express API (`/ws` path). The Vite dev server proxies WebSocket connections automatically.
 
@@ -286,19 +286,18 @@ toggle.
 
 Things to know before running it:
 
-- **Fresh containers start empty.** Seed the reference data (14,269 ports, carriers, vessels,
-  commodities, HS codes, 208 countries and their trade lanes) once, with the server **stopped** —
-  the embedded database allows only one process:
+- **A fresh container seeds itself.** Its first start loads the reference data (14,270 ports, 68
+  carriers, 211 countries and their trade lanes, regions, commodities, HS codes; the mock vessels are left
+  out under `NODE_ENV=production`, which the images set) and then downloads the SMDG terminal list in the
+  background — the container needs outbound HTTPS to raw.githubusercontent.com for that, and keeps
+  retrying (1 h, 2 h, … at most a day apart) until it gets through; an admin can upload the CSV meanwhile.
+  `REFERENCE_DOWNLOADS=off` switches the download off. No seed step:
   ```bash
   docker run -d --name cargodesk -v cargodesk-pgdata:/app/pgdata -p 127.0.0.1:3001:3001 \
-    -e JWT_SECRET="$(openssl rand -hex 32)" cargodesk-monolith   # first boot creates the schema
-  docker stop cargodesk                                          # graceful, so the database closes cleanly
-  docker run --rm -v cargodesk-pgdata:/app/pgdata cargodesk-monolith node scripts/import-mdm-data.js
-  docker start cargodesk
+    -e JWT_SECRET="$(openssl rand -hex 32)" cargodesk-monolith
   ```
   Without a volume on `/app/pgdata` the data disappears when the container is recreated. Always stop
-  it with `docker stop`, never `docker kill`. (The seed script prints "0 inserted" rather than failing
-  if a reference file is missing — check the counts it reports.)
+  it with `docker stop`, never `docker kill`.
 - **Set `ADMIN_EMAIL` and `ADMIN_PASSWORD`.** The first admin account is otherwise the published default
   `admin@cargodesk.com` / `admin123`. Under `docker compose` they are read from `.env`; with a bare
   `docker run` pass them with `-e`. (Under `NODE_ENV=production`, which the images set, `ADMIN_EMAIL` is
@@ -352,8 +351,8 @@ corruption only surfaces later, on the server's *next* restart, as this exact op
 `npm run seed` now refuses to run at all while it detects the server on :3001, specifically to
 prevent this — but if you already hit it: stop the server, delete `pgdata/` (there's no repair
 tool for pglite specifically — a real Postgres data directory can sometimes be recovered with
-`pg_resetwal`, pglite cannot), and restart the server to reinitialize a clean schema, then
-`npm run seed` again. If this happens on a **first ever** boot with no prior `pgdata/` at all
+`pg_resetwal`, pglite cannot), and restart the server: it reinitializes a clean schema and loads
+the reference data again by itself. If this happens on a **first ever** boot with no prior `pgdata/` at all
 (nothing to have raced against), you've likely hit a different, platform-specific pglite WASM
 bug (confirmed to occur on very new macOS/Apple Silicon builds as of writing) — try
 `npm install @electric-sql/pglite@<an older version>`, or set `DATABASE_URL` to a real local
@@ -377,18 +376,15 @@ taskkill /PID <pid> /F
 lsof -ti:3001 | xargs kill
 ```
 
-**App starts but the database is empty**
-This is expected on a genuinely fresh `pgdata/` — unlike the old SQLite-era behavior, nothing is
-auto-copied into place on first boot. The server only creates its own schema; ports, carriers,
-vessels, commodities, regions, and trade lanes need the one-time setup script:
+**App starts but Master Data is empty**
+The server loads its reference data by itself before it answers its first request, so empty port,
+carrier or country lists mean that load failed: the server log says why (look for "Reference data").
+In production the vessel list starts empty on purpose (the shipped list is mock data); ships arrive with
+AIS vessel tracking, or add one on Master Data → Vessels. Empty Facilities mean the SMDG download hasn't got through yet (the log says
+when it retries; Update from SMDG or Upload the CSV brings it in now). To put every reference row back
+as the files have it, stop the server first (see [Stopping the Server](#stopping-the-server) above), then:
 ```bash
-npm run setup           # boots the server once, shuts it down cleanly, then seeds MDM data
-```
-If you've already run that and still see an empty database (or want to refresh MDM data after
-editing `data/*.csv`), stop the server first (see [Stopping the Server](#stopping-the-server)
-above), then:
-```bash
-npm run seed            # re-imports ports, carriers, vessels, commodities, HS codes, regions, trade lanes
+npm run seed            # full restore: ports, carriers, countries + lanes, regions, commodities, HS codes, vessels
 npm run seed:contracts  # sample carrier contracts (optional, server must be running)
 ```
 
@@ -424,19 +420,21 @@ CargoDesk/
 ├── exports/
 │   └── dashboard-template.xlsx  # Base XLSX template with named ranges (WeeklySummary, ByCarrier, ByLane)
 ├── scripts/
-│   ├── import-mdm-data.js        # Seeds ports, carriers, vessels, regions, commodities, HS codes (npm run seed)
+│   ├── import-mdm-data.js        # Full restore of the reference data (npm run seed); the server loads it by itself (lib/reference-data.js)
 │   ├── seed-contracts.js         # Seeds sample carrier contracts (npm run seed:contracts)
 │   ├── checkdb.js                # Dev utility — inspects DB schema and row counts (npm run checkdb)
 │   └── create-export-template.js # Generates exports/dashboard-template.xlsx (npm run export:template)
 ├── data/
-│   ├── seaports.csv           # 14,269 UN/LOCODE records
+│   ├── seaports.csv           # 14,270 UN/LOCODE records
 │   ├── carriers.csv           # 68 carrier records
-│   └── vessels.json           # 349 vessels (IMO registry)
+│   ├── countries.json         # 211 countries and their trade lanes
+│   ├── commodities.json       # 294 commodity codes
+│   ├── hs-codes.json          # 48 HS-6 codes
+│   └── vessels.json           # 350 vessels (mock: retired ships; loaded outside production only)
+│                               #   all loaded by the server itself on its first start (lib/reference-data.js)
 ├── db/
-│   └── cargodesk.sample.db    # Committed MDM reference DB (ports/carriers/vessels/commodities/
-│                               #   regions/trade lanes/countries) — read directly by `npm run
-│                               #   seed`/`npm run setup` into the live Postgres/pglite database,
-│                               #   never auto-copied
+│   └── cargodesk.sample.db    # Older SQLite copy of the reference data (data/countries.json was taken from it);
+│                               #   no longer read at run time
 └── src/
     ├── api.js                 # All fetch wrappers (api.shipments, api.export, api.costLines…)
     ├── tokens.js              # Design tokens, theme system, route-matching helpers
@@ -512,7 +510,7 @@ CargoDesk/
 
 ## Database Schema
 
-139 tables in the monolith — schema declared in `lib/schema.js` at startup, migrations applied automatically. See the About page's **Architectural Details** tab for the full domain-grouped list; the table below covers the core/most-referenced ones.
+140 tables in the monolith — schema declared in `lib/schema.js` at startup, migrations applied automatically. See the About page's **Architectural Details** tab for the full domain-grouped list; the table below covers the core/most-referenced ones.
 
 | Table | Purpose |
 |---|---|
@@ -528,7 +526,8 @@ CargoDesk/
 | `regions` | Region MDM |
 | `countries` | ISO 3166-1 countries + `portCount` via LEFT JOIN |
 | `carrier_offices` | A carrier's own offices and companies; with `carrier_office_coverage` (port or country, direction, role: booking, import, billing) they give each shipment its carrier offices (`shipment_carrier_offices`) |
-| `facilities` | Terminals (SMDG Terminal Code List, imported by an admin) and depots added by hand: the places a haulage stop picks |
+| `facilities` | Terminals (SMDG Terminal Code List, downloaded once on the first start, then by an admin) and depots added by hand: the places a haulage stop picks |
+| `reference_data_loads` | One row per reference dataset the server loaded from `data/` (file version, the keys it held, rows added): a later release's changed file adds only its new rows |
 | `haulage_stops` | A Pickup or Delivery service's stops in order (shared route or one container's own), with `haulage_stop_times` per container: planned and actual gate in/out |
 | `tickets` | Kanban board cards (`shipment_id`, `parent_id`, `assignee_id`, `due_date`, `version`) |
 | `ticket_links` | Cross-ticket dependency relationships (blocks / is blocked by / etc.) |
@@ -575,6 +574,7 @@ Recent releases below; full version history (back to v0.1.0) lives in [CHANGELOG
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.91.17 | Gazetteer | A new installation seeds itself — on its first start the server loads its reference data from its own files (14,270 ports, 68 carriers, 211 countries with their trade lanes, regions, commodities, HS codes and, outside production, the mock vessel list) before it answers any request, and downloads the SMDG terminal list once in the background, retrying until it gets through: no npm run setup or seed, no upload, and Docker containers no longer start empty. A later release adds only new rows; nothing edited or deleted is touched. Admins see each load at GET /api/reference-data; npm run seed is now a full restore. CI runs on what the first start loaded, with no seed step. The MDM Service's seed gained South Africa, Zambia, Zimbabwe and SGSIN. An SMDG CSV re-saved in a spreadsheet keeps its dates. The pre-release audit's fixes: Reset Demo Data keeps facilities, HS codes and the load record; one failing dataset no longer stops the rest. |
 | 0.91.16 | Gatehouse | Carrier offices and the trucker's run — carrier offices replace the Carrier Agents list and the Line Agent parties: each carrier's booking, import and billing offices per port or country, picked for every shipment from its sea legs, with our account number per legal entity and the issuing office on carrier invoices; the Carrier Booking in Trade Horizon Next with foldable carrier offices and payment terms; a carrier's haulage leg from or to a door sends the door's address and contact from the shipper's or consignee's customer profile in the DCSA booking; Pickup and Delivery plan the trucker's stops (empty depot, door, terminal, from the new Master Data → Facilities with the SMDG terminal list) with a planned gate in and out per container, the carrier's cut-offs and their checks, printed on the trucker's plan; plus the findings of three audits (TKT-IFZANU, TKT-CJNFID, TKT-0W1FYJ) fixed. |
 | 0.91.15 | Collect | The office split — on the Carrier Booking the OCC/BK sets the payment terms (CPI) per DCSA charge category, each Prepaid or Collect with its responsible office, defaulted from the Incoterm and sent with the booking request; every cost and charge belongs to its category's office (the Costs and charges pop-up moves one), is billed to the party its term names and counts for its office's legal entity; an office's billing office issues every invoice of its shipments; one invoice per issuing entity and billed party, with VAT, GL Export, statements, reminders, collections and receivables following them, and GP by office; each line's own Prepaid/Collect follows its category; plus the findings of the QA export/import audit (TKT-KL28KB) and of the office split's pre-release audit (TKT-E9ZOIR) fixed. |
 | 0.91.14 | Telex | Bundled release — House B/L terms and conditions per legal entity and language, printed after the face and carried by the eBL; the carrier's Master B/L as sent to you: printed from the carrier's DCSA data or its PDF read and checked against the shipment, its paper originals or eBL tracked until the carrier releases the cargo, and CargoDesk's own MB01 retired; shipment messages signed by whoever is signed in; Export for QA, a production shipment as one JSON file that a test system imports as an IMPORTED shipment that never sends anything; the principal set by the incoterm on every screen, through the API and on quote conversion, kept once someone chooses one, every party change on the History, and the invoice's Bill To naming who pays (a credit note the party its invoice billed); and the findings of the two pre-release audits (TKT-GC05AS, TKT-E1GOI6) fixed. |

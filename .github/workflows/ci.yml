@@ -41,6 +41,9 @@ jobs:
     timeout-minutes: 15
     env:
       NODE_ENV: test
+      # The SMDG terminal list isn't downloaded on CI's fresh database (lib/facilities.js firstStartImport): the tests
+      # import fictitious terminals of their own and count on what they put there.
+      REFERENCE_DOWNLOADS: 'off'
       # The monolith suite (73 files as of 2026-09) logs in a few times per file against one
       # continuous server process — well past the real-world default of 20 per 15 minutes. 200 was
       # sized when this was 29 files and ran out around file 60, so the last 14 files failed with
@@ -91,42 +94,12 @@ jobs:
       - name: Wait for contract-management service (port 3004)
         run: npx wait-on http://localhost:3004/health --timeout 60000
 
-      # import-mdm-data.js requires the schema to already exist (created by the server on boot,
-      # above) — it exits early otherwise. Must run after the server has booted at least once,
-      # but v0.90.2's pgdata/ exclusive-lock fix (real corruption incident) means the server
-      # itself must NOT still be holding that lock while this runs — import-mdm-data.js now
-      # refuses outright ("server appears to already be running on port 3001") rather than risk
-      # the exact corruption that fix exists to prevent. A real CI regression, not caught until
-      # the next push after v0.90.2 landed, since nothing else had run this workflow in between.
-      - name: Stop monolith before seeding (holds the pgdata/ lock the seed script also needs)
-        run: |
-          (fuser -k 3001/tcp || true) 2>/dev/null
-          (lsof -ti:3001 | xargs -r kill -9 || true) 2>/dev/null
-          npx wait-on --reverse http://localhost:3001/api/health --timeout 15000 || true
+      # No seed step since 2026-11-22: the monolith loads its reference data itself on its first start
+      # (lib/reference-data.js: ports, carriers, countries and lanes, regions, commodities, HS codes, the mock vessels)
+      # before it answers /api/health, and builds its port caches after that load. So this job runs on exactly what a
+      # fresh deployment gets; the old stop / npm run seed / restart steps (and their force-kills) are gone.
 
-      - name: Seed database
-        run: npm run seed
-
-      # Same class of staleness the cypress job below already had to fix, for the same reason:
-      # the monolith caches port->country and port->trade-lane resolution in memory
-      # (portCountryMap/portLanesMap, both built exactly once at startup) — rows the seed step
-      # above just inserted directly into SQLite are invisible to the already-running process
-      # until it restarts and rebuilds those caches from scratch. Found via a real CI failure:
-      # reports.test.js's groupBy=country/region assertions (NLRTM -> country NL) came back
-      # empty even though the seeded port row was genuinely there — reproduced locally by
-      # booting the monolith against a genuinely fresh DB, seeding after boot with no restart
-      # (matching this exact step order), and confirming the same 3 assertions fail; restarting
-      # before testing fixed it. Only the monolith needs this — the 3 auxiliary services own no
-      # port/country/trade-lane data of their own.
-      - name: Restart monolith to pick up freshly-seeded MDM caches
-        run: |
-          (fuser -k 3001/tcp || true) 2>/dev/null
-          (lsof -ti:3001 | xargs -r kill -9 || true) 2>/dev/null
-          npx wait-on --reverse http://localhost:3001/api/health --timeout 15000 || true
-          npm run server &
-          npx wait-on http://localhost:3001/api/health --timeout 60000
-
-      - name: Run monolith test suite (45 files)
+      - name: Run monolith test suite (npm test)
         run: npm test
 
       - name: Run document-distribution service test suite
@@ -152,6 +125,9 @@ jobs:
     timeout-minutes: 20
     env:
       NODE_ENV: test
+      # The SMDG terminal list isn't downloaded on CI's fresh database (lib/facilities.js firstStartImport): the tests
+      # import fictitious terminals of their own and count on what they put there.
+      REFERENCE_DOWNLOADS: 'off'
       # Cypress logs in repeatedly across specs against one continuous server process — see
       # the backend-tests-and-build job's own comment, and routes/auth.js, for why.
       LOGIN_RATE_MAX: '200'
@@ -187,32 +163,10 @@ jobs:
       - name: Wait for Vite (port 5173)
         run: npx wait-on http://localhost:5173 --timeout 60000
 
-      # import-mdm-data.js requires the schema to already exist (created by the server on boot,
-      # above) — it exits early otherwise. Same v0.90.2 pgdata/-lock regression as
-      # backend-tests-and-build's own identical step — see that job's comment for the full story.
-      - name: Stop monolith before seeding (holds the pgdata/ lock the seed script also needs)
-        run: |
-          (fuser -k 3001/tcp || true) 2>/dev/null
-          (lsof -ti:3001 | xargs -r kill -9 || true) 2>/dev/null
-          npx wait-on --reverse http://localhost:3001/api/health --timeout 15000 || true
-
-      - name: Seed database
-        run: npm run seed
-
-      # The monolith caches port->trade-lane resolution in memory (portLanesMap,
-      # rebuildPortLanesMap()) exactly once at startup — country_trade_lanes rows the seed
-      # step above just inserted directly into SQLite are invisible to the already-running
-      # process until it restarts and rebuilds that cache from scratch. Found via a real CI
-      # failure: transit-suggestion.cy.js's lane lookups stayed null even though the DB row
-      # was genuinely there. Only the monolith needs this — the 3 auxiliary services own no
-      # trade-lane data of their own.
-      - name: Restart monolith to pick up freshly-seeded MDM caches
-        run: |
-          (fuser -k 3001/tcp || true) 2>/dev/null
-          (lsof -ti:3001 | xargs -r kill -9 || true) 2>/dev/null
-          npx wait-on --reverse http://localhost:3001/api/health --timeout 15000 || true
-          npm run server &
-          npx wait-on http://localhost:3001/api/health --timeout 60000
+      # No seed step since 2026-11-22: the monolith loads its reference data itself on its first start
+      # (lib/reference-data.js: ports, carriers, countries and lanes, regions, commodities, HS codes, the mock vessels)
+      # before it answers /api/health, and builds its port caches after that load. So this job runs on exactly what a
+      # fresh deployment gets; the old stop / npm run seed / restart steps (and their force-kills) are gone.
 
       - name: Run Cypress
         run: npx cypress run --browser chrome

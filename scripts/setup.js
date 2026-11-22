@@ -1,11 +1,13 @@
 /**
- * CargoDesk — first-time setup
+ * CargoDesk — first-time setup (optional since 2026-11-22)
  *
- * Automates the exact sequence that has to happen in order, and that's easy to get wrong by
- * hand: boot the server once so it creates its own schema, shut it down CLEANLY (releasing its
- * exclusive lock on pgdata/), then seed MDM reference data — never while the server is still up.
- * See lib/db.js's own lock (added 2026-09-04, after a real corrupted-database incident traced to
- * running the seed script concurrently with a live server) for why that order matters.
+ * Not needed any more: the server loads its reference data itself on its first start (ports, carriers, countries,
+ * regions, commodities, HS codes and, outside production, the mock vessels — lib/reference-data.js) and downloads the
+ * SMDG terminal list once in the background (lib/facilities.js). `npm run dev` or `node server.js` is enough.
+ *
+ * Kept for anyone used to it: it boots the server once (schema + reference data) and shuts it down CLEANLY through the
+ * dev shutdown route, so pgdata/ is ready and unlocked. It no longer runs the seed script, the step that had to wait for
+ * the server to stop (pglite is single-connection: lib/db.js's lock, 2026-09-04).
  *
  * Usage (after npm install):
  *   npm run setup
@@ -17,7 +19,7 @@ const path = require("path");
 const ROOT = path.join(__dirname, "..");
 const HEALTH_URL = "http://localhost:3001/api/health";
 const SHUTDOWN_URL = "http://localhost:3001/internal/dev/shutdown";
-const BOOT_TIMEOUT_MS = 30_000;
+const BOOT_TIMEOUT_MS = 180_000; // the first start also loads the reference data
 const POLL_INTERVAL_MS = 300;
 
 function sleep(ms) {
@@ -46,14 +48,6 @@ async function isPortInUse(port) {
   });
 }
 
-function runToCompletion(command, args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd: ROOT, stdio: "inherit" });
-    child.on("error", reject);
-    child.on("exit", code => code === 0 ? resolve() : reject(new Error(`${command} ${args.join(" ")} exited with code ${code}`)));
-  });
-}
-
 (async () => {
   console.log("⚓  CargoDesk setup\n");
 
@@ -63,7 +57,7 @@ function runToCompletion(command, args) {
     process.exit(1);
   }
 
-  console.log("① Booting the server once to create its schema…");
+  console.log("① Booting the server once (schema and reference data)…");
   const server = spawn("node", ["server.js"], { cwd: ROOT, stdio: "inherit" });
   let serverExited = false;
   server.on("exit", () => { serverExited = true; });
@@ -74,7 +68,7 @@ function runToCompletion(command, args) {
     if (!serverExited) server.kill();
     process.exit(1);
   }
-  console.log("  ✔ Schema created.\n");
+  console.log("  ✔ Schema created and reference data loaded.\n");
 
   console.log("② Shutting the server down cleanly (releases its database lock)…");
   try {
@@ -101,10 +95,7 @@ function runToCompletion(command, args) {
   });
   console.log("  ✔ Server stopped.\n");
 
-  console.log("③ Seeding MDM reference data (ports, carriers, vessels, commodities, regions, trade lanes)…");
-  await runToCompletion("node", ["scripts/import-mdm-data.js"]);
-
-  console.log("\n✔ Setup complete — run npm run dev to start CargoDesk.");
+  console.log("✔ Setup complete — run npm run dev to start CargoDesk.");
 })().catch(e => {
   console.error("\n✗ Setup failed:", e.message);
   process.exit(1);

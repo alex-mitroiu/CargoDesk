@@ -50,6 +50,23 @@ const sgsinLine = csv.split(/\r?\n/).find(l => l.startsWith("SGSIN;"));
 assert("has an SGSIN row in the file's own code;name;lat;lon;country;zone shape", /^SGSIN;Singapore;1\.2644;103\.84;SG;AS-SIN/.test(sgsinLine || ""), sgsinLine);
 assert("and only one", csv.split(/\r?\n/).filter(l => l.startsWith("SGSIN;")).length === 1);
 
+// The JSON seeds (2026-11-22): data/countries.json is what the server itself loads countries and their lanes from on its
+// first start (lib/reference-data.js); services/mdm/mdm.sample-data.json is what the MDM Service seeds an empty database
+// from (seedIfEmpty). The latter had missed the 2026-10-09 fix.
+console.log("\ndata/countries.json (what the server loads countries and their trade lanes from)");
+const countriesJson = JSON.parse(fs.readFileSync(path.join(ROOT, "data/countries.json"), "utf8"));
+assert("has South Africa, Zambia and Zimbabwe, each on lane SAF",
+  SOUTHERN_AFRICA.every(c => countriesJson.find(r => r.iso2 === c)?.lanes?.includes("SAF")),
+  JSON.stringify(countriesJson.filter(r => SOUTHERN_AFRICA.includes(r.iso2))));
+assert("211 countries, no code twice", countriesJson.length === 211 && new Set(countriesJson.map(r => r.iso2)).size === 211, String(countriesJson.length));
+
+console.log("\nservices/mdm/mdm.sample-data.json (what the MDM Service seeds an empty database from)");
+const mdmSeed = JSON.parse(fs.readFileSync(path.join(ROOT, "services/mdm/mdm.sample-data.json"), "utf8"));
+assert("has South Africa, Zambia and Zimbabwe", SOUTHERN_AFRICA.every(c => mdmSeed.countries.some(r => r.iso2 === c)));
+assert("each is on trade lane SAF", SOUTHERN_AFRICA.every(c => mdmSeed.countryTradeLanes.some(r => r.iso2 === c && r.lane_code === "SAF")));
+const mdmSgsin = mdmSeed.portLocations.find(p => p.unlocode === "SGSIN");
+assert("has the port SGSIN (Singapore, zone AS-SIN)", mdmSgsin?.country_code === "SG" && mdmSgsin?.zone_code === "AS-SIN", JSON.stringify(mdmSgsin));
+
 console.log(`\n${"─".repeat(50)}`);
 console.log(`Results: ${passed} passed, ${failed} failed`);
 process.exitCode = failed > 0 ? 1 : 0;

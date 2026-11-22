@@ -81,7 +81,7 @@ const MdmUNLocationCodesPage = () => {
           <PageSpinner />
         ) : rows.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
-            {search ? "No codes match your search." : "No data yet — run node import-mdm-data.js first."}
+            {search ? "No codes match your search." : "No codes yet. CargoDesk loads the ports from its data files when the server starts; if this stays empty, the server log says why."}
           </div>
         ) : rows.map(r => (
           <div key={r.unlocode}

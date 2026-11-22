@@ -2112,7 +2112,23 @@ async function seedDefaultProject() {
   } catch (e) { console.warn('  ⚠ Could not seed default project:', e.message); }
 }
 
+// Reference data (2026-11-22, lib/reference-data.js): ports, carriers, countries and their trade lanes, regions,
+// commodities, HS codes and, outside production, the mock vessels, loaded from data/ by the server itself — on a fresh
+// install everything, after a release with a changed file only its new rows. No npm run setup / seed needed any more.
+const referenceData = require("./lib/reference-data")({ query, transaction, timezoneFor });
+async function loadReferenceData() {
+  try {
+    const summary = await referenceData.load();
+    const added = summary.filter(s => s.added > 0);
+    if (added.length) {
+      console.log(`  ✔ Reference data added: ${added.map(s => `${s.dataset} ${s.added.toLocaleString()}`).join(", ")}`);
+      await rebuildPortLanesMap(); await rebuildPortCountryMap(); // built from these tables at startup
+    }
+  } catch (e) { console.error("  ⚠ Reference data not loaded:", e.message); }
+}
+
 schemaReadyPromise = schemaReadyPromise
+  .then(() => loadReferenceData())
   .then(() => backfillPortCountryCodes())
   .then(() => backfillPortTimezones())
   .then(() => seedDefaultMilestoneTemplate())
@@ -4288,6 +4304,7 @@ const ctx = {
   // aren't needed for this — every route-level sweep only depends on tables existing, which this
   // already guarantees.
   schemaReady: schemaReadyPromise,
+  referenceData,
   query, transaction, uid, ok, err, isUniqueViolation, isForeignKeyViolation, validCoord,
   gracefulShutdown,
   auth, requireRole, effectiveRolesFor,
@@ -4595,5 +4612,7 @@ schemaReadyPromise
     ctx.assistantKnowledge.embedMissing()
       .then(r => { if (r.embedded) console.log(`Assistant knowledge: embedded ${r.embedded} passages with ${r.model}`); })
       .catch(e => console.warn("Assistant knowledge embeddings not filled:", e.message));
+    // The SMDG terminal list, downloaded once on a fresh install (lib/facilities.js firstStartImport; never committed).
+    ctx.facilities.firstStartImport().catch(e => console.warn("SMDG first-start download:", e.message));
   }))
   .catch(e => { console.error("Failed to initialize database:", e); process.exit(1); });

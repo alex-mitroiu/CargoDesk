@@ -16,7 +16,7 @@ behaviour of an epic is described in its ARCHITECTURE.md §8 section, with the t
 
 | Layer | Where | How many | Run with |
 |---|---|---|---|
-| Backend API tests | `tests/*.test.js` (plain Node, `fetch` against the running monolith) | 140 files; 129 in the `npm test` chain, the rest in the per-service `test:*` scripts. A full pass runs 137: the chain plus the distribution and contract-service suites | `npm test`, or one file: `node tests/<name>.test.js` |
+| Backend API tests | `tests/*.test.js` (plain Node, `fetch` against the running monolith) | 141 files; 130 in the `npm test` chain, the rest in the per-service `test:*` scripts. A full pass runs 138: the chain plus the distribution and contract-service suites | `npm test`, or one file: `node tests/<name>.test.js` |
 | Microservice tests | `services/*/tests/*.test.js` | per service | `npm run test:contract-service`, `test:mdm-service`, `test:kanban-service`, `test:customer-service`, `test:screening-service`, `test:distribution-service` |
 | Frontend unit tests | `src/**/*.test.js(x)` (Vitest + Testing Library) | 57 files, 597 tests | `npm run test:frontend` |
 | Browser tests | `cypress/e2e/*.cy.js` | 42 specs, 308 tests (1 pending by design) | `npx cypress run` (from this VS Code shell: `env -u ELECTRON_RUN_AS_NODE npx cypress run`); in Edge, one spec per run (step 4) |
@@ -62,6 +62,8 @@ behaviour of an epic is described in its ARCHITECTURE.md §8 section, with the t
 - The demo carrier's own API (`/dcsa-sim/*`) needs its token: read `accessToken` from
   `GET /api/dcsa-simulator/status` as admin and send it as the Bearer token.
 
+**2026-11-22, for v0.91.17 "Gazetteer":** the CI replica on an empty database with no seed step, backend 138/138 files (4,601 checks), Vitest
+597/597, Cypress 4 reference-data specs 40/40 in Edge (TC-112, TC-113).
 **Latest full run:** 2026-11-21, for v0.91.16 "Gatehouse": the CI replica on an empty database, backend 137/137 files
 (4,550 checks), Vitest 597/597, Cypress 307 of 308 tests in 42 specs (1 pending by design), one spec per run in Edge;
 see SYSTEM-TEST-RESULTS.md. The manual test cases for carrier offices, the Carrier Booking's folds, the carrier's door
@@ -154,6 +156,8 @@ All protected-endpoint tests first obtain a JWT via `POST /api/auth/login` with 
 | P1 | Shipments CRUD | Critical | Core business domain |
 | P1 | Containers | Critical | Auto cost-line creation for Central contracts |
 | P2 | Contracts: routing lines with typed legs | High | The Leg type, places, kind and mode on contract lines decide which contracts a shipment's carrier haulage is offered (TC-093–TC-094, TC-097) |
+| P1 | The reference data audit and the spreadsheet's SMDG dates (2026-11-22) | Medium | Reset Demo Data keeps facilities, HS codes and the load record; one failing dataset doesn't stop the rest; an SMDG CSV re-saved in Excel keeps its dates (TC-113) |
+| P1 | Reference data on a new installation (2026-11-22) | High | The server loads ports, carriers, countries and lanes, regions, commodities, HS codes (and, outside production, the mock vessels) on its first start, adds only a changed file's new rows later, downloads the SMDG list once; CI runs with no seed step (TC-112) |
 | P1 | The trucker's run: the audit's fixes (2026-11-21) | High | A typed trucker clears the party, a cancelled or removed service releases it, the QA export carries the stops, a deleted shipment takes its services along, the way back from own stops, the service sides refused on the server (TC-111) |
 | P1 | The trucker's run on Pickup / Delivery (2026-11-20) | High | Stops from Master Data → Facilities (SMDG terminals, depots) and customers, times per container, the carrier's cut-offs filling empty fields and checked as warnings, the trucker as the service's vendor, the Pickup / Delivery Plan, BR01's door (TC-110) |
 | P1 | The carrier's haulage at a door in the DCSA booking (2026-11-20) | High | Store Door only for a Carrier's Haulage leg from or to a Door; the shipper's or consignee's address, contact and the Loading plan's time go to the carrier; a profile that can't say where is refused before sending (TC-109) |

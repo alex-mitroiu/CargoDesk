@@ -10,7 +10,8 @@ the booking (§5.12) and the shipper's DG emergency contact (§5.8); 2026-11-02 
 pages (§5.2); 2026-11-06 for the managing offices from the ports, the shipment header's facts and routing after
 entry (§5.2), and the space position on Contracts & Schedules (§5.3); 2026-11-17 to 2026-11-20 for carrier offices, the Carrier
 Booking's folds, the carrier's door in the booking and the trucker's stops (§5.12) and Master Data → Facilities (§5.6),
-all released in v0.91.16 "Gatehouse" on 2026-11-21). **Scope**:
+all released in v0.91.16 "Gatehouse" on 2026-11-21); 2026-11-22 for the reference data a new installation loads by
+itself on its first start (§5.6), released in v0.91.17 "Gazetteer" on 2026-11-22. **Scope**:
 whole application, at the level of its major
 functional domains and system-to-system data flows — not an exhaustive per-route specification.
 **Companion documents**: [`ARCHITECTURE.md`](ARCHITECTURE.md) (technical architecture, module
@@ -413,14 +414,20 @@ better-matching setup is created afterward. See ARCHITECTURE.md §8.27.
 
 ### 5.6 Master Data Management (P6a)
 **Purpose**: the shared reference data every other domain depends on.
-**Key functions**: carriers, vessels, ports (14,269 UN/LOCODEs) with linked-port equivalence, trade
+**Key functions**: carriers, vessels, ports (14,270 UN/LOCODEs) with linked-port equivalence, trade
 lanes, countries, commodities, charge codes, pack types, **carrier profiles** (a carrier's own offices at any
 UN/LOCODE, which office books, handles imports and bills per port or country, our customer number at the carrier per
 legal entity, the creditor code of each office; ARCHITECTURE.md §8.53), carrier service **loop codes** with a directional (Eastbound/Westbound)
 port rotation, an **HS Codes** registry of real 6-digit Harmonized System codes that cargo
-forms pick from instead of typing free text, and **Facilities** (terminals from the SMDG Terminal Code List, imported by an
-admin at run time and never shipped with CargoDesk, and depots added by hand; the places a haulage stop picks;
+forms pick from instead of typing free text, and **Facilities** (terminals from the SMDG Terminal Code List, imported at
+run time and never shipped with CargoDesk, and depots added by hand; the places a haulage stop picks;
 ARCHITECTURE.md §8.56).
+**Loaded by itself (2026-11-22, ARCHITECTURE.md §8.57)**: a new installation needs no script and no upload. On its first
+start the monolith loads ports, carriers, countries with their trade lanes, regions, commodities and HS codes from its own
+data files (and, outside production only, a mock vessel list), before it answers any request; then it downloads the SMDG
+terminal list once in the background, retrying until it gets through. A later release whose files gained rows adds only
+those rows: what a user edited, switched off or deleted stays so. An admin sees each load at `GET /api/reference-data`;
+`npm run seed` is the explicit full restore. The denied-party lists' first sync stays an admin's action (§5.4).
 **Roles**: admin (write; HS Codes writes also allow operator); every domain (read, as a dependency,
 not a direct user-facing action).
 **Primary data**: owned by the MDM Service when `mdm_source=remote`, monolith-local otherwise.
@@ -746,8 +753,9 @@ https://claude.ai/artifact/Y61PAmXZfgFxTLtpt7GiAZ. See ARCHITECTURE.md §8.38.
   swapped in place, ARCHITECTURE.md §4). Other pages use the classic theme. Lists that adopt the
   shared table system (§8.23) behave identically to the Shipments list.
 - **Quality gates**: a backend test chain (`npm test`), a frontend Vitest suite and a Cypress suite
-  all run in CI against a database that starts empty — every test provisions the reference data it
-  needs (e.g. offices) rather than assuming a developer's long-lived local data (ARCHITECTURE.md §10).
+  all run in CI against a database that starts empty — the reference data in it is what the server's own first start
+  loaded (no seed step since 2026-11-22), and every test provisions the business data it needs (e.g. offices) rather
+  than assuming a developer's long-lived local data (ARCHITECTURE.md §10).
 
 Full technical detail (module maps, request lifecycle, ID formats, the complete data model) is in
 ARCHITECTURE.md §§2–7 and is intentionally not duplicated here.
@@ -756,7 +764,7 @@ ARCHITECTURE.md §§2–7 and is intentionally not duplicated here.
 
 | ID | Store | Owner | Representative tables |
 |---|---|---|---|
-| D1 | Monolith DB | `server.js` + `routes/*.js` | `spot_offers`, `spot_offer_lines`, `margin_rules`, `booking_escalations`, `lane_steerings`, `dcsa_sim_bookings`, `shipments`, `containers`, `carrier_offices`, `shipment_carrier_offices`, `haulage_stops`, `facilities`, `shipment_cost_lines`, `shipment_parties`, `shipment_milestones`, `carrier_bookings`, `quotes`, `allocations`, `shipment_documents`, `customer_statements`, `gl_export_batches`, `users`, `app_settings` |
+| D1 | Monolith DB | `server.js` + `routes/*.js` | `spot_offers`, `spot_offer_lines`, `margin_rules`, `booking_escalations`, `lane_steerings`, `dcsa_sim_bookings`, `shipments`, `containers`, `carrier_offices`, `shipment_carrier_offices`, `haulage_stops`, `facilities`, `reference_data_loads`, `shipment_cost_lines`, `shipment_parties`, `shipment_milestones`, `carrier_bookings`, `quotes`, `allocations`, `shipment_documents`, `customer_statements`, `gl_export_batches`, `users`, `app_settings` |
 | D2 | Contract Service DB | `services/contract-management/` | `contracts`, `contract_legs`, `contract_rates`, `contract_routings` |
 | D3 | MDM Service DB | `services/mdm/` | `carriers`, `vessels`, `port_locations`, `linked_ports`, `trade_lanes`, `countries`, `commodities` (and the legacy `carrier_agents`, read once by the move to carrier offices) |
 | D4 | Screening Service DB | `services/screening/` | `sanctions_entries`, `sanctions_syncs` |
