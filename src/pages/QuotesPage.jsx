@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { T, CURRENCIES, INCOTERMS_2020 } from "../tokens";
 import { api } from "../api";
+import { incotermFreightTerms, followFreightTerms } from "../utils/paymentTerms";
 import { toast } from "../toast";
 import { useAuth } from "../AuthContext";
 import Btn from "../components/primitives/Btn";
@@ -81,7 +82,8 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
   const [notify, setNotify] = useState({ id: quote?.notifyId || "", name: quote?.notifyName || "" });
   const [declaredValue, setDeclaredValue] = useState(quote?.declaredValue != null ? String(quote.declaredValue) : "");
   const [declaredValueCurrency, setDeclaredValueCurrency] = useState(quote?.declaredValueCurrency || "USD");
-  const [freightTerms, setFreightTerms] = useState(quote?.freightTerms || "Prepaid");
+  // Freight Terms follows the incoterm until someone picks it (audit A, 2026-11-24): E/F terms Collect, C/D Prepaid.
+  const [freightTerms, setFreightTerms] = useState(quote?.freightTerms || incotermFreightTerms(quote?.incoterm));
   const [pol, setPol] = useState(quote?.pol ? { unlocode: quote.pol, name: "" } : null);
   const [pod, setPod] = useState(quote?.pod ? { unlocode: quote.pod, name: "" } : null);
   const [carrierCode, setCarrierCode] = useState(quote?.carrierCode || "");
@@ -215,7 +217,7 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Commodity"><CommodityCombobox value={commodityCode} onChange={setCommodityCode} /></Field>
-          <Sel label="Incoterm" value={incoterm} onChange={setIncoterm}
+          <Sel label="Incoterm" value={incoterm} onChange={v => { setFreightTerms(ft => followFreightTerms(ft, incoterm, v)); setIncoterm(v); }}
             options={[{ value: "", label: "Select incoterm…" }, ...INCOTERMS_2020.map(t => ({ value: t.code, label: `${t.code} – ${t.name}` }))]} />
         </div>
 

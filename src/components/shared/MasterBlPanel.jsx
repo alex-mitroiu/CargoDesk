@@ -212,6 +212,13 @@ const MasterBlPanel = ({ shipment, canEdit, refreshKey = 0, onChanged }) => {
             </ol>
           )}
           <div id="mbl-banner" style={{ fontSize: 12.5, lineHeight: 1.55, padding: "10px 12px", borderRadius: 8, background: bannerBg, color: bannerFg }}>{banner[0]}</div>
+          {/* The House B/L against this Master (audit M3, screen 3 of mockup 12f412e9): one line here, the detail on the House B/L. */}
+          {mbl.houseCheck?.differences?.length > 0 && (
+            <div id="mbl-house-check" data-testid="mbl-house-check" style={{ fontSize: 12.5, lineHeight: 1.55, padding: "10px 12px", borderRadius: 8, background: HZ.warnBg, color: HZ.text }}>
+              The House B/L {mbl.houseCheck.houseReference || ""} differs from this Master B/L in {mbl.houseCheck.differences.length} place{mbl.houseCheck.differences.length === 1 ? "" : "s"}{" "}
+              ({mbl.houseCheck.differences.slice(0, 3).map(d => d.label).join(", ")}{mbl.houseCheck.differences.length > 3 ? ", …" : ""}). See the House B/L on Documents.
+            </div>
+          )}
 
           {preview && (
             <div id="mbl-amend-preview" role="region" aria-label="Amendment to send" style={sub}>

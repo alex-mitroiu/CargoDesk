@@ -1619,6 +1619,96 @@ NLAMS → NLRTM (Carrier's Haulage, 16 Nov), as Save stored them before the fix 
 
 ---
 
+### TC-117: The 0.91.18 audit: Freight Terms follows the Incoterm, a refused send saves nothing (2026-11-24, epic TKT-T3QZ6Z)
+**Feature:** Freight Terms on shipments and quotes (lib/payment-terms.js, routes/shipments.js, routes/quotes.js, ShipmentFormPage, QuotesPage), the booking request (routes/edi.js), the payment terms and transport document cards; ARCHITECTURE.md §8.58
+**Precondition:** MAEU played by the demo carrier; a shipper whose profile has a DG emergency contact
+**Steps:**
+1. New Shipment: pick Incoterm FOB, leave Freight Terms alone; then switch the Incoterm to CIF; then pick Collect and switch to DAP
+2. New Quote: Incoterm FOB, Freight Terms left alone
+3. Over the API: create a shipment with Freight Terms "Freight Collect", then one with "  payable  at DESTINATION "
+4. A shipment with a dangerous goods container that has no UN number: Send Booking Request; open Payment terms (CPI); then add the UN number and proper shipping name and send again
+5. Complete a shipment and open Carrier Booking → Details
+6. After the booking is confirmed, change the transport document
+
+**Expected Result:**
+- 1: Freight Terms shows Collect under FOB, Prepaid after the switch to CIF, and stays Collect once picked by hand
+- 2: Freight Terms Collect
+- 3: the first refused (400: Prepaid, Collect or Payable at Destination); the second saved as Payable at Destination
+- 4: the send is refused for the dangerous goods and the payment terms still read "Not saved yet"; the second send goes and saves them as shown
+- 5: the payment terms and the transport document are read-only
+- 6: the status reads "… STATED · GOES WITH THE NEXT UPDATE" and the toast points to Send update to carrier
+
+**Status:** PASS (2026-11-24, automated: tests/release-audit-0918.test.js 24/24 on the CI replica 2026-11-24; paymentTerms.parity.test.js; TransportDocumentCard.test.jsx)
+
+---
+
+### TC-116: The House B/L panel's audit screens (2026-11-23, epic TKT-J0SDVB, mockup 12f412e9)
+**Feature:** The House B/L panel on Documents (src/components/shared/HouseBlPanel.jsx), the Master B/L card; ARCHITECTURE.md §8.58, §8.44
+**Precondition:** An FCL export NLRTM → USNYC with two containers, sealed, packed and weighed; the carrier's booking confirmed; the shipper's profile has an e-mail; the export office's legal entity has a SCAC and address
+**Steps:**
+1. Documents → House B/L: type two clauses (e.g. "L/C NO. 4471-2026 ISSUED BY ABN AMRO BANK N.V."), Generate draft
+2. Send draft for approval to the shipper's e-mail; record "Changes asked…" with a comment; generate a new draft
+3. Issue House B/L (received for shipment, 3 originals, Telex Release) without a new approval
+4. ＋ Record handover of 3 originals to the shipper by courier; try Surrendered at origin and Void
+5. ＋ Record originals returned: 3, from the shipper, today, by courier; Surrendered at origin
+6. Record Loaded on both containers; Add on-board notation
+7. Let the demo carrier draft its Master B/L with one container's seal different from ours
+
+**Expected Result:**
+- 1: the clauses print under SHIPPER'S LOAD, STOW AND COUNT · SAID TO CONTAIN and go in the DCSA document's carrierClauses; more than 10 lines or a line over 300 characters is refused
+- 2: SENT, e-mailed from the export office's mail account (or "recorded as sent" without one); after the changes asked and a new draft the approval reads as for an older draft
+- 3: "Issue without the shipper's approval?" names the changes asked; Issue anyway issues it
+- 4: the count pill says 3 out with the shipper; Surrendered at origin is disabled ("3 originals are still with … record them returned first"); Void is disabled with the reason
+- 5: the returned row is listed, 0 outstanding; the surrender is recorded and the import office gets its telex release task
+- 6: "All 2 containers are aboard"; the notation is dated by the last loading; the panel then shows both dates and the next print carries them
+- 7: House vs Master reads 1 DIFFERENCE with the seal on each side; the Master B/L card has the same check in one line; nothing is blocked
+
+**Status:** PASS (2026-11-24, automated: src/components/shared/HouseBlPanel.test.jsx, cypress/e2e/house-bl.cy.js; server rules: tests/house-bl*.test.js)
+
+---
+
+### TC-115: Carrier Booking → Details: the freight term's source (D1) and the transport document (2026-11-23, TKT-ML3GRC, TKT-JV1SF2 point 5, mockup dffb8ab2)
+**Feature:** Carrier Booking → Details (ShipmentCarrierBookingDetailsPage.jsx, PaymentTerms.jsx, TransportDocumentCard.jsx); ARCHITECTURE.md §8.58
+**Precondition:** An FOB shipment ESBCN → USNYC, Freight Terms Collect, payment terms never saved; a contract and a sailing attached; the user is the export side's OCC/BK
+**Steps:**
+1. Open Carrier Booking → Details; read the booking card and the Payment terms (CPI) card
+2. Change Freight Terms to Prepaid (Conditions) and come back
+3. Transport document and loading: pick Sea waybill, then Partial loading Not allowed; type 2 B/Ls, place of issue ES, a customs reference (type UCR, country ES, a value)
+4. Press Use the port of loading; fold the section and reload
+5. Send Booking Request
+
+**Expected Result:**
+- 1: the hint says the ocean freight follows Freight Terms (Collect) and the other charges the Incoterm (FOB); the card reads "Not saved yet"; each row names its source
+- 2: the freight row shows Prepaid "from Freight Terms", the rest still from FOB; the status reads "freight from Freight Terms, the rest from FOB"
+- 3: each choice saves at once and each typed field when it loses focus; the status counts what is stated ("… STATED · SENT WITH THE BOOKING"); the preview shows exactly those DCSA fields
+- 4: the place becomes ESBCN; folded, one pill per stated field; still folded after the reload
+- 5: the request carries the payment terms as shown (saved, History "As shown") and the stated fields; a field left Not stated isn't in it; the hint disappears
+
+**Status:** PASS (2026-11-24, automated: TransportDocumentCard.test.jsx, PaymentTerms.test.jsx, paymentTerms.parity.test.js, cypress/e2e/carrier-booking-folds.cy.js)
+
+---
+
+### TC-114: The DCSA booking request's parties, goods, reference and warnings (2026-11-23, story TKT-JV1SF2)
+**Feature:** The booking request (routes/edi.js dcsaBookingExtras, lib/carrier-integrations/dcsa-bkg-v2.js, lib/dcsa/parties.js, lib/booking-request-options.js); ARCHITECTURE.md §8.58
+**Precondition:** A port-to-port FCL export NLRTM → USNYC with MAEU (the demo carrier), commodity FAK (9999); the shipper's profile with an address, an Operations contact (and a primary Sales one), an LEI, an EORI and a VAT number; the consignee's with an address, an EIN and no contact person; no MAEU account number for the export office's legal entity
+**Steps:**
+1. Send Booking Request; open the outbound message's body
+2. Give the shipment a named commodity (e.g. Furniture, nos) and send for a second shipment
+3. Name an NVOCC on a third shipment and send
+4. State a sea waybill, 2 B/Ls, place of issue NLRTM, no partial loading and a customs reference; send; then clear them all
+5. Try a place of issue "ROTTERDAM" and a customs reference with no country
+
+**Expected Result:**
+- 1: valid Booking 2.0 with no field the spec doesn't define; the shipper carries its address, the Operations contact, the LEI under GLEIF, the EORI and VAT as taxLegalReferences (NL); the consignee its address, EIN and the company's own phone; commodityType = the containers' cargo descriptions, each once, with their HS codes, while the shipment stays FAK; references = CR with the shipment's number; the send answers 201 with a warning that MAEU has no customer number of ours (not a refusal)
+- 2: commodityType = the commodity's description
+- 3: the booking's shipper is the NVOCC with its own address
+- 4: the request carries transportDocumentTypeCode SWB, requestedNumberOfTransportDocuments 2, placeOfBLIssue NLRTM, isPartialLoadAllowed false and the customs reference; the change is in History; once cleared, none of them is sent
+- 5: both refused (400), saying a UN/LOCODE or a two-letter country code / a two-letter country
+
+**Status:** PASS (2026-11-24, automated: tests/booking-request-parties.test.js, 30 checks, passed on the CI replica 2026-11-23; tests/dcsa-booking-doors.test.js)
+
+---
+
 ### TC-113: The audit of the reference data, and a spreadsheet's SMDG dates (2026-11-22, epic TKT-QXISZ8)
 **Feature:** Reset Demo Data (routes/admin-reset.js), the reference data loader (lib/reference-data.js), Master Data → Facilities → Upload the CSV (lib/facilities.js parseSmdg); ARCHITECTURE.md §8.57
 **Precondition:** An installation that loaded its reference data and the SMDG list on its first start
@@ -1630,7 +1720,7 @@ NLAMS → NLRTM (Carrier's Haulage, 16 Nov), as Save stored them before the fix 
 
 **Expected Result:**
 - 1–2: the 1,259 terminals, the 48 HS codes and the reference data records are still there after the reset and the restart; the deleted carrier stays deleted; the list isn't downloaded again
-- 3: "the file's dates read as month/day/year"; each terminal's Valid from and Last change are filled (e.g. HAJT Ajman: 2022-01-19)
+- 3: "the file's dates read as month/day/year"; each terminal's Valid from and Last change are filled (e.g. HAJT Ajman: 2022-01-19); a warning that 3 codes are only digits (BEANR 1700, CNWEI 1, NLRTM 5049) and that CNWEI 1 is the CNWEI 00001 already there; still one Weihai Port
 - 4: those dates are left empty and the page says how many couldn't be read (day and month can't be told apart)
 
 **Status:** PASS (2026-11-22, automated: tests/admin-reset.test.js, tests/reference-data.test.js, tests/haulage-stops.test.js; steps 1–2 by hand on the CI replica)
@@ -1664,7 +1754,7 @@ NLAMS → NLRTM (Carrier's Haulage, 16 Nov), as Save stored them before the fix 
 
 ---
 
-### TC-111: The audit of the trucker's run (2026-11-21, epic TKT-0W1FYJ)
+### TC-111: The audit of the trucker's run (2026-11-21, epic TKT-YQQWJR)
 **Feature:** Export Services → Pickup / Import Services → Delivery, Parties & Offices, Shipments → delete, QA export (lib/haulage-stops.js, lib/service-types.js, lib/shipment-transfer.js; ARCHITECTURE.md §8.56)
 **Precondition:** The shipment of TC-110 with its Pickup (vendor a trucking company from Customers) and Delivery services and their stops
 **Steps:**

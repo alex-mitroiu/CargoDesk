@@ -12,6 +12,7 @@ import { resolveCreditGate } from "../../utils/invoiceGenerator";
 import { canEditShipmentSide } from "../../utils/officeSide";
 import { HZ, HZ_MONO, HZ_BODY, HZ_DISPLAY, useHorizonFonts } from "./shipmentDetailTheme";
 import { PaymentTermsCard } from "../../components/shared/PaymentTerms";
+import { TransportDocumentCard } from "../../components/shared/TransportDocumentCard";
 import { FoldSection, FactsPills, useFolds } from "../../components/shared/FoldSection";
 import { PillNav, GlowEdge, DotPill, frameStyle, sectionLabelStyle, ctaStyle, pillBtnStyle, fmtDate } from "./schedules/SchedulesParts";
 
@@ -27,7 +28,7 @@ import { PillNav, GlowEdge, DotPill, frameStyle, sectionLabelStyle, ctaStyle, pi
 // while it can be used, else Save payment terms.
 
 const FREIGHT_TERMS_OPTIONS = ["Prepaid", "Collect", "Payable at Destination"];
-const FOLD = { offices: "carrier-booking.offices", terms: "carrier-booking.terms" };
+const FOLD = { offices: "carrier-booking.offices", terms: "carrier-booking.terms", transport: "carrier-booking.transport" };
 const FOLD_KEYS = Object.values(FOLD);
 
 // The carrier offices' roles: booking = cyan, import = violet, billing = amber, as everywhere on the page.
@@ -281,17 +282,22 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
   );
 
   const carrier = shipment.carrierCode || "the carrier";
-  const officesOpen = folds.isOpen(FOLD.offices), termsOpen = folds.isOpen(FOLD.terms);
+  const officesOpen = folds.isOpen(FOLD.offices), termsOpen = folds.isOpen(FOLD.terms), transportOpen = folds.isOpen(FOLD.transport);
   // The page's one glowing action (Trade Horizon Next): Send Booking Request while it can be used, else Save payment terms.
   const sendIsPrimary = canSend;
   const navItems = [
     ["booking", "Booking", "shpbooking-booking-section"],
     ["offices", "Carrier offices", "shpbooking-offices-section", officesOpen ? null : "· folded"],
     ["terms", "Payment terms", "shpbooking-payment-terms-section", termsOpen ? null : "· folded"],
+    ["transport", "Transport document", "shpbooking-transport-section", transportOpen ? null : "· folded"],
     ["contract", "Contract", "shpbooking-contract-section"],
     ["request", "Booking request", "shpbooking-request-section"],
   ];
-  const openOnJump = key => { if (key === "offices" && !officesOpen) folds.setOpen(FOLD.offices, true); if (key === "terms" && !termsOpen) folds.setOpen(FOLD.terms, true); };
+  const openOnJump = key => {
+    if (key === "offices" && !officesOpen) folds.setOpen(FOLD.offices, true);
+    if (key === "terms" && !termsOpen) folds.setOpen(FOLD.terms, true);
+    if (key === "transport" && !transportOpen) folds.setOpen(FOLD.transport, true);
+  };
 
   return (
     <div id="shpbooking-details-page" data-testid="carrier-booking-details-page" style={{ maxWidth: 1100, margin: "0 auto", position: "relative" }}>
@@ -340,6 +346,14 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
                 </div>
                 <Fact label="Booking" value={booking?.id} empty="—" />
               </div>
+              {/* D1 (2026-11-23, TKT-ML3GRC, mockup dffb8ab2): before the payment terms are saved, say where the ocean
+                  freight's term comes from, so the card and the payment terms never seem to disagree. */}
+              {!shipment.paymentTerms && (
+                <div data-testid="carrier-booking-freight-hint" style={{ fontFamily: HZ_BODY, fontSize: 11.5, color: HZ.textMuted, lineHeight: 1.45 }}>
+                  Until the payment terms are saved, the <b style={{ color: HZ.text }}>ocean freight follows Freight Terms</b> ({shipment.freightTerms || "Prepaid"}) and
+                  the other charges follow the Incoterm{shipment.incoterm ? ` (${shipment.incoterm})` : ""}. Sending the booking saves them as shown.
+                </div>
+              )}
             </div>
           </div>
           {/* A block wrapper: the table centres itself with auto margins, which in this flex column would shrink it. */}
@@ -366,6 +380,10 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
 
         {/* The office split (§8.52): the carrier payment terms per charge category, with what goes to the carrier. */}
         <PaymentTermsCard shipment={shipment} onSaved={() => onRefresh?.()} open={termsOpen} onToggle={() => folds.toggle(FOLD.terms)} primary={!sendIsPrimary} />
+
+        {/* TKT-JV1SF2 point 5 (2026-11-23, mockup dffb8ab2): the transport document and loading, sent only when stated. */}
+        <TransportDocumentCard shipment={shipment} open={transportOpen} onToggle={() => folds.toggle(FOLD.transport)}
+          sentToCarrier={(status === "Pending" && !sendFailed) || status === "Confirmed"} />
 
         <section id="shpbooking-contract-section" data-testid="carrier-booking-contract-section" style={{ ...frameStyle(), padding: "16px 20px", scrollMarginTop: 90 }}>
           <div style={{ ...sectionLabelStyle(), marginBottom: 10 }}>Contract</div>

@@ -2,6 +2,7 @@
 const ExcelJS = require("exceljs");
 const { mainLegIndex } = require("../lib/mainLeg");
 const { impliedPrincipal, followPrincipal, payerOf } = require("../lib/incoterm-principal");
+const { freightTermsValue, incotermFreightTerms, followFreightTerms, freightTermOf } = require("../lib/payment-terms");
 const { routeProblems, refusal: routeRefusal } = require("../lib/route-rules");
 const { PACKAGE_CODES, TO_ORDER_MODES } = require("../lib/house-bl");
 const { buildVgmDeclaration, retraction: vgmRetraction, vgmProblems } = require("../lib/carrier-integrations/dcsa-vgm-v1");
@@ -582,7 +583,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
             shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
             principalId: sentPrincipalId = "", principalName: sentPrincipalName = "",
             allocationId = "", spaceSkipReason = "", spaceOverageReason = "",
-            freightTerms = "Prepaid", movementType = "FCL", serviceType = "Port-to-Port",
+            freightTerms: sentFreightTerms = "", movementType = "FCL", serviceType = "Port-to-Port",
             placeOfReceipt = "", placeOfDelivery = "", cargoReadyDate = null,
             notifyId = "", notifyName = "",
             declaredValue = null, declaredValueCurrency = "USD",
@@ -595,6 +596,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const impliedP = principalSent ? null : impliedPrincipal(incoterm, { shipperId, shipperName, consigneeId, consigneeName });
     const principalId = sentPrincipalId || impliedP?.id || "";
     const principalName = principalSent ? sentPrincipalName : (impliedP?.name || "");
+    // Freight Terms: one of the three values (audit D, 2026-11-24); none sent → what the incoterm implies (audit A, the user:
+    // "Follow the Incoterm": E/F terms Collect, C/D terms Prepaid), as the New Shipment form fills it in.
+    const freightTermsSent = freightTermsValue(sentFreightTerms);
+    if (freightTermsSent === null) return err(res, "freightTerms must be Prepaid, Collect or Payable at Destination");
+    const freightTerms = freightTermsSent || incotermFreightTerms(incoterm);
     let { emoOfficeId = null, imoOfficeId = null } = req.body;
     if (!pol || !pod || !carrierCode || !contractType) return err(res, "pol, pod, carrierCode, contractType required");
     // A side sent empty is filled by the managing-office rule (lib/office-resolution.js, the one the New
@@ -790,7 +796,18 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const spaceSelection = req.body.spaceSelection !== undefined ? String(req.body.spaceSelection || '')
       : (allocationId !== (existing.allocation_id || '') ? '' : (existing.space_selection || ''));
     if (!SPACE_SELECTIONS.includes(spaceSelection)) return err(res, `spaceSelection must be one of: ${SPACE_SELECTIONS.filter(Boolean).join(", ")}`);
-    const freightTerms = field('freightTerms', 'freight_terms');
+    // Freight Terms (audits A and D, 2026-11-24): a changed value must be one of the three (a stored older value sent back
+    // as it is still saves); one sent back unchanged, or not sent, follows a new incoterm while it was empty or what the old
+    // incoterm implied, and only while the payment terms aren't saved (saved terms keep Freight Terms in step themselves,
+    // below). Like the principal: the Conditions and Parties pages send the whole record back.
+    let freightTerms = field('freightTerms', 'freight_terms');
+    if (reqBody.freightTerms !== undefined && (reqBody.freightTerms || '') !== (existing.freight_terms || '')) {
+      const v = freightTermsValue(reqBody.freightTerms);
+      if (v === null) return err(res, "freightTerms must be Prepaid, Collect or Payable at Destination");
+      freightTerms = v || incotermFreightTerms(incoterm);   // emptied: what the incoterm implies, never blank
+    }
+    if (!existing.payment_terms && (freightTerms || '') === (existing.freight_terms || '') && (incoterm || '') !== (existing.incoterm || ''))
+      freightTerms = followFreightTerms(existing.freight_terms, existing.incoterm, incoterm);
     const movementType = field('movementType', 'movement_type');
     const serviceType = field('serviceType', 'service_type');
     const placeOfReceipt = field('placeOfReceipt', 'place_of_receipt');
@@ -1097,7 +1114,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       const fresh = await split.loadShipment(req.params.id);
       const terms = rules.termsOf(fresh.shipment);
       if ((freightTerms || '') !== (existing.freight_terms || '')) {
-        const want = /collect|payable at destination/i.test(freightTerms || '') ? "COL" : "PRE";
+        const want = freightTermOf(freightTerms) === "COL" ? "COL" : "PRE";
         if (terms.categories.freight.term !== want) {
           const categories = { ...terms.categories, freight: { term: want, office: want === "COL" ? "import" : "export" } };
           await query("UPDATE shipments SET payment_terms=$1 WHERE id=$2", [JSON.stringify({ followsIncoterm: false, categories }), req.params.id]);

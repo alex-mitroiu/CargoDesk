@@ -142,8 +142,8 @@ const madridOffset = date => {
     assert("…and its address: the customer's name and details on the shipper", a?.documentParties?.shipper?.partyName === shipper.companyName
       && a.documentParties.shipper.address?.street === "Carrer de la Botanica 112, Nave 4" && a.documentParties.shipper.address?.countryCode === "ES",
       JSON.stringify(a?.documentParties?.shipper));
-    assert("no place of delivery and no consignee contact: the delivery isn't the carrier's",
-      !loc(a, "PDE") && !a?.documentParties?.consignee?.partyContactDetails, JSON.stringify(a?.documentParties?.consignee));
+    assert("no place of delivery: the delivery isn't the carrier's (the consignee party still carries its own profile, TKT-JV1SF2)",
+      !loc(a, "PDE") && a?.documentParties?.consignee?.address?.city === "Secaucus", JSON.stringify(a?.documentParties?.consignee));
 
     // ─── PT-DR: the carrier delivers to the consignee's door ───────────────────
     console.log("\nPT-DR: the carrier's delivery to the consignee's door");
@@ -160,7 +160,10 @@ const madridOffset = date => {
     assert("…its contact: the company's own phone (it has no contact person), and its address on the consignee",
       b?.documentParties?.consignee?.partyContactDetails?.[0]?.phone === "+1 201 555 0142" && b.documentParties.consignee.address?.city === "Secaucus",
       JSON.stringify(b?.documentParties?.consignee));
-    assert("the shipper's details aren't sent: the pick-up isn't the carrier's", !b?.documentParties?.shipper?.address && !b?.documentParties?.shipper?.partyContactDetails,
+    // Since TKT-JV1SF2 point 1 (2026-11-23) every booking's shipper carries its own profile (address, contact); what stays
+    // door-only is the place of receipt and the positioning (next check).
+    assert("the shipper party carries its own address and contact from its profile (every booking), not a door",
+      b?.documentParties?.shipper?.address?.street === "Carrer de la Botanica 112, Nave 4" && b.documentParties.shipper.partyContactDetails?.[0]?.name === "Marta Puig",
       JSON.stringify(b?.documentParties?.shipper));
     assert("no place of receipt and no container positioning at origin", !loc(b, "PRE") && !b?.requestedEquipments?.[0]?.containerPositionings,
       JSON.stringify(b?.requestedEquipments?.[0]));
@@ -172,8 +175,9 @@ const madridOffset = date => {
     assert("the booking request is sent (201)", sentC.status === 201, JSON.stringify(sentC.body).slice(0, 300));
     const c = await sentBody(C.id);
     assert("CY, though Service Type says Door-to-Port: the route decides", c?.receiptTypeAtOrigin === "CY", c?.receiptTypeAtOrigin);
-    assert("…no place of receipt, no positioning, no shipper contact",
-      !loc(c, "PRE") && !c?.requestedEquipments?.[0]?.containerPositionings && !c?.documentParties?.shipper?.partyContactDetails, JSON.stringify(c?.documentParties?.shipper));
+    assert("…no place of receipt, no positioning (the shipper party still carries its own profile, TKT-JV1SF2)",
+      !loc(c, "PRE") && !c?.requestedEquipments?.[0]?.containerPositionings && c?.documentParties?.shipper?.address?.city === "L'Hospitalet de Llobregat",
+      JSON.stringify(c?.documentParties?.shipper));
 
     // ─── A classified location: found by its GPS coordinates ───────────────────
     console.log("\nA classified location (GPS only)");

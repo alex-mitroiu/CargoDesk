@@ -126,7 +126,10 @@ export function PaymentTermsCard({ shipment, onSaved, open, onToggle, primary = 
   };
 
   const good = view.saved && !dirty;
-  const statusText = !view.saved ? `Not saved yet · the ${shipment.incoterm || "default"} defaults`
+  // D1 (2026-11-23, mockup dffb8ab2): before the terms are saved the ocean freight follows Freight Terms, the rest the Incoterm.
+  const statusText = !view.saved ? (view.freightFromFreightTerms && !view.followsIncoterm
+      ? `Not saved yet · freight from Freight Terms, the rest from ${shipment.incoterm || "the defaults"}`
+      : `Not saved yet · the ${shipment.incoterm || "default"} defaults`)
     : dirty ? "Changed · not saved yet" : view.followsIncoterm ? `Follows the Incoterm ${shipment.incoterm || ""}` : "Set by hand";
   const status = (
     <span data-testid="payment-terms-status" style={{ fontFamily: HZ_BODY, fontSize: 11.5, fontWeight: 600, borderRadius: 999, padding: "2px 10px", whiteSpace: "nowrap",
@@ -168,7 +171,13 @@ export function PaymentTermsCard({ shipment, onSaved, open, onToggle, primary = 
                   rows.push(
                     <tr key={c.id} data-testid={`cpi-row-${c.id}`}>
                       <td style={{ ...cell(), fontWeight: 600 }}>{c.label}</td>
-                      <td style={cell()}><TermToggle id={`cpi-${c.id}`} value={draft[c.id].term} disabled={!canEdit || busy} onChange={t => setTerm(c.id, t)} /></td>
+                      <td style={cell()}><TermToggle id={`cpi-${c.id}`} value={draft[c.id].term} disabled={!canEdit || busy} onChange={t => setTerm(c.id, t)} />
+                        {/* Not saved yet: where the shown term comes from (D1) — the ocean freight from Freight Terms, the rest from the Incoterm. */}
+                        {!view.saved && draft[c.id].term === view.categories.find(x => x.id === c.id)?.term && (
+                          <div data-testid={`cpi-source-${c.id}`} style={{ fontSize: 11, color: HZ.textMuted, marginTop: 3 }}>
+                            {c.id === "freight" && view.freightFromFreightTerms ? "from Freight Terms" : `from ${shipment.incoterm || "the defaults"}`}
+                          </div>
+                        )}</td>
                       <td style={cell()}><OfficeSelect id={`cpi-office-${c.id}`} offices={view.offices} value={draft[c.id].office} disabled={!canEdit || busy}
                         onChange={k => setDraft(d => ({ ...d, [c.id]: { ...d[c.id], office: k } }))} /></td>
                       <td style={cell()}>

@@ -22,6 +22,7 @@
 // can be cancelled.
 
 const { buildShippingInstructions, houseBillOfLadingFrom, houseBillOfLadingFor } = require("../lib/carrier-integrations/dcsa-ebl-v3");
+const { freightTermOf } = require("../lib/payment-terms");
 
 module.exports = function shippingInstructionsRoutes(app, ctx) {
   const { query, uid, ok, err, auth, requireRole, applyShipmentAccessFilter, mapShipment,
@@ -92,7 +93,7 @@ module.exports = function shippingInstructionsRoutes(app, ctx) {
     if (parties.consignee && !parties.consignee.identifyingCodes?.length)
       missing.push(`an identifying code (LEI, DUNS, FMC or an eBL platform id) on the consignee ${parties.consignee.partyName} (Customers → Identifiers): the carrier's Master B/L names the consignee by one`);
     // Where the freight is paid: the carrier's billing (creditor) office of the paying side (§8.53), as on the booking.
-    const payableAt = ctx.carrierOffices ? await ctx.carrierOffices.payableAt(shipment, /^(collect|payable at destination)$/i.test(String(shipment.freight_terms || "").trim()) ? "COL" : "PRE").catch(() => "") : "";
+    const payableAt = ctx.carrierOffices ? await ctx.carrierOffices.payableAt(shipment, freightTermOf(shipment.freight_terms) === "COL" ? "COL" : "PRE").catch(() => "") : "";
     const body = buildShippingInstructions({
       shipment, containers, reference, payableAt,
       parties,

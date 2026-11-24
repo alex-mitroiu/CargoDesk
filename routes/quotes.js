@@ -14,7 +14,8 @@
 // quoted price commonly includes a margin the contract rate alone doesn't show. On conversion,
 // those lines become the new shipment's SELL cost lines (source 'quote'); the BUY side still
 // comes from the real matched contract via the existing importContractRates path, unchanged.
-const { applyColumnFilters, filterOptions, applySearch, applySort, paginate, blanksLast } = require("../lib/tableQuery");
+const { applyColumnFilters, filterOptions, applySearch, applySort, paginate, blanksLast } = require("../lib/tableQuery");
+const { freightTermsValue, incotermFreightTerms, followFreightTerms } = require("../lib/payment-terms");
 const { impliedPrincipal } = require("../lib/incoterm-principal");
 
 module.exports = function quotesRoutes(app, ctx) {
@@ -185,13 +186,17 @@ module.exports = function quotesRoutes(app, ctx) {
             contractId = "", contractRef = "", commodityCode = "",
             movementType = "FCL", serviceType = "Port-to-Port", incoterm = "",
             cargoReadyDate = "", validUntil = "", notes = "", currency = "USD",
-            declaredValue = null, declaredValueCurrency = "USD", freightTerms = "Prepaid",
+            declaredValue = null, declaredValueCurrency = "USD", freightTerms: sentFreightTerms,
             officeId = "", lines = [] } = req.body || {};
     if (!pol || !pod) return err(res, "pol and pod are required");
     const commodityError = await commodityCodeError(commodityCode);
     if (commodityError) return err(res, commodityError);
     const invalidLine = findInvalidLine(lines);
     if (invalidLine) return err(res, `Each line's quantity must be a positive number (got "${invalidLine.quantity}")`);
+    // Freight Terms: one of the three values (audit D, 2026-11-24); none sent → what the incoterm implies (audit A).
+    const freightTermsSent = freightTermsValue(sentFreightTerms);
+    if (freightTermsSent === null) return err(res, "freightTerms must be Prepaid, Collect or Payable at Destination");
+    const freightTerms = freightTermsSent || incotermFreightTerms(incoterm);
     const id = `QT-${uid()}`;
     const now = new Date().toISOString();
     const actor = req.user?.name || req.user?.email || "";
@@ -226,13 +231,21 @@ module.exports = function quotesRoutes(app, ctx) {
             contractId = "", contractRef = "", commodityCode = "",
             movementType = "FCL", serviceType = "Port-to-Port", incoterm = "",
             cargoReadyDate = "", validUntil = "", notes = "", currency = "USD",
-            declaredValue = null, declaredValueCurrency = "USD", freightTerms = "Prepaid",
+            declaredValue = null, declaredValueCurrency = "USD", freightTerms: sentFreightTerms,
             officeId = "", lines = [] } = req.body || {};
     if (!pol || !pod) return err(res, "pol and pod are required");
     const commodityError = await commodityCodeError(commodityCode, existing.commodity_code);
     if (commodityError) return err(res, commodityError);
     const invalidLine = findInvalidLine(lines);
     if (invalidLine) return err(res, `Each line's quantity must be a positive number (got "${invalidLine.quantity}")`);
+    // Freight Terms (audits A and D): a changed value must be one of the three; not sent → the stored one, which follows a
+    // new incoterm while it was empty or what the old incoterm implied.
+    let freightTerms = existing.freight_terms || "";
+    if (sentFreightTerms !== undefined && (sentFreightTerms || "") !== (existing.freight_terms || "")) {
+      const v = freightTermsValue(sentFreightTerms);
+      if (v === null) return err(res, "freightTerms must be Prepaid, Collect or Payable at Destination");
+      freightTerms = v || incotermFreightTerms(incoterm);   // emptied: what the incoterm implies, never blank
+    } else if ((incoterm || "") !== (existing.incoterm || "")) freightTerms = followFreightTerms(existing.freight_terms, existing.incoterm, incoterm);
     // A quote priced on a spot offer (routes/spot-offers.js) keeps the offer's carrier, route and
     // reference; changing those means taking the offer off first.
     let effCarrierCode = carrierCode, effContractId = contractId, effContractRef = contractRef;

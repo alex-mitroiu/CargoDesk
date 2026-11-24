@@ -104,6 +104,10 @@ describe("Carrier Booking Folds Suite", () => {
     cy.get('[data-testid="carrier-booking-office-import"]').should("contain", "None set");
     cy.get('[data-testid="cpi-row-freight"]').should("be.visible");
     cy.contains("button", "Send Booking Request").should("not.be.disabled");
+    // D1 (2026-11-23, mockup dffb8ab2): until the payment terms are saved (the next tests save them), the booking card
+    // says the ocean freight follows Freight Terms and the rest the Incoterm.
+    cy.get('[data-testid="carrier-booking-freight-hint"]').should("contain", "ocean freight follows Freight Terms")
+      .and("contain", "(Collect)").and("contain", "(FOB)");
   });
 
   it("folds both sections to their summaries and keeps them folded after a reload", () => {
@@ -137,6 +141,23 @@ describe("Carrier Booking Folds Suite", () => {
     cy.get('[data-testid="cpi-row-freight"]').should("be.visible");
     // Collect, and no billing office on the import side: payable at the port of discharge.
     cy.get('[data-testid="payment-terms-dcsa"]').should("contain", '"UNLocationCode": "USNYC"');
+  });
+
+  // TKT-JV1SF2 point 5 (2026-11-23, mockup dffb8ab2): the transport document and loading, sent only when stated, with
+  // the request's own preview.
+  it("states the transport document for the request", () => {
+    cy.intercept("PUT", "**/booking-request-options").as("saveOptions");
+    openDetails();
+    cy.get('[data-testid="transport-document-status"]', { timeout: 15000 }).should("contain", "NOTHING STATED");
+    cy.get('[data-testid="transport-document-dcsa"]').should("contain", "nothing stated");
+    cy.get('[data-testid="td-type-SWB"]').click();
+    cy.wait("@saveOptions").its("response.statusCode").should("eq", 200);
+    cy.get('[data-testid="td-partial-false"]').click();
+    cy.wait("@saveOptions").its("response.statusCode").should("eq", 200);
+    cy.get('[data-testid="transport-document-status"]').should("contain", "2 STATED");
+    cy.get('[data-testid="transport-document-dcsa"]').should("contain", '"transportDocumentTypeCode": "SWB"').and("contain", '"isPartialLoadAllowed": false');
+    cy.then(() => api("GET", `/shipments/${shipmentId}/booking-request-options`)).its("body.dcsa")
+      .should("deep.equal", { transportDocumentTypeCode: "SWB", isPartialLoadAllowed: false });
   });
 
   it("Review keeps the Next header and the » pill", () => {

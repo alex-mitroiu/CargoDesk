@@ -1140,7 +1140,7 @@ These runs were reported in the commits and ARCHITECTURE.md but not here.
 ### 2026-11-21: v0.91.16 "Gatehouse" — the full regression after the audit of the trucker's run
 
 Run on fddbec4 (carrier offices, the Carrier Booking in Trade Horizon Next, the carrier's door in the booking, haulage
-stops and Facilities, and the fixes of the audit TKT-0W1FYJ), CI-style on the scratchpad replica: empty databases, the
+stops and Facilities, and the fixes of the audit TKT-YQQWJR), CI-style on the scratchpad replica: empty databases, the
 seed, CI's rate-limit settings, the distribution, pdf-render and contract services, Vite started by the runner.
 
 | Check | Result |
@@ -1203,3 +1203,30 @@ SMDG date reader.
 By hand on the replica: a real Reset Demo Data (118 tables cleared) kept 1,259 terminals, 48 HS codes and the load
 records; a carrier deleted before it stayed deleted after a restart, and the list wasn't downloaded again. The user's own
 SMDG upload (re-saved with US dates) now reads all 1,259 Valid from and 546 Last change dates.
+
+### 2026-11-23: the spreadsheet's leading zeros (unreleased)
+
+The SMDG import warns about a spreadsheet re-save's digit-only codes and keeps an existing terminal instead of adding a
+copy whose code lost its zeros (ARCHITECTURE.md §8.57). On the CI replica's empty databases with no seed step:
+`tests/haulage-stops.test.js` **81/81**, `tests/reference-data.test.js` 38/38, `tests/admin-reset.test.js` 14/14. By hand
+on the replica: the first start downloaded the list (1,259 terminals); uploading the user's own Excel copy then updated
+1,258, added none, read its dates as month/day/year and kept CNWEI 00001 for the file's CNWEI 1, still 1,259 terminals.
+The user's database: Update from SMDG filled the dates; the bad duplicate FAC-SMDG-CNWEI-1 was deleted (1,259 terminals,
+no port and name twice).
+
+### 2026-11-24: v0.91.18 "Notation" — the booking request, D1, the House B/L screens and the audit (TKT-T3QZ6Z)
+
+The same CI-style setup (empty databases, no seed step, `REFERENCE_DOWNLOADS=off`), with everything in ARCHITECTURE.md §8.58
+and the audit's fixes A–E.
+
+| Check | Result |
+|---|---|
+| Full backend, each file on its own | **140/140 files (138 in the full run; its 2 freight-audit files, failing on a name clash in routes/carrier-invoices.js, pass 96/96 after the fix)** |
+| Vitest | **610/610 in 58 files** |
+| Cypress, every spec, one per run in Edge | **42/42 specs, 308 of 309 tests (1 pending by design)** |
+| Production build | OK |
+
+A first full run (2026-11-23) read Cypress 8/42 for nothing: the replica's clone lacked 68 tracked files (the manual's
+screenshots among them, so Vite failed on every page). The clone is now synced by content (scratchpad `replica-sync.cjs`)
+and the run repeated. The audit's live checks (an untouched FOB shipment booked, a dangerous goods send refused, a Completed
+shipment, an off-list Freight Terms) ran on the replica before and after the fixes (`tests/release-audit-0918.test.js`).

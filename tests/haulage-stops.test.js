@@ -15,7 +15,7 @@
  *     own stops for one container (B), reordering, an actual time from a container event, the truck's plate;
  *   - F: a Delivery run's usual stops and its terminal free time and detention checks;
  *   - BR01: GET …/booking-doors gives the carrier's door as the DCSA booking sends it;
- *   - the audit of 2026-11-21 (epic TKT-0W1FYJ): A1 a vendor typed as free text clears the Trucker party; A2 a cancelled or
+ *   - the audit of 2026-11-21 (epic TKT-YQQWJR): A1 a vendor typed as free text clears the Trucker party; A2 a cancelled or
  *     removed service releases it; A3 the QA export / import carries the stops and their times; A4 a deleted shipment takes
  *     its services along; A6 a Pickup can't be ordered on (or moved to) the Import side.
  *
@@ -33,7 +33,7 @@ import { ensureOffices } from "./helpers/offices.mjs";
 import { bookThroughCarrier } from "./helpers/dcsa-sim.mjs";
 
 const require = createRequire(import.meta.url);
-const { parseSmdg } = require("../lib/facilities.js");
+const { parseSmdg, zeroTwinOf } = require("../lib/facilities.js");
 const { checksFor, legacyToStops, limitOf } = require("../lib/haulage-stops.js");
 
 let passed = 0, failed = 0;
@@ -106,6 +106,18 @@ const amsterdamMs = local => {
     assert("both orders in one file: left empty and counted", mixed.order === "mixed" && mixed.unreadable === 2, JSON.stringify(mixed));
     const impossible = dates(["NLRTM,A,Alpha,2/30/2022,1/19/2022,"]);
     assert("a day that doesn't exist (30 February) is left empty and counted; the rest read", impossible.unreadable === 1 && impossible.d[0] === "|2022-01-19|", JSON.stringify(impossible));
+    // A spreadsheet also drops a code's leading zeros (2026-11-23: the user's copy had Weihai Port as CNWEI 1, the list 00001).
+    const sheet = parseSmdg([H, "CNWEI,1,WEIHAI PORT,4/16/2019,5/31/2004,", "BEANR,1700,ANTWERP TERMINAL,,1/19/2022,", "NLRTM,ECT,ECT DELTA,,1/19/2022,"].join("\n"));
+    assert("a spreadsheet re-save is recognised by its dates, and its digit-only codes listed (they may have lost zeros)",
+      sheet.spreadsheet === true && sheet.digitCodes.join() === "CNWEI 1,BEANR 1700", JSON.stringify({ s: sheet.spreadsheet, d: sheet.digitCodes }));
+    const listFile = parseSmdg([H, "CNWEI,00001,WEIHAI PORT,2019-04-16,2004-05-31,"].join("\n"));
+    assert("…the list's own file isn't (no warning for its 00001)", listFile.spreadsheet === false && listFile.digitCodes.length === 0, JSON.stringify(listFile.digitCodes));
+    const known = [{ unlocode: "CNWEI", code: "00001" }, { unlocode: "BEANR", code: "1700" }];
+    assert("CNWEI 1 from a spreadsheet is the CNWEI 00001 already here (same port, equal without zeros)",
+      zeroTwinOf({ unlocode: "CNWEI", code: "1" }, known, true)?.code === "00001");
+    assert("…not from the list's own file, not at another port, not for a code with letters, not 1700 for 17",
+      !zeroTwinOf({ unlocode: "CNWEI", code: "1" }, known, false) && !zeroTwinOf({ unlocode: "CNSHA", code: "1" }, known, true)
+        && !zeroTwinOf({ unlocode: "CNWEI", code: "1A" }, known, true) && !zeroTwinOf({ unlocode: "BEANR", code: "17" }, known, true));
     const tz = "Europe/Amsterdam";
     const stops = [{ id: "e", purpose: "EMPTY_PICKUP", timezone: tz }, { id: "d", purpose: "LOAD", timezone: tz }, { id: "g", purpose: "FULL_GATE_IN", timezone: tz }];
     const cut = { FCO: limitOf("2026-10-24T12:00:00Z", "carrier"), VCO: limitOf("2026-10-23T12:00:00Z", "carrier") };
@@ -139,6 +151,19 @@ const amsterdamMs = local => {
     assert("…a second import updates the same rows, adds none", again.body.added === 0 && again.body.updated === 2, JSON.stringify(again.body).slice(0, 200));
     const bad = await request("POST", "/api/facilities/import-smdg", { csv: "name,code\nx,y" }, token);
     assert("…a file that isn't the list is refused (400)", bad.status === 400, JSON.stringify(bad.body));
+    // The list's file with a zero-padded code, then a spreadsheet's copy of it that lost the zeros (2026-11-23).
+    const digits = String(1000 + Math.floor(Math.random() * 8999));
+    const zH = "UNLOCODE,Terminal Code,Terminal Facility Name,Last change,Valid from,Valid to";
+    const padded = await request("POST", "/api/facilities/import-smdg", { csv: `${zH}\nNLRTM,00${digits},TEST ZERO TERMINAL Z${digits},2026-11-01,2014-08-26,` }, token);
+    cleanup.facilities.push(`FAC-SMDG-NLRTM-00${digits}`);
+    const fromSheet = await request("POST", "/api/facilities/import-smdg", { csv: `${zH}\nNLRTM,${digits},TEST ZERO TERMINAL Z${digits},11/1/2026,8/26/2014,` }, token);
+    const zeroRows = (await request("GET", `/api/facilities?unlocode=NLRTM&q=${encodeURIComponent(`TEST ZERO TERMINAL Z${digits}`)}`, null, token)).body;
+    assert("a spreadsheet's copy whose code lost its zeros (NLRTM " + digits + ") keeps the terminal already here (00" + digits + "): no duplicate, and the answer says so",
+      padded.body?.added === 1 && fromSheet.status === 200 && fromSheet.body.added === 0 && fromSheet.body.leadingZeros?.spreadsheet === true
+        && fromSheet.body.leadingZeros.kept?.[0]?.kept === `NLRTM 00${digits}` && fromSheet.body.leadingZeros.digitCodes?.includes(`NLRTM ${digits}`)
+        && Array.isArray(zeroRows) && zeroRows.length === 1 && zeroRows[0].code === `00${digits}`,
+      JSON.stringify({ padded: padded.body, fromSheet: fromSheet.body, zeroRows }).slice(0, 500));
+    if (Array.isArray(zeroRows)) for (const z of zeroRows) if (z.id !== `FAC-SMDG-NLRTM-00${digits}`) cleanup.facilities.push(z.id);
     const openList = (await request("GET", `/api/facilities?unlocode=NLRTM&open=1&q=${rand}`, null, token)).body;
     assert("the picker lists the open terminal, not the one past its Valid to", openList.length === 1 && openList[0].code === `QA${rand}` && openList[0].codeList === "SMDG",
       JSON.stringify(openList).slice(0, 300));
@@ -343,7 +368,7 @@ const amsterdamMs = local => {
     assert("a full pick-up 6 days after arrival is past the 4 free days; the empty return 2 days later is within detention",
       dchecks.find(c => c.key === "DEM")?.ok === false && dchecks.find(c => c.key === "DET_DEST")?.ok === true, JSON.stringify(dchecks));
 
-    // ─── The audit's fixes (2026-11-21, epic TKT-0W1FYJ) ─────────────────────────
+    // ─── The audit's fixes (2026-11-21, epic TKT-YQQWJR) ─────────────────────────
     console.log("\nAudit fixes: A1, A2, A3, A6");
     await request("PATCH", `/api/shipments/${sid}/services/${svc.id}`, { vendorId: "", vendorName: "Kees' Trucks (typed)" }, token);
     const typedPlan = (await request("GET", `/api/shipments/${sid}/services/${svc.id}/haulage-plan`, null, token)).body;

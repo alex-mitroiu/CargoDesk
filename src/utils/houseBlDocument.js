@@ -18,6 +18,9 @@ export const houseBlStatement = (choice, facts, typedDate, counts = {}) => ({
   ...(counts.withCharges !== undefined && { withCharges: !!counts.withCharges }),
   // The terms and conditions picked (2026-11-10): "BRANCH:nl", "ORG:en"…; none = the export office's default.
   ...(counts.termsKey && { termsKey: counts.termsKey }),
+  // Clauses added (audit L4, screen 4 of mockup 12f412e9): printed under the fixed ones and sent as carrierClauses.
+  // None typed = none sent (the server keeps none either way).
+  ...(Array.isArray(counts.clauses) && counts.clauses.length > 0 && { clauses: counts.clauses }),
 });
 
 // The terms a copy prints (lib/bl-terms.js): an amendment keeps the original's; else the one picked; else the

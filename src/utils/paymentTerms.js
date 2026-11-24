@@ -80,13 +80,41 @@ export function defaultCategories(incoterm) {
 
 const parse = v => { if (!v) return null; if (typeof v === "object") return v; try { return JSON.parse(v); } catch { return null; } };
 
+// The shipment's Freight Terms as a term: Collect (or Payable at Destination) → COL, anything else set → PRE, none → null.
+export const freightTermOf = v => { const s = String(v || "").trim(); return !s ? null : /^(collect|payable at destination)$/i.test(s) ? "COL" : "PRE"; };
+
+// Freight Terms takes one of the three values the screens offer (audit D, 2026-11-24, TKT-UKAFDT): a value → its spelling
+// here (case and spacing ignored), "" for none, null for anything else (the server refuses it).
+export const FREIGHT_TERMS = ["Prepaid", "Collect", "Payable at Destination"];
+export const freightTermsValue = v => {
+  const s = String(v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  return !s ? "" : FREIGHT_TERMS.find(f => f.toLowerCase() === s) || null;
+};
+// The Freight Terms an Incoterm implies (audit A, the user 2026-11-24: "Follow the Incoterm"): its ocean freight default,
+// E and F terms Collect, C and D terms (and none) Prepaid.
+export const incotermFreightTerms = incoterm => freightTermsFor(defaultCategories(incoterm).freight.term);
+// Freight Terms when the Incoterm changes: one nobody picked (empty, or what the old Incoterm implied) follows the new
+// Incoterm; anything else was someone's choice and stays (the principal's rule, lib/incoterm-principal.js).
+export const followFreightTerms = (current, beforeIncoterm, afterIncoterm) => {
+  const c = String(current || "").trim();
+  return !c || c === incotermFreightTerms(beforeIncoterm) ? incotermFreightTerms(afterIncoterm) : c;
+};
+
 // A shipment's terms as they apply now → { saved, followsIncoterm, categories }. Not saved (null on the shipment):
 // the Incoterm's defaults, shown but not applied — the shipment is billed as before the split (one legal entity, one
 // invoice to the principal). Saved and following the Incoterm: the defaults of its current Incoterm.
 export function termsOf(shipment = {}) {
   const stored = parse(shipment.paymentTerms);
   const defaults = defaultCategories(shipment.incoterm);
-  if (!stored) return { saved: false, followsIncoterm: true, categories: defaults };
+  // D1 (2026-11-23, TKT-ML3GRC): until the terms are saved, the ocean freight follows the shipment's Freight Terms (when
+  // set) and the other categories the Incoterm, so the booking card and the payment terms can't disagree; sending the
+  // booking saves them as shown (lib/office-split.js activate).
+  if (!stored) {
+    const freight = freightTermOf(shipment.freightTerms);
+    if (!freight) return { saved: false, followsIncoterm: true, freightFromFreightTerms: false, categories: defaults };
+    return { saved: false, followsIncoterm: freight === defaults.freight.term, freightFromFreightTerms: true,
+      categories: { ...defaults, freight: { term: freight, office: freight === "COL" ? "import" : "export" } } };
+  }
   if (stored.followsIncoterm !== false) return { saved: true, followsIncoterm: true, categories: defaults };
   const categories = {};
   for (const id of CATEGORY_IDS) {

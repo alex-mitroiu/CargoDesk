@@ -3,6 +3,7 @@ import { toast } from "../../toast";
 import useSaving from "../../hooks/useSaving";
 import { T, STATUSES, INCOTERMS_2020, IMDG_CLASSES, BL_RELEASE_TYPES, teuOf, buildTeuLookup } from "../../tokens";
 import { withFollowedPrincipal, principalHintText } from "../../utils/incotermPrincipal";
+import { incotermFreightTerms, followFreightTerms } from "../../utils/paymentTerms";
 import { api } from "../../api";
 import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
@@ -1755,7 +1756,8 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     spaceSkipReason:    init.spaceSkipReason    || "",
     spaceOverageReason: init.spaceOverageReason || "",
     spaceSelection:     init.spaceSelection     || "",
-    freightTerms:       init.freightTerms       || "Prepaid",
+    // A new shipment's Freight Terms is what its incoterm implies (audit A, the user 2026-11-24: "Follow the Incoterm").
+    freightTerms:       init.freightTerms       || incotermFreightTerms(init.incoterm),
     movementType:       init.movementType       || "FCL",
     serviceType:        init.serviceType        || "Port-to-Port",
     placeOfReceipt:     init.placeOfReceipt     || "",
@@ -2106,7 +2108,10 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
               touch("incoterm");
               // C/D terms → the seller pays → the shipper is the principal; E/F terms → the buyer arranges → the consignee
               // (src/utils/incotermPrincipal.js, the server's rule too). A principal someone chose isn't moved.
-              setF(p => withFollowedPrincipal(p, { ...p, incoterm: v }));
+              setF(p => withFollowedPrincipal(p, { ...p, incoterm: v,
+                // Freight Terms nobody picked follows the incoterm too (E/F terms Collect, C/D Prepaid), while the payment
+                // terms aren't saved: saved ones keep Freight Terms in step on the server (lib/payment-terms.js).
+                ...(init.paymentTerms ? {} : { freightTerms: followFreightTerms(p.freightTerms, p.incoterm, v) }) }));
             }} required
             error={touched.incoterm && !f.incoterm}
             options={[

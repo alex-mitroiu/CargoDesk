@@ -91,6 +91,12 @@ const MdmFacilitiesPage = () => {
       toast.success(`SMDG list imported: ${r.added} added, ${r.updated} updated${r.skipped ? `, ${r.skipped} rows skipped` : ""}${order ? `; the file's dates read as ${order}` : ""}`);
       // A spreadsheet re-save whose dates can't tell day from month (2026-11-22): those dates are left empty, never guessed.
       if (r.dates?.unreadable) toast.error(`${r.dates.unreadable} dates in the file couldn't be read (day and month can't be told apart), so they were left empty. Update from SMDG gets the original file.`);
+      // A spreadsheet also drops leading zeros from codes (2026-11-23: Weihai Port's 00001 came in as 1).
+      const lz = r.leadingZeros;
+      if (lz?.spreadsheet && (lz.digitCodes?.length || lz.kept?.length)) {
+        const kept = (lz.kept || []).map(k => `${k.file} is ${k.kept}`).join(", ");
+        toast.warning(`This file was saved by a spreadsheet, which drops leading zeros from codes. ${lz.digitCodes.length} terminal code${lz.digitCodes.length === 1 ? " is" : "s are"} only digits and may be wrong (${lz.digitCodes.slice(0, 5).join(", ")}${lz.digitCodes.length > 5 ? ", …" : ""}).${kept ? ` Kept the terminal already here instead of a duplicate: ${kept}.` : ""} Update from SMDG gets the original list.`, 20000);
+      }
       await load();
     } catch (e) { toast.error(e.message || "The import failed"); }
     setBusy("");

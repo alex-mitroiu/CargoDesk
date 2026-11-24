@@ -19,7 +19,9 @@ const LINES = [
 describe("Payment terms and the office split", () => {
   it("every Incoterm: the same split in the browser and on the server", () => {
     for (const t of ["", "EXW", "FCA", "FAS", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP"]) {
-      for (const extra of [{}, { principalId: "CUS-HHI", principalName: "Hudson Home Imports Inc" }, { billingOfficeId: "OFF-AMS" }]) {
+      // D1 (2026-11-23): before the terms are saved, the freight follows Freight Terms; every value in both copies.
+      for (const extra of [{}, { principalId: "CUS-HHI", principalName: "Hudson Home Imports Inc" }, { billingOfficeId: "OFF-AMS" },
+        { freightTerms: "Prepaid" }, { freightTerms: "Collect" }, { freightTerms: "Payable at Destination" }]) {
         const s = ship(t, extra);
         expect(browser.termsOf(s)).toEqual(server.termsOf(s));
         for (const l of LINES) expect(browser.lineSplit(s, l)).toEqual(server.lineSplit(s, l));
@@ -61,5 +63,31 @@ describe("Payment terms and the office split", () => {
     });
     expect(browser.freightTermsFor("COL", "Payable at Destination")).toBe("Payable at Destination");
     expect(browser.freightTermsFor("PRE", "Collect")).toBe("Prepaid");
+  });
+
+  // The 0.91.18 audit (2026-11-24): A — Freight Terms follows the Incoterm until picked (E/F Collect, C/D Prepaid); D — only
+  // the three values, one reader of Freight Terms everywhere.
+  it("Freight Terms: what an Incoterm implies, following it, the three values, one reader", () => {
+    const incoterms = ["", "EXW", "FCA", "FAS", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP", null];
+    for (const t of incoterms) expect(browser.incotermFreightTerms(t)).toBe(server.incotermFreightTerms(t));
+    expect(incoterms.map(t => browser.incotermFreightTerms(t))).toEqual(["Prepaid", "Collect", "Collect", "Collect", "Collect",
+      "Prepaid", "Prepaid", "Prepaid", "Prepaid", "Prepaid", "Prepaid", "Prepaid", "Prepaid"]);
+    const values = ["", "Prepaid", "Collect", "Payable at Destination", "Freight Collect", null];
+    for (const v of values) for (const a of incoterms) for (const b of ["FOB", "CIF", ""])
+      expect(browser.followFreightTerms(v, a, b)).toBe(server.followFreightTerms(v, a, b));
+    expect(browser.followFreightTerms("Collect", "FOB", "CIF")).toBe("Prepaid");          // implied before: follows
+    expect(browser.followFreightTerms("", "", "FCA")).toBe("Collect");                    // none: follows
+    expect(browser.followFreightTerms("Prepaid", "FOB", "DAP")).toBe("Prepaid");         // picked under FOB: stays
+    expect(browser.followFreightTerms("Collect", "CIF", "DDP")).toBe("Collect");         // picked under CIF: stays
+    expect(browser.followFreightTerms("Payable at Destination", "FOB", "CIF")).toBe("Payable at Destination");
+    for (const v of ["  payable  at DESTINATION ", "collect", "PREPAID", "Freight Collect", "", undefined, "Third party"]) {
+      expect(browser.freightTermsValue(v)).toBe(server.freightTermsValue(v));
+      expect(browser.freightTermOf(v)).toBe(server.freightTermOf(v));
+    }
+    expect(browser.freightTermsValue("  payable  at DESTINATION ")).toBe("Payable at Destination");
+    expect(browser.freightTermsValue("Freight Collect")).toBe(null);
+    expect(browser.freightTermsValue("")).toBe("");
+    expect([browser.freightTermOf("Collect"), browser.freightTermOf("Payable at Destination"), browser.freightTermOf("Prepaid"), browser.freightTermOf("")])
+      .toEqual(["COL", "COL", "PRE", null]);
   });
 });

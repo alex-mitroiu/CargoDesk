@@ -534,6 +534,11 @@ export const api = {
     get:  shipmentId      => req("GET", `/shipments/${shipmentId}/payment-terms`),
     save: (shipmentId, d) => req("PUT", `/shipments/${shipmentId}/payment-terms`, d),
   },
+  // The booking request's transport document and loading (TKT-JV1SF2 point 5, 2026-11-23).
+  bookingRequestOptions: {
+    get:  shipmentId      => req("GET", `/shipments/${shipmentId}/booking-request-options`),
+    save: (shipmentId, d) => req("PUT", `/shipments/${shipmentId}/booking-request-options`, d),
+  },
   costLines: {
     list:           (shipmentId)               => req("GET",    `/shipments/${shipmentId}/cost-lines`),
     create:         (shipmentId, d)            => req("POST",   `/shipments/${shipmentId}/cost-lines`, d),
@@ -658,6 +663,11 @@ export const api = {
     number:   (shipmentId)       => req("POST", `/shipments/${shipmentId}/house-bl/number`, {}),
     surrenderForAmendment: (shipmentId, reason) => req("POST", `/shipments/${shipmentId}/house-bl/surrender-for-amendment`, { reason }),
     originalsHandover: (shipmentId, data) => req("POST", `/shipments/${shipmentId}/house-bl/originals-handover`, data),
+    // The House B/L audit's screens (mockup 12f412e9, built 2026-11-23): originals back, the on-board notation, the shipper's approval.
+    originalsReturned: (shipmentId, data) => req("POST", `/shipments/${shipmentId}/house-bl/originals-returned`, data),
+    onBoardNotation:   (shipmentId)       => req("POST", `/shipments/${shipmentId}/house-bl/on-board-notation`, {}),
+    approvalSend:      (shipmentId, data) => req("POST", `/shipments/${shipmentId}/house-bl/approval/send`, data),
+    approvalAnswer:    (shipmentId, data) => req("POST", `/shipments/${shipmentId}/house-bl/approval/answer`, data),
   },
   carrierIntegrations: {
     list:     ()      => req("GET",    "/carrier-integrations"),

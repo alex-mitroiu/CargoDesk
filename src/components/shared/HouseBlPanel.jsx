@@ -56,6 +56,11 @@ const EVENT_TEXT = {
   EBL_SURRENDER_REJECTED: d => `Surrender rejected (SREJ)${d.comments ? `: ${d.comments}` : ""}`,
   SURRENDERED_FOR_AMENDMENT: d => `Surrendered for amendment${d.reason ? `: ${d.reason}` : ""}`,
   ORIGINALS_HANDED_OVER: d => `Originals handed over: ${d.count} of ${d.total} ${d.method === "In person" ? "in person" : `by ${String(d.method || "").toLowerCase()}`} to ${d.to}${d.trackingRef ? ` (${d.trackingRef})` : ""}`,
+  ORIGINALS_RETURNED: d => `Originals returned: ${d.count} by ${d.from || "the holder"}${d.method === "In person" ? " in person" : d.method ? ` by ${String(d.method).toLowerCase()}` : ""}`,
+  ON_BOARD_NOTATION: d => `On-board notation added: shipped on board ${d.date || ""}${d.source ? ` (${d.source})` : ""}`,
+  APPROVAL_REQUESTED: d => `Draft sent to the shipper for approval: ${d.to}${d.emailed ? "" : " (recorded; not emailed)"}`,
+  APPROVED_BY_SHIPPER: () => "The shipper approved the draft",
+  CHANGES_REQUESTED_BY_SHIPPER: d => `The shipper asked for changes${d.comment ? `: “${d.comment}”` : ""}`,
   TELEX_RELEASE_NOTICE: d => (d.sent ? `Telex release notice to ${d.office} (Kanban task)` : "Telex release: no import office on the shipment, nobody was told"),
 };
 export const eventText = e => (EVENT_TEXT[e.eventType] ? EVENT_TEXT[e.eventType](e.detail || {}) : e.eventType);
@@ -193,6 +198,13 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged, onTermsChange }
   const [presentedBy, setPresentedBy] = useState("");
   // The terms and conditions picked (2026-11-10); null = the export office's default.
   const [termsKey, setTermsKey] = useState(null);
+  // The House B/L audit's screens (mockup 12f412e9, built 2026-11-23): originals coming back (1), the clauses added and the
+  // shipper's approval of the draft (4), the confirmation before issuing an unapproved draft.
+  const [returning, setReturning] = useState(null);
+  const [clausesText, setClausesText] = useState("");
+  const [approvalTo, setApprovalTo] = useState("");
+  const [changesText, setChangesText] = useState(null);
+  const [issueAsk, setIssueAsk] = useState(false);
   const docsKey = docs.filter(d => d.docType === "BL01").map(d => `${d.id}:${d.status}:${d.blSurrenderedAt || ""}:${d.blReleasedAt || ""}`).join("|");
 
   const load = useCallback(async () => {
@@ -214,7 +226,13 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged, onTermsChange }
     if (basisKey === null) return;
     setCounts({ originals: basis?.originals ?? (shipment.blReleaseType === "Seaway Bill" ? 0 : 3), copies: basis?.copies ?? 0, withCharges: !!basis?.withCharges });
     setTermsKey(summary?.terms?.draft?.key || null);
+    setClausesText((basis?.extraClauses || []).join("\n"));
   }, [basisKey]);
+  // The shipper's email for the draft's approval: its customer profile's, until someone types another.
+  useEffect(() => {
+    if (!shipment.shipperId) return;
+    api.customers.get(shipment.shipperId).then(c => setApprovalTo(a => a || c?.email || "")).catch(() => {});
+  }, [shipment.shipperId]);
   const sharedTermsKey = summary?.terms?.locked ? null : termsKey;
   useEffect(() => { onTermsChange?.(sharedTermsKey); }, [sharedTermsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -238,7 +256,11 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged, onTermsChange }
   // An uploaded BL01 waiting to be confirmed: a draft document with no draft record of its own (C2).
   const uploadedDraft = docs.find(d => d.docType === "BL01" && d.status === "draft" && d.id !== draft?.documentId) || null;
   const termsOpt = houseBlTermsOf(terms, termsKey);
-  const statement = houseBlStatement(choice, facts, typed, { ...counts, originals: swb ? 0 : counts.originals, ...(termsKey && !terms?.locked && { termsKey }) });
+  // Clauses added (audit L4): one per line, up to 10; the copy and the DCSA document carry what's typed here.
+  const clauseLines = clausesText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const clausesOk = clauseLines.length <= 10 && clauseLines.every(l => l.length <= 300);
+  const statement = houseBlStatement(choice, facts, typed, { ...counts, originals: swb ? 0 : counts.originals, ...(termsKey && !terms?.locked && { termsKey }),
+    clauses: clauseLines.slice(0, 10) });
   const statementOk = choice === "received" || !!typed || !!facts.shippedOnBoard;
   // The server's loading item judges the current draft; the copy about to be made follows `choice`. Its terms
   // item judges the draft or the office's default; the copy about to be made carries the terms picked here.
@@ -247,7 +269,13 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged, onTermsChange }
   const missing = [...(summary.readiness?.missing || []).filter(m => !(statementOk && /^Loading/.test(m)) && !/^Terms and conditions:/.test(m)),
     ...(termsMissing ? [termsMissing] : [])];
   const countsOk = swb ? true : Number.isInteger(Number(counts.originals)) && counts.originals >= 1 && counts.originals <= 9;
-  const ready = !live && missing.length === 0 && statementOk && countsOk;
+  const ready = !live && missing.length === 0 && statementOk && countsOk && clausesOk;
+  // The originals both ways (screen 1): { out, back, outstanding, holder }, and what came back.
+  const originals = summary.originals || null;
+  const returns = events.filter(e => e.eventType === "ORIGINALS_RETURNED");
+  // The shipper's approval of the draft (screen 4): null = not asked; STALE = a newer draft than the one sent.
+  const approval = draft?.approval || null;
+  const approvalStatus = approval?.status || "";
   const canOverride = isAdmin || !!user?.canViewFinance;
   const releaseType = live?.releaseType || shipment.blReleaseType || "";
   const eblShipperId = summary.ebl?.shipperPlatformIds?.find(i => i.platform === platform)?.code || "";
@@ -301,11 +329,28 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged, onTermsChange }
     await api.houseBl.originalsHandover(shipment.id, { ...handover, count: Number(handover.count) });
     setHandover(null);
   }, "Handover logged");
+  // Screen 1: originals coming back. Screen 2: the on-board notation. Screen 4: the shipper's approval, and the
+  // confirmation before issuing a draft the shipper hasn't approved (it warns; it doesn't block).
+  const openReturning = () => setReturning({ count: originals?.outstanding || 1, from: originals?.holder || shipment.shipperName || "", method: "In person", returnedOn: todayIso() });
+  const recordReturned = () => act("returned", async () => {
+    await api.houseBl.originalsReturned(shipment.id, { ...returning, count: Number(returning.count) });
+    setReturning(null);
+  }, `${returning?.count || ""} original${Number(returning?.count) === 1 ? "" : "s"} recorded as returned`);
+  const addNotation = () => act("notation", () => api.houseBl.onBoardNotation(shipment.id), "On-board notation added");
+  const sendForApproval = () => act("approval", async () => {
+    const r = await api.houseBl.approvalSend(shipment.id, { to: approvalTo.trim() });
+    if (r?.note) toast.info(r.note);
+  }, "Draft sent to the shipper for approval");
+  const answerApproval = (approved, comment = "") => act("approval", async () => {
+    await api.houseBl.approvalAnswer(shipment.id, { approved, comment });
+    setChangesText(null);
+  }, approved ? "Recorded: the shipper approved the draft" : "Recorded: the shipper asked for changes");
+  const issueOrAsk = () => (draft && approvalStatus !== "APPROVED" ? setIssueAsk(true) : issue());
 
   const steps = [["Draft", "regenerating replaces it"], ["Issued", "number and date fixed"], ["Surrendered", "originals back, or the eBL"], ["Released", "Delivery Order unlocks"]];
   const onBoardText = t => (t.isShippedOnBoardType
     ? `Shipped on board${t.shippedOnBoardDate ? ` ${fmtDay(t.shippedOnBoardDate)}` : ", no date yet"}`
-    : `Received for shipment${t.receivedForShipmentDate ? ` ${fmtDay(t.receivedForShipmentDate)}` : ""}`);
+    : `Received for shipment${t.receivedForShipmentDate ? ` ${fmtDay(t.receivedForShipmentDate)}` : ""}${t.onBoardNotationDate ? ` · Shipped on board ${fmtDay(t.onBoardNotationDate)} (notation)` : ""}`);
   const numberSourceText = src => (src === "SERIES" ? "office series" : "typed on Conditions");
   const toOrderMode = td?.status !== "DRAFT" && td ? td.toOrderMode : (shipment.blToOrder || "");
   const countsText = t => (t?.originals !== null && t?.originals !== undefined
@@ -356,6 +401,31 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged, onTermsChange }
             <Row label="Issued">{live?.issueDate ? `${fmtDay(live.issueDate)}${live.placeOfIssue ? ` · ${live.placeOfIssue}` : ""}` : "Not yet"}</Row>
             <Row label="DCSA document">{live?.hasPayload ? (live.payloadErrors ? "Kept; not valid for an eBL yet" : "Kept as issued, passes eBL 3.0") : "Built at issue"}</Row>
           </dl>
+          {/* Screen 2 (audit M4): a received-for-shipment B/L gets a dated on-board notation once every container is aboard,
+              on the same B/L (UCP 600 art. 20). An eBL's notation is made on its platform. */}
+          {live && live.status === "ISSUED" && !live.isShippedOnBoardType && !(live.isElectronic && ["PENDING", "ISSU"].includes(live.eblIssuanceStatus)) && (
+            <div data-testid="house-bl-notation" style={{ ...box(), background: live.onBoardNotationDate ? HZ.goodBg : HZ.cyanBg,
+              border: `1px solid ${(live.onBoardNotationDate ? HZ.good : HZ.cyan)}55`, fontSize: 12.5 }}>
+              {live.onBoardNotationDate ? (
+                <span>On-board notation added {fmtDay(live.onBoardNotationDate)} (the last container's loading). The B/L now reads: Received for
+                  shipment{live.receivedForShipmentDate ? ` ${fmtDay(live.receivedForShipmentDate)}` : ""} · Shipped on board {fmtDay(live.onBoardNotationDate)}.</span>
+              ) : (
+                <>
+                  <span>{facts.shippedOnBoard
+                    ? `${facts.containers === 1 ? "The container is" : `All ${facts.containers} containers are`} aboard. Add the on-board notation to make this a shipped-on-board B/L.`
+                    : `${facts.loaded || 0} of ${facts.containers || 0} container${facts.containers === 1 ? "" : "s"} loaded. The notation can be added once every container is aboard.`}</span>
+                  {!facts.shippedOnBoard && facts.notLoaded?.length > 0 && <span style={{ color: HZ.textMuted }}>Waiting for {facts.notLoaded.join(", ")}.</span>}
+                  {canEdit && (
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
+                      {facts.shippedOnBoard && <span style={{ fontSize: 12, color: HZ.textMuted, marginRight: "auto" }}>Logged in History; the next print shows it.</span>}
+                      <Btn size="sm" data-testid="house-bl-notation-add" disabled={!!busy || !facts.shippedOnBoard} onClick={addNotation}>
+                        {facts.shippedOnBoard ? `Add on-board notation (${fmtDay(facts.onBoardDate)})` : "Add on-board notation"}</Btn>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
           {(versions.length > 1 || amends) && versions.length > 0 && (
             <div data-testid="house-bl-versions" style={{ ...box(), fontSize: 12.5 }}>
               <b>Versions under {versions[0].reference}</b>
@@ -504,10 +574,100 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged, onTermsChange }
                   )}
                 </div>
               </fieldset>
+
+              {/* Screen 4 (audit L4): clauses the shipper or a letter of credit asks for, under the fixed ones. */}
+              <div data-testid="house-bl-clauses" style={box()}>
+                <b style={{ fontSize: 13.5 }}>Clauses</b>
+                {shipment.movementType !== "LCL" && (
+                  <span style={{ fontSize: 12.5, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                    <span style={{ color: HZ.textMuted }}>Always (FCL)</span><span style={{ fontFamily: HZ_MONO, fontSize: 11.5 }}>SHIPPER'S LOAD, STOW AND COUNT · SAID TO CONTAIN</span>
+                  </span>
+                )}
+                <label htmlFor={`house-bl-clauses-${shipment.id}`} style={fieldLabel()}>Additional clauses, one per line</label>
+                <textarea id={`house-bl-clauses-${shipment.id}`} data-testid="house-bl-clauses-text" rows={3} value={clausesText} disabled={!canEdit}
+                  onChange={e => setClausesText(e.target.value)} placeholder={"e.g. FREIGHT PREPAID AS ARRANGED\nL/C NO. 4471-2026 ISSUED BY ABN AMRO BANK N.V."}
+                  style={{ ...inputStyle(), fontFamily: HZ_MONO, fontSize: 12, resize: "vertical" }} />
+                <span style={{ fontSize: 11.5, color: clausesOk ? HZ.textMuted : HZ.crit }}>
+                  {clausesOk ? "Printed on the B/L under the fixed ones and sent in the DCSA document (carrierClauses). Up to 10 lines; they go with the next draft or issue."
+                    : "Up to 10 lines of 300 characters each."}</span>
+              </div>
+
+              {/* Screen 4 (audit L3): the shipper's approval of the draft. Issuing without it asks to confirm. */}
+              {(canEdit || approval) && (
+                <div data-testid="house-bl-approval" style={box()}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <b style={{ fontSize: 13.5 }}>Shipper's approval of the draft</b>
+                    {approvalStatus && approvalStatus !== "STALE" && (
+                      <span data-testid="house-bl-approval-status" style={{ marginLeft: "auto", ...(approvalStatus === "APPROVED" ? chipStyle(HZ.goodBg, HZ.good, HZ.good + "66")
+                        : approvalStatus === "CHANGES_REQUESTED" ? chipStyle(HZ.warnBg, HZ.warn, HZ.warn + "66") : chipStyle(HZ.cyanBg, HZ.cyan, HZ.cyan + "66")) }}>
+                        {approvalStatus === "APPROVED" ? "✓ APPROVED" : approvalStatus === "CHANGES_REQUESTED" ? "CHANGES ASKED" : `SENT ${fmtDay(approval.sentAt).toUpperCase()}`}</span>
+                    )}
+                  </div>
+                  {!draft?.documentId ? (
+                    <span style={{ fontSize: 12.5, color: HZ.textMuted }}>Generate the draft, then email it to the shipper for approval and record their answer here. Issuing without it asks you to confirm.</span>
+                  ) : (approvalStatus === "" || approvalStatus === "STALE") ? (
+                    <>
+                      <span style={{ fontSize: 12.5, color: approvalStatus === "STALE" ? HZ.warn : HZ.textMuted }}>{approvalStatus === "STALE"
+                        ? `The draft changed since it was sent to ${approval.sentTo}: send this one.`
+                        : "Email the draft PDF to the shipper and record their answer here. Issuing without it asks you to confirm."}</span>
+                      {canEdit && (
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <input aria-label="Shipper's email" data-testid="house-bl-approval-to" value={approvalTo} onChange={e => setApprovalTo(e.target.value)}
+                            placeholder="the shipper's email" style={{ ...inputStyle(), flex: "1 1 240px" }} />
+                          <Btn size="sm" data-testid="house-bl-approval-send" disabled={!!busy || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(approvalTo.trim())} onClick={sendForApproval}>Send draft for approval</Btn>
+                        </div>
+                      )}
+                    </>
+                  ) : approvalStatus === "SENT" ? (
+                    <>
+                      <span style={{ fontSize: 12.5, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                        <span style={{ color: HZ.textMuted }}>Sent {fmtDay(approval.sentAt)}{approval.sentBy ? ` · ${approval.sentBy}` : ""}{approval.emailed ? "" : " · recorded, not emailed"}</span>
+                        <span>to {approval.sentTo} (draft {draft.version})</span>
+                      </span>
+                      {canEdit && changesText === null && (
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                          <Btn variant="secondary" size="sm" data-testid="house-bl-approval-changes" disabled={!!busy} onClick={() => setChangesText("")}>Changes asked…</Btn>
+                          <Btn size="sm" data-testid="house-bl-approval-ok" disabled={!!busy} onClick={() => answerApproval(true)}>Approved by the shipper</Btn>
+                        </div>
+                      )}
+                      {canEdit && changesText !== null && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          <label htmlFor="house-bl-approval-comment" style={fieldLabel()}>What the shipper asked to change</label>
+                          <textarea id="house-bl-approval-comment" rows={2} value={changesText} onChange={e => setChangesText(e.target.value)} style={{ ...inputStyle(), resize: "vertical" }} />
+                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                            <Btn variant="secondary" size="sm" onClick={() => setChangesText(null)}>Cancel</Btn>
+                            <Btn size="sm" data-testid="house-bl-approval-changes-save" disabled={!!busy || !changesText.trim()} onClick={() => answerApproval(false, changesText.trim())}>Record the changes asked</Btn>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : approvalStatus === "CHANGES_REQUESTED" ? (
+                    <>
+                      <span style={{ fontSize: 12.5, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                        <span style={{ color: HZ.textMuted }}>{fmtDay(approval.answeredAt)}{approval.answeredBy ? ` · recorded by ${approval.answeredBy}` : ""}</span>
+                        <span>“{approval.comment}”</span>
+                      </span>
+                      <span style={{ fontSize: 12.5, color: HZ.textMuted }}>Correct the shipment, generate the draft again and send it.</span>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: 12.5, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                      <span style={{ color: HZ.textMuted }}>{fmtDay(approval.answeredAt)}{approval.answeredBy ? ` · recorded by ${approval.answeredBy}` : ""}</span>
+                      <span>approved draft {draft.version} (by email)</span>
+                    </span>
+                  )}
+                </div>
+              )}
+
               {canEdit && (
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
-                  <Btn variant="secondary" data-testid="house-bl-generate-draft" disabled={!!busy || !countsOk} onClick={generateDraft}>{busy === "draft" ? "Building…" : "Generate draft"}</Btn>
-                  <Btn data-testid="house-bl-issue" disabled={!!busy || !ready} onClick={issue}>{busy === "issue" ? "Issuing…" : nextVersion ? `Issue version ${nextVersion}` : "Issue House B/L"}</Btn>
+                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  {draft?.documentId && approvalStatus !== "APPROVED" && (
+                    <span data-testid="house-bl-issue-note" style={{ fontSize: 12, color: HZ.textMuted, marginRight: "auto" }}>
+                      {approvalStatus === "SENT" ? "Waiting for the shipper's approval: issuing asks you to confirm."
+                        : approvalStatus === "CHANGES_REQUESTED" ? "The shipper asked for changes: issuing asks you to confirm."
+                        : "The shipper hasn't approved this draft: issuing asks you to confirm."}</span>
+                  )}
+                  <Btn variant="secondary" data-testid="house-bl-generate-draft" disabled={!!busy || !countsOk || !clausesOk} onClick={generateDraft}>{busy === "draft" ? "Building…" : "Generate draft"}</Btn>
+                  <Btn data-testid="house-bl-issue" disabled={!!busy || !ready} onClick={issueOrAsk}>{busy === "issue" ? "Issuing…" : nextVersion ? `Issue version ${nextVersion}` : "Issue House B/L"}</Btn>
                 </div>
               )}
               {!number?.value && !amends && <span style={{ fontSize: 12, color: HZ.textMuted }}>A draft generated before issue prints “B/L number: assigned at issue”.</span>}
@@ -530,12 +690,17 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged, onTermsChange }
                 <div data-testid="house-bl-originals-log" style={box()}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                     <b style={{ fontSize: 13.5 }}>Originals</b>
+                    {/* Screen 1 (audit M5/H1): the log counts both ways, what went out and what came back. */}
+                    {originals?.out > 0 && (
+                      <span data-testid="house-bl-originals-count" style={{ marginLeft: "auto", ...(originals.outstanding
+                        ? chipStyle(HZ.warnBg, HZ.warn, HZ.warn + "66") : chipStyle(HZ.goodBg, HZ.good, HZ.good + "66")) }}>{originals.out} OUT · {originals.back} BACK</span>
+                    )}
                     {canEdit && !handover && <Btn variant="secondary" size="sm" data-testid="house-bl-handover-open" disabled={!!busy} onClick={openHandover}>＋ Record handover</Btn>}
                   </div>
                   <span style={{ fontSize: 12.5, color: HZ.textMuted }}>{live.originals ?? 3} original{live.originals === 1 ? " was" : "s were"} issued. {releaseType === "Original"
                     ? `Log who they went to; the consignee presents one at ${shipment.podName || shipment.pod}.`
                     : "Log who they went to; the shipper hands them back at origin for the telex release."}</span>
-                  {handovers.length > 0 && (
+                  {(handovers.length > 0 || returns.length > 0) && (
                     <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
                       {handovers.map(h => (
                         <li key={h.id} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "7px 10px", borderRadius: 7, background: HZ.surface, fontSize: 12.5 }}>
@@ -544,7 +709,41 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged, onTermsChange }
                           {h.detail.trackingRef && <span style={{ fontFamily: HZ_MONO, color: HZ.textMuted }}>{h.detail.trackingRef}</span>}
                         </li>
                       ))}
+                      {returns.map(r => (
+                        <li key={r.id} data-testid="house-bl-returned-row" style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "7px 10px", borderRadius: 7, background: HZ.goodBg, fontSize: 12.5 }}>
+                          <span style={{ fontFamily: HZ_MONO, color: HZ.textMuted }}>{fmtDay(r.detail.on)}</span>
+                          <span style={{ flex: 1 }}>{r.detail.count} returned by {r.detail.from}{r.detail.method === "In person" ? " in person" : ` by ${String(r.detail.method || "").toLowerCase()}`}</span>
+                        </li>
+                      ))}
                     </ul>
+                  )}
+                  {canEdit && !returning && originals?.outstanding > 0 && (
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <Btn variant="secondary" size="sm" data-testid="house-bl-returned-open" disabled={!!busy} onClick={openReturning}>＋ Record originals returned</Btn>
+                      <span style={{ fontSize: 12, color: HZ.textMuted }}>{originals.outstanding} still with {originals.holder || "the holder"}.</span>
+                    </div>
+                  )}
+                  {returning && (
+                    <div data-testid="house-bl-returned-form" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "8px 10px" }}>
+                      <label style={fieldLabel()}>How many came back
+                        <input id="house-bl-returned-count" type="number" min={1} max={originals?.outstanding || 1} value={returning.count}
+                          onChange={e => setReturning(r => ({ ...r, count: e.target.value }))} style={{ ...inputStyle(), fontFamily: HZ_MONO }} />
+                        <span style={{ fontSize: 11 }}>Of the {originals?.outstanding} still out.</span></label>
+                      <label style={fieldLabel()}>From
+                        <input id="house-bl-returned-from" value={returning.from} onChange={e => setReturning(r => ({ ...r, from: e.target.value }))} style={inputStyle()} /></label>
+                      <label style={fieldLabel()}>Date
+                        <input id="house-bl-returned-date" type="date" max={todayIso()} value={returning.returnedOn}
+                          onChange={e => setReturning(r => ({ ...r, returnedOn: e.target.value }))} style={{ ...inputStyle(), fontFamily: HZ_MONO }} /></label>
+                      <label style={fieldLabel()}>How
+                        <select id="house-bl-returned-method" value={returning.method} onChange={e => setReturning(r => ({ ...r, method: e.target.value }))} style={{ ...inputStyle(), background: HZ.surfaceSolid }}>
+                          {(summary.handoverMethods || ["In person", "Courier", "Mail"]).map(m => <option key={m} value={m}>{m}</option>)}
+                        </select></label>
+                      <div style={{ gridColumn: "span 2", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                        <Btn variant="secondary" size="sm" onClick={() => setReturning(null)}>Cancel</Btn>
+                        <Btn size="sm" data-testid="house-bl-returned-save" disabled={!!busy || !(Number(returning.count) >= 1 && Number(returning.count) <= (originals?.outstanding || 0))}
+                          onClick={recordReturned}>Record returned</Btn>
+                      </div>
+                    </div>
                   )}
                   {handover && (
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "8px 10px" }}>
@@ -580,9 +779,19 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged, onTermsChange }
                         <input id="house-bl-presented-by" value={presentedBy} onChange={e => setPresentedBy(e.target.value)}
                           placeholder={toOrderMode ? "e.g. the bank the B/L was endorsed to" : shipment.consigneeName || ""} style={inputStyle()} /></label>
                     )}
-                    <Btn variant="secondary" size="sm" data-testid="house-bl-surrender" disabled={!!busy} onClick={surrender}>
-                      {releaseType === "Original" ? "Originals presented at destination" : "Surrendered at origin"}
-                    </Btn>
+                    {/* A telex release waits for every original to come back first (audit M5): the server refuses it too. */}
+                    {(() => {
+                      const held = releaseType !== "Original" && originals?.outstanding > 0;
+                      return (
+                        <>
+                          {held && <span data-testid="house-bl-surrender-why" style={{ fontSize: 12, color: HZ.warn, flex: "1 1 220px" }}>
+                            {originals.outstanding} original{originals.outstanding === 1 ? " is" : "s are"} still with {originals.holder || "the holder"}: record them returned first.</span>}
+                          <Btn variant="secondary" size="sm" data-testid="house-bl-surrender" disabled={!!busy || held} onClick={surrender}>
+                            {releaseType === "Original" ? "Originals presented at destination" : "Surrendered at origin"}
+                          </Btn>
+                        </>
+                      );
+                    })()}
                     <Btn variant="secondary" size="sm" data-testid="house-bl-open-release" disabled={!!busy} onClick={() => setReleaseOpen(true)}>Release cargo…</Btn>
                   </div>
                 </div>
@@ -644,11 +853,13 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged, onTermsChange }
                 </div>
               )}
               {canEdit && (
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end" }}>
+                  {/* Why it can't be voided now (audit H1, M6): originals still out, an eBL, not an admin… — the server's reason. */}
+                  {summary.voidBlock && <span data-testid="house-bl-void-why" style={{ fontSize: 12, color: HZ.warn, marginRight: "auto" }}>Can't void: {summary.voidBlock.error}.</span>}
                   {!amendOpen && (
                     <Btn variant="secondary" size="sm" data-testid="house-bl-amend" disabled={!!busy} onClick={() => setAmendOpen(true)}>Surrender for amendment…</Btn>
                   )}
-                  <Btn variant="danger" size="sm" data-testid="house-bl-void" disabled={!!busy} onClick={() => setVoidOpen(true)}>Void, with a reason…</Btn>
+                  <Btn variant="danger" size="sm" data-testid="house-bl-void" disabled={!!busy || !!summary.voidBlock} onClick={() => setVoidOpen(true)}>Void, with a reason…</Btn>
                 </div>
               )}
             </>
@@ -693,6 +904,46 @@ const HouseBlPanel = ({ shipment, canEdit, docs = [], onChanged, onTermsChange }
           )}
         </div>
       </div>
+
+      {/* Screen 3 (audit M3): the House against the carrier's Master B/L, once the carrier has drafted it. It warns; it doesn't block. */}
+      {summary.houseVsMaster && (
+        <div data-testid="house-bl-vs-master" style={card()}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800 }}>House vs Master</h3>
+            <span style={{ fontSize: 12, color: HZ.textMuted }}>the carrier's Master B/L <span style={{ fontFamily: HZ_MONO }}>{summary.houseVsMaster.masterReference}</span> ({String(summary.houseVsMaster.masterStatus || "").toLowerCase().replace(/_/g, " ")})</span>
+            <span data-testid="house-bl-vs-master-status" style={{ marginLeft: "auto", ...(summary.houseVsMaster.differences.length
+              ? chipStyle(HZ.warnBg, HZ.warn, HZ.warn + "66") : chipStyle(HZ.goodBg, HZ.good, HZ.good + "66")) }}>
+              {summary.houseVsMaster.differences.length ? `${summary.houseVsMaster.differences.length} DIFFERENCE${summary.houseVsMaster.differences.length === 1 ? "" : "S"}` : "✓ MATCHES"}</span>
+          </div>
+          {summary.houseVsMaster.differences.length > 0 ? summary.houseVsMaster.differences.map(d => (
+            <div key={d.key} data-testid="house-bl-vs-master-row" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr)", gap: "4px 12px",
+              alignItems: "baseline", padding: "9px 12px", borderRadius: 8, background: HZ.warnBg, fontSize: 12.5 }}>
+              <span style={{ fontWeight: 600 }}>{d.label}</span>
+              <span><span style={{ fontSize: 11, color: HZ.textMuted }}>House </span>{d.house}</span>
+              <span style={{ color: HZ.warn, fontWeight: 700 }}><span style={{ fontSize: 11, color: HZ.textMuted, fontWeight: 400 }}>Master </span>{d.master}</span>
+            </div>
+          )) : (
+            <span style={{ fontSize: 12.5 }}>Containers, seals, weights and packages: the same on both ✓</span>
+          )}
+          <span style={{ fontSize: 11.5, color: HZ.textMuted }}>Compared once the carrier has drafted its Master B/L{summary.houseVsMaster.houseIssued ? "" : ", against this House B/L as it would issue now"}.
+            A difference is a classic reason for an ICS2 or AMS hold at destination: correct the shipment, then amend whichever B/L is wrong. It warns; it doesn't block.</span>
+        </div>
+      )}
+
+      {/* Screen 4: issuing a draft the shipper hasn't approved asks first (the default stated with the mockup: warn, don't block). */}
+      {issueAsk && (
+        <Modal title="Issue without the shipper's approval?" onClose={() => setIssueAsk(false)} width={480} data-testid="house-bl-issue-ask">
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, fontFamily: HZ_BODY }}>
+            <span style={{ fontSize: 13, color: HZ.textMuted }}>{approvalStatus === "SENT" ? `The draft went to ${approval.sentTo} on ${fmtDay(approval.sentAt)}, with no answer recorded yet.`
+              : approvalStatus === "CHANGES_REQUESTED" ? `The shipper asked for changes: “${approval.comment}”.`
+              : "The shipper hasn't seen this draft."} Once issued, the B/L number and date are fixed; correcting it means getting the originals back.</span>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Btn variant="secondary" onClick={() => setIssueAsk(false)}>Cancel</Btn>
+              <Btn data-testid="house-bl-issue-anyway" disabled={!!busy} onClick={() => { setIssueAsk(false); issue(); }}>Issue anyway</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {releaseOpen && live && (
         <ReleaseCargoModal blocks={summary.release?.blocks || []} warnings={summary.release?.warnings || []} canOverride={canOverride} onRelease={release} onClose={() => setReleaseOpen(false)} />

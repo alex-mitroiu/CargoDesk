@@ -118,7 +118,9 @@ const hoursAhead = iso => (Date.parse(iso) - Date.now()) / 36e5;
     r = await request("POST", `/api/shipments/${A}/spot-offer`, { offerId: taken.id }, token);
     assert("attached to a CMDU shipment", r.status === 200 && r.body.buyLines === 4, JSON.stringify(r.body).slice(0, 200));
     r = await request("POST", `/api/shipments/${A}/edi-messages/booking-request`, {}, token);
-    assert("booked", r.status === 201 && !r.body.warning, JSON.stringify(r.body).slice(0, 200));
+    // A live offer books with no warning about it (since TKT-JV1SF2 the send may still warn of a missing account number
+    // or agent contact, which this test's carrier doesn't have).
+    assert("booked", r.status === 201 && !/spot offer|expired/i.test(r.body.warning || ""), JSON.stringify(r.body).slice(0, 200));
     await waitForCarrierReference(request, token, A);
     r = await carrierActs(request, token, A, "confirm");
     const cmp = (await request("GET", `/api/shipments/${A}/carrier-booking/comparison`, null, token)).body;

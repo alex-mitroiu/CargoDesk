@@ -253,6 +253,18 @@ describe("House B/L screens", () => {
     goto(`shipments/${ships.F.id}/documents`);
     cy.get('[data-testid="house-bl-issue"]', { timeout: 15000 }).should("not.be.disabled").click();
     cy.get('[data-testid="house-bl-status"]', { timeout: 20000 }).should("have.text", "ISSUED");
+    // The originals both ways (audit M5, screen 1 of mockup 12f412e9, 2026-11-23): handed to the shipper, the telex release
+    // waits until they're recorded back.
+    cy.then(() => api("POST", `/shipments/${ships.F.id}/house-bl/originals-handover`, { to: "Rotterdam Tegelhandel BV", method: "Courier",
+      trackingRef: "DHL 4471 0921 55" })).its("status").should("eq", 201);
+    goto(`shipments/${ships.F.id}/documents`);
+    cy.get('[data-testid="house-bl-originals-count"]', { timeout: 15000 }).should("contain", "OUT · 0 BACK");
+    cy.get('[data-testid="house-bl-surrender"]').should("be.disabled");
+    cy.get('[data-testid="house-bl-surrender-why"]').should("contain", "record them returned first");
+    cy.get('[data-testid="house-bl-returned-open"]').click();
+    cy.get('[data-testid="house-bl-returned-save"]').click();
+    cy.get('[data-testid="house-bl-originals-count"]', { timeout: 15000 }).should("not.contain", "0 BACK");
+    cy.get('[data-testid="house-bl-surrender"]').should("not.be.disabled");
     cy.get('[data-testid="house-bl-surrender"]').should("contain", "Surrendered at origin").click();
     cy.get('[data-testid="house-bl-telex-notice"]', { timeout: 15000 }).should("contain", "Telex release notice sent to");
     api("GET", `/tickets?shipmentId=${ships.F.id}`).then(res => {

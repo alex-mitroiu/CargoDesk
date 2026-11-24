@@ -299,6 +299,122 @@ describe("HouseBlPanel", () => {
   });
 });
 
+// The House B/L audit's four screens (mockup 12f412e9, approved 2026-11-23 "the mockups are ok"): SHP-AQ1FIM-like data.
+describe("HouseBlPanel — the audit's screens", () => {
+  const telexShipment = { ...shipment, blReleaseType: "Telex Release", shipperId: "CUS-VLM", shipperName: "Van Leeuwen Meubelen BV" };
+  const OUT = { out: 3, back: 0, outstanding: 3, holder: "Van Leeuwen Meubelen BV" };
+
+  it("1 · originals out and back: counted both ways; the telex release and void wait for them; recording them returned", async () => {
+    api.houseBl.originalsReturned.mockResolvedValue({});
+    renderPanel(summary({ live: issued({ releaseType: "Telex Release" }), readiness: null, release: { blocks: [] }, originals: OUT,
+      voidBlock: { error: "3 originals are still with Van Leeuwen Meubelen BV: record them returned before voiding", status: 409 } }), {}, { ship: telexShipment, events: [
+      { id: "E2", eventType: "ORIGINALS_HANDED_OVER", detail: { to: "Van Leeuwen Meubelen BV", method: "Courier", trackingRef: "DHL 4471 0921 55", count: 3, total: 3, on: "2026-10-28" },
+        createdAt: "2026-10-28T09:00:00Z" }] });
+    expect(await screen.findByTestId("house-bl-originals-count")).toHaveTextContent("3 OUT · 0 BACK");
+    expect(screen.getByTestId("house-bl-surrender")).toBeDisabled();
+    expect(screen.getByTestId("house-bl-surrender-why")).toHaveTextContent("3 originals are still with Van Leeuwen Meubelen BV: record them returned first.");
+    expect(screen.getByTestId("house-bl-void")).toBeDisabled();
+    expect(screen.getByTestId("house-bl-void-why")).toHaveTextContent("record them returned before voiding");
+    fireEvent.click(screen.getByTestId("house-bl-returned-open"));
+    expect(screen.getByLabelText(/How many came back/)).toHaveValue(3);
+    expect(screen.getByLabelText("From")).toHaveValue("Van Leeuwen Meubelen BV");
+    fireEvent.change(screen.getByLabelText("How"), { target: { value: "In person" } });
+    fireEvent.click(screen.getByTestId("house-bl-returned-save"));
+    await waitFor(() => expect(api.houseBl.originalsReturned).toHaveBeenCalledWith("SHP-T1", expect.objectContaining({ count: 3, from: "Van Leeuwen Meubelen BV", method: "In person" })));
+  });
+
+  it("1 · …all back: the pill turns good, the telex release and void are open", async () => {
+    renderPanel(summary({ live: issued({ releaseType: "Telex Release" }), readiness: null, release: { blocks: [] }, originals: { ...OUT, back: 3, outstanding: 0 }, voidBlock: null }),
+      {}, { ship: telexShipment, events: [{ id: "E3", eventType: "ORIGINALS_RETURNED", detail: { from: "Van Leeuwen Meubelen BV", method: "In person", count: 3, on: "2026-10-30" },
+        createdAt: "2026-10-30T09:00:00Z" }] });
+    expect(await screen.findByTestId("house-bl-originals-count")).toHaveTextContent("3 OUT · 3 BACK");
+    await waitFor(() => expect(screen.getByTestId("house-bl-returned-row")).toHaveTextContent("3 returned by Van Leeuwen Meubelen BV in person"));
+    expect(screen.getByTestId("house-bl-surrender")).not.toBeDisabled();
+    expect(screen.queryByTestId("house-bl-returned-open")).not.toBeInTheDocument();
+    expect(screen.getByTestId("house-bl-void")).not.toBeDisabled();
+  });
+
+  it("2 · on-board notation: waits for every container, then adds it; once added the record says so", async () => {
+    api.houseBl.onBoardNotation.mockResolvedValue({});
+    const received = issued({ isShippedOnBoardType: false, shippedOnBoardDate: null, receivedForShipmentDate: "2026-10-22" });
+    const first = renderPanel(summary({ live: received, readiness: null, release: { blocks: [] },
+      onBoard: { shippedOnBoard: false, onBoardDate: null, containers: 2, loaded: 1, notLoaded: ["MSKU7743220"] } }));
+    expect(await screen.findByTestId("house-bl-notation")).toHaveTextContent("1 of 2 containers loaded");
+    expect(screen.getByTestId("house-bl-notation")).toHaveTextContent("Waiting for MSKU7743220");
+    expect(screen.getByTestId("house-bl-notation-add")).toBeDisabled();
+    first.unmount();
+    const second = renderPanel(summary({ live: received, readiness: null, release: { blocks: [] },
+      onBoard: { shippedOnBoard: true, onBoardDate: "2026-10-25", onBoardSource: "Loaded event", containers: 2, loaded: 2, notLoaded: [] } }));
+    expect(await screen.findByTestId("house-bl-notation")).toHaveTextContent("All 2 containers are aboard");
+    fireEvent.click(screen.getByTestId("house-bl-notation-add"));
+    await waitFor(() => expect(api.houseBl.onBoardNotation).toHaveBeenCalledWith("SHP-T1"));
+    second.unmount();
+    renderPanel(summary({ live: { ...received, onBoardNotationDate: "2026-10-25" }, readiness: null, release: { blocks: [] } }));
+    expect(await screen.findByTestId("house-bl-notation")).toHaveTextContent("On-board notation added");
+    expect(screen.queryByTestId("house-bl-notation-add")).not.toBeInTheDocument();
+  });
+
+  it("3 · House vs Master: a seal that differs is named; matching ones say so", async () => {
+    const first = renderPanel(summary({ live: issued(), readiness: null, release: { blocks: [] }, houseVsMaster: { masterReference: "MAEU412841377LS", masterStatus: "ISSUED",
+      houseReference: "RTMHBL2600018", houseIssued: true, containers: 2,
+      differences: [{ key: "seal:MSKU7743220", label: "Container MSKU7743220 · Seal", house: "ML-4471183", master: "ML-4471188" }] } }));
+    expect(await screen.findByTestId("house-bl-vs-master-status")).toHaveTextContent("1 DIFFERENCE");
+    expect(screen.getByTestId("house-bl-vs-master-row")).toHaveTextContent("Container MSKU7743220 · Seal");
+    expect(screen.getByTestId("house-bl-vs-master-row")).toHaveTextContent("ML-4471188");
+    first.unmount();
+    renderPanel(summary({ live: issued(), readiness: null, release: { blocks: [] }, houseVsMaster: { masterReference: "MAEU412841377LS", masterStatus: "ISSUED",
+      houseReference: "RTMHBL2600018", houseIssued: true, containers: 2, differences: [] } }));
+    expect(await screen.findByTestId("house-bl-vs-master-status")).toHaveTextContent("✓ MATCHES");
+  });
+
+  it("4 · the draft: clauses go with the copy; it's sent to the shipper; issuing without approval asks first", async () => {
+    api.customers.get.mockResolvedValue({ id: "CUS-VLM", email: "logistics@vanleeuwen.example" });
+    api.houseBl.approvalSend.mockResolvedValue({ emailed: true, note: "" });
+    api.houseBl.number.mockResolvedValue({ number: "RTMHBL2600123", source: "SERIES" });
+    api.documents.generate.mockResolvedValue({ id: "DOC-9" });
+    api.documents.patch.mockResolvedValue({});
+    const draft = { id: "TD-D", status: "DRAFT", reference: "", typeCode: "BOL", version: 2, documentId: "DOC-D", originals: 3, copies: 0, withCharges: false,
+      extraClauses: ["FREIGHT PREPAID AS ARRANGED"], approval: null, isShippedOnBoardType: true };
+    renderPanel(summary({ draft }), {}, { ship: { ...shipment, shipperId: "CUS-VLM" } });
+    const clauses = await screen.findByTestId("house-bl-clauses-text");
+    await waitFor(() => expect(clauses).toHaveValue("FREIGHT PREPAID AS ARRANGED"));
+    fireEvent.change(clauses, { target: { value: "FREIGHT PREPAID AS ARRANGED\nL/C NO. 4471-2026 ISSUED BY ABN AMRO BANK N.V." } });
+    await waitFor(() => expect(screen.getByTestId("house-bl-approval-to")).toHaveValue("logistics@vanleeuwen.example"));
+    fireEvent.click(screen.getByTestId("house-bl-approval-send"));
+    await waitFor(() => expect(api.houseBl.approvalSend).toHaveBeenCalledWith("SHP-T1", { to: "logistics@vanleeuwen.example" }));
+    expect(screen.getByTestId("house-bl-issue-note")).toHaveTextContent("hasn't approved this draft");
+    fireEvent.click(screen.getByTestId("house-bl-issue"));
+    expect(await screen.findByText("Issue without the shipper's approval?")).toBeInTheDocument();
+    expect(api.houseBl.number).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("house-bl-issue-anyway"));
+    await waitFor(() => expect(buildHouseBlHtml).toHaveBeenCalled());
+    const statement = buildHouseBlHtml.mock.calls.at(-1)[1].statement;
+    expect(statement.clauses).toEqual(["FREIGHT PREPAID AS ARRANGED", "L/C NO. 4471-2026 ISSUED BY ABN AMRO BANK N.V."]);
+  });
+
+  it("4 · …sent: the answer is recorded; approved, Issue goes straight through", async () => {
+    api.houseBl.approvalAnswer.mockResolvedValue({});
+    const approval = { status: "SENT", sentTo: "logistics@vanleeuwen.example", sentAt: "2026-10-28T10:12:00Z", sentBy: "Dana", emailed: true };
+    const draft = { id: "TD-D", status: "DRAFT", reference: "", typeCode: "BOL", version: 2, documentId: "DOC-D", originals: 3, copies: 0, withCharges: false, extraClauses: [], approval };
+    const first = renderPanel(summary({ draft }));
+    expect(await screen.findByTestId("house-bl-approval-status")).toHaveTextContent("SENT");
+    fireEvent.click(screen.getByTestId("house-bl-approval-changes"));
+    fireEvent.change(screen.getByLabelText("What the shipper asked to change"), { target: { value: "Consignee street is 250 Port Jersey Blvd, not 205" } });
+    fireEvent.click(screen.getByTestId("house-bl-approval-changes-save"));
+    await waitFor(() => expect(api.houseBl.approvalAnswer).toHaveBeenCalledWith("SHP-T1", { approved: false, comment: "Consignee street is 250 Port Jersey Blvd, not 205" }));
+    first.unmount();
+    api.houseBl.number.mockResolvedValue({ number: "RTMHBL2600123", source: "SERIES" });
+    api.documents.generate.mockResolvedValue({ id: "DOC-9" });
+    api.documents.patch.mockResolvedValue({});
+    renderPanel(summary({ draft: { ...draft, approval: { ...approval, status: "APPROVED", answeredAt: "2026-10-29T09:05:00Z", answeredBy: "Dana" } } }));
+    expect(await screen.findByTestId("house-bl-approval-status")).toHaveTextContent("✓ APPROVED");
+    expect(screen.queryByTestId("house-bl-issue-note")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("house-bl-issue"));
+    await waitFor(() => expect(api.houseBl.number).toHaveBeenCalled());
+    expect(screen.queryByText("Issue without the shipper's approval?")).not.toBeInTheDocument();
+  });
+});
+
 describe("House B/L panel helpers", () => {
   it("sends each readiness item to where it's fixed", () => {
     expect(fixPlaceOf("Shipper's address: street, city and country on Acme (Customers)", "S1")).toEqual({ label: "Customers", href: "#mdm-customers" });

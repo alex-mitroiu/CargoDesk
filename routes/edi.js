@@ -1,9 +1,12 @@
 "use strict";
 
 const { validateOutbound, errorsText, specVersion } = require("../lib/dcsa/validate");
+const { freightTermOf } = require("../lib/payment-terms");
 const { comparisonRows, planLegs } = require("../lib/carrier-confirmation");
 const { doorLegs, doorPoint, dcsaAddress, addressGaps, doorContact, doorLocation, positioningTimes } = require("../lib/booking-doors");
 const { timezoneFor } = require("../lib/timezones");
+const { dcsaPartyCodes } = require("../lib/dcsa/parties");
+const requestOptions = require("../lib/booking-request-options");
 
 module.exports = function ediRoutes(app, ctx) {
   const { query, ok, err, uid, auth, requireRole, shipmentSubs,
@@ -342,11 +345,23 @@ module.exports = function ediRoutes(app, ctx) {
   // CargoDesk has it): service/movement/freight terms, the booking agent (the legal entity behind
   // the shipment's export office), the commodity description and HS codes, the loop as service code.
   async function dcsaBookingExtras(shipment) {
+    // The booking agent: the legal entity behind the export office. Its contact is the entity's e-mail or phone, else the
+    // export office's own mail address (TKT-JV1SF2 point 4, 2026-11-23: the carrier needs someone to reach).
     const [agent] = shipment.emo_office_id ? await query(
-      "SELECT o.name AS office_name, b.name AS branch_name, b.email AS branch_email, b.phone AS branch_phone FROM offices o LEFT JOIN branches b ON b.id = o.branch_id WHERE o.id=$1",
+      `SELECT o.name AS office_name, b.name AS branch_name, b.email AS branch_email, b.phone AS branch_phone, m.from_address AS office_email
+       FROM offices o LEFT JOIN branches b ON b.id = o.branch_id
+       LEFT JOIN office_mail_settings m ON m.office_id = o.id AND m.is_active = TRUE WHERE o.id=$1`,
       [shipment.emo_office_id]) : [];
     const [commodity] = shipment.commodity_code ? await query("SELECT description FROM commodities WHERE code=$1", [shipment.commodity_code]) : [];
     const ctrs = await query("SELECT * FROM containers WHERE shipment_id=$1 ORDER BY container_number, id", [shipment.id]);
+    // What the carrier is told the goods are (TKT-JV1SF2 point 2, 2026-11-23): FAK (Freight All Kinds) is how the contract
+    // rates the shipment and stays its commodity, but it doesn't describe the goods; then the containers' own cargo
+    // descriptions go, as typed (each once). Any other commodity goes by its description, as before.
+    const cargoDescriptions = [...new Set(ctrs.map(c => String(c.cargo_description || "").trim()).filter(Boolean))];
+    const isFak = String(shipment.commodity_code || "").split(",").map(s => s.trim()).filter(Boolean).every(c => c === ctx.FAK_COMMODITY)
+      && !!shipment.commodity_code;
+    const commodityDescription = (isFak && cargoDescriptions.length ? cargoDescriptions.join("; ")
+      : commodity?.description || cargoDescriptions[0] || "").slice(0, 550);
     // Dangerous goods (2026-10-29: the booking audit found the request carried none): each DG container —
     // flagged itself, or holding a DG package — with its UN number, proper shipping name, class, weight and
     // packages, on its equipment line (the ISO code), and the company's DG emergency contact. What's missing
@@ -412,37 +427,106 @@ module.exports = function ediRoutes(app, ctx) {
     };
     const originDoor = await doorOf(pickUp, "origin");
     const destinationDoor = await doorOf(delivery, "destination");
-    // The payment terms (CPI) once saved (the office split, §8.52): freight, origin and destination charges. The freight
-    // term is theirs once saved, else the shipment's Freight Terms.
-    let paymentTerms = null, freightTerm = /^(collect|payable at destination)$/i.test(String(shipment.freight_terms || "").trim()) ? "COL" : shipment.freight_terms ? "PRE" : "";
+    // The payment terms (CPI, the office split, §8.52): freight, origin and destination charges. Saved, or as shown before
+    // they are (D1: the freight from Freight Terms, the rest from the Incoterm), which is exactly what the send then saves
+    // (audit B, 2026-11-24: the request is built and checked before anything is saved).
+    let paymentTerms = null, freightTerm = freightTermOf(shipment.freight_terms) || "";
     let terms = null;
     if (ctx.officeSplit) {
       const split = await ctx.officeSplit.loadShipment(shipment.id);
       terms = split && ctx.officeSplit.rules.termsOf(split.shipment);
-      if (terms?.saved && terms.categories.freight?.term) freightTerm = terms.categories.freight.term;
+      if (terms?.categories?.freight?.term) freightTerm = terms.categories.freight.term;
     }
     // The carrier's offices (§8.53): the booking office at its own location, our customer number at the carrier for the
     // legal entity behind the export office, and where the freight is payable: the carrier's billing (creditor) office
     // of the side that pays it (the user, 2026-11-16), else the port of loading or discharge.
     const carrier = ctx.carrierOffices ? await ctx.carrierOffices.forBooking(shipment, { freightTerm })
       : { bookingOffice: null, identifyingCodes: [], payableAt: "" };
-    if (terms?.saved) paymentTerms = ctx.officeSplit.rules.dcsaPaymentTerms(terms, { freightPayableAt: carrier.payableAt || "" });
+    if (terms) paymentTerms = ctx.officeSplit.rules.dcsaPaymentTerms(terms, { freightPayableAt: carrier.payableAt || "" });
+
+    // The shipper's and the consignee's own details on every booking (TKT-JV1SF2 point 1, 2026-11-23): the customer profile's
+    // address, a contact (the door rule: Operations first, then the primary contact, then the company's phone or e-mail), its
+    // identifiers (LEI, DUNS, …) and tax numbers (VAT, EORI, …). The booking's shipper is the NVOCC when one handles the
+    // shipment (its own profile, not the cargo owner's). Only what the profile holds goes; a profile with no address sends
+    // none (no refusal: DCSA asks only for the name, and a carrier's door still refuses through doorMissing above).
+    const [nvoccRow] = await query("SELECT customer_id FROM shipment_parties WHERE shipment_id=$1 AND role='NVOCC'", [shipment.id]);
+    const partyOf = async customerId => {
+      const profile = customerId ? await getCustomerRow(customerId).catch(() => null) : null;
+      if (!profile) return null;
+      const where = dcsaAddress(profile);
+      const contact = doorContact(profile, await customerContacts(profile.id));
+      const { identifyingCodes, taxLegalReferences } = dcsaPartyCodes(await customerIdentifiers(profile.id), profile.countryIso2);
+      return { ...(where || {}), ...(contact ? { contact } : {}), identifyingCodes, taxLegalReferences };
+    };
+    const shipperDetails = await partyOf(nvoccRow?.customer_id || shipment.shipper_id);
+    const consigneeDetails = await partyOf(shipment.consignee_id);
+
+    // What the carrier may hold against the request, said when it's sent but never refused (TKT-JV1SF2 point 4): no
+    // customer number of ours for the export office's legal entity at this carrier, no contact at the booking agent.
+    const agentName = agent?.branch_name || agent?.office_name || "";
+    const agentContact = { name: agent?.office_name || agent?.branch_name, email: agent?.branch_email || agent?.office_email || "", phone: agent?.branch_phone || "" };
+    const bookingWarnings = [];
+    if (agentName && !(carrier.identifyingCodes || []).length)
+      bookingWarnings.push(`no customer number of ${agentName} at ${shipment.carrier_code} (Master Data → Carriers → ${shipment.carrier_code} → Our account numbers), so the carrier may not know who is booking`);
+    if (agentName && !agentContact.email && !agentContact.phone)
+      bookingWarnings.push(`no e-mail or phone for ${agentName} (its legal entity, or the export office's mail settings), so the carrier has no one to contact at the booking agent`);
     return {
       paymentTerms,
       movementType: shipment.movement_type || "FCL",
       freightTerms: shipment.freight_terms || "", incoterm: shipment.incoterm || "",
       declaredValue: shipment.declared_value, declaredValueCurrency: shipment.declared_value_currency || "USD",
-      bookingAgent: (agent?.branch_name || agent?.office_name) ? { name: agent.branch_name || agent.office_name,
-        contact: { name: agent.office_name || agent.branch_name, email: agent.branch_email || "", phone: agent.branch_phone || "" },
-        identifyingCodes: carrier.identifyingCodes } : null,
+      bookingAgent: agentName ? { name: agentName, contact: agentContact, identifyingCodes: carrier.identifyingCodes } : null,
       carrierBookingOffice: carrier.bookingOffice,
       invoicePayableAt: carrier.payableAt || "",
-      commodityDescription: commodity?.description || ctrs.map(c => c.cargo_description).find(Boolean) || "",
+      commodityDescription,
       hsCodes: [...new Set(ctrs.map(c => c.hs_code).filter(Boolean))],
       ...(loop ? { service: loop } : {}),
       dangerousGoods, dgEmergencyContact, dgMissing,
       originDoor, destinationDoor, doorMissing,
+      shipperDetails, consigneeDetails, bookingWarnings,
+      // The transport document and loading (TKT-JV1SF2 point 5): what's stated on Carrier Booking → Details, nothing else.
+      requestOptionFields: requestOptions.dcsaFields(shipment.booking_request_options),
     };
+  }
+
+  // ─── The transport document and loading (2026-11-23, TKT-JV1SF2 point 5, mockup dffb8ab2) ───────────────────────────
+  // GET: the shipment's options (every field, empty = not stated) and whether this user may change them. PUT: any of the
+  // fields; who may is whoever may change the payment terms (the export side's OCC/BK, admins, operators). Locked on a
+  // Completed or Cancelled shipment (server.js shipmentStatusLock). A change is logged in History; it goes with the next
+  // booking request, update or amendment.
+  app.get("/api/shipments/:id/booking-request-options", auth(), async (req, res) => {
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    const options = requestOptions.optionsOf(shipment.booking_request_options);
+    const canEdit = ctx.officeSplit ? !!(await ctx.officeSplit.mayEdit(req.user, req, shipment)) : false;
+    ok(res, { options, dcsa: requestOptions.dcsaFields(options), canEdit, portOfLoading: shipment.pol || "" });
+  });
+
+  app.put("/api/shipments/:id/booking-request-options", auth(), async (req, res) => {
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    if (!ctx.officeSplit || !(await ctx.officeSplit.mayEdit(req.user, req, shipment)))
+      return err(res, "Only the shipment's OCC/BK (export side), an admin or an operator can change what the booking request states", 403);
+    const before = requestOptions.optionsOf(shipment.booking_request_options);
+    const r = requestOptions.normalize(req.body || {}, before);
+    if (r.error) return err(res, r.error, 400);
+    const stored = requestOptions.isEmpty(r.options) ? null : JSON.stringify(r.options);
+    if (JSON.stringify(before) !== JSON.stringify(r.options)) {
+      await query("UPDATE shipments SET booking_request_options=$1 WHERE id=$2", [stored, shipment.id]);
+      await logEvent(shipment.id, "FIELD_UPDATED", "booking_request_options", JSON.stringify(requestOptions.dcsaFields(before)),
+        JSON.stringify(requestOptions.dcsaFields(r.options)), JSON.stringify({ reason: "Transport document and loading, for the booking request" }),
+        req.user?.name || req.user?.email || "");
+    }
+    ok(res, { options: r.options, dcsa: requestOptions.dcsaFields(r.options), canEdit: true, portOfLoading: shipment.pol || "" });
+  });
+
+  // A customer's identifiers (Master Data → Customers → Identifiers), from the Customer Service when it owns them.
+  async function customerIdentifiers(customerId) {
+    if (((await getSettings()).customer_source || "local") === "remote") {
+      try { return (await ctx.callCustomerService("GET", `/internal/customers/${customerId}/identifiers`)) || []; } catch { return []; }
+    }
+    return (await query("SELECT id_type, id_code, country_iso2 FROM customer_identifiers WHERE customer_id=$1 ORDER BY is_primary DESC, created_at", [customerId]))
+      .map(r => ({ idType: r.id_type, idCode: r.id_code, countryIso2: r.country_iso2 || "" }));
   }
 
   // The doors the printed booking request (BR01) shows (2026-11-20, §8.56): exactly what the DCSA booking sends (§8.55), so
@@ -559,13 +643,6 @@ module.exports = function ediRoutes(app, ctx) {
     const now = new Date().toISOString();
     const correlationId = `EDI-${uid()}`;
 
-    // The booking settles the payment terms with the carrier (the office split, §8.52): terms never saved are saved now,
-    // as the Incoterm sets them, and the shipment is split between its offices from here on.
-    if (ctx.officeSplit && !shipment.payment_terms) {
-      await ctx.officeSplit.activate(shipment.id, user?.name || user?.email || "CargoDesk");
-      Object.assign(shipment, (await query("SELECT * FROM shipments WHERE id=$1", [shipment.id]))[0]);
-    }
-
     const requestPayload = await bookingRequestPayload(shipment, body);
     // Built and checked against DCSA Booking 2.0 before anything is recorded: a request the carrier
     // would answer 400 is refused here, with the reasons, instead of becoming a "sent" message and a
@@ -584,6 +661,14 @@ module.exports = function ediRoutes(app, ctx) {
     }
     const conditions = integ.adapter.bookingConditionProblems ? integ.adapter.bookingConditionProblems(dcsaPayload) : [];
     if (conditions.length) return fail(400, `Can't send the booking request: a DCSA booking needs ${conditions.join(", ")}`);
+
+    // The booking settles the payment terms with the carrier (the office split, §8.52): terms never saved are saved now,
+    // exactly as the request above carries them (D1: as shown), and the shipment is split between its offices from here on.
+    // Only once every check has passed (audit B, 2026-11-24, TKT-FXZUWR): a request refused above saves nothing.
+    if (ctx.officeSplit && !shipment.payment_terms) {
+      await ctx.officeSplit.activate(shipment.id, user?.name || user?.email || "CargoDesk");
+      Object.assign(shipment, (await query("SELECT * FROM shipments WHERE id=$1", [shipment.id]))[0]);
+    }
 
     // Outbound message, recorded and broadcast immediately.
     const outId = `EDI-${uid()}`;
@@ -633,7 +718,11 @@ module.exports = function ediRoutes(app, ctx) {
     // Always pending — the carrier (a real one, or the built-in DCSA simulator) confirms
     // asynchronously, by notification (routes/carrier-webhooks.js) or when polled.
     return { status: 201, body: { sent: sentMsg, booking: mapCarrierBooking(booking), pending: true, capabilityGaps,
-      ...(carrierError ? { carrierError } : {}), ...(spotCheck.warning ? { warning: spotCheck.warning } : {}) } };
+      ...(carrierError ? { carrierError } : {}),
+      // One warning line for the screen's toast: the spot offer's, and what the carrier may hold against the request.
+      ...((spotCheck.warning || extras.bookingWarnings.length) ? { warning: [spotCheck.warning,
+        extras.bookingWarnings.length ? `Sent, but the carrier may ask about it: ${extras.bookingWarnings.join("; ")}.` : ""].filter(Boolean).join(" ") } : {}),
+      bookingWarnings: extras.bookingWarnings } };
   }
   ctx.sendBookingRequest = sendBookingRequest;
 

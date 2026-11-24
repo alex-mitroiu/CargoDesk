@@ -85,10 +85,15 @@ const inDays = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
     assert("it takes its export office's billing office", A.billingOfficeId === billingOffice.id, A.billingOfficeId);
     let terms = (await request("GET", `/api/shipments/${A.id}/payment-terms`, null, token)).body;
     const cat = id => terms.categories.find(c => c.id === id);
-    assert("not saved yet: the Incoterm's defaults are shown", terms.saved === false && terms.canEdit === true && cat("freight").term === "COL"
-      && cat("originPort").term === "PRE" && cat("destinationPort").term === "COL", JSON.stringify(terms.categories.map(c => [c.id, c.term, c.office])));
-    assert("…origin charges billed to the shipper, the freight to the principal (the consignee)", cat("originPort").billTo.customerId === shipper.id
-      && cat("freight").billTo.customerId === consignee.id && cat("freight").billTo.role === "Principal", JSON.stringify([cat("originPort").billTo, cat("freight").billTo]));
+    // D1 (2026-11-23, TKT-ML3GRC): until the terms are saved the ocean freight follows Freight Terms (Prepaid here), the rest
+    // the Incoterm; it used to show FOB's Collect while the booking card said Prepaid.
+    assert("not saved yet: the freight from Freight Terms (Prepaid), the rest the Incoterm's defaults", terms.saved === false && terms.canEdit === true
+      && terms.freightFromFreightTerms === true && cat("freight").term === "PRE" && cat("originPort").term === "PRE" && cat("destinationPort").term === "COL",
+      JSON.stringify(terms.categories.map(c => [c.id, c.term, c.office])));
+    assert("…origin charges and the Prepaid freight billed to the shipper, destination charges to the principal (the consignee)",
+      cat("originPort").billTo.customerId === shipper.id && cat("freight").billTo.customerId === shipper.id
+      && cat("destinationPort").billTo.customerId === consignee.id && cat("destinationPort").billTo.role === "Principal",
+      JSON.stringify([cat("originPort").billTo, cat("freight").billTo, cat("destinationPort").billTo]));
     assert("…the offices to choose from: export, import, billing", terms.offices.map(o => o.key).join(",") === "export,import,billing"
       && terms.offices.find(o => o.key === "billing")?.code === billingOffice.code, JSON.stringify(terms.offices));
 

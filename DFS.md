@@ -11,7 +11,9 @@ pages (§5.2); 2026-11-06 for the managing offices from the ports, the shipment 
 entry (§5.2), and the space position on Contracts & Schedules (§5.3); 2026-11-17 to 2026-11-20 for carrier offices, the Carrier
 Booking's folds, the carrier's door in the booking and the trucker's stops (§5.12) and Master Data → Facilities (§5.6),
 all released in v0.91.16 "Gatehouse" on 2026-11-21); 2026-11-22 for the reference data a new installation loads by
-itself on its first start (§5.6), released in v0.91.17 "Gazetteer" on 2026-11-22. **Scope**:
+itself on its first start (§5.6), released in v0.91.17 "Gazetteer" on 2026-11-22; 2026-11-23 for the booking request's
+parties, references and transport document, the freight following Freight Terms until the payment terms are saved (§5.12),
+and the House B/L panel's audit controls (§5.9), released in v0.91.18 "Notation" on 2026-11-24. **Scope**:
 whole application, at the level of its major
 functional domains and system-to-system data flows — not an exhaustive per-route specification.
 **Companion documents**: [`ARCHITECTURE.md`](ARCHITECTURE.md) (technical architecture, module
@@ -508,7 +510,10 @@ its platform; a telex release at origin needs every original back. "Shipped on b
 is dated by the last, in the port's own date; a received-for-shipment B/L gets a dated on-board notation once all are
 aboard. The issuer's legal entity needs a SCAC and address. The House is compared with the carrier's Master (seals,
 weights, packages; a warning), the draft can go to the shipper for approval (an answer belongs to the draft it was sent
-with), and clauses can be added to it. (The new controls follow the pending mockup; the rules are in place.)
+with; issuing an unapproved draft asks to confirm), and clauses can be added to it. The House B/L panel has the controls
+for each since 2026-11-23 (ARCHITECTURE.md §8.58): originals returned and how many are still out, the on-board notation,
+a House vs Master card (one line on the Master B/L card too), the approval and clauses boxes, and Void or a telex release
+disabled with the reason.
 **Roles**: operator, occ_bk (generate/send); all roles (view/download, scope-permitting).
 **Primary data**: `shipment_documents`; delivery state owned by the Document Distribution Service.
 **Business rules**: PDF Render is stateless by design — no document content is ever persisted
@@ -578,7 +583,11 @@ carrier says no, says "yes, but", or says nothing.
 haulage, port and other charges; ocean freight; destination port, haulage and other charges), Prepaid or Collect and the
 responsible office from the shipment's offices; the Incoterm sets the defaults. The Costs and charges pop-up shows every
 line with its side, category, office and billed party, and lets the OCC/BK move a line. The booking sends the terms and
-where the freight is payable; sending it saves the terms if nobody did. A shipment's billing office (from its export
+where the freight is payable; sending it saves the terms as shown if nobody did. Until they are saved, the ocean freight
+follows the shipment's Freight Terms and the rest the Incoterm (D1, ARCHITECTURE.md §8.58, 2026-11-23), and the booking card
+says so: the booking never overwrites Freight Terms. Freight Terms is Prepaid, Collect or Payable at Destination, and on a new
+shipment or quote it follows the Incoterm until someone picks it (FOB, FCA, FAS, EXW → Collect; C and D terms → Prepaid; the
+0.91.18 audit, 2026-11-24). A booking request refused before it goes saves nothing. A shipment's billing office (from its export
 office's settings, changeable on Parties & Offices) issues its invoices.
 **Carrier offices** (ARCHITECTURE.md §8.53): a shipment gets the carrier's booking office and origin billing office from
 its port of loading, and its import office and destination billing office from its port of discharge (the carrier's
@@ -593,6 +602,14 @@ checks, Send). Folded, the offices read as one line and the payment terms keep t
 Save. The "Payment terms in the booking request" preview shows "payable at" as the booking sends it: the carrier's
 billing office of the side paying the freight, else the port. A request the carrier didn't receive reads "Not received", with
 the carrier's reason, and can be sent again.
+**What the booking request says** (ARCHITECTURE.md §8.58, 2026-11-23, the user's review of a real request): the shipper and
+the consignee with their address, contact and registration numbers (LEI, DUNS, VAT, EORI…) from their customer profiles,
+whatever the route (a profile without them still books: DCSA asks only for the name); for a FAK shipment, the containers'
+cargo descriptions as what the goods are; our shipment number as the customer's reference (CR). A missing customer number
+at the carrier, or a booking agent with no e-mail or phone, is reported when the request goes, not refused. The **Transport
+document and loading** section states what the carrier should know before drafting its B/L: a bill of lading or a sea
+waybill, how many B/Ls, the place of issue, partial loading, customs references. Each one is optional; one not stated isn't
+sent.
 **Door pick-up and delivery** (ARCHITECTURE.md §8.55, 2026-11-20): when the route has a Carrier's Haulage pick-up leg from a
 door or a GPS point (DR-CY, DR-PT), the booking tells the carrier it collects at the door (DCSA "store door") and where: the
 shipper's name, address and contact from its customer profile (on the shipper and on the place), and, from the Loading

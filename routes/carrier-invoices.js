@@ -1,6 +1,7 @@
 "use strict";
 
 const { applyColumnFilters, filterOptions, applySearch, applySort, paginate, blanksLast } = require("../lib/tableQuery");
+const { freightTermOf: termOfFreightTerms } = require("../lib/payment-terms");
 
 // Freight Audit & Payment — reconciles a carrier's own submitted invoice against what was
 // actually CONTRACTED (contract_rates) and/or already accrued (shipment_cost_lines), instead of
@@ -324,7 +325,7 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
   const freightTermOf = shipment => {
     const terms = (() => { try { return shipment.payment_terms ? JSON.parse(shipment.payment_terms) : null; } catch { return null; } })();
     const t = terms?.categories?.freight?.term;
-    return t === "COL" || t === "PRE" ? t : /^(collect|payable at destination)$/i.test(String(shipment.freight_terms || "").trim()) ? "COL" : "PRE";
+    return t === "COL" || t === "PRE" ? t : termOfFreightTerms(shipment.freight_terms) === "COL" ? "COL" : "PRE";
   };
   async function sideOfInvoiceLine(shipment, line) {
     if (line.freeTimeSide === "origin" || line.freeTimeSide === "destination") return line.freeTimeSide;

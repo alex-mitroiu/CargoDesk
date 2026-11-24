@@ -2,12 +2,18 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.91.17";
-export const BUILD     = "2026-11-22";
-export const CODENAME  = "Gazetteer";
-export const BUILD_FINGERPRINT = "23290adf";
+export const VERSION   = "0.91.18";
+export const BUILD     = "2026-11-24";
+export const CODENAME  = "Notation";
+export const BUILD_FINGERPRINT = "b417a064";
 
 export const CHANGELOG = [
+  {
+    version:  "0.91.18",
+    date:     "2026-11-24",
+    codename: "Notation",
+    summary:  "The booking request sends what the carrier needs, and the House B/L panel gets its audit screens — every DCSA booking now carries the shipper's and consignee's own profile (address, contact, LEI/DUNS, VAT/EORI), a FAK shipment's real cargo descriptions and our shipment number as the customer's reference, and a missing account number or agent contact is reported instead of passing silently (TKT-JV1SF2). Carrier Booking → Details gains Transport document and loading: B/L or sea waybill, how many B/Ls, the place of issue, partial loading, customs references, each sent only when stated. Until the payment terms are saved the ocean freight follows Freight Terms and the rest the Incoterm, and Freight Terms itself follows the Incoterm until someone picks it (D1, TKT-ML3GRC). The House B/L panel records originals coming back, adds the on-board notation, compares the House with the carrier's Master, takes the shipper's approval of the draft and added clauses (TKT-J0SDVB). The SMDG import warns when a spreadsheet dropped a code's leading zeros. Pre-release audit TKT-T3QZ6Z: 5 findings, all fixed — a booking request refused before it goes saves nothing, Freight Terms takes only its three values, a locked shipment's cards are read-only.",
+  },
   {
     version:  "0.91.17",
     date:     "2026-11-22",
@@ -18,7 +24,7 @@ export const CHANGELOG = [
     version:  "0.91.16",
     date:     "2026-11-21",
     codename: "Gatehouse",
-    summary:  "Carrier offices and the trucker's run — carrier offices replace the Carrier Agents list and the Line Agent parties: each carrier's booking, import and billing offices per port or country, picked for every shipment from its sea legs, with our account number per legal entity and the issuing office on carrier invoices; the Carrier Booking in Trade Horizon Next with foldable carrier offices and payment terms; a carrier's haulage leg from or to a door sends the door's address and contact from the shipper's or consignee's customer profile in the DCSA booking; Pickup and Delivery plan the trucker's stops (empty depot, door, terminal, from the new Master Data → Facilities with the SMDG terminal list) with a planned gate in and out per container, the carrier's cut-offs and their checks, printed on the trucker's plan; plus the findings of three audits (TKT-IFZANU, TKT-CJNFID, TKT-0W1FYJ) fixed.",
+    summary:  "Carrier offices and the trucker's run — carrier offices replace the Carrier Agents list and the Line Agent parties: each carrier's booking, import and billing offices per port or country, picked for every shipment from its sea legs, with our account number per legal entity and the issuing office on carrier invoices; the Carrier Booking in Trade Horizon Next with foldable carrier offices and payment terms; a carrier's haulage leg from or to a door sends the door's address and contact from the shipper's or consignee's customer profile in the DCSA booking; Pickup and Delivery plan the trucker's stops (empty depot, door, terminal, from the new Master Data → Facilities with the SMDG terminal list) with a planned gate in and out per container, the carrier's cut-offs and their checks, printed on the trucker's plan; plus the findings of three audits (TKT-IFZANU, TKT-CJNFID, TKT-YQQWJR) fixed.",
   },
   {
     version:  "0.91.15",
